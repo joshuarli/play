@@ -40,8 +40,10 @@ pub struct Player {
     audio_delay_us: i64,
     duration_us: i64,
     pending_seeks: u32,
-    /// After a seek, skip audio/video with PTS below this value.
+    /// After an exact seek, skip audio/video with PTS below this value.
     seek_floor_us: i64,
+    /// For inexact seeks: waiting for first post-seek packet to land.
+    seek_landed: bool,
 
     // Subtitles
     subtitle_tracks: Vec<SubtitleTrack>,
@@ -85,6 +87,7 @@ impl Player {
             duration_us: stream_info.duration_us,
             pending_seeks: 0,
             seek_floor_us: 0,
+            seek_landed: true,
             subtitle_tracks,
             current_subtitle_idx: None,
             last_subtitle_text: None,
@@ -144,7 +147,7 @@ impl Player {
         self.pending_seeks += 1;
         let _ = self.demux_cmd_tx.send(DemuxCommand::Seek {
             target_pts: target_us,
-            exact: false,
+            forward: false,
         });
         if let Some(ref mut vd) = self.video_decoder {
             vd.flush();
@@ -216,13 +219,7 @@ impl Player {
                 let current = self.sync_clock.audio_pts();
                 let delta_us = (seconds * 1_000_000.0) as i64;
                 let target = (current + delta_us).max(0).min(self.duration_us);
-
-                // Show OSD immediately
-                let dur_str = format_time(self.duration_us);
-                let pos_str = format_time(target);
-                let _ = self
-                    .ui_update_tx
-                    .send(UiUpdate::Osd(format!("{pos_str} / {dur_str}")));
+                let forward = seconds > 0.0;
 
                 // Track pending seek so stale packets are discarded until Flush arrives
                 self.pending_seeks += 1;
@@ -230,7 +227,7 @@ impl Player {
                 // Send seek to demuxer
                 let _ = self.demux_cmd_tx.send(DemuxCommand::Seek {
                     target_pts: target,
-                    exact,
+                    forward: !exact && forward,
                 });
 
                 // Flush decoders
@@ -244,8 +241,18 @@ impl Player {
                     ao.flush();
                 }
 
-                self.sync_clock.set_position(target);
-                self.seek_floor_us = target;
+                if exact {
+                    // Exact seek: decode from keyframe but skip to target
+                    self.seek_floor_us = target;
+                    self.sync_clock.set_position(target);
+                } else {
+                    // Inexact seek: snap to keyframe, no decode waste.
+                    // Position will be updated when the first post-seek
+                    // video frame arrives (see seek_landed).
+                    self.seek_floor_us = 0;
+                    self.sync_clock.set_position(target);
+                    self.seek_landed = false;
+                }
                 let _ = self.ui_update_tx.send(UiUpdate::SeekFlush(target));
             }
             Command::VolumeUp => {
@@ -347,7 +354,7 @@ impl Player {
                         return;
                     }
                     while let Some(frame) = decoder.receive_frame() {
-                        // After a seek, skip frames before the target
+                        // Exact seek: skip frames before the target
                         if frame.pts_us < self.seek_floor_us {
                             if !frame.pixel_buffer.is_null() {
                                 unsafe {
@@ -358,12 +365,24 @@ impl Player {
                             }
                             continue;
                         }
+                        // Inexact seek: first decoded frame reveals actual position
+                        if !self.seek_landed {
+                            self.seek_landed = true;
+                            self.sync_clock.set_position(frame.pts_us);
+                            let _ = self
+                                .ui_update_tx
+                                .send(UiUpdate::SeekFlush(frame.pts_us));
+                            let dur_str = format_time(self.duration_us);
+                            let pos_str = format_time(frame.pts_us);
+                            let _ = self
+                                .ui_update_tx
+                                .send(UiUpdate::Osd(format!("{pos_str} / {dur_str}")));
+                        }
                         // Non-blocking send — the display layer's timebase handles
                         // presentation timing. Never block here so audio keeps flowing.
                         match self.video_frame_tx.try_send(frame) {
                             Ok(()) => {}
                             Err(crossbeam_channel::TrySendError::Full(f)) => {
-                                // Channel full — drop frame rather than block
                                 if !f.pixel_buffer.is_null() {
                                     unsafe {
                                         crate::decode_video::release_pixel_buffer(

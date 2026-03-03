@@ -152,12 +152,16 @@ pub fn run_demuxer(
                 log::debug!("Demuxer: stop received");
                 return Ok(());
             }
-            Ok(DemuxCommand::Seek { target_pts, exact: _ }) => {
-                log::debug!("Demuxer: seek to {target_pts}us");
-                // Seek to timestamp (target_pts is in microseconds, ffmpeg uses AV_TIME_BASE)
-                let ts = target_pts; // AV_TIME_BASE is microseconds
-                let _ = ictx.seek(ts, ..ts);
-                // Signal to player that seek is done and subsequent packets are from new position
+            Ok(DemuxCommand::Seek { target_pts, forward }) => {
+                log::debug!("Demuxer: seek to {target_pts}us (forward={forward})");
+                let ts = target_pts;
+                if forward {
+                    // Keyframe at or after target
+                    let _ = ictx.seek(ts, ts..);
+                } else {
+                    // Keyframe at or before target
+                    let _ = ictx.seek(ts, ..ts);
+                }
                 let _ = packet_tx.send(DemuxPacket::Flush);
                 continue;
             }

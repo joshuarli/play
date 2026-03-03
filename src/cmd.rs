@@ -31,7 +31,11 @@ pub enum DemuxPacket {
 #[derive(Debug)]
 #[allow(dead_code)]
 pub enum DemuxCommand {
-    Seek { target_pts: i64, exact: bool },
+    Seek {
+        target_pts: i64,
+        /// Seek forward (keyframe at or after target) vs backward.
+        forward: bool,
+    },
     Flush,
     Stop,
 }
