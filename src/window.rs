@@ -1,5 +1,6 @@
 use std::ffi::c_void;
-use std::sync::OnceLock;
+use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::{Arc, OnceLock};
 
 use crossbeam_channel::Sender;
 use objc2::rc::Retained;
@@ -27,6 +28,7 @@ std::thread_local! {
 }
 static INITIAL_SIZE: OnceLock<(u32, u32)> = OnceLock::new();
 static START_FULLSCREEN: OnceLock<bool> = OnceLock::new();
+static AUDIO_CLOCK: OnceLock<Arc<AtomicI64>> = OnceLock::new();
 
 // ── AppDelegate ────────────────────────────────────────────────────────────
 
@@ -175,8 +177,14 @@ fn install_key_monitor() {
                 });
                 return std::ptr::null_mut();
             }
+            let is_quit = matches!(cmd, Command::Quit);
             if let Some(tx) = CMD_TX.get() {
                 let _ = tx.send(cmd);
+            }
+            if is_quit {
+                if let Some(mtm) = MainThreadMarker::new() {
+                    NSApplication::sharedApplication(mtm).terminate(None);
+                }
             }
             return std::ptr::null_mut();
         }
@@ -203,10 +211,23 @@ fn start_main_timer() {
     let leeway_ns: u64 = 1_000_000;
     source.set_timer(DispatchTime::NOW, interval_ns, leeway_ns);
 
-    let handler = block2::RcBlock::new(|| {
-        process_pending_frames();
+    // Drift correction counter: sync timebase to audio clock ~once per second
+    let drift_counter = std::cell::Cell::new(0u32);
+    let handler = block2::RcBlock::new(move || {
         process_pending_ui_updates();
+        process_pending_frames();
         crate::osd::tick();
+
+        // Sync timebase to audio ~once per second (every 125 ticks at 8ms)
+        let c = drift_counter.get() + 1;
+        if c >= 125 {
+            drift_counter.set(0);
+            if let Some(clock) = AUDIO_CLOCK.get() {
+                crate::video_out::sync_timebase(clock.load(Ordering::Relaxed));
+            }
+        } else {
+            drift_counter.set(c);
+        }
     });
 
     unsafe {
@@ -243,6 +264,18 @@ fn process_pending_ui_updates() {
             UiUpdate::VideoSize { width, height } => {
                 log::debug!("Video size: {width}x{height}");
             }
+            UiUpdate::Paused(paused) => {
+                if !paused {
+                    // Sync timebase to audio clock before resuming so they agree
+                    if let Some(clock) = AUDIO_CLOCK.get() {
+                        crate::video_out::sync_timebase(clock.load(Ordering::Relaxed));
+                    }
+                }
+                crate::video_out::set_playback_rate(if paused { 0.0 } else { 1.0 });
+            }
+            UiUpdate::SeekFlush(pts_us) => {
+                crate::video_out::flush_and_seek(pts_us);
+            }
             UiUpdate::PlaybackPosition { .. } => {}
             UiUpdate::EndOfFile => {
                 if let Some(tx) = CMD_TX.get() {
@@ -265,12 +298,14 @@ pub fn run_app(
     video_width: u32,
     video_height: u32,
     fullscreen: bool,
+    audio_clock: Arc<AtomicI64>,
 ) {
     CMD_TX.set(cmd_tx).unwrap();
     VIDEO_FRAME_RX.set(video_frame_rx).unwrap();
     UI_UPDATE_RX.set(ui_update_rx).unwrap();
     INITIAL_SIZE.set((video_width, video_height)).unwrap();
     START_FULLSCREEN.set(fullscreen).ok();
+    AUDIO_CLOCK.set(audio_clock).ok();
 
     let mtm = MainThreadMarker::new().expect("must run on main thread");
     let app = NSApplication::sharedApplication(mtm);

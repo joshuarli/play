@@ -14,6 +14,8 @@ mod video_out;
 mod window;
 
 use std::path::Path;
+use std::sync::atomic::AtomicI64;
+use std::sync::Arc;
 use std::thread;
 
 use anyhow::{bail, Context, Result};
@@ -118,8 +120,11 @@ fn play_file(path: &Path, args: &Args) -> Result<()> {
     let (cmd_tx, cmd_rx) = crossbeam_channel::bounded::<Command>(32);
     let (demux_packet_tx, demux_packet_rx) = crossbeam_channel::bounded::<DemuxPacket>(64);
     let (demux_cmd_tx, demux_cmd_rx) = crossbeam_channel::bounded::<DemuxCommand>(4);
-    let (video_frame_tx, video_frame_rx) = crossbeam_channel::bounded::<VideoFrame>(2);
+    let (video_frame_tx, video_frame_rx) = crossbeam_channel::bounded::<VideoFrame>(8);
     let (ui_update_tx, ui_update_rx) = crossbeam_channel::unbounded::<UiUpdate>();
+
+    // Audio clock shared between player (writer) and main thread (reader for timebase sync)
+    let audio_clock = Arc::new(AtomicI64::new(0));
 
     let video_width = info
         .video_stream
@@ -161,6 +166,7 @@ fn play_file(path: &Path, args: &Args) -> Result<()> {
         .and_then(|s| time::parse_time(s).ok())
         .unwrap_or(0);
 
+    let player_clock = audio_clock.clone();
     let player_thread = thread::Builder::new()
         .name("player".into())
         .spawn(move || {
@@ -174,6 +180,7 @@ fn play_file(path: &Path, args: &Args) -> Result<()> {
                 initial_volume,
                 initial_audio_delay,
                 subtitle_tracks,
+                player_clock,
             ) {
                 Ok(p) => p,
                 Err(e) => {
@@ -213,6 +220,7 @@ fn play_file(path: &Path, args: &Args) -> Result<()> {
             video_width,
             video_height,
             args.fullscreen,
+            audio_clock,
         );
     } else {
         let filename = path

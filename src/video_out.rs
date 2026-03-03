@@ -1,5 +1,6 @@
 use std::ffi::c_void;
 use std::ptr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 
 use objc2::encode::{Encoding, RefEncode};
@@ -16,12 +17,26 @@ struct OpaqueCMSampleBuffer {
 }
 
 unsafe impl RefEncode for OpaqueCMSampleBuffer {
-    const ENCODING_REF: Encoding = Encoding::Pointer(&Encoding::Struct("opaqueCMSampleBuffer", &[]));
+    const ENCODING_REF: Encoding =
+        Encoding::Pointer(&Encoding::Struct("opaqueCMSampleBuffer", &[]));
 }
 
 type CVPixelBufferRef = *mut c_void;
 type CMSampleBufferRef = *mut OpaqueCMSampleBuffer;
 type CMVideoFormatDescriptionRef = *mut c_void;
+/// Opaque CMTimebase with correct ObjC encoding for msg_send! validation.
+#[repr(C)]
+struct OpaqueCMTimebase {
+    _priv: [u8; 0],
+}
+
+unsafe impl RefEncode for OpaqueCMTimebase {
+    const ENCODING_REF: Encoding =
+        Encoding::Pointer(&Encoding::Struct("OpaqueCMTimebase", &[]));
+}
+
+type CMTimebaseRef = *mut OpaqueCMTimebase;
+type CMClockRef = *mut c_void;
 type CFAllocatorRef = *const c_void;
 type OSStatus = i32;
 
@@ -49,6 +64,13 @@ impl CMTime {
 
     fn from_us(us: i64) -> Self {
         Self::make(us, 1_000_000)
+    }
+
+    fn to_us(self) -> i64 {
+        if self.timescale == 0 || self.flags & K_CM_TIME_FLAGS_VALID == 0 {
+            return 0;
+        }
+        self.value * 1_000_000 / self.timescale as i64
     }
 }
 
@@ -84,12 +106,20 @@ unsafe extern "C" {
     ) -> OSStatus;
 
     fn CFRelease(cf: *const c_void);
-
     fn CVPixelBufferRelease(pixelBuffer: *mut c_void);
+
+    fn CMClockGetHostTimeClock() -> CMClockRef;
+    fn CMTimebaseCreateWithSourceClock(
+        allocator: CFAllocatorRef,
+        source_clock: CMClockRef,
+        timebase_out: *mut CMTimebaseRef,
+    ) -> OSStatus;
+    fn CMTimebaseSetTime(timebase: CMTimebaseRef, time: CMTime) -> OSStatus;
+    fn CMTimebaseSetRate(timebase: CMTimebaseRef, rate: f64) -> OSStatus;
+    fn CMTimebaseGetTime(timebase: CMTimebaseRef) -> CMTime;
 }
 
 /// Wrapper to make *mut c_void Send+Sync for OnceLock.
-/// SAFETY: the display layer pointer is only accessed from the main thread.
 struct SendPtr(*mut c_void);
 unsafe impl Send for SendPtr {}
 unsafe impl Sync for SendPtr {}
@@ -97,16 +127,44 @@ unsafe impl Sync for SendPtr {}
 /// Global display layer (created on main thread, used from main thread timer).
 static DISPLAY_LAYER: OnceLock<SendPtr> = OnceLock::new();
 
+/// Wrapper to make CMTimebaseRef Send+Sync for OnceLock.
+struct SendTimebase(CMTimebaseRef);
+unsafe impl Send for SendTimebase {}
+unsafe impl Sync for SendTimebase {}
+
+/// CMTimebase driving the display layer's presentation timing.
+static TIMEBASE: OnceLock<SendTimebase> = OnceLock::new();
+/// Whether the timebase has been started (aligned to first frame).
+static TIMEBASE_STARTED: AtomicBool = AtomicBool::new(false);
+
 /// Initialize the AVSampleBufferDisplayLayer. Must be called on main thread.
 pub fn init_display_layer(width: u32, height: u32) {
-    let cls = AnyClass::get(c"AVSampleBufferDisplayLayer").expect("AVSampleBufferDisplayLayer class not found");
+    let cls = AnyClass::get(c"AVSampleBufferDisplayLayer")
+        .expect("AVSampleBufferDisplayLayer class not found");
     let layer: Retained<AnyObject> = unsafe { msg_send![cls, new] };
 
     // Set video gravity to resize aspect
     let gravity = objc2_foundation::NSString::from_str("AVLayerVideoGravityResizeAspect");
     let _: () = unsafe { msg_send![&*layer, setVideoGravity: &*gravity] };
 
-    // Store the raw pointer (retain is held by our layer_retained below)
+    // Create a CMTimebase — start paused (rate 0.0) until the first frame arrives
+    let mut timebase: CMTimebaseRef = ptr::null_mut();
+    let status = unsafe {
+        CMTimebaseCreateWithSourceClock(ptr::null(), CMClockGetHostTimeClock(), &mut timebase)
+    };
+    if status == 0 && !timebase.is_null() {
+        unsafe {
+            CMTimebaseSetTime(timebase, CMTime::from_us(0));
+            CMTimebaseSetRate(timebase, 0.0);
+        }
+        let _: () = unsafe { msg_send![&*layer, setControlTimebase: timebase] };
+        TIMEBASE.set(SendTimebase(timebase)).ok();
+        log::debug!("Display layer timebase created (paused until first frame)");
+    } else {
+        log::warn!("Failed to create CMTimebase (status={status}), playback timing may be wrong");
+    }
+
+    // Store the raw pointer
     let ptr: *mut c_void = Retained::into_raw(layer) as *mut c_void;
     DISPLAY_LAYER.set(SendPtr(ptr)).ok();
 
@@ -130,6 +188,18 @@ pub fn enqueue_frame(frame: VideoFrame) {
 
     if frame.pixel_buffer.is_null() {
         return;
+    }
+
+    // On the first valid frame, align the timebase to this frame's PTS and start it
+    if !TIMEBASE_STARTED.load(Ordering::Relaxed) {
+        if let Some(tb) = TIMEBASE.get() {
+            unsafe {
+                CMTimebaseSetTime(tb.0, CMTime::from_us(frame.pts_us));
+                CMTimebaseSetRate(tb.0, 1.0);
+            }
+            TIMEBASE_STARTED.store(true, Ordering::Relaxed);
+            log::debug!("Timebase started at PTS {}us", frame.pts_us);
+        }
     }
 
     // Create CMVideoFormatDescription
@@ -182,5 +252,48 @@ pub fn enqueue_frame(frame: VideoFrame) {
     unsafe {
         CFRelease(sample_buffer as *const c_void);
         CVPixelBufferRelease(frame.pixel_buffer);
+    }
+}
+
+/// Sync the display layer timebase to the audio clock position.
+/// Only adjusts if drift exceeds 30ms to avoid fighting the timebase.
+pub fn sync_timebase(audio_pts_us: i64) {
+    if !TIMEBASE_STARTED.load(Ordering::Relaxed) {
+        return;
+    }
+    if let Some(tb) = TIMEBASE.get() {
+        let tb_us = unsafe { CMTimebaseGetTime(tb.0) }.to_us();
+        let drift = audio_pts_us - tb_us;
+        if drift.abs() > 30_000 {
+            unsafe {
+                CMTimebaseSetTime(tb.0, CMTime::from_us(audio_pts_us));
+            }
+            log::debug!("Timebase drift corrected: {drift}us");
+        }
+    }
+}
+
+/// Set the timebase rate (1.0 = playing, 0.0 = paused).
+pub fn set_playback_rate(rate: f64) {
+    if let Some(tb) = TIMEBASE.get() {
+        unsafe {
+            CMTimebaseSetRate(tb.0, rate);
+        }
+    }
+}
+
+/// Flush the display layer and reset timebase for a seek.
+/// Must be called on the main thread.
+pub fn flush_and_seek(pts_us: i64) {
+    if let Some(layer_wrap) = DISPLAY_LAYER.get() {
+        let layer = layer_wrap.0 as *mut AnyObject;
+        let _: () = unsafe { msg_send![layer, flush] };
+    }
+    if let Some(tb) = TIMEBASE.get() {
+        unsafe {
+            CMTimebaseSetTime(tb.0, CMTime::from_us(pts_us));
+        }
+        // Ensure it's running after seek
+        TIMEBASE_STARTED.store(true, Ordering::Relaxed);
     }
 }

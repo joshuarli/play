@@ -131,9 +131,8 @@ impl AudioOutput {
                 completionHandler: &*completion
             ]
         };
-
-        // Update clock to start of this buffer
-        self.audio_clock.store(buf.pts_us, Ordering::Relaxed);
+        // Clock is only updated by the completion handler (when audio actually plays),
+        // not at schedule time — avoids jumping ahead of actual playback.
     }
 
     pub fn pause(&self) {

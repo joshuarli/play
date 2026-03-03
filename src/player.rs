@@ -11,7 +11,7 @@ use crate::decode_audio::AudioDecoder;
 use crate::decode_video::VideoDecoder;
 use crate::demux::StreamInfo;
 use crate::subtitle::SubtitleTrack;
-use crate::sync::{SyncAction, SyncClock};
+use crate::sync::SyncClock;
 use crate::time::format_time;
 
 /// Player state machine.
@@ -39,6 +39,9 @@ pub struct Player {
     volume: u32,
     audio_delay_us: i64,
     duration_us: i64,
+    pending_seeks: u32,
+    /// After a seek, skip audio/video with PTS below this value.
+    seek_floor_us: i64,
 
     // Subtitles
     subtitle_tracks: Vec<SubtitleTrack>,
@@ -61,8 +64,8 @@ impl Player {
         initial_volume: u32,
         initial_audio_delay: f64,
         subtitle_tracks: Vec<SubtitleTrack>,
+        audio_clock: Arc<AtomicI64>,
     ) -> Result<Self> {
-        let audio_clock = Arc::new(AtomicI64::new(0));
         let sync_clock = SyncClock::new(audio_clock.clone());
 
         Ok(Self {
@@ -80,6 +83,8 @@ impl Player {
             volume: initial_volume,
             audio_delay_us: (initial_audio_delay * 1_000_000.0) as i64,
             duration_us: stream_info.duration_us,
+            pending_seeks: 0,
+            seek_floor_us: 0,
             subtitle_tracks,
             current_subtitle_idx: None,
             last_subtitle_text: None,
@@ -136,6 +141,7 @@ impl Player {
 
     /// Seek to a specific position (microseconds). Used for --start.
     pub fn seek_to(&mut self, target_us: i64) {
+        self.pending_seeks += 1;
         let _ = self.demux_cmd_tx.send(DemuxCommand::Seek {
             target_pts: target_us,
             exact: false,
@@ -150,6 +156,8 @@ impl Player {
             ao.flush();
         }
         self.sync_clock.set_position(target_us);
+        self.seek_floor_us = target_us;
+        let _ = self.ui_update_tx.send(UiUpdate::SeekFlush(target_us));
     }
 
     /// Run the player event loop. Blocks until quit.
@@ -202,6 +210,7 @@ impl Player {
                         ao.play();
                     }
                 }
+                let _ = self.ui_update_tx.send(UiUpdate::Paused(self.paused));
             }
             Command::SeekRelative { seconds, exact } => {
                 let current = self.sync_clock.audio_pts();
@@ -214,6 +223,9 @@ impl Player {
                 let _ = self
                     .ui_update_tx
                     .send(UiUpdate::Osd(format!("{pos_str} / {dur_str}")));
+
+                // Track pending seek so stale packets are discarded until Flush arrives
+                self.pending_seeks += 1;
 
                 // Send seek to demuxer
                 let _ = self.demux_cmd_tx.send(DemuxCommand::Seek {
@@ -233,6 +245,8 @@ impl Player {
                 }
 
                 self.sync_clock.set_position(target);
+                self.seek_floor_us = target;
+                let _ = self.ui_update_tx.send(UiUpdate::SeekFlush(target));
             }
             Command::VolumeUp => {
                 self.volume = (self.volume + 5).min(100);
@@ -318,31 +332,47 @@ impl Player {
 
     fn handle_packet(&mut self, pkt: DemuxPacket) {
         match pkt {
+            // Seek completed — subsequent packets are from the new position
+            DemuxPacket::Flush => {
+                self.pending_seeks = self.pending_seeks.saturating_sub(1);
+                return;
+            }
+            // Discard stale pre-seek packets
+            _ if self.pending_seeks > 0 => {
+                return;
+            }
             DemuxPacket::Video(packet) => {
                 if let Some(ref mut decoder) = self.video_decoder {
                     if decoder.send_packet(&packet).is_err() {
                         return;
                     }
                     while let Some(frame) = decoder.receive_frame() {
-                        let action = self.sync_clock.decide(frame.pts_us);
-                        match action {
-                            SyncAction::Display => {
-                                let _ = self.video_frame_tx.send(frame);
+                        // After a seek, skip frames before the target
+                        if frame.pts_us < self.seek_floor_us {
+                            if !frame.pixel_buffer.is_null() {
+                                unsafe {
+                                    crate::decode_video::release_pixel_buffer(
+                                        frame.pixel_buffer,
+                                    );
+                                }
                             }
-                            SyncAction::Drop => {
-                                // Release pixel buffer
-                                if !frame.pixel_buffer.is_null() {
+                            continue;
+                        }
+                        // Non-blocking send — the display layer's timebase handles
+                        // presentation timing. Never block here so audio keeps flowing.
+                        match self.video_frame_tx.try_send(frame) {
+                            Ok(()) => {}
+                            Err(crossbeam_channel::TrySendError::Full(f)) => {
+                                // Channel full — drop frame rather than block
+                                if !f.pixel_buffer.is_null() {
                                     unsafe {
                                         crate::decode_video::release_pixel_buffer(
-                                            frame.pixel_buffer,
+                                            f.pixel_buffer,
                                         );
                                     }
                                 }
                             }
-                            SyncAction::Wait(_us) => {
-                                // For simplicity, just display it (the layer handles timing)
-                                let _ = self.video_frame_tx.send(frame);
-                            }
+                            Err(crossbeam_channel::TrySendError::Disconnected(_)) => return,
                         }
                     }
                 }
@@ -353,8 +383,11 @@ impl Player {
                         return;
                     }
                     while let Some(mut buf) = decoder.receive_buffer() {
-                        // Apply audio delay
                         buf.pts_us += self.audio_delay_us;
+                        // After a seek, skip audio before the target
+                        if buf.pts_us < self.seek_floor_us {
+                            continue;
+                        }
                         if let Some(ref ao) = self.audio_output {
                             ao.schedule_buffer(&buf);
                         }

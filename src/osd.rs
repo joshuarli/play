@@ -1,20 +1,31 @@
 use std::ffi::c_void;
 use std::sync::Mutex;
 
+use objc2::encode::{Encoding, RefEncode};
 use objc2::msg_send;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyClass, AnyObject, Bool};
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 
+// Opaque CGColor type with correct ObjC encoding so msg_send! validates as ^{CGColor=}
+#[repr(C)]
+pub(crate) struct CGColor {
+    _private: [u8; 0],
+}
+
+unsafe impl RefEncode for CGColor {
+    const ENCODING_REF: Encoding = Encoding::Pointer(&Encoding::Struct("CGColor", &[]));
+}
+
 // CoreGraphics color FFI
 unsafe extern "C" {
     fn CGColorSpaceCreateDeviceRGB() -> *mut c_void;
-    fn CGColorCreate(space: *mut c_void, components: *const f64) -> *mut c_void;
-    fn CGColorRelease(color: *mut c_void);
+    fn CGColorCreate(space: *mut c_void, components: *const f64) -> *mut CGColor;
+    fn CGColorRelease(color: *mut CGColor);
     fn CGColorSpaceRelease(space: *mut c_void);
 }
 
-pub(crate) fn create_cgcolor(r: f64, g: f64, b: f64, a: f64) -> *mut c_void {
+pub(crate) fn create_cgcolor(r: f64, g: f64, b: f64, a: f64) -> *mut CGColor {
     unsafe {
         let space = CGColorSpaceCreateDeviceRGB();
         let c = [r, g, b, a];
@@ -24,7 +35,7 @@ pub(crate) fn create_cgcolor(r: f64, g: f64, b: f64, a: f64) -> *mut c_void {
     }
 }
 
-pub(crate) fn release_cgcolor(color: *mut c_void) {
+pub(crate) fn release_cgcolor(color: *mut CGColor) {
     if !color.is_null() {
         unsafe { CGColorRelease(color) };
     }

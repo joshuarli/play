@@ -157,8 +157,8 @@ pub fn run_demuxer(
                 // Seek to timestamp (target_pts is in microseconds, ffmpeg uses AV_TIME_BASE)
                 let ts = target_pts; // AV_TIME_BASE is microseconds
                 let _ = ictx.seek(ts, ..ts);
-                // Signal flush to player
-                let _ = packet_tx.send(DemuxPacket::Eof); // reuse Eof as flush marker for now
+                // Signal to player that seek is done and subsequent packets are from new position
+                let _ = packet_tx.send(DemuxPacket::Flush);
                 continue;
             }
             Ok(DemuxCommand::Flush) => {

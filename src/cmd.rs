@@ -22,6 +22,8 @@ pub enum DemuxPacket {
     Video(ffmpeg_next::Packet),
     Audio(ffmpeg_next::Packet),
     Subtitle(ffmpeg_next::Packet),
+    /// Seek completed — all subsequent packets are from the new position.
+    Flush,
     Eof,
 }
 
@@ -58,6 +60,10 @@ pub enum UiUpdate {
     SubtitleText(Option<String>),
     PlaybackPosition { current_us: i64, duration_us: i64 },
     VideoSize { width: u32, height: u32 },
+    /// Pause or unpause video display layer.
+    Paused(bool),
+    /// Flush the display layer and reset timebase after a seek.
+    SeekFlush(i64),
     EndOfFile,
 }
 
