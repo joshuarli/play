@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 /// Commands sent from the UI/input layer to the player thread.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Command {
     PlayPause,
     SeekRelative { seconds: f64, exact: bool },

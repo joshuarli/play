@@ -99,6 +99,131 @@ fn parse_srt_time(s: &str) -> Option<i64> {
     Some(((h * 3600.0 + m * 60.0 + secs) * 1_000_000.0) as i64)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+    fn write_temp_srt(content: &str) -> PathBuf {
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let id = std::process::id();
+        let path = std::env::temp_dir().join(format!("play_test_{id}_{n}.srt"));
+        std::fs::write(&path, content).unwrap();
+        path
+    }
+
+    #[test]
+    fn parse_srt_basic() {
+        let srt = "\
+1
+00:00:01,000 --> 00:00:03,000
+Hello world
+
+2
+00:00:05,000 --> 00:00:07,500
+Second subtitle
+";
+        let f = write_temp_srt(srt);
+        let entries = parse_srt(&f).unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].start_us, 1_000_000);
+        assert_eq!(entries[0].end_us, 3_000_000);
+        assert_eq!(entries[0].text, "Hello world");
+        assert_eq!(entries[1].start_us, 5_000_000);
+        assert_eq!(entries[1].end_us, 7_500_000);
+        assert_eq!(entries[1].text, "Second subtitle");
+    }
+
+    #[test]
+    fn parse_srt_multiline_text() {
+        let srt = "\
+1
+00:00:01,000 --> 00:00:03,000
+Line one
+Line two
+";
+        let f = write_temp_srt(srt);
+        let entries = parse_srt(&f).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].text, "Line one\nLine two");
+    }
+
+    #[test]
+    fn parse_srt_empty_file() {
+        let f = write_temp_srt("");
+        let entries = parse_srt(&f).unwrap();
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn parse_srt_no_trailing_blank_line() {
+        let srt = "\
+1
+00:00:01,000 --> 00:00:02,000
+No newline at end";
+        let f = write_temp_srt(srt);
+        let entries = parse_srt(&f).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].text, "No newline at end");
+    }
+
+    #[test]
+    fn parse_srt_bom_prefix() {
+        let srt = "\u{FEFF}1
+00:00:00,500 --> 00:00:01,500
+BOM test";
+        let f = write_temp_srt(srt);
+        let entries = parse_srt(&f).unwrap();
+        // BOM is part of the sequence number line, which is skipped by the
+        // u32-parse check. The entry should still parse.
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].text, "BOM test");
+    }
+
+    #[test]
+    fn text_at_before_first() {
+        let track = SubtitleTrack {
+            label: "test".into(),
+            entries: vec![SrtEntry { start_us: 1_000_000, end_us: 2_000_000, text: "hi".into() }],
+        };
+        assert_eq!(track.text_at(500_000), None);
+    }
+
+    #[test]
+    fn text_at_during_entry() {
+        let track = SubtitleTrack {
+            label: "test".into(),
+            entries: vec![SrtEntry { start_us: 1_000_000, end_us: 2_000_000, text: "hi".into() }],
+        };
+        assert_eq!(track.text_at(1_500_000), Some("hi"));
+    }
+
+    #[test]
+    fn text_at_between_and_after() {
+        let track = SubtitleTrack {
+            label: "test".into(),
+            entries: vec![
+                SrtEntry { start_us: 1_000_000, end_us: 2_000_000, text: "first".into() },
+                SrtEntry { start_us: 3_000_000, end_us: 4_000_000, text: "second".into() },
+            ],
+        };
+        assert_eq!(track.text_at(2_500_000), None); // between
+        assert_eq!(track.text_at(5_000_000), None); // after
+    }
+
+    #[test]
+    fn text_at_exact_boundary() {
+        let track = SubtitleTrack {
+            label: "test".into(),
+            entries: vec![SrtEntry { start_us: 1_000_000, end_us: 2_000_000, text: "hi".into() }],
+        };
+        assert_eq!(track.text_at(1_000_000), Some("hi")); // start
+        assert_eq!(track.text_at(2_000_000), Some("hi")); // end (inclusive)
+    }
+}
+
 /// Look for SRT files alongside a video file.
 /// Checks: video.srt, video.*.srt
 pub fn find_srt_files(video_path: &Path) -> Vec<PathBuf> {
