@@ -19,13 +19,12 @@ use std::sync::Arc;
 use std::thread;
 
 use anyhow::{bail, Context, Result};
-use clap::Parser;
 
 use cmd::{Args, Command, DemuxCommand, DemuxPacket, UiUpdate, VideoFrame};
 use player::Player;
 
 fn main() -> Result<()> {
-    let args = Args::parse();
+    let args = cmd::parse_args()?;
 
     // Set up logging
     let log_level = match args.verbose {

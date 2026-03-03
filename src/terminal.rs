@@ -1,9 +1,11 @@
 use std::io::{self, Write};
+use std::thread;
 use std::time::Duration;
 
 use crossbeam_channel::{Receiver, Sender};
-use crossterm::event::{self, Event, KeyCode};
-use crossterm::terminal;
+use termion::input::TermRead;
+use termion::event::Key;
+use termion::raw::IntoRawMode;
 
 use crate::cmd::{Command, UiUpdate};
 use crate::time::format_time;
@@ -15,42 +17,38 @@ pub fn run_terminal(
     filename: &str,
     duration_us: i64,
 ) {
-    terminal::enable_raw_mode().ok();
-    let mut stdout = io::stdout();
+    let mut stdout = io::stdout().into_raw_mode().expect("failed to enter raw mode");
+    let mut keys = termion::async_stdin().keys();
 
     let dur = format_time(duration_us);
     write!(stdout, "\r\x1b[K\u{25b6} 00:00:00 / {dur}  {filename}").ok();
     stdout.flush().ok();
 
     loop {
-        if event::poll(Duration::from_millis(100)).unwrap_or(false) {
-            if let Ok(Event::Key(key)) = event::read() {
-                let cmd = match key.code {
-                    KeyCode::Char('q') => Some(Command::Quit),
-                    KeyCode::Char(' ') => Some(Command::PlayPause),
-                    KeyCode::Left => Some(Command::SeekRelative {
-                        seconds: -5.0,
-                        exact: false,
-                    }),
-                    KeyCode::Right => Some(Command::SeekRelative {
-                        seconds: 5.0,
-                        exact: false,
-                    }),
-                    KeyCode::Up => Some(Command::VolumeUp),
-                    KeyCode::Down => Some(Command::VolumeDown),
-                    KeyCode::Char('a') => Some(Command::CycleAudioTrack),
-                    KeyCode::Char('+') | KeyCode::Char('=') => {
-                        Some(Command::AudioDelayIncrease)
-                    }
-                    KeyCode::Char('-') => Some(Command::AudioDelayDecrease),
-                    _ => None,
-                };
-                if let Some(cmd) = cmd {
-                    let quit = matches!(cmd, Command::Quit);
-                    let _ = cmd_tx.send(cmd);
-                    if quit {
-                        break;
-                    }
+        if let Some(Ok(key)) = keys.next() {
+            let cmd = match key {
+                Key::Char('q') => Some(Command::Quit),
+                Key::Char(' ') => Some(Command::PlayPause),
+                Key::Left => Some(Command::SeekRelative {
+                    seconds: -5.0,
+                    exact: false,
+                }),
+                Key::Right => Some(Command::SeekRelative {
+                    seconds: 5.0,
+                    exact: false,
+                }),
+                Key::Up => Some(Command::VolumeUp),
+                Key::Down => Some(Command::VolumeDown),
+                Key::Char('a') => Some(Command::CycleAudioTrack),
+                Key::Char('+') | Key::Char('=') => Some(Command::AudioDelayIncrease),
+                Key::Char('-') => Some(Command::AudioDelayDecrease),
+                _ => None,
+            };
+            if let Some(cmd) = cmd {
+                let quit = matches!(cmd, Command::Quit);
+                let _ = cmd_tx.send(cmd);
+                if quit {
+                    break;
                 }
             }
         }
@@ -72,8 +70,11 @@ pub fn run_terminal(
             let _ = cmd_tx.send(Command::Quit);
             break;
         }
+
+        thread::sleep(Duration::from_millis(50));
     }
 
-    terminal::disable_raw_mode().ok();
-    writeln!(stdout).ok();
+    drop(stdout); // restores terminal via Drop
+    let mut out = io::stdout();
+    writeln!(out).ok();
 }

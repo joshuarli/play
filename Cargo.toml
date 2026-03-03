@@ -15,37 +15,19 @@ block2 = "0.6"
 dispatch2 = { version = "0.3", features = ["block2"] }
 objc2-foundation = { version = "0.3", features = [
     "NSString",
-    "NSThread",
     "NSNotification",
-    "NSRunLoop",
-    "NSDate",
-    "NSArray",
-    "NSEnumerator",
 ] }
 objc2-app-kit = { version = "0.3", features = [
     "NSApplication",
     "NSWindow",
     "NSView",
     "NSEvent",
-    "NSScreen",
-    "NSResponder",
-    "NSRunningApplication",
-    "NSColor",
     "NSMenu",
     "NSMenuItem",
-    "NSGraphics",
 ] }
 objc2-core-foundation = { version = "0.3", features = ["objc2"] }
-objc2-quartz-core = { version = "0.3", features = [
-    "CALayer",
-    "CATextLayer",
-    "CATransaction",
-    "CAMediaTiming",
-] }
-
 crossbeam-channel = "0.5"
-clap = { version = "4", features = ["derive"] }
 anyhow = "1"
-crossterm = "0.28"
+termion = "4"
 log = "0.4"
-env_logger = "0.11"
+env_logger = { version = "0.11", default-features = false, features = ["humantime"] }
