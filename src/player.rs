@@ -23,9 +23,10 @@ struct QueuedSeek {
     exact: bool,
 }
 
-/// Minimum time between seek dispatches. Each frame must survive at least one
-/// VSync (~8ms at 120Hz, ~16ms at 60Hz) before the next seek_flush clears it.
-const SEEK_MIN_DISPLAY: Duration = Duration::from_millis(16);
+/// Minimum time between seek dispatches. Must be >= the display timer tick
+/// (8ms / 120Hz) so at most one seek_flush frame lands per tick — otherwise
+/// the second flush clears the first before the compositor runs.
+const SEEK_MIN_DISPLAY: Duration = Duration::from_millis(4);
 /// Safety timeout: if a seek completes but no frame arrives within this window,
 /// dispatch the queued seek anyway (prevents stuck decodes from freezing).
 const SEEK_COALESCE_TIMEOUT: Duration = Duration::from_millis(50);
@@ -286,6 +287,14 @@ impl Player {
         log::info!("Player: starting event loop");
 
         loop {
+            // Tight poll when a seek is queued so execute_queued_seek runs
+            // promptly once SEEK_MIN_DISPLAY elapses. Otherwise 16ms is fine.
+            let timeout = if self.queued_seek.is_some() {
+                Duration::from_millis(1)
+            } else {
+                Duration::from_millis(16)
+            };
+
             crossbeam_channel::select! {
                 recv(self.cmd_rx) -> msg => {
                     match msg {
@@ -299,11 +308,23 @@ impl Player {
                 }
                 recv(self.demux_packet_rx) -> msg => {
                     match msg {
-                        Ok(pkt) => self.handle_packet(pkt),
+                        Ok(pkt) => {
+                            self.handle_packet(pkt);
+                            // Batch-drain packets that arrived together. After a
+                            // Flush the first video packet is usually already
+                            // queued — processing it in the same iteration saves
+                            // a full round-trip through the select loop.
+                            for _ in 0..8 {
+                                match self.demux_packet_rx.try_recv() {
+                                    Ok(p) => self.handle_packet(p),
+                                    Err(_) => break,
+                                }
+                            }
+                        }
                         Err(_) => return,
                     }
                 }
-                default(Duration::from_millis(16)) => {
+                default(timeout) => {
                     // Timeout — periodic work below
                 }
             }

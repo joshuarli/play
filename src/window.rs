@@ -207,9 +207,9 @@ fn start_main_timer() {
         &raw const dispatch2::_dispatch_source_type_timer as *mut _;
     let source = unsafe { DispatchSource::new(timer_type, 0, 0, Some(queue)) };
 
-    // 8ms interval (~120Hz), 1ms leeway
-    let interval_ns: u64 = 8_000_000;
-    let leeway_ns: u64 = 1_000_000;
+    // 4ms interval (~240Hz), 500μs leeway
+    let interval_ns: u64 = 4_000_000;
+    let leeway_ns: u64 = 500_000;
     source.set_timer(DispatchTime::NOW, interval_ns, leeway_ns);
 
     // Drift correction counter: sync timebase to audio clock ~once per second
@@ -219,9 +219,9 @@ fn start_main_timer() {
         process_pending_frames();
         crate::osd::tick();
 
-        // Sync timebase to audio ~once per second (every 125 ticks at 8ms)
+        // Sync timebase to audio ~once per second (every 250 ticks at 4ms)
         let c = drift_counter.get() + 1;
-        if c >= 125 {
+        if c >= 250 {
             drift_counter.set(0);
             if let Some(clock) = AUDIO_CLOCK.get() {
                 crate::video_out::sync_timebase(clock.load(Ordering::Relaxed));
@@ -248,7 +248,15 @@ fn process_pending_frames() {
     };
     for _ in 0..4 {
         match rx.try_recv() {
-            Ok(frame) => crate::video_out::enqueue_frame(frame),
+            Ok(frame) => {
+                let flush = frame.seek_flush;
+                crate::video_out::enqueue_frame(frame);
+                // After a seek-flush frame, yield so the compositor can
+                // present it before the next flush replaces it.
+                if flush {
+                    break;
+                }
+            }
             Err(_) => break,
         }
     }
