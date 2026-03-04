@@ -45,8 +45,20 @@ struct OsdInner {
     parent: *mut AnyObject,
     message: *mut AnyObject,
     subtitle: *mut AnyObject,
+    // Progress bar layers
+    bar_bg: *mut AnyObject,        // container: semi-transparent background
+    bar_left_time: *mut AnyObject,  // CATextLayer: left timestamp
+    bar_right_time: *mut AnyObject, // CATextLayer: right timestamp
+    bar_track: *mut AnyObject,      // CALayer: unfilled track
+    bar_fill: *mut AnyObject,       // CALayer: filled track
     message_deadline_ms: u64,
     message_visible: bool,
+    bar_visible: bool,
+    bar_hide_deadline_ms: u64,
+    current_us: i64,
+    duration_us: i64,
+    /// After a click-seek, hold the bar position until the audio clock catches up.
+    seek_hold_until_ms: u64,
 }
 
 unsafe impl Send for OsdInner {}
@@ -72,14 +84,37 @@ fn commit_animations() {
     let _: () = unsafe { msg_send![cls, commit] };
 }
 
+// ── Progress bar layout constants ──────────────────────────────────────────
+
+const BAR_HEIGHT: f64 = 36.0;
+const BAR_FONT_SIZE: f64 = 14.0;
+const BAR_PAD: f64 = 12.0;
+/// Width reserved for "HH:MM:SS" label.
+const TIME_LABEL_W: f64 = 80.0;
+const TRACK_HEIGHT: f64 = 4.0;
+const TRACK_RADIUS: f64 = 2.0;
+
+/// X where the track starts.
+fn track_x() -> f64 {
+    BAR_PAD + TIME_LABEL_W + BAR_PAD
+}
+
+/// Track width for a given bar width.
+fn track_width(bar_w: f64) -> f64 {
+    (bar_w - 2.0 * (BAR_PAD + TIME_LABEL_W + BAR_PAD)).max(0.0)
+}
+
+// ── Layer creation ─────────────────────────────────────────────────────────
+
 /// Create OSD + subtitle layers on the given parent layer. Main thread only.
 pub fn init_layers(parent_ptr: *mut c_void, bounds: CGRect) {
     let parent = parent_ptr as *mut AnyObject;
-    let cls = AnyClass::get(c"CATextLayer").expect("CATextLayer");
+    let text_cls = AnyClass::get(c"CATextLayer").expect("CATextLayer");
+    let layer_cls = AnyClass::get(c"CALayer").expect("CALayer");
     let scale: f64 = unsafe { msg_send![parent, contentsScale] };
 
     // OSD message layer (bottom-left)
-    let msg: Retained<AnyObject> = unsafe { msg_send![cls, new] };
+    let msg: Retained<AnyObject> = unsafe { msg_send![text_cls, new] };
     setup_text_layer(
         &msg,
         CGRect::new(
@@ -93,7 +128,7 @@ pub fn init_layers(parent_ptr: *mut c_void, bounds: CGRect) {
     let _: () = unsafe { msg_send![parent, addSublayer: &*msg] };
 
     // Subtitle layer — frame and font set dynamically in show_subtitle
-    let sub: Retained<AnyObject> = unsafe { msg_send![cls, new] };
+    let sub: Retained<AnyObject> = unsafe { msg_send![text_cls, new] };
     let _: () = unsafe { msg_send![&*sub, setContentsScale: scale] };
     let black = create_cgcolor(0.0, 0.0, 0.0, 1.0);
     let _: () = unsafe { msg_send![&*sub, setShadowColor: black] };
@@ -102,12 +137,81 @@ pub fn init_layers(parent_ptr: *mut c_void, bounds: CGRect) {
     let zero = CGSize::new(0.0, 0.0);
     let _: () = unsafe { msg_send![&*sub, setShadowOffset: zero] };
     let _: () = unsafe { msg_send![&*sub, setShadowRadius: 2.0f64] };
-    let center = objc2_foundation::NSString::from_str("center");
-    let _: () = unsafe { msg_send![&*sub, setAlignmentMode: &*center] };
+    let center_align = objc2_foundation::NSString::from_str("center");
+    let _: () = unsafe { msg_send![&*sub, setAlignmentMode: &*center_align] };
     let _: () = unsafe { msg_send![&*sub, setWrapped: Bool::YES] };
     let _: () = unsafe { msg_send![&*sub, setOpacity: 0.0f32] };
     let _: () = unsafe { msg_send![parent, addSublayer: &*sub] };
 
+    // ── Progress bar ───────────────────────────────────────────────────────
+    let bar_w = bounds.size.width;
+
+    // Background container
+    let bar_bg: Retained<AnyObject> = unsafe { msg_send![layer_cls, new] };
+    let bar_frame = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(bar_w, BAR_HEIGHT));
+    let _: () = unsafe { msg_send![&*bar_bg, setFrame: bar_frame] };
+    let bg_color = create_cgcolor(0.0, 0.0, 0.0, 0.6);
+    let _: () = unsafe { msg_send![&*bar_bg, setBackgroundColor: bg_color] };
+    release_cgcolor(bg_color);
+    // Auto-resize width with parent
+    let _: () = unsafe { msg_send![&*bar_bg, setAutoresizingMask: 2u32] };
+    let _: () = unsafe { msg_send![&*bar_bg, setOpacity: 0.0f32] };
+    let _: () = unsafe { msg_send![parent, addSublayer: &*bar_bg] };
+
+    // Left timestamp
+    let bar_left: Retained<AnyObject> = unsafe { msg_send![text_cls, new] };
+    let text_y = (BAR_HEIGHT - BAR_FONT_SIZE * 1.3) / 2.0;
+    let left_frame = CGRect::new(
+        CGPoint::new(BAR_PAD, text_y),
+        CGSize::new(TIME_LABEL_W, BAR_FONT_SIZE * 1.3),
+    );
+    setup_bar_text_layer(&bar_left, left_frame, scale, false);
+    let _: () = unsafe { msg_send![&*bar_bg, addSublayer: &*bar_left] };
+
+    // Right timestamp
+    let bar_right: Retained<AnyObject> = unsafe { msg_send![text_cls, new] };
+    let right_x = bar_w - BAR_PAD - TIME_LABEL_W;
+    let right_frame = CGRect::new(
+        CGPoint::new(right_x, text_y),
+        CGSize::new(TIME_LABEL_W, BAR_FONT_SIZE * 1.3),
+    );
+    setup_bar_text_layer(&bar_right, right_frame, scale, true);
+    // Auto-position right label relative to right edge when bar resizes
+    // autoresizingMask: kCALayerMinXMargin (1 << 0) = 1
+    let _: () = unsafe { msg_send![&*bar_right, setAutoresizingMask: 1u32] };
+    let _: () = unsafe { msg_send![&*bar_bg, addSublayer: &*bar_right] };
+
+    // Track background (unfilled)
+    let bar_track: Retained<AnyObject> = unsafe { msg_send![layer_cls, new] };
+    let tw = track_width(bar_w);
+    let track_y = (BAR_HEIGHT - TRACK_HEIGHT) / 2.0;
+    let track_frame = CGRect::new(
+        CGPoint::new(track_x(), track_y),
+        CGSize::new(tw, TRACK_HEIGHT),
+    );
+    let _: () = unsafe { msg_send![&*bar_track, setFrame: track_frame] };
+    let track_color = create_cgcolor(1.0, 1.0, 1.0, 0.2);
+    let _: () = unsafe { msg_send![&*bar_track, setBackgroundColor: track_color] };
+    release_cgcolor(track_color);
+    let _: () = unsafe { msg_send![&*bar_track, setCornerRadius: TRACK_RADIUS] };
+    // Auto-resize width: kCALayerWidthSizable (1 << 1) = 2
+    let _: () = unsafe { msg_send![&*bar_track, setAutoresizingMask: 2u32] };
+    let _: () = unsafe { msg_send![&*bar_bg, addSublayer: &*bar_track] };
+
+    // Track fill
+    let bar_fill: Retained<AnyObject> = unsafe { msg_send![layer_cls, new] };
+    let fill_frame = CGRect::new(
+        CGPoint::new(track_x(), track_y),
+        CGSize::new(0.0, TRACK_HEIGHT),
+    );
+    let _: () = unsafe { msg_send![&*bar_fill, setFrame: fill_frame] };
+    let fill_color = create_cgcolor(1.0, 1.0, 1.0, 0.85);
+    let _: () = unsafe { msg_send![&*bar_fill, setBackgroundColor: fill_color] };
+    release_cgcolor(fill_color);
+    let _: () = unsafe { msg_send![&*bar_fill, setCornerRadius: TRACK_RADIUS] };
+    let _: () = unsafe { msg_send![&*bar_bg, addSublayer: &*bar_fill] };
+
+    // Store raw pointers
     let msg_ptr = Retained::into_raw(msg) as *mut AnyObject;
     let sub_ptr = Retained::into_raw(sub) as *mut AnyObject;
 
@@ -115,8 +219,18 @@ pub fn init_layers(parent_ptr: *mut c_void, bounds: CGRect) {
         parent,
         message: msg_ptr,
         subtitle: sub_ptr,
+        bar_bg: Retained::into_raw(bar_bg) as *mut AnyObject,
+        bar_left_time: Retained::into_raw(bar_left) as *mut AnyObject,
+        bar_right_time: Retained::into_raw(bar_right) as *mut AnyObject,
+        bar_track: Retained::into_raw(bar_track) as *mut AnyObject,
+        bar_fill: Retained::into_raw(bar_fill) as *mut AnyObject,
         message_deadline_ms: 0,
         message_visible: false,
+        bar_visible: false,
+        bar_hide_deadline_ms: 0,
+        current_us: 0,
+        duration_us: 0,
+        seek_hold_until_ms: 0,
     });
 }
 
@@ -156,6 +270,25 @@ fn setup_text_layer(
 
     // Hidden initially
     let _: () = unsafe { msg_send![layer, setOpacity: 0.0f32] };
+}
+
+/// Configure a timestamp text layer inside the progress bar.
+fn setup_bar_text_layer(layer: &AnyObject, frame: CGRect, scale: f64, right_align: bool) {
+    let _: () = unsafe { msg_send![layer, setFrame: frame] };
+    let _: () = unsafe { msg_send![layer, setContentsScale: scale] };
+    let _: () = unsafe { msg_send![layer, setFontSize: BAR_FONT_SIZE] };
+    // Monospace font
+    let font_name = objc2_foundation::NSString::from_str("Menlo");
+    let font_ptr: *const c_void = &*font_name as *const _ as *const c_void;
+    let _: () = unsafe { msg_send![layer, setFont: font_ptr] };
+    // White text
+    let white = create_cgcolor(1.0, 1.0, 1.0, 0.9);
+    let _: () = unsafe { msg_send![layer, setForegroundColor: white] };
+    release_cgcolor(white);
+    if right_align {
+        let align = objc2_foundation::NSString::from_str("right");
+        let _: () = unsafe { msg_send![layer, setAlignmentMode: &*align] };
+    }
 }
 
 /// Show a transient OSD message (bottom-left, fades after 2s). Main thread only.
@@ -256,7 +389,7 @@ pub fn show_subtitle(text: Option<&str>) {
     commit_animations();
 }
 
-/// Called on main thread to expire OSD messages.
+/// Called on main thread to expire OSD messages and progress bar.
 pub fn tick() {
     let mut osd = OSD.lock().unwrap();
     let Some(ref mut inner) = *osd else { return };
@@ -267,4 +400,112 @@ pub fn tick() {
         commit_animations();
         inner.message_visible = false;
     }
+
+    if inner.bar_visible && now_ms() >= inner.bar_hide_deadline_ms {
+        disable_animations();
+        let _: () = unsafe { msg_send![inner.bar_bg, setOpacity: 0.0f32] };
+        commit_animations();
+        inner.bar_visible = false;
+    }
+}
+
+/// Update the progress bar with current playback position. Main thread only.
+/// Called periodically by the timer — skipped if a seek hold is active.
+pub fn update_progress(current_us: i64, duration_us: i64) {
+    let mut osd = OSD.lock().unwrap();
+    let Some(ref mut inner) = *osd else { return };
+    // Don't let timer overwrite a recent click-seek position
+    if now_ms() < inner.seek_hold_until_ms {
+        return;
+    }
+    inner.current_us = current_us;
+    inner.duration_us = duration_us;
+    if inner.bar_visible {
+        render_bar(inner);
+    }
+}
+
+/// Seek via the progress bar: snap position, show bar, hold against timer updates.
+pub fn seek_bar(target_us: i64, duration_us: i64) {
+    let mut osd = OSD.lock().unwrap();
+    let Some(ref mut inner) = *osd else { return };
+    inner.current_us = target_us;
+    inner.duration_us = duration_us;
+    // Hold for 500ms so the timer doesn't snap it back before the audio clock catches up
+    inner.seek_hold_until_ms = now_ms() + 500;
+    set_bar_visible(inner);
+}
+
+/// Show the progress bar and reset the auto-hide timer. Main thread only.
+pub fn show_bar() {
+    let mut osd = OSD.lock().unwrap();
+    let Some(ref mut inner) = *osd else { return };
+    set_bar_visible(inner);
+}
+
+fn set_bar_visible(inner: &mut OsdInner) {
+    if !inner.bar_visible {
+        disable_animations();
+        let _: () = unsafe { msg_send![inner.bar_bg, setOpacity: 1.0f32] };
+        commit_animations();
+        inner.bar_visible = true;
+    }
+    inner.bar_hide_deadline_ms = now_ms() + 2000;
+    render_bar(inner);
+}
+
+/// Height of the progress bar in points (for mouse hit testing).
+pub fn bar_height() -> f64 {
+    BAR_HEIGHT
+}
+
+/// Map a click x-coordinate (in window points) to a 0.0–1.0 fraction within
+/// the bar's track region. Returns None if the bar isn't initialized.
+pub fn bar_fraction_at_x(x: f64) -> Option<f64> {
+    let osd = OSD.lock().unwrap();
+    let inner = osd.as_ref()?;
+
+    // Read the track layer's actual frame (handles window resize)
+    let track_frame: CGRect = unsafe { msg_send![inner.bar_track, frame] };
+    let start = track_frame.origin.x;
+    let end = start + track_frame.size.width;
+    if track_frame.size.width <= 0.0 {
+        return None;
+    }
+
+    Some(((x - start) / (end - start)).clamp(0.0, 1.0))
+}
+
+fn render_bar(inner: &OsdInner) {
+    use crate::time::format_time;
+
+    let left = format_time(inner.current_us);
+    let right = format_time(inner.duration_us);
+
+    let fraction = if inner.duration_us > 0 {
+        (inner.current_us as f64 / inner.duration_us as f64).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+
+    // Read current track width (handles window resize via autoresizingMask)
+    let track_frame: CGRect = unsafe { msg_send![inner.bar_track, frame] };
+    let fill_w = fraction * track_frame.size.width;
+
+    disable_animations();
+
+    // Update timestamps
+    let ns_left = objc2_foundation::NSString::from_str(&left);
+    let _: () = unsafe { msg_send![inner.bar_left_time, setString: &*ns_left] };
+    let ns_right = objc2_foundation::NSString::from_str(&right);
+    let _: () = unsafe { msg_send![inner.bar_right_time, setString: &*ns_right] };
+
+    // Update fill width (pixel-smooth)
+    let fill_frame = CGRect::new(
+        track_frame.origin,
+        CGSize::new(fill_w, TRACK_HEIGHT),
+    );
+    let _: () = unsafe { msg_send![inner.bar_fill, setFrame: fill_frame] };
+
+    commit_animations();
 }

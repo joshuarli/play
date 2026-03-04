@@ -5,6 +5,7 @@ use std::path::PathBuf;
 pub enum Command {
     PlayPause,
     SeekRelative { seconds: f64, exact: bool },
+    SeekAbsolute { target_us: i64 },
     VolumeUp,
     VolumeDown,
     CycleAudioTrack,
@@ -14,6 +15,15 @@ pub enum Command {
     NextFile,
     PrevFile,
     ToggleFullscreen,
+    Quit,
+}
+
+/// Why playback of the current file ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EndReason {
+    Eof,
+    NextFile,
+    PrevFile,
     Quit,
 }
 
@@ -78,7 +88,7 @@ pub enum UiUpdate {
     Paused(bool),
     /// Flush the display layer and reset timebase after a seek.
     SeekFlush(i64),
-    EndOfFile,
+    EndOfFile(EndReason),
 }
 
 /// Parsed CLI arguments.
@@ -102,11 +112,41 @@ pub struct Args {
     pub verbose: u8,
 }
 
+const MEDIA_EXTENSIONS: &[&str] = &[
+    "mp4", "mkv", "avi", "mov", "webm", "flv", "m4v", "ts", "mp3", "flac", "ogg", "opus", "wav",
+    "m4a", "aac", "wma",
+];
+
+/// Expand directories into sorted media files; pass through regular files.
+pub fn expand_files(paths: Vec<PathBuf>) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    for p in paths {
+        if p.is_dir() {
+            let mut files: Vec<PathBuf> = std::fs::read_dir(&p)
+                .into_iter()
+                .flatten()
+                .filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .filter(|f| {
+                    f.extension()
+                        .and_then(|e| e.to_str())
+                        .is_some_and(|e| MEDIA_EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()))
+                })
+                .collect();
+            files.sort();
+            out.extend(files);
+        } else {
+            out.push(p);
+        }
+    }
+    out
+}
+
 const USAGE: &str = "\
-Usage: play [OPTIONS] <FILE>...
+Usage: play [OPTIONS] <FILE|DIR>...
 
 Arguments:
-  <FILE>...  One or more media file paths
+  <FILE|DIR>...  One or more media files or directories
 
 Options:
       --volume <N>          Initial volume percentage 0-100 [default: 100]

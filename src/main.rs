@@ -20,7 +20,7 @@ use std::thread;
 
 use anyhow::{bail, Context, Result};
 
-use cmd::{Args, Command, DemuxCommand, DemuxPacket, UiUpdate, VideoFrame};
+use cmd::{Args, Command, DemuxCommand, DemuxPacket, EndReason, UiUpdate, VideoFrame};
 use player::Player;
 
 fn main() -> Result<()> {
@@ -40,21 +40,55 @@ fn main() -> Result<()> {
     // Initialize ffmpeg
     ffmpeg_next::init().context("Failed to initialize ffmpeg")?;
 
-    // Validate files
-    for file in &args.files {
+    // Expand directories into sorted media files
+    let files = cmd::expand_files(args.files.clone());
+    if files.is_empty() {
+        bail!("No media files found in the given paths");
+    }
+
+    // Validate files exist
+    for file in &files {
         if !file.exists() {
             bail!("File not found: {}", file.display());
         }
     }
 
-    // Play first file (playlist support later)
-    let file = &args.files[0];
-    play_file(file, &args)?;
+    // Playlist loop
+    let mut index = 0;
+    let mut first_run = true;
+    while index < files.len() {
+        let file = &files[index];
+        match play_file(file, &args, first_run, index, files.len()) {
+            Ok(reason) => {
+                match reason {
+                    EndReason::Quit => break,
+                    EndReason::Eof | EndReason::NextFile => {
+                        index += 1;
+                        // Eof past last file: done
+                    }
+                    EndReason::PrevFile => {
+                        index = index.saturating_sub(1);
+                    }
+                }
+            }
+            Err(e) => {
+                log::error!("Error playing {}: {e}", file.display());
+                index += 1; // skip to next
+            }
+        }
+        first_run = false;
+    }
 
     Ok(())
 }
 
-fn play_file(path: &Path, args: &Args) -> Result<()> {
+fn play_file(
+    path: &Path,
+    args: &Args,
+    first_run: bool,
+    file_index: usize,
+    file_count: usize,
+) -> Result<EndReason> {
     // Probe the file
     let info = demux::probe(path)?;
 
@@ -136,6 +170,19 @@ fn play_file(path: &Path, args: &Args) -> Result<()> {
         .map(|s| s.height)
         .unwrap_or(480);
 
+    // Show OSD for playlist position
+    let filename = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("unknown");
+    if file_count > 1 {
+        let _ = ui_update_tx.send(UiUpdate::Osd(format!(
+            "[{}/{}] {filename}",
+            file_index + 1,
+            file_count
+        )));
+    }
+
     // Spawn demuxer thread
     let demux_path = path.to_path_buf();
     let demux_thread = thread::Builder::new()
@@ -159,11 +206,14 @@ fn play_file(path: &Path, args: &Args) -> Result<()> {
     let player_info = info.clone();
     let initial_volume = args.volume;
     let initial_audio_delay = args.audio_delay;
-    let start_pos = args
-        .start
-        .as_ref()
-        .and_then(|s| time::parse_time(s).ok())
-        .unwrap_or(0);
+    let start_pos = if first_run {
+        args.start
+            .as_ref()
+            .and_then(|s| time::parse_time(s).ok())
+            .unwrap_or(0)
+    } else {
+        0
+    };
 
     let player_clock = audio_clock.clone();
     let player_thread = thread::Builder::new()
@@ -211,7 +261,8 @@ fn play_file(path: &Path, args: &Args) -> Result<()> {
         })
         .context("Failed to spawn player thread")?;
 
-    if has_video {
+    let title = format!("play - {filename}");
+    let reason = if has_video {
         window::run_app(
             cmd_tx,
             video_frame_rx,
@@ -220,19 +271,18 @@ fn play_file(path: &Path, args: &Args) -> Result<()> {
             video_height,
             args.fullscreen,
             audio_clock,
-        );
+            info.duration_us,
+            &title,
+            first_run,
+        )
     } else {
-        let filename = path
-            .file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or("unknown");
-        terminal::run_terminal(cmd_tx, ui_update_rx, filename, info.duration_us);
-    }
+        terminal::run_terminal(cmd_tx, ui_update_rx, filename, info.duration_us)
+    };
 
     player_thread.join().ok();
     demux_thread.join().ok();
 
-    Ok(())
+    Ok(reason)
 }
 
 fn log_stream_info(info: &demux::StreamInfo) {

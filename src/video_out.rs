@@ -1,7 +1,7 @@
 use std::ffi::c_void;
 use std::ptr;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 use objc2::encode::{Encoding, RefEncode};
 use objc2::msg_send;
@@ -127,8 +127,9 @@ unsafe impl Sync for SendPtr {}
 /// Global display layer (created on main thread, used from main thread timer).
 static DISPLAY_LAYER: OnceLock<SendPtr> = OnceLock::new();
 
-/// Cached CMVideoFormatDescription — identical for all frames (same resolution/pixel format).
-static CACHED_FORMAT_DESC: OnceLock<SendPtr> = OnceLock::new();
+/// Cached CMVideoFormatDescription — identical for all frames of the same file.
+/// Mutex instead of OnceLock so it can be reset between files (different resolutions).
+static CACHED_FORMAT_DESC: Mutex<Option<SendPtr>> = Mutex::new(None);
 
 /// Wrapper to make CMTimebaseRef Send+Sync for OnceLock.
 struct SendTimebase(CMTimebaseRef);
@@ -219,23 +220,21 @@ pub fn enqueue_frame(mut frame: VideoFrame) {
     let pixel_buffer = frame.take_pixel_buffer();
 
     // Reuse cached CMVideoFormatDescription (same resolution/pixel format for entire file)
-    let format_desc = if let Some(cached) = CACHED_FORMAT_DESC.get() {
-        cached.0
-    } else {
-        let mut desc: CMVideoFormatDescriptionRef = ptr::null_mut();
-        let status = unsafe {
-            CMVideoFormatDescriptionCreateForImageBuffer(ptr::null(), pixel_buffer, &mut desc)
-        };
-        if status != 0 {
-            log::error!("CMVideoFormatDescriptionCreateForImageBuffer failed: {status}");
-            unsafe { CVPixelBufferRelease(pixel_buffer) };
-            return;
-        }
-        // Store for all future frames — if another thread raced us, release ours
-        if CACHED_FORMAT_DESC.set(SendPtr(desc)).is_err() {
-            unsafe { CFRelease(desc) };
-            CACHED_FORMAT_DESC.get().unwrap().0
+    let format_desc = {
+        let mut guard = CACHED_FORMAT_DESC.lock().unwrap();
+        if let Some(ref cached) = *guard {
+            cached.0
         } else {
+            let mut desc: CMVideoFormatDescriptionRef = ptr::null_mut();
+            let status = unsafe {
+                CMVideoFormatDescriptionCreateForImageBuffer(ptr::null(), pixel_buffer, &mut desc)
+            };
+            if status != 0 {
+                log::error!("CMVideoFormatDescriptionCreateForImageBuffer failed: {status}");
+                unsafe { CVPixelBufferRelease(pixel_buffer) };
+                return;
+            }
+            *guard = Some(SendPtr(desc));
             desc
         }
     };
@@ -316,5 +315,25 @@ pub fn flush_and_seek(pts_us: i64) {
         }
         // Ensure it's running after seek
         TIMEBASE_STARTED.store(true, Ordering::Relaxed);
+    }
+}
+
+/// Reset state between files. Must be called on the main thread.
+pub fn reset_for_new_file() {
+    // Release and clear cached format description (resolution may differ)
+    {
+        let mut guard = CACHED_FORMAT_DESC.lock().unwrap();
+        if let Some(desc) = guard.take() {
+            if !desc.0.is_null() {
+                unsafe { CFRelease(desc.0) };
+            }
+        }
+    }
+    // Reset timebase state so next file starts fresh
+    TIMEBASE_STARTED.store(false, Ordering::Relaxed);
+    // Flush display layer
+    if let Some(layer_wrap) = DISPLAY_LAYER.get() {
+        let layer = layer_wrap.0 as *mut AnyObject;
+        let _: () = unsafe { msg_send![layer, flush] };
     }
 }

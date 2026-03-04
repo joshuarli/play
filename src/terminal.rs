@@ -3,26 +3,29 @@ use std::thread;
 use std::time::Duration;
 
 use crossbeam_channel::{Receiver, Sender};
-use termion::input::TermRead;
 use termion::event::Key;
+use termion::input::TermRead;
 use termion::raw::IntoRawMode;
 
-use crate::cmd::{Command, UiUpdate};
+use crate::cmd::{Command, EndReason, UiUpdate};
 use crate::time::format_time;
 
 /// Run audio-only terminal mode. Blocks until quit or EOF.
+/// Returns the EndReason so the playlist loop knows what to do.
 pub fn run_terminal(
     cmd_tx: Sender<Command>,
     ui_update_rx: Receiver<UiUpdate>,
     filename: &str,
     duration_us: i64,
-) {
+) -> EndReason {
     let mut stdout = io::stdout().into_raw_mode().expect("failed to enter raw mode");
     let mut keys = termion::async_stdin().keys();
 
     let dur = format_time(duration_us);
     write!(stdout, "\r\x1b[K\u{25b6} 00:00:00 / {dur}  {filename}").ok();
     stdout.flush().ok();
+
+    let mut end_reason = EndReason::Quit;
 
     loop {
         if let Some(Ok(key)) = keys.next() {
@@ -42,31 +45,35 @@ pub fn run_terminal(
                 Key::Char('a') => Some(Command::CycleAudioTrack),
                 Key::Char('+') | Key::Char('=') => Some(Command::AudioDelayIncrease),
                 Key::Char('-') => Some(Command::AudioDelayDecrease),
+                Key::Char('>') | Key::Char('.') => Some(Command::NextFile),
+                Key::Char('<') | Key::Char(',') => Some(Command::PrevFile),
                 _ => None,
             };
             if let Some(cmd) = cmd {
                 let quit = matches!(cmd, Command::Quit);
                 let _ = cmd_tx.send(cmd);
                 if quit {
+                    end_reason = EndReason::Quit;
                     break;
                 }
             }
         }
 
-        let mut should_quit = false;
+        let mut should_break = false;
         while let Ok(update) = ui_update_rx.try_recv() {
             match update {
                 UiUpdate::Osd(text) => {
                     write!(stdout, "\r\x1b[K{text}").ok();
                     stdout.flush().ok();
                 }
-                UiUpdate::EndOfFile => {
-                    should_quit = true;
+                UiUpdate::EndOfFile(reason) => {
+                    end_reason = reason;
+                    should_break = true;
                 }
                 _ => {}
             }
         }
-        if should_quit {
+        if should_break {
             let _ = cmd_tx.send(Command::Quit);
             break;
         }
@@ -77,4 +84,6 @@ pub fn run_terminal(
     drop(stdout); // restores terminal via Drop
     let mut out = io::stdout();
     writeln!(out).ok();
+
+    end_reason
 }

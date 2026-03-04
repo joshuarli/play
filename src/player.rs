@@ -6,13 +6,13 @@ use anyhow::{Context, Result};
 use crossbeam_channel::{Receiver, Sender};
 
 use crate::audio_out::AudioOutput;
-use crate::cmd::{Command, DemuxCommand, DemuxPacket, UiUpdate, VideoFrame};
+use crate::cmd::{Command, DemuxCommand, DemuxPacket, EndReason, UiUpdate, VideoFrame};
 use crate::decode_audio::AudioDecoder;
 use crate::decode_video::VideoDecoder;
 use crate::demux::StreamInfo;
 use crate::subtitle::SubtitleTrack;
 use crate::sync::SyncClock;
-use crate::time::format_time;
+
 
 /// Accumulated relative seek waiting to be dispatched.
 /// Like mpv's `queue_seek()`: coalesces rapid key-repeat seeks so only one
@@ -85,8 +85,6 @@ pub struct Player {
     stream_info: StreamInfo,
     current_audio_track: usize,
 
-    /// Cached formatted duration (never changes after construction).
-    duration_str: String,
 }
 
 impl Player {
@@ -131,7 +129,6 @@ impl Player {
             subtitle_tracks,
             current_subtitle_idx: None,
             last_subtitle_text: None,
-            duration_str: format_time(stream_info.duration_us),
             stream_info,
             current_audio_track: 0,
         })
@@ -340,7 +337,9 @@ impl Player {
             if let Some(end_us) = self.eof_audio_end_us {
                 if self.sync_clock.audio_pts() >= end_us {
                     self.eof_audio_end_us = None;
-                    let _ = self.ui_update_tx.send(UiUpdate::EndOfFile);
+                    let _ = self
+                        .ui_update_tx
+                        .send(UiUpdate::EndOfFile(EndReason::Eof));
                 }
             }
         }
@@ -366,6 +365,13 @@ impl Player {
                     }
                 }
                 let _ = self.ui_update_tx.send(UiUpdate::Paused(self.paused));
+            }
+            Command::SeekAbsolute { target_us } => {
+                let target = target_us.max(0).min(self.duration_us);
+                // Inexact (keyframe) seek for instant display — no decode-to-exact
+                self.dispatch_seek(target, true, false);
+                self.last_seek_dispatched = Some(Instant::now());
+                self.seek_frame_shown = false;
             }
             Command::SeekRelative { seconds, exact } => {
                 self.queue_seek(seconds, exact);
@@ -443,8 +449,15 @@ impl Player {
                     .ui_update_tx
                     .send(UiUpdate::Osd(format!("Audio delay: {ms:+}ms")));
             }
-            Command::NextFile | Command::PrevFile => {
-                let _ = self.ui_update_tx.send(UiUpdate::EndOfFile);
+            Command::NextFile => {
+                let _ = self
+                    .ui_update_tx
+                    .send(UiUpdate::EndOfFile(EndReason::NextFile));
+            }
+            Command::PrevFile => {
+                let _ = self
+                    .ui_update_tx
+                    .send(UiUpdate::EndOfFile(EndReason::PrevFile));
             }
             Command::ToggleFullscreen => {
                 // Handled on main thread
@@ -488,10 +501,6 @@ impl Player {
                         if !self.seek_landed {
                             self.seek_landed = true;
                             self.sync_clock.set_position(frame.pts_us);
-                            let pos_str = format_time(frame.pts_us);
-                            let _ = self
-                                .ui_update_tx
-                                .send(UiUpdate::Osd(format!("{pos_str} / {}", self.duration_str)));
                         }
                         // Non-blocking send — the display layer's timebase handles
                         // presentation timing. Never block here so audio keeps flowing.
@@ -529,10 +538,6 @@ impl Player {
                                     .ui_update_tx
                                     .send(UiUpdate::SeekFlush(buf.pts_us));
                             }
-                            let pos_str = format_time(buf.pts_us);
-                            let _ = self
-                                .ui_update_tx
-                                .send(UiUpdate::Osd(format!("{pos_str} / {}", self.duration_str)));
                         }
                         let end_us = buf.pts_us
                             + (buf.samples_per_channel as i64 * 1_000_000
@@ -581,7 +586,9 @@ impl Player {
                     // Wait for audio to finish playing before signaling EOF
                     self.eof_audio_end_us = Some(self.last_audio_end_us);
                 } else {
-                    let _ = self.ui_update_tx.send(UiUpdate::EndOfFile);
+                    let _ = self
+                        .ui_update_tx
+                        .send(UiUpdate::EndOfFile(EndReason::Eof));
                 }
             }
         }

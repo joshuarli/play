@@ -1,6 +1,6 @@
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicI64, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex};
 
 use crossbeam_channel::Sender;
 use objc2::rc::Retained;
@@ -13,22 +13,81 @@ use objc2_app_kit::{
 use objc2_core_foundation::{CGPoint, CGRect, CGSize};
 use objc2_foundation::{MainThreadMarker, NSNotification, NSObject, NSObjectProtocol};
 
-use crate::cmd::{Command, UiUpdate, VideoFrame};
+use crate::cmd::{Command, EndReason, UiUpdate, VideoFrame};
 use crate::input::map_key;
 
 // ── Global state ───────────────────────────────────────────────────────────
 
-static CMD_TX: OnceLock<Sender<Command>> = OnceLock::new();
-static VIDEO_FRAME_RX: OnceLock<crossbeam_channel::Receiver<VideoFrame>> = OnceLock::new();
-static UI_UPDATE_RX: OnceLock<crossbeam_channel::Receiver<UiUpdate>> = OnceLock::new();
-// Window is only accessed from main thread; use a thread-local instead of OnceLock
+// Channels: Mutex<Option<_>> so they can be replaced between files.
+static CMD_TX: Mutex<Option<Sender<Command>>> = Mutex::new(None);
+static VIDEO_FRAME_RX: Mutex<Option<crossbeam_channel::Receiver<VideoFrame>>> = Mutex::new(None);
+static UI_UPDATE_RX: Mutex<Option<crossbeam_channel::Receiver<UiUpdate>>> = Mutex::new(None);
+static AUDIO_CLOCK: Mutex<Option<Arc<AtomicI64>>> = Mutex::new(None);
+static DURATION_US: Mutex<i64> = Mutex::new(0);
+
+// Window is only accessed from main thread; use a thread-local instead of Mutex
 use std::cell::RefCell;
 std::thread_local! {
     static WINDOW: RefCell<Option<Retained<NSWindow>>> = const { RefCell::new(None) };
 }
-static INITIAL_SIZE: OnceLock<(u32, u32)> = OnceLock::new();
-static START_FULLSCREEN: OnceLock<bool> = OnceLock::new();
-static AUDIO_CLOCK: OnceLock<Arc<AtomicI64>> = OnceLock::new();
+static INITIAL_SIZE: std::sync::OnceLock<(u32, u32)> = std::sync::OnceLock::new();
+static START_FULLSCREEN: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+/// Stored EndReason from EndOfFile or Quit, read after app.run() returns.
+static END_REASON: Mutex<Option<EndReason>> = Mutex::new(None);
+
+/// Set all per-file channels atomically.
+fn set_channels(
+    cmd_tx: Sender<Command>,
+    video_frame_rx: crossbeam_channel::Receiver<VideoFrame>,
+    ui_update_rx: crossbeam_channel::Receiver<UiUpdate>,
+    audio_clock: Arc<AtomicI64>,
+    duration_us: i64,
+) {
+    *CMD_TX.lock().unwrap() = Some(cmd_tx);
+    *VIDEO_FRAME_RX.lock().unwrap() = Some(video_frame_rx);
+    *UI_UPDATE_RX.lock().unwrap() = Some(ui_update_rx);
+    *AUDIO_CLOCK.lock().unwrap() = Some(audio_clock);
+    *DURATION_US.lock().unwrap() = duration_us;
+    *END_REASON.lock().unwrap() = None;
+}
+
+/// Send a command to the player thread via CMD_TX.
+fn send_cmd(cmd: Command) {
+    if let Some(ref tx) = *CMD_TX.lock().unwrap() {
+        let _ = tx.send(cmd);
+    }
+}
+
+/// Stop the NSApp run loop so run_app() can return.
+fn stop_app() {
+    if let Some(mtm) = MainThreadMarker::new() {
+        let app = NSApplication::sharedApplication(mtm);
+        // SAFETY: stop: just sets a flag; the dummy event wakes the run loop
+        // so run() returns immediately.
+        app.stop(None);
+        // Post a dummy event to ensure the run loop wakes up and exits
+        post_dummy_event(mtm);
+    }
+}
+
+fn post_dummy_event(mtm: MainThreadMarker) {
+    use objc2_app_kit::NSEventType;
+    let event = NSEvent::otherEventWithType_location_modifierFlags_timestamp_windowNumber_context_subtype_data1_data2(
+        NSEventType::ApplicationDefined,
+        CGPoint::new(0.0, 0.0),
+        NSEventModifierFlags::empty(),
+        0.0,
+        0,
+        None,
+        0,
+        0,
+        0,
+    );
+    if let Some(event) = event {
+        NSApplication::sharedApplication(mtm).postEvent_atStart(&event, true);
+    }
+}
 
 // ── AppDelegate ────────────────────────────────────────────────────────────
 
@@ -129,6 +188,7 @@ define_class!(
             WINDOW.with(|w| *w.borrow_mut() = Some(window));
 
             install_key_monitor();
+            install_mouse_monitor();
             start_main_timer();
         }
     }
@@ -136,10 +196,9 @@ define_class!(
     unsafe impl NSWindowDelegate for AppDelegate {
         #[unsafe(method(windowWillClose:))]
         fn window_will_close(&self, _: &NSNotification) {
-            if let Some(tx) = CMD_TX.get() {
-                let _ = tx.send(Command::Quit);
-            }
-            NSApplication::sharedApplication(self.mtm()).terminate(None);
+            *END_REASON.lock().unwrap() = Some(EndReason::Quit);
+            send_cmd(Command::Quit);
+            stop_app();
         }
     }
 );
@@ -179,16 +238,59 @@ fn install_key_monitor() {
                 return std::ptr::null_mut();
             }
             let is_quit = matches!(cmd, Command::Quit);
-            if let Some(tx) = CMD_TX.get() {
-                let _ = tx.send(cmd);
+            let is_seek = matches!(cmd, Command::SeekRelative { .. });
+            send_cmd(cmd);
+            if is_seek {
+                crate::osd::show_bar();
             }
             if is_quit {
-                if let Some(mtm) = MainThreadMarker::new() {
-                    NSApplication::sharedApplication(mtm).terminate(None);
-                }
+                *END_REASON.lock().unwrap() = Some(EndReason::Quit);
+                stop_app();
             }
             return std::ptr::null_mut();
         }
+        event_ptr.as_ptr()
+    });
+
+    unsafe {
+        let _monitor = NSEvent::addLocalMonitorForEventsMatchingMask_handler(mask, &*handler);
+    }
+}
+
+// ── Mouse event handling ───────────────────────────────────────────────────
+
+fn install_mouse_monitor() {
+    use block2::RcBlock;
+    use objc2_app_kit::NSEventMask;
+    use std::ptr::NonNull;
+
+    let mask = NSEventMask::MouseMoved
+        | NSEventMask::LeftMouseDown
+        | NSEventMask::LeftMouseDragged;
+
+    let handler = RcBlock::new(|event_ptr: NonNull<NSEvent>| -> *mut NSEvent {
+        let event = unsafe { event_ptr.as_ref() };
+        let event_type = event.r#type();
+
+        use objc2_app_kit::NSEventType;
+        match event_type {
+            NSEventType::MouseMoved => {
+                crate::osd::show_bar();
+            }
+            NSEventType::LeftMouseDown | NSEventType::LeftMouseDragged => {
+                let location = event.locationInWindow();
+                if location.y <= crate::osd::bar_height() {
+                    if let Some(fraction) = crate::osd::bar_fraction_at_x(location.x) {
+                        let duration = *DURATION_US.lock().unwrap();
+                        let target_us = (fraction * duration as f64) as i64;
+                        send_cmd(Command::SeekAbsolute { target_us });
+                        crate::osd::seek_bar(target_us, duration);
+                    }
+                }
+            }
+            _ => {}
+        }
+
         event_ptr.as_ptr()
     });
 
@@ -212,22 +314,36 @@ fn start_main_timer() {
     let leeway_ns: u64 = 500_000;
     source.set_timer(DispatchTime::NOW, interval_ns, leeway_ns);
 
-    // Drift correction counter: sync timebase to audio clock ~once per second
+    // Counters for periodic work
     let drift_counter = std::cell::Cell::new(0u32);
+    let progress_counter = std::cell::Cell::new(0u32);
     let handler = block2::RcBlock::new(move || {
         process_pending_ui_updates();
         process_pending_frames();
         crate::osd::tick();
 
-        // Sync timebase to audio ~once per second (every 250 ticks at 4ms)
         let c = drift_counter.get() + 1;
+        // Sync timebase to audio ~once per second (every 250 ticks at 4ms)
         if c >= 250 {
             drift_counter.set(0);
-            if let Some(clock) = AUDIO_CLOCK.get() {
+            if let Some(ref clock) = *AUDIO_CLOCK.lock().unwrap() {
                 crate::video_out::sync_timebase(clock.load(Ordering::Relaxed));
             }
         } else {
             drift_counter.set(c);
+        }
+
+        // Update progress bar ~4Hz (every 60 ticks at 4ms = ~240ms)
+        let p = progress_counter.get() + 1;
+        if p >= 60 {
+            progress_counter.set(0);
+            if let Some(ref clock) = *AUDIO_CLOCK.lock().unwrap() {
+                let current = clock.load(Ordering::Relaxed);
+                let duration = *DURATION_US.lock().unwrap();
+                crate::osd::update_progress(current, duration);
+            }
+        } else {
+            progress_counter.set(p);
         }
     });
 
@@ -243,9 +359,8 @@ fn start_main_timer() {
 }
 
 fn process_pending_frames() {
-    let Some(rx) = VIDEO_FRAME_RX.get() else {
-        return;
-    };
+    let rx = VIDEO_FRAME_RX.lock().unwrap();
+    let Some(ref rx) = *rx else { return };
     for _ in 0..4 {
         match rx.try_recv() {
             Ok(frame) => {
@@ -263,9 +378,8 @@ fn process_pending_frames() {
 }
 
 fn process_pending_ui_updates() {
-    let Some(rx) = UI_UPDATE_RX.get() else {
-        return;
-    };
+    let rx = UI_UPDATE_RX.lock().unwrap();
+    let Some(ref rx) = *rx else { return };
     while let Ok(update) = rx.try_recv() {
         match update {
             UiUpdate::Osd(text) => crate::osd::show_message(&text),
@@ -276,7 +390,7 @@ fn process_pending_ui_updates() {
             UiUpdate::Paused(paused) => {
                 if !paused {
                     // Sync timebase to audio clock before resuming so they agree
-                    if let Some(clock) = AUDIO_CLOCK.get() {
+                    if let Some(ref clock) = *AUDIO_CLOCK.lock().unwrap() {
                         crate::video_out::sync_timebase(clock.load(Ordering::Relaxed));
                     }
                 }
@@ -285,13 +399,10 @@ fn process_pending_ui_updates() {
             UiUpdate::SeekFlush(pts_us) => {
                 crate::video_out::flush_and_seek(pts_us);
             }
-            UiUpdate::EndOfFile => {
-                if let Some(tx) = CMD_TX.get() {
-                    let _ = tx.send(Command::Quit);
-                }
-                if let Some(mtm) = MainThreadMarker::new() {
-                    NSApplication::sharedApplication(mtm).terminate(None);
-                }
+            UiUpdate::EndOfFile(reason) => {
+                *END_REASON.lock().unwrap() = Some(reason);
+                send_cmd(Command::Quit);
+                stop_app();
             }
         }
     }
@@ -307,28 +418,41 @@ pub fn run_app(
     video_height: u32,
     fullscreen: bool,
     audio_clock: Arc<AtomicI64>,
-) {
-    CMD_TX.set(cmd_tx).unwrap();
-    VIDEO_FRAME_RX.set(video_frame_rx).unwrap();
-    UI_UPDATE_RX.set(ui_update_rx).unwrap();
-    INITIAL_SIZE.set((video_width, video_height)).unwrap();
-    START_FULLSCREEN.set(fullscreen).ok();
-    AUDIO_CLOCK.set(audio_clock).ok();
+    duration_us: i64,
+    title: &str,
+    first_run: bool,
+) -> EndReason {
+    set_channels(cmd_tx, video_frame_rx, ui_update_rx, audio_clock, duration_us);
 
     let mtm = MainThreadMarker::new().expect("must run on main thread");
     let app = NSApplication::sharedApplication(mtm);
 
-    // Minimal menu
-    {
-        use objc2_app_kit::{NSMenu, NSMenuItem};
-        let menu_bar = NSMenu::new(mtm);
-        let app_menu_item = NSMenuItem::new(mtm);
-        menu_bar.addItem(&app_menu_item);
-        app.setMainMenu(Some(&menu_bar));
+    if first_run {
+        INITIAL_SIZE.set((video_width, video_height)).ok();
+        START_FULLSCREEN.set(fullscreen).ok();
+
+        // Minimal menu
+        {
+            use objc2_app_kit::{NSMenu, NSMenuItem};
+            let menu_bar = NSMenu::new(mtm);
+            let app_menu_item = NSMenuItem::new(mtm);
+            menu_bar.addItem(&app_menu_item);
+            app.setMainMenu(Some(&menu_bar));
+        }
+
+        let delegate = AppDelegate::new(mtm);
+        app.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
+    } else {
+        // Subsequent files: reset display for new resolution, update title
+        crate::video_out::reset_for_new_file();
+        WINDOW.with(|w| {
+            if let Some(ref win) = *w.borrow() {
+                win.setTitle(&objc2_foundation::NSString::from_str(title));
+            }
+        });
     }
 
-    let delegate = AppDelegate::new(mtm);
-    app.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
-
     app.run();
+
+    END_REASON.lock().unwrap().take().unwrap_or(EndReason::Quit)
 }
