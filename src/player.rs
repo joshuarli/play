@@ -187,6 +187,15 @@ impl Player {
         }
     }
 
+    /// If a seek is buffered, dispatch it now. Called after the first frame
+    /// from the current seek is displayed, so each seek position shows one
+    /// keyframe before advancing to the next (scrubbing effect).
+    fn dispatch_buffered_seek(&mut self) {
+        if let Some(seek) = self.buffered_seek.take() {
+            self.dispatch_seek(seek.target_pts, seek.forward, seek.exact);
+        }
+    }
+
     fn flush_decoders(&mut self) {
         self.last_audio_end_us = 0;
         self.eof_audio_end_us = None;
@@ -272,49 +281,24 @@ impl Player {
                 let _ = self.ui_update_tx.send(UiUpdate::Paused(self.paused));
             }
             Command::SeekRelative { seconds, exact } => {
-                let mut total_seconds = seconds;
-                let mut any_exact = exact;
-                let mut deferred = Vec::new();
-
-                // Drain cmd_rx for additional seeks that already arrived
-                while let Ok(cmd) = self.cmd_rx.try_recv() {
-                    match cmd {
-                        Command::SeekRelative { seconds: s, exact: e } => {
-                            total_seconds += s;
-                            any_exact = any_exact || e;
-                        }
-                        other => {
-                            deferred.push(other);
-                            break;
-                        }
-                    }
-                }
-
                 let current = self.sync_clock.audio_pts();
-                let delta_us = (total_seconds * 1_000_000.0) as i64;
+                let delta_us = (seconds * 1_000_000.0) as i64;
                 let target = (current + delta_us).max(0).min(self.duration_us);
-                let forward = total_seconds > 0.0;
+                let forward = seconds > 0.0;
 
                 if self.pending_seeks == 0 {
-                    // No seek in flight — dispatch immediately
-                    self.dispatch_seek(target, !any_exact && forward, any_exact);
+                    self.dispatch_seek(target, !exact && forward, exact);
                 } else {
-                    // Seek already in flight — buffer (overwrites previous buffer)
                     self.buffered_seek = Some(BufferedSeek {
                         target_pts: target,
-                        forward: !any_exact && forward,
-                        exact: any_exact,
+                        forward: !exact && forward,
+                        exact,
                     });
-                    // Update clock + UI so the scrub bar tracks instantly
                     self.sync_clock.set_position(target);
                 }
-                let _ = self.ui_update_tx.send(UiUpdate::SeekFlush(target));
-
-                for cmd in deferred {
-                    if self.handle_command(cmd) {
-                        return true;
-                    }
-                }
+                // Don't flush display here — SeekFlush is sent from
+                // seek_landed when the decoded frame is ready, keeping
+                // the old frame visible until the new one arrives.
             }
             Command::VolumeUp => self.adjust_volume(5),
             Command::VolumeDown => self.adjust_volume(-5),
@@ -384,25 +368,7 @@ impl Player {
         match pkt {
             // Seek completed — dispatch buffered seek or resume packet processing
             DemuxPacket::Flush => {
-                if let Some(seek) = self.buffered_seek.take() {
-                    // Consumed Flush cancels out with the new seek's future
-                    // Flush, so pending_seeks stays unchanged. Decoders are
-                    // already clean (no packets fed since last flush).
-                    let _ = self.demux_cmd_tx.send(DemuxCommand::Seek {
-                        target_pts: seek.target_pts,
-                        forward: seek.forward,
-                    });
-                    if seek.exact {
-                        self.seek_floor_us = seek.target_pts;
-                        self.sync_clock.set_position(seek.target_pts);
-                    } else {
-                        self.seek_floor_us = 0;
-                        self.sync_clock.set_position(seek.target_pts);
-                        self.seek_landed = false;
-                    }
-                } else {
-                    self.pending_seeks = self.pending_seeks.saturating_sub(1);
-                }
+                self.pending_seeks = self.pending_seeks.saturating_sub(1);
                 return;
             }
             // Discard stale pre-seek packets
@@ -410,6 +376,7 @@ impl Player {
                 return;
             }
             DemuxPacket::Video(packet) => {
+                let mut just_landed = false;
                 if let Some(ref mut decoder) = self.video_decoder {
                     if decoder.send_packet(&packet).is_err() {
                         return;
@@ -423,6 +390,7 @@ impl Player {
                         // Inexact seek: first decoded frame reveals actual position
                         if !self.seek_landed {
                             self.seek_landed = true;
+                            just_landed = true;
                             self.sync_clock.set_position(frame.pts_us);
                             let _ = self
                                 .ui_update_tx
@@ -442,8 +410,12 @@ impl Player {
                         }
                     }
                 }
+                if just_landed {
+                    self.dispatch_buffered_seek();
+                }
             }
             DemuxPacket::Audio(packet) => {
+                let mut just_landed = false;
                 if let Some(ref mut decoder) = self.audio_decoder {
                     if let Err(e) = decoder.send_packet(&packet) {
                         log::debug!("Audio send_packet error: {e}");
@@ -458,6 +430,7 @@ impl Player {
                         // Audio-only: first post-seek buffer reveals actual position
                         if !self.seek_landed {
                             self.seek_landed = true;
+                            just_landed = true;
                             self.sync_clock.set_position(buf.pts_us);
                             let _ = self
                                 .ui_update_tx
@@ -476,6 +449,9 @@ impl Player {
                             ao.schedule_buffer(&buf);
                         }
                     }
+                }
+                if just_landed {
+                    self.dispatch_buffered_seek();
                 }
             }
             DemuxPacket::Subtitle(_packet) => {
