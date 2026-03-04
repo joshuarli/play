@@ -115,6 +115,11 @@ define_class!(
                 }
             }
 
+            // Become a regular app and grab focus before showing the window
+            app.setActivationPolicy(NSApplicationActivationPolicy::Regular);
+            #[allow(deprecated)]
+            app.activateIgnoringOtherApps(true);
+
             window.makeKeyAndOrderFront(None);
 
             if START_FULLSCREEN.get().copied().unwrap_or(false) {
@@ -122,10 +127,6 @@ define_class!(
             }
 
             WINDOW.with(|w| *w.borrow_mut() = Some(window));
-
-            app.setActivationPolicy(NSApplicationActivationPolicy::Regular);
-            #[allow(deprecated)]
-            app.activateIgnoringOtherApps(true);
 
             install_key_monitor();
             start_main_timer();
