@@ -18,24 +18,19 @@ pub struct StreamInfo {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct VideoStreamInfo {
     pub index: usize,
     pub width: u32,
     pub height: u32,
     pub codec_name: String,
-    pub time_base: ffmpeg::Rational,
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct AudioStreamInfo {
     pub index: usize,
     pub codec_name: String,
     pub sample_rate: u32,
-    pub channels: u16,
     pub channel_layout_desc: String,
-    pub time_base: ffmpeg::Rational,
 }
 
 #[derive(Debug, Clone)]
@@ -76,7 +71,6 @@ pub fn probe(path: &Path) -> Result<StreamInfo> {
                 width,
                 height,
                 codec_name,
-                time_base: s.time_base(),
             }
         });
 
@@ -98,9 +92,7 @@ pub fn probe(path: &Path) -> Result<StreamInfo> {
                 index: s.index(),
                 codec_name,
                 sample_rate,
-                channels,
                 channel_layout_desc: format!("{channels}ch"),
-                time_base: s.time_base(),
             }
         })
         .collect();
@@ -165,10 +157,6 @@ pub fn run_demuxer(
                 let _ = packet_tx.send(DemuxPacket::Flush);
                 continue;
             }
-            Ok(DemuxCommand::Flush) => {
-                log::debug!("Demuxer: flush");
-                continue;
-            }
             Err(crossbeam_channel::TryRecvError::Empty) => {}
             Err(crossbeam_channel::TryRecvError::Disconnected) => return Ok(()),
         }
@@ -202,7 +190,6 @@ pub fn run_demuxer(
                         let _ = ictx.seek(target_pts, ..target_pts);
                         continue;
                     }
-                    Ok(DemuxCommand::Flush) => continue,
                     Err(_) => return Ok(()),
                 }
             }
@@ -211,8 +198,7 @@ pub fn run_demuxer(
 }
 
 fn read_next_packet(ictx: &mut Input) -> Option<(usize, ffmpeg::Packet)> {
-    for (stream, packet) in ictx.packets() {
-        return Some((stream.index(), packet));
-    }
-    None
+    ictx.packets()
+        .next()
+        .map(|(stream, packet)| (stream.index(), packet))
 }

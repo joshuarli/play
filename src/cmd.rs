@@ -29,19 +29,16 @@ pub enum DemuxPacket {
 
 /// Commands sent from the player to the demuxer.
 #[derive(Debug)]
-#[allow(dead_code)]
 pub enum DemuxCommand {
     Seek {
         target_pts: i64,
         /// Seek forward (keyframe at or after target) vs backward.
         forward: bool,
     },
-    Flush,
     Stop,
 }
 
 /// Video frame ready for display. Releases CVPixelBuffer on drop.
-#[allow(dead_code)]
 pub struct VideoFrame {
     /// Raw pointer to CVPixelBufferRef (retained, released on drop).
     pub pixel_buffer: *mut std::ffi::c_void,
@@ -49,10 +46,6 @@ pub struct VideoFrame {
     pub pts_us: i64,
     /// Duration of this frame in microseconds.
     pub duration_us: i64,
-    /// Video width.
-    pub width: u32,
-    /// Video height.
-    pub height: u32,
 }
 
 unsafe impl Send for VideoFrame {}
@@ -74,11 +67,9 @@ impl VideoFrame {
 }
 
 /// Updates sent from the player to the main (UI) thread.
-#[allow(dead_code)]
 pub enum UiUpdate {
     Osd(String),
     SubtitleText(Option<String>),
-    PlaybackPosition { current_us: i64, duration_us: i64 },
     VideoSize { width: u32, height: u32 },
     /// Pause or unpause video display layer.
     Paused(bool),

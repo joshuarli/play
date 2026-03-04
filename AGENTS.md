@@ -38,9 +38,9 @@ File → Demuxer → DemuxPacket ──┬── Video: VideoToolbox GPU decode
                                │   → CMSampleBuffer → AVSampleBufferDisplayLayer
                                │
                                ├── Audio: ffmpeg CPU decode
-                               │   → resample to f32 packed
-                               │   → deinterleave to planar
-                               │   → AVAudioPCMBuffer → AVAudioPlayerNode
+                               │   → resample to f32 planar (matches AVAudioEngine)
+                               │   → memcpy per-plane → AVAudioPCMBuffer
+                               │   → AVAudioPlayerNode
                                │   → completion handler updates audio_clock
                                │
                                └── Periodic (16ms timeout)
@@ -52,22 +52,22 @@ File → Demuxer → DemuxPacket ──┬── Video: VideoToolbox GPU decode
 
 | File | Lines | Responsibility |
 |---|---|---|
-| `main.rs` | 265 | CLI parsing, thread spawning, file probe, playlist entry |
-| `cmd.rs` | 267 | Command/DemuxPacket/DemuxCommand/VideoFrame/UiUpdate/Args types, hand-rolled arg parser |
-| `player.rs` | 455 | State machine: crossbeam select! loop, decode dispatch, seek, volume, subtitles |
-| `demux.rs` | 218 | ffmpeg format::input, packet reading loop, seek handling, stream probe |
-| `decode_video.rs` | 176 | VideoToolbox hwaccel setup, CVPixelBuffer extraction from AVFrame.data[3] |
-| `decode_audio.rs` | 122 | ffmpeg audio decode + resample to f32 packed via software::resampling |
-| `video_out.rs` | 299 | AVSampleBufferDisplayLayer, CMSampleBuffer creation from CVPixelBuffer |
-| `audio_out.rs` | 186 | AVAudioEngine + AVAudioPlayerNode, buffer scheduling, clock reporting |
-| `window.rs` | 326 | NSWindow via objc2 define_class!, key monitor, GCD timer (~120Hz), layer setup |
-| `osd.rs` | 263 | CATextLayer for OSD messages, NSAttributedString subtitles with outline, CGColor helpers |
-| `sync.rs` | 108 | Audio-master clock, SyncAction decisions (±50ms thresholds) |
-| `subtitle.rs` | 259 | SRT parser, auto-detection of .srt files alongside video |
-| `input.rs` | 163 | Virtual key code → Command mapping (Carbon key codes + characters) |
-| `time.rs` | 172 | PTS↔microseconds conversion, HH:MM:SS formatting/parsing |
-| `terminal.rs` | 80 | Audio-only mode: termion raw terminal, keyboard controls |
-| `build.rs` | 17 | Links Apple frameworks (AVFoundation, CoreMedia, CoreVideo, etc.) |
+| `main.rs` | ~265 | Thread spawning, file probe, stream info logging |
+| `cmd.rs` | ~260 | Command/DemuxPacket/DemuxCommand/VideoFrame/UiUpdate/Args types, arg parser |
+| `player.rs` | ~430 | State machine: crossbeam select!, decode dispatch, seek, volume, subtitles |
+| `demux.rs` | ~205 | ffmpeg format::input, packet reading, seek handling, stream probe |
+| `decode_video.rs` | ~170 | VideoToolbox hwaccel setup, CVPixelBuffer extraction from AVFrame.data[3] |
+| `decode_audio.rs` | ~130 | ffmpeg audio decode + resample to f32 planar via software::resampling |
+| `video_out.rs` | ~300 | AVSampleBufferDisplayLayer, CMSampleBuffer from CVPixelBuffer, timebase sync |
+| `audio_out.rs` | ~175 | AVAudioEngine + AVAudioPlayerNode, planar buffer scheduling, clock reporting |
+| `window.rs` | ~325 | NSWindow via objc2 define_class!, key monitor, GCD timer (~120Hz), layer setup |
+| `osd.rs` | ~265 | CATextLayer OSD messages, NSAttributedString subtitles with outline |
+| `sync.rs` | ~105 | Audio-master clock (AtomicI64), pause/resume, seek position |
+| `subtitle.rs` | ~260 | SRT parser, binary search lookup, auto-detection of .srt files |
+| `input.rs` | ~165 | Virtual key code → Command mapping (Carbon key codes + characters) |
+| `time.rs` | ~180 | PTS↔microseconds conversion (i128 overflow-safe), HH:MM:SS format/parse |
+| `terminal.rs` | ~80 | Audio-only mode: termion raw terminal, keyboard controls |
+| `build.rs` | ~17 | Links Apple frameworks (AVFoundation, CoreMedia, CoreVideo, etc.) |
 
 ## Key Dependencies
 
@@ -92,16 +92,15 @@ Two `CATextLayer` sublayers on the content view's layer, above the display layer
 - **Message** (bottom-left, 16pt): seek position, volume, audio delay. Fades after 2s.
 - **Subtitle** (bottom-center, dynamic size): NSAttributedString with stroke outline. Shown/hidden by PTS lookup.
 
-Subtitle font size scales with window height (mpv-style: `height * 33/720`, matching
-`sub-font-size=55` with `sub-scale=0.6`). Black stroke outline via negative `NSStrokeWidth`
-plus subtle shadow for readability. Frame and margins recalculated on each update.
-`CATransaction` disables implicit animations.
+Subtitle font size scales with window height (`height * 22/720`). Black stroke outline via
+negative `NSStrokeWidth` plus subtle shadow for readability. Frame and margins recalculated
+on each update. `CATransaction` disables implicit animations.
 
 ## Gotchas
 
 - `initWithCommonFormat:sampleRate:channels:interleaved:` on AVAudioFormat crashes with
   a C++ exception from CoreAudio. Use `initStandardFormatWithSampleRate:channels:` instead
-  (non-interleaved float32). Audio data must be deinterleaved before scheduling.
+  (non-interleaved float32). Resampler outputs planar f32 to match; memcpy per-plane.
 - `OpaqueCMSampleBuffer` needs a custom `RefEncode` impl (`Pointer → Struct`) to satisfy
   objc2's runtime type checking for `enqueueSampleBuffer:`.
 - ffmpeg-sys-next `build-audiotoolbox` feature is broken on macOS (adds iOS flags). Omit it;

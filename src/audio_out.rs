@@ -146,11 +146,6 @@ impl AudioOutput {
         let _: () = unsafe { msg_send![&*self.player_node, setVolume: self.volume] };
     }
 
-    #[allow(dead_code)]
-    pub fn volume(&self) -> f32 {
-        self.volume
-    }
-
     pub fn flush(&self) {
         let _: () = unsafe { msg_send![&*self.player_node, stop] };
         let _: () = unsafe { msg_send![&*self.player_node, play] };

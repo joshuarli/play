@@ -277,7 +277,6 @@ fn process_pending_ui_updates() {
             UiUpdate::SeekFlush(pts_us) => {
                 crate::video_out::flush_and_seek(pts_us);
             }
-            UiUpdate::PlaybackPosition { .. } => {}
             UiUpdate::EndOfFile => {
                 if let Some(tx) = CMD_TX.get() {
                     let _ = tx.send(Command::Quit);

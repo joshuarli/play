@@ -100,13 +100,12 @@ impl Player {
     pub fn init_decoders(&mut self, ictx: &ffmpeg_next::format::context::Input) -> Result<()> {
         if let Some(ref vs) = self.stream_info.video_stream {
             let stream = ictx.stream(vs.index).context("Video stream not found")?;
-            self.video_decoder = Some(VideoDecoder::new(&stream)?);
-
-            let vd = self.video_decoder.as_ref().unwrap();
+            let vd = VideoDecoder::new(&stream)?;
             let _ = self.ui_update_tx.send(UiUpdate::VideoSize {
                 width: vd.width(),
                 height: vd.height(),
             });
+            self.video_decoder = Some(vd);
         }
 
         if let Some(audio) = self.stream_info.audio_streams.first() {
@@ -149,6 +148,13 @@ impl Player {
             target_pts: target_us,
             forward: false,
         });
+        self.flush_decoders();
+        self.sync_clock.set_position(target_us);
+        self.seek_floor_us = target_us;
+        let _ = self.ui_update_tx.send(UiUpdate::SeekFlush(target_us));
+    }
+
+    fn flush_decoders(&mut self) {
         if let Some(ref mut vd) = self.video_decoder {
             vd.flush();
         }
@@ -158,9 +164,16 @@ impl Player {
         if let Some(ref ao) = self.audio_output {
             ao.flush();
         }
-        self.sync_clock.set_position(target_us);
-        self.seek_floor_us = target_us;
-        let _ = self.ui_update_tx.send(UiUpdate::SeekFlush(target_us));
+    }
+
+    fn adjust_volume(&mut self, delta: i32) {
+        self.volume = (self.volume as i32 + delta).clamp(0, 100) as u32;
+        if let Some(ref mut ao) = self.audio_output {
+            ao.set_volume(self.volume as f32 / 100.0);
+        }
+        let _ = self
+            .ui_update_tx
+            .send(UiUpdate::Osd(format!("Volume: {}%", self.volume)));
     }
 
     /// Run the player event loop. Blocks until quit.
@@ -230,16 +243,7 @@ impl Player {
                     forward: !exact && forward,
                 });
 
-                // Flush decoders
-                if let Some(ref mut vd) = self.video_decoder {
-                    vd.flush();
-                }
-                if let Some(ref mut ad) = self.audio_decoder {
-                    ad.flush();
-                }
-                if let Some(ref ao) = self.audio_output {
-                    ao.flush();
-                }
+                self.flush_decoders();
 
                 if exact {
                     // Exact seek: decode from keyframe but skip to target
@@ -255,35 +259,19 @@ impl Player {
                 }
                 let _ = self.ui_update_tx.send(UiUpdate::SeekFlush(target));
             }
-            Command::VolumeUp => {
-                self.volume = (self.volume + 5).min(100);
-                if let Some(ref mut ao) = self.audio_output {
-                    ao.set_volume(self.volume as f32 / 100.0);
-                }
-                let _ = self
-                    .ui_update_tx
-                    .send(UiUpdate::Osd(format!("Volume: {}%", self.volume)));
-            }
-            Command::VolumeDown => {
-                self.volume = self.volume.saturating_sub(5);
-                if let Some(ref mut ao) = self.audio_output {
-                    ao.set_volume(self.volume as f32 / 100.0);
-                }
-                let _ = self
-                    .ui_update_tx
-                    .send(UiUpdate::Osd(format!("Volume: {}%", self.volume)));
-            }
+            Command::VolumeUp => self.adjust_volume(5),
+            Command::VolumeDown => self.adjust_volume(-5),
             Command::CycleAudioTrack => {
                 if self.stream_info.audio_streams.len() > 1 {
                     self.current_audio_track =
                         (self.current_audio_track + 1) % self.stream_info.audio_streams.len();
                     let info = &self.stream_info.audio_streams[self.current_audio_track];
                     let _ = self.ui_update_tx.send(UiUpdate::Osd(format!(
-                        "Audio: {}/{} - {} ({} {})",
+                        "Audio: {}/{} - {} {}Hz {}",
                         self.current_audio_track + 1,
                         self.stream_info.audio_streams.len(),
-                        info.channel_layout_desc,
                         info.codec_name,
+                        info.sample_rate,
                         info.channel_layout_desc,
                     )));
                 }

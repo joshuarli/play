@@ -111,8 +111,6 @@ impl VideoDecoder {
                     pixel_buffer,
                     pts_us,
                     duration_us,
-                    width: self.width,
-                    height: self.height,
                 })
             }
             Err(_) => None,
@@ -169,8 +167,4 @@ pub unsafe fn release_pixel_buffer(buf: *mut c_void) {
 unsafe extern "C" {
     fn CVPixelBufferRetain(pixelBuffer: *mut c_void) -> *mut c_void;
     fn CVPixelBufferRelease(pixelBuffer: *mut c_void);
-    #[allow(dead_code)]
-    fn CVPixelBufferGetWidth(pixelBuffer: *mut c_void) -> usize;
-    #[allow(dead_code)]
-    fn CVPixelBufferGetHeight(pixelBuffer: *mut c_void) -> usize;
 }

@@ -38,11 +38,6 @@ impl SyncClock {
         self.paused = paused;
     }
 
-    #[allow(dead_code)]
-    pub fn is_paused(&self) -> bool {
-        self.paused
-    }
-
     /// Force-set the clock position (used after seek).
     pub fn set_position(&self, pts_us: i64) {
         self.audio_clock.store(pts_us, Ordering::Relaxed);
@@ -74,7 +69,6 @@ mod tests {
         // Atomic advances but paused clock doesn't
         atom.store(20_000_000, Ordering::Relaxed);
         assert_eq!(clock.audio_pts(), 10_000_000);
-        assert!(clock.is_paused());
     }
 
     #[test]
@@ -85,7 +79,6 @@ mod tests {
         atom.store(20_000_000, Ordering::Relaxed);
         clock.set_paused(false);
         assert_eq!(clock.audio_pts(), 20_000_000);
-        assert!(!clock.is_paused());
     }
 
     #[test]
