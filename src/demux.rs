@@ -129,42 +129,35 @@ impl PacketCache {
         }
 
         if forward {
+            // Binary search: first packet with pts_us >= target_us
+            let start = self
+                .packets
+                .partition_point(|cp| cp.pts_us < target_us);
             // First video keyframe at or after target
-            for (i, cp) in self.packets.iter().enumerate() {
-                if cp.is_video_keyframe && cp.pts_us >= target_us {
+            for i in start..self.packets.len() {
+                if self.packets[i].is_video_keyframe && self.packets[i].pts_us >= target_us {
                     return Some(i);
                 }
             }
             // Audio-only fallback: first packet at or after target
-            if self.video_idx.is_none() {
-                for (i, cp) in self.packets.iter().enumerate() {
-                    if cp.pts_us >= target_us {
-                        return Some(i);
-                    }
-                }
+            if self.video_idx.is_none() && start < self.packets.len() {
+                return Some(start);
             }
             None
         } else {
-            // Last video keyframe at or before target
-            let mut best: Option<usize> = None;
-            for (i, cp) in self.packets.iter().enumerate() {
-                if cp.is_video_keyframe && cp.pts_us <= target_us {
-                    best = Some(i);
+            // Binary search: first packet with pts_us > target_us
+            let end = self
+                .packets
+                .partition_point(|cp| cp.pts_us <= target_us);
+            // Scan backward from end for last video keyframe at or before target
+            for i in (0..end).rev() {
+                if self.packets[i].is_video_keyframe && self.packets[i].pts_us <= target_us {
+                    return Some(i);
                 }
-                if cp.pts_us > target_us && best.is_some() {
-                    break;
-                }
-            }
-            if best.is_some() {
-                return best;
             }
             // Audio-only fallback: nearest packet at or before target
-            if self.video_idx.is_none() {
-                for (i, cp) in self.packets.iter().enumerate().rev() {
-                    if cp.pts_us <= target_us {
-                        return Some(i);
-                    }
-                }
+            if self.video_idx.is_none() && end > 0 {
+                return Some(end - 1);
             }
             None
         }
@@ -310,7 +303,7 @@ pub fn probe(path: &Path) -> Result<StreamInfo> {
 pub fn run_demuxer(
     path: &Path,
     video_idx: Option<usize>,
-    audio_idx: Option<usize>,
+    mut audio_idx: Option<usize>,
     subtitle_idx: Option<usize>,
     cmd_rx: Receiver<DemuxCommand>,
     packet_tx: Sender<DemuxPacket>,
@@ -335,6 +328,15 @@ pub fn run_demuxer(
                 Ok(cmd @ DemuxCommand::Seek { .. }) => {
                     seek_count += 1;
                     last_seek = Some(cmd);
+                }
+                Ok(DemuxCommand::ChangeAudio(new_idx)) => {
+                    log::debug!("Demuxer: changing audio stream to {new_idx}");
+                    audio_idx = Some(new_idx);
+                    cache.clear();
+                    cache = PacketCache::new(
+                        CACHE_MAX_BYTES, video_idx, audio_idx, subtitle_idx, &ictx,
+                    );
+                    replay_cursor = None;
                 }
                 Err(crossbeam_channel::TryRecvError::Empty) => break,
                 Err(crossbeam_channel::TryRecvError::Disconnected) => return Ok(()),
@@ -382,6 +384,15 @@ pub fn run_demuxer(
                                 replay_cursor = try_cached_seek(&mut cache, &mut ictx, &packet_tx, t, f, n);
                                 continue;
                             }
+                            Ok(DemuxCommand::ChangeAudio(new_idx)) => {
+                                audio_idx = Some(new_idx);
+                                cache.clear();
+                                cache = PacketCache::new(
+                                    CACHE_MAX_BYTES, video_idx, audio_idx, subtitle_idx, &ictx,
+                                );
+                                replay_cursor = None;
+                                continue;
+                            }
                             Err(_) => return Ok(()),
                         }
                     }
@@ -423,6 +434,15 @@ pub fn run_demuxer(
                                     replay_cursor = try_cached_seek(&mut cache, &mut ictx, &packet_tx, t, f, n);
                                     continue;
                                 }
+                                Ok(DemuxCommand::ChangeAudio(new_idx)) => {
+                                    audio_idx = Some(new_idx);
+                                    cache.clear();
+                                    cache = PacketCache::new(
+                                        CACHE_MAX_BYTES, video_idx, audio_idx, subtitle_idx, &ictx,
+                                    );
+                                    replay_cursor = None;
+                                    continue;
+                                }
                                 Err(_) => return Ok(()),
                             }
                         }
@@ -439,6 +459,15 @@ pub fn run_demuxer(
                                 return Ok(());
                             };
                             replay_cursor = try_cached_seek(&mut cache, &mut ictx, &packet_tx, t, f, n);
+                            continue;
+                        }
+                        Ok(DemuxCommand::ChangeAudio(new_idx)) => {
+                            audio_idx = Some(new_idx);
+                            cache.clear();
+                            cache = PacketCache::new(
+                                CACHE_MAX_BYTES, video_idx, audio_idx, subtitle_idx, &ictx,
+                            );
+                            replay_cursor = None;
                             continue;
                         }
                         Err(_) => return Ok(()),
@@ -469,6 +498,9 @@ fn coalesce_seeks(
                 t = t2;
                 f = f2;
                 n += 1;
+            }
+            DemuxCommand::ChangeAudio(_) => {
+                // ChangeAudio is handled at the top of the loop; ignore during coalesce
             }
         }
     }

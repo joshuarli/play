@@ -62,19 +62,17 @@ struct OsdInner {
     last_right_secs: u64,
     /// After a click-seek, hold the bar position until the audio clock catches up.
     seek_hold_until_ms: u64,
+    /// Cached NSShadow for subtitle attributed strings (created once).
+    cached_sub_shadow: *mut AnyObject,
+    /// Cached NSMutableParagraphStyle for subtitle attributed strings.
+    cached_sub_para: *mut AnyObject,
 }
 
 unsafe impl Send for OsdInner {}
 
 static OSD: Mutex<Option<OsdInner>> = Mutex::new(None);
 
-fn now_ms() -> u64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64
-}
+use crate::time::now_ms;
 
 fn disable_animations() {
     let cls = AnyClass::get(c"CATransaction").unwrap();
@@ -214,6 +212,25 @@ pub fn init_layers(parent_ptr: *mut c_void, bounds: CGRect) {
     let _: () = unsafe { msg_send![&*bar_fill, setCornerRadius: TRACK_RADIUS] };
     let _: () = unsafe { msg_send![&*bar_bg, addSublayer: &*bar_fill] };
 
+    // Create cached subtitle style objects (shadow + paragraph style)
+    let cached_sub_shadow: *mut AnyObject = unsafe {
+        let shadow_cls = AnyClass::get(c"NSShadow").unwrap();
+        let shadow: Retained<AnyObject> = msg_send![shadow_cls, new];
+        let color_cls = AnyClass::get(c"NSColor").unwrap();
+        let black_ns: Retained<AnyObject> = msg_send![color_cls, blackColor];
+        let _: () = msg_send![&*shadow, setShadowColor: &*black_ns];
+        let zero = CGSize::new(0.0, 0.0);
+        let _: () = msg_send![&*shadow, setShadowOffset: zero];
+        let _: () = msg_send![&*shadow, setShadowBlurRadius: 2.0f64];
+        Retained::into_raw(shadow) as *mut AnyObject
+    };
+    let cached_sub_para: *mut AnyObject = unsafe {
+        let para_cls = AnyClass::get(c"NSMutableParagraphStyle").unwrap();
+        let para: Retained<AnyObject> = msg_send![para_cls, new];
+        let _: () = msg_send![&*para, setAlignment: 2i64]; // NSTextAlignmentCenter
+        Retained::into_raw(para) as *mut AnyObject
+    };
+
     // Store raw pointers
     let msg_ptr = Retained::into_raw(msg) as *mut AnyObject;
     let sub_ptr = Retained::into_raw(sub) as *mut AnyObject;
@@ -236,6 +253,8 @@ pub fn init_layers(parent_ptr: *mut c_void, bounds: CGRect) {
         last_left_secs: u64::MAX,
         last_right_secs: u64::MAX,
         seek_hold_until_ms: 0,
+        cached_sub_shadow,
+        cached_sub_para,
     });
 }
 
@@ -314,7 +333,13 @@ pub fn show_message(text: &str) {
 /// Build an NSAttributedString for subtitles.
 /// Uses NSShadow attribute for one outline pass; the CATextLayer's own
 /// shadow provides a second pass, combining into a thick crisp outline.
-fn build_sub_string(text: &str, font_size: f64) -> Retained<AnyObject> {
+/// `shadow` and `para` are cached ObjC objects from OsdInner.
+fn build_sub_string(
+    text: &str,
+    font_size: f64,
+    shadow: *mut AnyObject,
+    para: *mut AnyObject,
+) -> Retained<AnyObject> {
     unsafe {
         let font_cls = AnyClass::get(c"NSFont").unwrap();
         let font: Retained<AnyObject> =
@@ -322,20 +347,6 @@ fn build_sub_string(text: &str, font_size: f64) -> Retained<AnyObject> {
 
         let color_cls = AnyClass::get(c"NSColor").unwrap();
         let white: Retained<AnyObject> = msg_send![color_cls, whiteColor];
-        let black: Retained<AnyObject> = msg_send![color_cls, blackColor];
-
-        // Text-level shadow (rendered by Core Text, independent of CALayer shadow)
-        let shadow_cls = AnyClass::get(c"NSShadow").unwrap();
-        let shadow: Retained<AnyObject> = msg_send![shadow_cls, new];
-        let _: () = msg_send![&*shadow, setShadowColor: &*black];
-        let zero = CGSize::new(0.0, 0.0);
-        let _: () = msg_send![&*shadow, setShadowOffset: zero];
-        let _: () = msg_send![&*shadow, setShadowBlurRadius: 2.0f64];
-
-        // Center-aligned paragraph style
-        let para_cls = AnyClass::get(c"NSMutableParagraphStyle").unwrap();
-        let para: Retained<AnyObject> = msg_send![para_cls, new];
-        let _: () = msg_send![&*para, setAlignment: 2i64]; // NSTextAlignmentCenter (macOS)
 
         let dict_cls = AnyClass::get(c"NSMutableDictionary").unwrap();
         let dict: Retained<AnyObject> = msg_send![dict_cls, new];
@@ -345,9 +356,9 @@ fn build_sub_string(text: &str, font_size: f64) -> Retained<AnyObject> {
         let k = objc2_foundation::NSString::from_str("NSColor");
         let _: () = msg_send![&*dict, setObject: &*white, forKey: &*k];
         let k = objc2_foundation::NSString::from_str("NSShadow");
-        let _: () = msg_send![&*dict, setObject: &*shadow, forKey: &*k];
+        let _: () = msg_send![&*dict, setObject: shadow, forKey: &*k];
         let k = objc2_foundation::NSString::from_str("NSParagraphStyle");
-        let _: () = msg_send![&*dict, setObject: &*para, forKey: &*k];
+        let _: () = msg_send![&*dict, setObject: para, forKey: &*k];
 
         let ns_text = objc2_foundation::NSString::from_str(text);
         let raw: *mut AnyObject =
@@ -383,7 +394,12 @@ pub fn show_subtitle(text: Option<&str>) {
             );
             let _: () = unsafe { msg_send![inner.subtitle, setFrame: frame] };
 
-            let attr = build_sub_string(t, font_size);
+            let attr = build_sub_string(
+                t,
+                font_size,
+                inner.cached_sub_shadow,
+                inner.cached_sub_para,
+            );
             let _: () = unsafe { msg_send![inner.subtitle, setString: &*attr] };
             let _: () = unsafe { msg_send![inner.subtitle, setOpacity: 1.0f32] };
         }

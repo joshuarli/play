@@ -176,10 +176,4 @@ fn capitalize(s: &str) -> String {
     }
 }
 
-fn now_ms() -> u64 {
-    use std::time::SystemTime;
-    SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as u64
-}
+use crate::time::now_ms;

@@ -1,8 +1,7 @@
 use std::cell::Cell;
-use std::collections::VecDeque;
 use std::ffi::c_void;
-use std::sync::atomic::{AtomicI64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
+use std::sync::Arc;
 
 use anyhow::{bail, Result};
 
@@ -115,23 +114,125 @@ unsafe extern "C" {
     ) -> OSStatus;
 }
 
-// ── Shared state ───────────────────────────────────────────────────
+// ── Lock-free SPSC ring buffer ─────────────────────────────────────
 
-struct SharedAudio {
-    planes: Vec<VecDeque<f32>>,
-    /// PTS of the next sample to be consumed (microseconds).
-    read_pts_us: i64,
-    sample_rate: u32,
+/// Ring buffer capacity: 524288 samples (~10.9s at 48kHz). Must be power of 2.
+/// Sized to absorb the decode burst after a seek (decoder runs far faster than
+/// real-time while the audio callback is just starting up).
+const RING_CAPACITY: usize = 524288;
+
+struct SpscRing {
+    buf: *mut f32,
+    mask: usize,
+    /// Written by producer, read by consumer.
+    head: AtomicUsize,
+    /// Written by consumer, read by producer.
+    tail: AtomicUsize,
 }
+
+impl SpscRing {
+    fn new() -> Self {
+        let layout = std::alloc::Layout::from_size_align(
+            RING_CAPACITY * std::mem::size_of::<f32>(),
+            std::mem::align_of::<f32>(),
+        )
+        .unwrap();
+        let buf = unsafe { std::alloc::alloc_zeroed(layout) as *mut f32 };
+        assert!(!buf.is_null(), "ring buffer allocation failed");
+        Self {
+            buf,
+            mask: RING_CAPACITY - 1,
+            head: AtomicUsize::new(0),
+            tail: AtomicUsize::new(0),
+        }
+    }
+
+    /// Available space for writing.
+    fn available_write(&self) -> usize {
+        let head = self.head.load(Ordering::Relaxed);
+        let tail = self.tail.load(Ordering::Acquire);
+        RING_CAPACITY - (head.wrapping_sub(tail))
+    }
+
+    /// Available samples for reading.
+    fn available_read(&self) -> usize {
+        let head = self.head.load(Ordering::Acquire);
+        let tail = self.tail.load(Ordering::Relaxed);
+        head.wrapping_sub(tail)
+    }
+
+    /// Push samples into the ring. Returns how many were actually written.
+    fn push_slice(&self, src: &[f32]) -> usize {
+        let avail = self.available_write();
+        let n = src.len().min(avail);
+        if n == 0 {
+            return 0;
+        }
+        let head = self.head.load(Ordering::Relaxed);
+        let start = head & self.mask;
+        let first = n.min(RING_CAPACITY - start);
+        unsafe {
+            std::ptr::copy_nonoverlapping(src.as_ptr(), self.buf.add(start), first);
+            if first < n {
+                std::ptr::copy_nonoverlapping(src.as_ptr().add(first), self.buf, n - first);
+            }
+        }
+        self.head.store(head.wrapping_add(n), Ordering::Release);
+        n
+    }
+
+    /// Pop samples directly into a raw pointer (the CoreAudio buffer).
+    /// Returns how many were actually read.
+    fn pop_to_ptr(&self, dest: *mut f32, count: usize) -> usize {
+        let avail = self.available_read();
+        let n = count.min(avail);
+        if n == 0 {
+            return 0;
+        }
+        let tail = self.tail.load(Ordering::Relaxed);
+        let start = tail & self.mask;
+        let first = n.min(RING_CAPACITY - start);
+        unsafe {
+            std::ptr::copy_nonoverlapping(self.buf.add(start), dest, first);
+            if first < n {
+                std::ptr::copy_nonoverlapping(self.buf, dest.add(first), n - first);
+            }
+        }
+        self.tail.store(tail.wrapping_add(n), Ordering::Release);
+        n
+    }
+
+    /// Clear all data. Only safe when no concurrent reader/writer is active.
+    fn clear(&self) {
+        let head = self.head.load(Ordering::Relaxed);
+        self.tail.store(head, Ordering::Relaxed);
+    }
+}
+
+impl Drop for SpscRing {
+    fn drop(&mut self) {
+        let layout = std::alloc::Layout::from_size_align(
+            RING_CAPACITY * std::mem::size_of::<f32>(),
+            std::mem::align_of::<f32>(),
+        )
+        .unwrap();
+        unsafe { std::alloc::dealloc(self.buf as *mut u8, layout) };
+    }
+}
+
+// ── Callback context ──────────────────────────────────────────────
 
 /// Context leaked into the render callback via `Box::into_raw`.
 struct CallbackContext {
-    shared: Arc<Mutex<SharedAudio>>,
+    rings: Vec<SpscRing>,
+    /// PTS of the next sample to be consumed (microseconds).
+    read_pts_us: AtomicI64,
+    sample_rate: u32,
     clock: Arc<AtomicI64>,
     channels: u32,
 }
 
-// ── Render callback ────────────────────────────────────────────────
+// ── Render callback (lock-free) ───────────────────────────────────
 
 unsafe extern "C" fn render_callback(
     in_ref_con: *mut c_void,
@@ -146,12 +247,8 @@ unsafe extern "C" fn render_callback(
         let count = in_number_frames as usize;
         let ch_count = ctx.channels as usize;
 
-        let Ok(mut audio) = ctx.shared.try_lock() else {
-            zero_output(io_data, ch_count, count);
-            return 0;
-        };
-
-        let available = audio.planes.first().map_or(0, |p| p.len());
+        // Read from first ring to determine available samples
+        let available = ctx.rings.first().map_or(0, |r| r.available_read());
         if available == 0 {
             zero_output(io_data, ch_count, count);
             return 0;
@@ -159,30 +256,19 @@ unsafe extern "C" fn render_callback(
 
         let to_read = count.min(available);
         for ch in 0..ch_count {
-            let buf = &(*io_data).buffers.as_ptr().add(ch).read();
-            let dest = buf.data as *mut f32;
-            let plane = &mut audio.planes[ch];
-            let (front, back) = plane.as_slices();
-            if to_read <= front.len() {
-                std::ptr::copy_nonoverlapping(front.as_ptr(), dest, to_read);
-            } else {
-                let first = front.len();
-                std::ptr::copy_nonoverlapping(front.as_ptr(), dest, first);
-                let rest = to_read - first;
-                if rest > 0 {
-                    std::ptr::copy_nonoverlapping(back.as_ptr(), dest.add(first), rest);
-                }
-            }
-            for i in to_read..count {
+            let ab = &(*io_data).buffers.as_ptr().add(ch).read();
+            let dest = ab.data as *mut f32;
+            let read = ctx.rings[ch].pop_to_ptr(dest, to_read);
+            // Zero any remaining frames
+            for i in read..count {
                 *dest.add(i) = 0.0;
             }
-            plane.drain(..to_read);
         }
 
         // Advance PTS clock
-        let us = to_read as i64 * 1_000_000 / audio.sample_rate as i64;
-        audio.read_pts_us += us;
-        ctx.clock.store(audio.read_pts_us, Ordering::Relaxed);
+        let us = to_read as i64 * 1_000_000 / ctx.sample_rate as i64;
+        let prev = ctx.read_pts_us.fetch_add(us, Ordering::Relaxed);
+        ctx.clock.store(prev + us, Ordering::Relaxed);
 
         0
     }
@@ -199,14 +285,10 @@ fn zero_output(abl: *mut AudioBufferList, channels: usize, count: usize) {
 
 // ── AudioOutput ────────────────────────────────────────────────────
 
-#[allow(dead_code)]
 pub struct AudioOutput {
     unit: AudioUnit,
-    shared: Arc<Mutex<SharedAudio>>,
-    audio_clock: Arc<AtomicI64>,
     /// Leaked pointer recovered in Drop.
     ctx_ptr: *const CallbackContext,
-    channels: u32,
     volume: f32,
     stopped: Cell<bool>,
     paused: Cell<bool>,
@@ -265,15 +347,13 @@ impl AudioOutput {
             bail!("Failed to set stream format: {status}");
         }
 
-        let shared = Arc::new(Mutex::new(SharedAudio {
-            planes: vec![VecDeque::with_capacity(sample_rate as usize); channels as usize],
-            read_pts_us: 0,
-            sample_rate,
-        }));
+        let rings: Vec<SpscRing> = (0..channels).map(|_| SpscRing::new()).collect();
 
         // Leak callback context so the render thread can reference it.
         let ctx = Box::new(CallbackContext {
-            shared: shared.clone(),
+            rings,
+            read_pts_us: AtomicI64::new(0),
+            sample_rate,
             clock: audio_clock.clone(),
             channels: channels as u32,
         });
@@ -311,35 +391,33 @@ impl AudioOutput {
             bail!("AudioUnitInitialize failed: {status}");
         }
 
-        log::info!("Audio output: {sample_rate}Hz, {channels}ch (CoreAudio AudioUnit)");
+        log::info!("Audio output: {sample_rate}Hz, {channels}ch (CoreAudio AudioUnit, lock-free)");
 
         Ok(Self {
             unit,
-            shared,
-            audio_clock,
             ctx_ptr,
-            channels: channels as u32,
             volume: 1.0,
             stopped: Cell::new(true),
             paused: Cell::new(false),
         })
     }
 
-    /// Push decoded audio into the ring buffer. Starts the unit if stopped.
+    /// Push decoded audio into the ring buffers. Starts the unit if stopped.
     pub fn schedule_buffer(&self, buf: &AudioBuffer) {
         let n = buf.samples_per_channel;
         if n == 0 {
             return;
         }
-        let mut audio = self.shared.lock().unwrap();
-        if audio.planes.first().map_or(true, |p| p.is_empty()) {
-            audio.read_pts_us = buf.pts_us;
+        let ctx = unsafe { &*self.ctx_ptr };
+
+        // If rings are empty, set the read PTS to this buffer's PTS
+        if ctx.rings.first().map_or(true, |r| r.available_read() == 0) {
+            ctx.read_pts_us.store(buf.pts_us, Ordering::Relaxed);
         }
+
         for ch in 0..buf.channels as usize {
-            let src = &buf.samples[ch * n..][..n];
-            audio.planes[ch].extend(src);
+            ctx.rings[ch].push_slice(&buf.planes[ch]);
         }
-        drop(audio);
 
         if self.stopped.get() && !self.paused.get() {
             unsafe { AudioOutputUnitStart(self.unit) };
@@ -358,10 +436,8 @@ impl AudioOutput {
     pub fn play(&self) {
         self.paused.set(false);
         if self.stopped.get() {
-            let has_audio = {
-                let audio = self.shared.lock().unwrap();
-                audio.planes.first().map_or(false, |p| !p.is_empty())
-            };
+            let ctx = unsafe { &*self.ctx_ptr };
+            let has_audio = ctx.rings.first().map_or(false, |r| r.available_read() > 0);
             if has_audio {
                 unsafe { AudioOutputUnitStart(self.unit) };
                 self.stopped.set(false);
@@ -392,14 +468,14 @@ impl AudioOutput {
 
     /// Stop the unit and clear all buffered audio.
     pub fn flush(&self) {
+        // AudioOutputUnitStop guarantees the callback is not running after it returns.
         if !self.stopped.get() {
             unsafe { AudioOutputUnitStop(self.unit) };
             self.stopped.set(true);
         }
-        if let Ok(mut audio) = self.shared.lock() {
-            for plane in &mut audio.planes {
-                plane.clear();
-            }
+        let ctx = unsafe { &*self.ctx_ptr };
+        for ring in &ctx.rings {
+            ring.clear();
         }
     }
 }

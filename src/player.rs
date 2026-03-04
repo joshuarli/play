@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::atomic::AtomicI64;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -82,9 +83,9 @@ pub struct Player {
     last_subtitle_text: Option<String>,
 
     // Stream info
+    file_path: PathBuf,
     stream_info: StreamInfo,
     current_audio_track: usize,
-
 }
 
 impl Player {
@@ -94,6 +95,7 @@ impl Player {
         demux_cmd_tx: Sender<DemuxCommand>,
         video_frame_tx: Sender<VideoFrame>,
         ui_update_tx: Sender<UiUpdate>,
+        file_path: PathBuf,
         stream_info: StreamInfo,
         initial_volume: u32,
         initial_audio_delay: f64,
@@ -129,13 +131,16 @@ impl Player {
             subtitle_tracks,
             current_subtitle_idx: None,
             last_subtitle_text: None,
+            file_path,
             stream_info,
             current_audio_track: 0,
         })
     }
 
-    /// Initialize decoders. Must be called after construction, with access to the ffmpeg streams.
-    pub fn init_decoders(&mut self, ictx: &ffmpeg_next::format::context::Input) -> Result<()> {
+    /// Initialize decoders. Opens the file to read stream parameters.
+    pub fn init_decoders(&mut self) -> Result<()> {
+        let ictx = ffmpeg_next::format::input(&self.file_path)
+            .with_context(|| format!("Failed to open: {}", self.file_path.display()))?;
         if let Some(ref vs) = self.stream_info.video_stream {
             let stream = ictx.stream(vs.index).context("Video stream not found")?;
             let vd = VideoDecoder::new(&stream)?;
@@ -402,14 +407,79 @@ impl Player {
                 if self.stream_info.audio_streams.len() > 1 {
                     self.current_audio_track =
                         (self.current_audio_track + 1) % self.stream_info.audio_streams.len();
-                    let info = &self.stream_info.audio_streams[self.current_audio_track];
+                    let new_info = &self.stream_info.audio_streams[self.current_audio_track];
+
+                    // Flush current audio pipeline
+                    if let Some(ref mut ad) = self.audio_decoder {
+                        ad.flush();
+                    }
+                    if let Some(ref ao) = self.audio_output {
+                        ao.flush();
+                    }
+
+                    // Tell demuxer to switch audio stream
+                    let _ = self
+                        .demux_cmd_tx
+                        .send(DemuxCommand::ChangeAudio(new_info.index));
+
+                    // Re-open input to get new stream parameters and create new decoder
+                    match ffmpeg_next::format::input(&self.file_path) {
+                        Ok(ictx) => {
+                            match ictx.stream(new_info.index) {
+                                Some(stream) => {
+                                    match AudioDecoder::new(&stream) {
+                                        Ok(decoder) => {
+                                            let new_rate = decoder.sample_rate;
+                                            let new_channels = decoder.channels;
+                                            self.audio_decoder = Some(decoder);
+
+                                            // Recreate audio output for new stream params
+                                            self.audio_output = None;
+                                            match AudioOutput::new(
+                                                new_rate,
+                                                new_channels,
+                                                self.audio_clock.clone(),
+                                            ) {
+                                                Ok(mut ao) => {
+                                                    if self.volume < 100 {
+                                                        ao.set_volume(
+                                                            self.volume as f32 / 100.0,
+                                                        );
+                                                    }
+                                                    self.audio_output = Some(ao);
+                                                }
+                                                Err(e) => {
+                                                    log::error!(
+                                                        "Failed to create audio output: {e}"
+                                                    );
+                                                }
+                                            }
+                                        }
+                                        Err(e) => {
+                                            log::error!("Failed to create audio decoder: {e}");
+                                        }
+                                    }
+                                }
+                                None => {
+                                    log::error!(
+                                        "Audio stream {} not found",
+                                        new_info.index
+                                    );
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            log::error!("Failed to re-open file for audio switch: {e}");
+                        }
+                    }
+
                     let _ = self.ui_update_tx.send(UiUpdate::Osd(format!(
                         "Audio: {}/{} - {} {}Hz {}",
                         self.current_audio_track + 1,
                         self.stream_info.audio_streams.len(),
-                        info.codec_name,
-                        info.sample_rate,
-                        info.channel_layout_desc,
+                        new_info.codec_name,
+                        new_info.sample_rate,
+                        new_info.channel_layout_desc,
                     )));
                 }
             }
@@ -539,10 +609,7 @@ impl Player {
                                     .send(UiUpdate::SeekFlush(buf.pts_us));
                             }
                         }
-                        let end_us = buf.pts_us
-                            + (buf.samples_per_channel as i64 * 1_000_000
-                                / buf.sample_rate as i64);
-                        self.last_audio_end_us = self.last_audio_end_us.max(end_us);
+                        self.last_audio_end_us = self.last_audio_end_us.max(buf.end_us());
                         if let Some(ref ao) = self.audio_output {
                             ao.schedule_buffer(&buf);
                         }
@@ -563,20 +630,14 @@ impl Player {
                 if let Some(ref mut ad) = self.audio_decoder {
                     let _ = ad.send_eof();
                     while let Some(buf) = ad.receive_buffer() {
-                        let end = buf.pts_us
-                            + (buf.samples_per_channel as i64 * 1_000_000
-                                / buf.sample_rate as i64);
-                        self.last_audio_end_us = self.last_audio_end_us.max(end);
+                        self.last_audio_end_us = self.last_audio_end_us.max(buf.end_us());
                         if let Some(ref ao) = self.audio_output {
                             ao.schedule_buffer(&buf);
                         }
                     }
                     // Flush any remaining accumulated samples
                     if let Some(buf) = ad.drain_accum() {
-                        let end = buf.pts_us
-                            + (buf.samples_per_channel as i64 * 1_000_000
-                                / buf.sample_rate as i64);
-                        self.last_audio_end_us = self.last_audio_end_us.max(end);
+                        self.last_audio_end_us = self.last_audio_end_us.max(buf.end_us());
                         if let Some(ref ao) = self.audio_output {
                             ao.schedule_buffer(&buf);
                         }
@@ -602,9 +663,16 @@ impl Player {
             return;
         };
         let pts = self.sync_clock.audio_pts();
-        let text = track.text_at(pts).map(|s| s.to_string());
+        let current = track.text_at(pts);
 
-        if text != self.last_subtitle_text {
+        let changed = match (&current, &self.last_subtitle_text) {
+            (Some(a), Some(b)) => *a != b.as_str(),
+            (None, None) => false,
+            _ => true,
+        };
+
+        if changed {
+            let text = current.map(|s| s.to_string());
             self.last_subtitle_text = text.clone();
             let _ = self.ui_update_tx.send(UiUpdate::SubtitleText(text));
         }
@@ -644,6 +712,7 @@ mod tests {
             demux_cmd_tx,
             video_frame_tx,
             ui_update_tx,
+            PathBuf::from("/dev/null"),
             stream_info,
             100,
             0.0,

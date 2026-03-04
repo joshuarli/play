@@ -1,4 +1,14 @@
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use anyhow::{bail, Result};
+
+/// Current wall-clock time in milliseconds (monotonic-ish, for OSD timeouts).
+pub fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
 
 /// Format microseconds as HH:MM:SS.
 pub fn format_time(us: i64) -> String {

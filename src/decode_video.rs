@@ -7,7 +7,7 @@ use ffmpeg_next::codec::context::Context as CodecContext;
 use ffmpeg_next::util::frame::video::Video;
 use ffmpeg_sys_next as ffs;
 
-use crate::cmd::VideoFrame;
+use crate::cmd::{PixelBuffer, VideoFrame};
 use crate::time::pts_to_us;
 
 /// VideoToolbox-accelerated video decoder.
@@ -88,27 +88,23 @@ impl VideoDecoder {
                 let duration = unsafe { (*raw).duration };
                 let duration_us = pts_to_us(duration, self.stream_time_base);
 
-                let pixel_buffer = if unsafe { (*raw).format }
-                    == ffs::AVPixelFormat::AV_PIX_FMT_VIDEOTOOLBOX as i32
+                if unsafe { (*raw).format }
+                    != ffs::AVPixelFormat::AV_PIX_FMT_VIDEOTOOLBOX as i32
                 {
-                    // data[3] is the CVPixelBufferRef
-                    let cvbuf = unsafe { (*raw).data[3] as *mut c_void };
-                    // Retain the CVPixelBuffer so it outlives the frame
-                    if !cvbuf.is_null() {
-                        unsafe {
-                            CVPixelBufferRetain(cvbuf);
-                        }
-                    }
-                    cvbuf
-                } else {
-                    // Software decode: transfer to CVPixelBuffer
-                    // For now, return null (we'll handle software path later)
-                    log::warn!("Software decoded frame (no CVPixelBuffer)");
-                    ptr::null_mut()
-                };
+                    log::error!("Software decoded frame has no CVPixelBuffer — skipping");
+                    return None;
+                }
+
+                // data[3] is the CVPixelBufferRef
+                let cvbuf = unsafe { (*raw).data[3] as *mut c_void };
+                if cvbuf.is_null() {
+                    return None;
+                }
+                // Retain the CVPixelBuffer so it outlives the frame
+                unsafe { CVPixelBufferRetain(cvbuf) };
 
                 Some(VideoFrame {
-                    pixel_buffer,
+                    pixel_buffer: Some(PixelBuffer::new(cvbuf)),
                     pts_us,
                     duration_us,
                     seek_flush: false,

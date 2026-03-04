@@ -9,12 +9,12 @@ Main Thread (AppKit)           Player Thread              Demuxer Thread
 ─────────────────────          ─────────────               ──────────────
 NSApplication.run()            crossbeam select! loop      blocking av_read_frame
 NSWindow + layers              video/audio decode          sends DemuxPacket
-key events → Command           A/V sync decisions          receives seek/stop
-video frame display            schedules audio buffers
+key events → Command           seek state machine          receives seek/stop/ChangeAudio
+video frame display            schedules audio buffers     150MB packet cache (binary search)
 OSD/subtitle rendering         subtitle lookup
 
-                               Audio Render Thread (implicit, AVAudioEngine)
-                               pulls PCM, updates Arc<AtomicI64> clock
+                               Audio Render Thread (implicit, CoreAudio AudioUnit)
+                               lock-free SPSC ring pop, updates Arc<AtomicI64> clock
 ```
 
 ## Channel Layout
@@ -22,8 +22,8 @@ OSD/subtitle rendering         subtitle lookup
 ```
 cmd_tx/rx          bounded(32)   Command        Main → Player     key events
 demux_packet_tx/rx bounded(64)   DemuxPacket    Demuxer → Player  video/audio/sub packets
-demux_cmd_tx/rx    bounded(4)    DemuxCommand   Player → Demuxer  seek/stop
-video_frame_tx/rx  bounded(2)    VideoFrame     Player → Main     CVPixelBuffer + PTS
+demux_cmd_tx/rx    bounded(4)    DemuxCommand   Player → Demuxer  seek/stop/ChangeAudio
+video_frame_tx/rx  bounded(8)    VideoFrame     Player → Main     PixelBuffer (RAII) + PTS
 ui_update_tx/rx    unbounded     UiUpdate       Player → Main     OSD text, subtitles, EOF
 audio_clock        Arc<AtomicI64>               Audio → Player    current PTS (microseconds)
 ```
@@ -31,60 +31,63 @@ audio_clock        Arc<AtomicI64>               Audio → Player    current PTS 
 ## Data Flow
 
 ```
-File → Demuxer → DemuxPacket ──┬── Video: VideoToolbox GPU decode
-                               │   → CVPixelBuffer (retained)
-                               │   → SyncClock.decide() (display/drop/wait)
-                               │   → VideoFrame → Main Thread
-                               │   → CMSampleBuffer → AVSampleBufferDisplayLayer
-                               │
-                               ├── Audio: ffmpeg CPU decode
-                               │   → resample to f32 planar (matches AVAudioEngine)
-                               │   → memcpy per-plane → AVAudioPCMBuffer
-                               │   → AVAudioPlayerNode
-                               │   → completion handler updates audio_clock
-                               │
-                               └── Periodic (16ms timeout)
-                                   → SubtitleTrack.text_at(audio_pts)
-                                   → UiUpdate if changed
+File → Demuxer (PacketCache, binary search) → DemuxPacket
+   │
+   ├── Video: VideoToolbox GPU decode
+   │   → PixelBuffer (RAII, CVPixelBufferRelease on Drop)
+   │   → try_send to bounded(8) channel
+   │   → Main Thread 240Hz timer
+   │   → CMSampleBuffer → AVSampleBufferDisplayLayer
+   │
+   ├── Audio: ffmpeg CPU decode
+   │   → resample to f32 planar (per-channel Vec<Vec<f32>>)
+   │   → push_slice into lock-free SPSC ring buffers (65536 samples/channel)
+   │   → CoreAudio render callback pops from rings (no locks)
+   │   → render callback updates audio_clock via AtomicI64
+   │
+   └── Periodic (16ms timeout / 1ms when seek queued)
+       → SubtitleTrack.text_at(audio_pts)
+       → UiUpdate if changed (allocation-free comparison)
 ```
 
 ## Modules
 
 | File | Lines | Responsibility |
 |---|---|---|
-| `main.rs` | ~265 | Thread spawning, file probe, stream info logging |
-| `cmd.rs` | ~260 | Command/DemuxPacket/DemuxCommand/VideoFrame/UiUpdate/Args types, arg parser |
-| `player.rs` | ~540 | State machine: crossbeam select!, decode dispatch, seek buffering, volume, subtitles |
-| `demux.rs` | ~310 | ffmpeg format::input, packet reading, seek coalescing, stream probe |
-| `decode_video.rs` | ~170 | VideoToolbox hwaccel setup, CVPixelBuffer extraction from AVFrame.data[3] |
-| `decode_audio.rs` | ~130 | ffmpeg audio decode + resample to f32 planar via software::resampling |
-| `video_out.rs` | ~300 | AVSampleBufferDisplayLayer, CMSampleBuffer from CVPixelBuffer, timebase sync |
-| `audio_out.rs` | ~415 | CoreAudio AudioUnit, non-interleaved f32 render callback, planar buffer scheduling, clock reporting |
-| `window.rs` | ~325 | NSWindow via objc2 define_class!, key monitor, GCD timer (~120Hz), layer setup |
-| `osd.rs` | ~265 | CATextLayer OSD messages, NSAttributedString subtitles with outline |
-| `sync.rs` | ~105 | Audio-master clock (AtomicI64), pause/resume, seek position |
-| `subtitle.rs` | ~260 | SRT parser, binary search lookup, auto-detection of .srt files |
+| `main.rs` | ~320 | Thread spawning, file probe, playlist loop, stream info logging |
+| `cmd.rs` | ~330 | Command/DemuxPacket/DemuxCommand/VideoFrame/PixelBuffer(RAII)/UiUpdate/Args types, arg parser |
+| `player.rs` | ~985 | State machine: crossbeam select!, decode dispatch, seek coalescing, volume, subtitles, audio track switching |
+| `demux.rs` | ~810 | ffmpeg format::input, 150MB packet cache (binary search), seek coalescing, ChangeAudio, stream probe |
+| `decode_video.rs` | ~170 | VideoToolbox hwaccel setup, PixelBuffer extraction from AVFrame.data[3] |
+| `decode_audio.rs` | ~230 | ffmpeg audio decode + resample to f32 planar, per-channel planes, 8192-sample accumulation, end_us() |
+| `video_out.rs` | ~340 | AVSampleBufferDisplayLayer, CMSampleBuffer from PixelBuffer, CMTimebase sync |
+| `audio_out.rs` | ~490 | CoreAudio AudioUnit, lock-free SPSC ring buffers (65536 samples/ch), non-interleaved f32 render callback |
+| `window.rs` | ~455 | NSWindow via objc2 define_class!, key/mouse monitors, GCD timer (240Hz / 4ms), layer setup |
+| `osd.rs` | ~535 | CATextLayer OSD messages, NSAttributedString subtitles (cached shadow/paragraph style), clickable progress bar |
+| `sync.rs` | ~100 | Audio-master clock (AtomicI64), pause/resume, seek position |
+| `subtitle.rs` | ~265 | SRT parser, binary search lookup, auto-detection of .srt files |
 | `input.rs` | ~165 | Virtual key code → Command mapping (Carbon key codes + characters) |
-| `time.rs` | ~180 | PTS↔microseconds conversion (i128 overflow-safe), HH:MM:SS format/parse |
-| `terminal.rs` | ~80 | Audio-only mode: termion raw terminal, keyboard controls |
-| `build.rs` | ~17 | Links Apple frameworks (AVFoundation, CoreMedia, CoreVideo, etc.) |
+| `time.rs` | ~190 | PTS↔microseconds conversion (i128 overflow-safe), HH:MM:SS format/parse, now_ms() |
+| `terminal.rs` | ~180 | Audio-only mode: termion raw terminal, metadata display, keyboard controls |
+| `build.rs` | ~16 | Links Apple frameworks (AVFoundation, CoreMedia, CoreVideo, etc.) |
 
 ## Key Dependencies
 
 - **ffmpeg-next 7** + **ffmpeg-sys-next 7** (vendored build, statically linked, VideoToolbox hwaccel)
-- **objc2 0.6** ecosystem for Apple framework bindings (raw `msg_send!` with `AnyObject` for AVFoundation/AVFAudio/CoreMedia APIs that lack typed bindings)
-- **block2 0.6** for Objective-C blocks (audio completion handlers, key monitor, timer)
+- **objc2 0.6** ecosystem for Apple framework bindings (raw `msg_send!` with `AnyObject` for AVFoundation/CoreMedia APIs that lack typed bindings)
+- **block2 0.6** for Objective-C blocks (key monitor, timer handler)
 - **dispatch2 0.3** for GCD timer on main queue
 - **crossbeam-channel 0.5** for inter-thread communication
 - **termion 4** for terminal raw mode (audio-only mode), **anyhow** for errors
 
 ## A/V Sync
 
-Audio-master: audio plays at device rate, video adjusts. The audio completion handler
-writes the current PTS to `Arc<AtomicI64>`. The player reads it to decide per-frame:
-- **> 50ms late**: drop frame (release CVPixelBuffer, don't enqueue)
-- **> 50ms early**: display anyway (layer handles timing in practice)
-- **within ±50ms**: display immediately
+Audio-master: audio plays at device rate, video adjusts. The CoreAudio render callback
+writes the current PTS to `Arc<AtomicI64>` as it consumes samples. The display layer's
+CMTimebase handles video frame pacing — the player simply pushes frames via `try_send()`
+and the layer presents them at the correct PTS. Every ~1s the main thread corrects
+timebase drift vs audio clock (threshold: 5ms). If the video channel is full, frames
+are implicitly dropped (try_send returns Full).
 
 ## Seek Coalescing
 
@@ -92,34 +95,42 @@ Holding an arrow key generates ~30 `SeekRelative` commands/sec. Without coalesci
 would trigger a full ffmpeg seek + decode flush round-trip. Two layers prevent this:
 
 1. **Player buffering** (`player.rs`): At most one seek is in flight to the demuxer. While
-   `pending_seeks > 0`, new seeks overwrite a `buffered_seek` field instead of dispatching.
-   When the Flush returns, the buffered seek is dispatched without redundant decoder flushes
-   (decoders are still clean — no packets were fed since the last flush).
+   `pending_seeks > 0`, new seeks accumulate into a `queued_seek` field instead of dispatching.
+   A minimum display time (`SEEK_MIN_DISPLAY` = 4ms) ensures each seek-flush frame survives
+   at least one VSync before the next flush clears it. A safety timeout (`SEEK_COALESCE_TIMEOUT`
+   = 50ms) prevents stuck decodes from freezing scrubbing.
 
 2. **Demuxer coalescing** (`demux.rs`): The demuxer drains all pending seeks from `cmd_rx`
    at the top of each loop iteration (keeps only the last). The packet send uses
    `crossbeam::select!` to race `send` vs `recv`, so a seek command is processed immediately
-   even when the packet channel is full (stale packet is dropped).
+   even when the packet channel is full (stale packet is dropped). Seeks are served from the
+   150MB in-memory packet cache when possible (instant replay, no file I/O).
 
 ## OSD Rendering
 
 Two `CATextLayer` sublayers on the content view's layer, above the display layer:
 - **Message** (bottom-left, 16pt): seek position, volume, audio delay. Fades after 2s.
-- **Subtitle** (bottom-center, dynamic size): NSAttributedString with stroke outline. Shown/hidden by PTS lookup.
+- **Subtitle** (bottom-center, dynamic size): NSAttributedString with shadow outline. Shown/hidden by PTS lookup.
+- **Progress bar** (bottom, 36pt): clickable track with fill + timestamps. Auto-hides after 2s. Seek-hold prevents snap-back during click-drag.
 
-Subtitle font size scales with window height (`height * 22/720`). Black stroke outline via
-negative `NSStrokeWidth` plus subtle shadow for readability. Frame and margins recalculated
-on each update. `CATransaction` disables implicit animations.
+Subtitle font size scales with window height (`height * 22/720`). Shadow outline via
+NSShadow attribute plus CATextLayer shadow for double-pass crispness. Frame and margins
+recalculated on each update. `CATransaction` disables implicit animations.
 
 ## Gotchas
 
-- `initWithCommonFormat:sampleRate:channels:interleaved:` on AVAudioFormat crashes with
-  a C++ exception from CoreAudio. Use `initStandardFormatWithSampleRate:channels:` instead
-  (non-interleaved float32). Resampler outputs planar f32 to match; memcpy per-plane.
 - `OpaqueCMSampleBuffer` needs a custom `RefEncode` impl (`Pointer → Struct`) to satisfy
   objc2's runtime type checking for `enqueueSampleBuffer:`.
 - ffmpeg-sys-next `build-audiotoolbox` feature is broken on macOS (adds iOS flags). Omit it;
-  AVAudioEngine is used via objc2 instead.
+  audio output uses CoreAudio AudioUnit via C FFI instead.
 - `NSWindow` is not `Send`/`Sync` — stored in a `thread_local! RefCell`. Display layer pointer
   wrapped in `SendPtr` newtype for `OnceLock`.
 - `define_class!` in objc2 0.6 requires unit structs (no inline ivars). State goes in globals.
+- Opus/AAC `ch_layout.nb_channels` must be read from the modern API — the legacy
+  `channel_layout` bitmask is often unset, giving 0 channels.
+- `SpscRing::clear()` is only safe after `AudioOutputUnitStop` returns (guarantees callback
+  is not running). Always call `flush()` which stops first, then clears.
+- `PixelBuffer` RAII owns a retained CVPixelBufferRef. Use `.take()` to transfer ownership
+  to CoreMedia without triggering Drop. Forgetting to take leaks the buffer.
+- Audio track switching (`CycleAudioTrack`) re-opens the file with `format::input` to get
+  new stream parameters. The `Input` context is dropped immediately after decoder creation.

@@ -186,9 +186,9 @@ pub fn enqueue_frame(mut frame: VideoFrame) {
         return; // Drop releases the pixel buffer
     };
 
-    if frame.pixel_buffer.is_null() {
+    let Some(pb) = frame.pixel_buffer.take() else {
         return;
-    }
+    };
 
     // Timebase handling: call get() once, then branch on seek_flush vs first-frame.
     let timebase = TIMEBASE.get();
@@ -217,7 +217,7 @@ pub fn enqueue_frame(mut frame: VideoFrame) {
     }
 
     // Take ownership — we'll release after handing to CoreMedia
-    let pixel_buffer = frame.take_pixel_buffer();
+    let pixel_buffer = pb.take();
 
     // Reuse cached CMVideoFormatDescription (same resolution/pixel format for entire file)
     let format_desc = {

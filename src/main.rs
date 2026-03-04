@@ -228,6 +228,7 @@ fn play_file(
                 demux_cmd_tx,
                 video_frame_tx,
                 ui_update_tx,
+                player_path,
                 player_info,
                 initial_volume,
                 initial_audio_delay,
@@ -241,19 +242,10 @@ fn play_file(
                 }
             };
 
-            // Initialize decoders (need access to the input context for stream params)
-            let ictx = match ffmpeg_next::format::input(&player_path) {
-                Ok(ctx) => ctx,
-                Err(e) => {
-                    log::error!("Failed to open file for decoding: {e}");
-                    return;
-                }
-            };
-            if let Err(e) = player.init_decoders(&ictx) {
+            if let Err(e) = player.init_decoders() {
                 log::error!("Failed to init decoders: {e}");
                 return;
             }
-            drop(ictx); // close the second context, decoders are initialized
 
             // Seek to start position if specified
             if start_pos > 0 {

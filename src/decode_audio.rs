@@ -31,10 +31,10 @@ pub struct AudioDecoder {
 
 unsafe impl Send for AudioDecoder {}
 
-/// A decoded audio buffer with timing info. Samples are planar (channels stored contiguously).
+/// A decoded audio buffer with timing info. Samples are per-channel planes.
 pub struct AudioBuffer {
-    /// Planar f32 PCM: [ch0_sample0..ch0_sampleN, ch1_sample0..ch1_sampleN, ...].
-    pub samples: Vec<f32>,
+    /// Per-channel f32 PCM planes: planes[ch][sample].
+    pub planes: Vec<Vec<f32>>,
     /// Number of samples per channel.
     pub samples_per_channel: usize,
     /// Number of channels.
@@ -43,6 +43,13 @@ pub struct AudioBuffer {
     pub sample_rate: u32,
     /// Presentation timestamp in microseconds.
     pub pts_us: i64,
+}
+
+impl AudioBuffer {
+    /// PTS of the sample just past the end of this buffer.
+    pub fn end_us(&self) -> i64 {
+        self.pts_us + (self.samples_per_channel as i64 * 1_000_000 / self.sample_rate as i64)
+    }
 }
 
 impl AudioDecoder {
@@ -193,15 +200,15 @@ impl AudioDecoder {
 
     fn take_accum(&mut self) -> AudioBuffer {
         let count = self.accum_count;
-        let channels = self.accum_planes.len();
-        let mut samples = Vec::with_capacity(count * channels);
-        for plane in &mut self.accum_planes {
-            samples.append(plane);
-        }
+        let planes: Vec<Vec<f32>> = self
+            .accum_planes
+            .iter_mut()
+            .map(|p| std::mem::take(p))
+            .collect();
         self.accum_count = 0;
 
         AudioBuffer {
-            samples,
+            planes,
             samples_per_channel: count,
             channels: self.channels,
             sample_rate: self.sample_rate,

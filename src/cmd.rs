@@ -45,13 +45,42 @@ pub enum DemuxCommand {
         /// Seek forward (keyframe at or after target) vs backward.
         forward: bool,
     },
+    /// Switch to a different audio stream index.
+    ChangeAudio(usize),
     Stop,
 }
 
-/// Video frame ready for display. Releases CVPixelBuffer on drop.
+/// RAII wrapper for a retained CVPixelBufferRef.
+pub struct PixelBuffer(*mut std::ffi::c_void);
+
+impl PixelBuffer {
+    /// Wrap a retained CVPixelBufferRef. Caller must have already called CVPixelBufferRetain.
+    pub fn new(ptr: *mut std::ffi::c_void) -> Self {
+        Self(ptr)
+    }
+
+    /// Take the raw pointer, defusing the Drop. Caller assumes ownership.
+    pub fn take(mut self) -> *mut std::ffi::c_void {
+        let ptr = self.0;
+        self.0 = std::ptr::null_mut();
+        ptr
+    }
+}
+
+unsafe impl Send for PixelBuffer {}
+
+impl Drop for PixelBuffer {
+    fn drop(&mut self) {
+        if !self.0.is_null() {
+            unsafe { crate::decode_video::release_pixel_buffer(self.0) };
+        }
+    }
+}
+
+/// Video frame ready for display.
 pub struct VideoFrame {
-    /// Raw pointer to CVPixelBufferRef (retained, released on drop).
-    pub pixel_buffer: *mut std::ffi::c_void,
+    /// Retained CVPixelBufferRef, released on drop via PixelBuffer.
+    pub pixel_buffer: Option<PixelBuffer>,
     /// Presentation timestamp in stream timebase microseconds.
     pub pts_us: i64,
     /// Duration of this frame in microseconds.
@@ -59,24 +88,6 @@ pub struct VideoFrame {
     /// If true, flush the display layer and reset the timebase before enqueuing.
     /// Bundled with the frame so flush+enqueue are atomic (no VSync gap).
     pub seek_flush: bool,
-}
-
-unsafe impl Send for VideoFrame {}
-
-impl Drop for VideoFrame {
-    fn drop(&mut self) {
-        if !self.pixel_buffer.is_null() {
-            unsafe { crate::decode_video::release_pixel_buffer(self.pixel_buffer) };
-            self.pixel_buffer = std::ptr::null_mut();
-        }
-    }
-}
-
-impl VideoFrame {
-    /// Take ownership of the pixel buffer pointer, preventing release on drop.
-    pub fn take_pixel_buffer(&mut self) -> *mut std::ffi::c_void {
-        std::mem::replace(&mut self.pixel_buffer, std::ptr::null_mut())
-    }
 }
 
 /// Updates sent from the player to the main (UI) thread.
