@@ -6,7 +6,7 @@ use ffmpeg_next::util::frame::audio::Audio;
 
 use crate::time::pts_to_us;
 
-/// Audio decoder: decodes packets to interleaved f32 PCM.
+/// Audio decoder: decodes packets to planar f32 PCM.
 pub struct AudioDecoder {
     decoder: ffmpeg::decoder::Audio,
     resampler: Option<resampling::Context>,
@@ -20,10 +20,12 @@ pub struct AudioDecoder {
 
 unsafe impl Send for AudioDecoder {}
 
-/// A decoded audio buffer with timing info.
+/// A decoded audio buffer with timing info. Samples are planar (channels stored contiguously).
 pub struct AudioBuffer {
-    /// Interleaved f32 PCM samples.
+    /// Planar f32 PCM: [ch0_sample0..ch0_sampleN, ch1_sample0..ch1_sampleN, ...].
     pub samples: Vec<f32>,
+    /// Number of samples per channel.
+    pub samples_per_channel: usize,
     /// Number of channels.
     pub channels: u16,
     /// Sample rate.
@@ -72,13 +74,13 @@ impl AudioDecoder {
                 let pts = self.frame.pts().unwrap_or(0);
                 let pts_us = pts_to_us(pts, self.stream_time_base);
 
-                // Ensure resampler is set up (to f32 planar → f32 interleaved)
+                // Ensure resampler is set up (to f32 planar)
                 let resampler = self.resampler.get_or_insert_with(|| {
                     resampling::Context::get(
                         self.frame.format(),
                         self.frame.channel_layout(),
                         self.frame.rate(),
-                        ffmpeg::format::Sample::F32(ffmpeg::format::sample::Type::Packed),
+                        ffmpeg::format::Sample::F32(ffmpeg::format::sample::Type::Planar),
                         self.frame.channel_layout(),
                         self.frame.rate(),
                     )
@@ -92,23 +94,26 @@ impl AudioDecoder {
                     delay = resampler.flush(&mut self.resampled).ok();
                 }
 
-                // Extract f32 samples from resampled frame
+                // Extract planar f32 samples: [ch0_0..ch0_N, ch1_0..ch1_N, ...]
                 let nb_samples = self.resampled.samples() as usize;
                 let channels = self.channels as usize;
-                let total = nb_samples * channels;
 
-                if total == 0 {
+                if nb_samples == 0 {
                     return None;
                 }
 
-                let data_ptr = self.resampled.data(0);
                 self.sample_buf.clear();
-                self.sample_buf.extend_from_slice(unsafe {
-                    std::slice::from_raw_parts(data_ptr.as_ptr() as *const f32, total)
-                });
+                self.sample_buf.reserve(nb_samples * channels);
+                for ch in 0..channels {
+                    let plane = self.resampled.data(ch);
+                    self.sample_buf.extend_from_slice(unsafe {
+                        std::slice::from_raw_parts(plane.as_ptr() as *const f32, nb_samples)
+                    });
+                }
 
                 Some(AudioBuffer {
                     samples: std::mem::take(&mut self.sample_buf),
+                    samples_per_channel: nb_samples,
                     channels: self.channels,
                     sample_rate: self.sample_rate,
                     pts_us,

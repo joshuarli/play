@@ -77,7 +77,7 @@ impl AudioOutput {
 
     /// Schedule an audio buffer for playback.
     pub fn schedule_buffer(&self, buf: &AudioBuffer) {
-        let frame_count = buf.samples.len() as u32 / buf.channels as u32;
+        let frame_count = buf.samples_per_channel as u32;
         if frame_count == 0 {
             return;
         }
@@ -93,19 +93,18 @@ impl AudioOutput {
         // Set frame length
         let _: () = unsafe { msg_send![&*pcm_buf, setFrameLength: frame_count] };
 
-        // Copy interleaved samples to non-interleaved buffer
+        // Copy planar samples directly — no deinterleave needed
         let float_data: *mut *mut f32 = unsafe { msg_send![&*pcm_buf, floatChannelData] };
         if !float_data.is_null() {
-            let ch_count = buf.channels as usize;
-            for ch in 0..ch_count {
+            let n = buf.samples_per_channel;
+            for ch in 0..buf.channels as usize {
                 let dest = unsafe { *float_data.add(ch) };
                 if dest.is_null() {
                     continue;
                 }
-                for i in 0..frame_count as usize {
-                    unsafe {
-                        *dest.add(i) = buf.samples[i * ch_count + ch];
-                    }
+                let src = &buf.samples[ch * n..][..n];
+                unsafe {
+                    std::ptr::copy_nonoverlapping(src.as_ptr(), dest, n);
                 }
             }
         }
