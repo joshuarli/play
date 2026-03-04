@@ -84,6 +84,9 @@ pub struct Player {
     // Stream info
     stream_info: StreamInfo,
     current_audio_track: usize,
+
+    /// Cached formatted duration (never changes after construction).
+    duration_str: String,
 }
 
 impl Player {
@@ -128,6 +131,7 @@ impl Player {
             subtitle_tracks,
             current_subtitle_idx: None,
             last_subtitle_text: None,
+            duration_str: format_time(stream_info.duration_us),
             stream_info,
             current_audio_track: 0,
         })
@@ -367,20 +371,20 @@ impl Player {
                 self.queue_seek(seconds, exact);
 
                 // Drain cmd_rx for additional seeks that already arrived
-                let mut deferred = Vec::new();
+                let mut deferred: Option<Command> = None;
                 while let Ok(cmd) = self.cmd_rx.try_recv() {
                     match cmd {
                         Command::SeekRelative { seconds: s, exact: e } => {
                             self.queue_seek(s, e);
                         }
                         other => {
-                            deferred.push(other);
+                            deferred = Some(other);
                             break;
                         }
                     }
                 }
 
-                for cmd in deferred {
+                if let Some(cmd) = deferred {
                     if self.handle_command(cmd) {
                         return true;
                     }
@@ -484,11 +488,10 @@ impl Player {
                         if !self.seek_landed {
                             self.seek_landed = true;
                             self.sync_clock.set_position(frame.pts_us);
-                            let dur_str = format_time(self.duration_us);
                             let pos_str = format_time(frame.pts_us);
                             let _ = self
                                 .ui_update_tx
-                                .send(UiUpdate::Osd(format!("{pos_str} / {dur_str}")));
+                                .send(UiUpdate::Osd(format!("{pos_str} / {}", self.duration_str)));
                         }
                         // Non-blocking send — the display layer's timebase handles
                         // presentation timing. Never block here so audio keeps flowing.
@@ -526,11 +529,10 @@ impl Player {
                                     .ui_update_tx
                                     .send(UiUpdate::SeekFlush(buf.pts_us));
                             }
-                            let dur_str = format_time(self.duration_us);
                             let pos_str = format_time(buf.pts_us);
                             let _ = self
                                 .ui_update_tx
-                                .send(UiUpdate::Osd(format!("{pos_str} / {dur_str}")));
+                                .send(UiUpdate::Osd(format!("{pos_str} / {}", self.duration_str)));
                         }
                         let end_us = buf.pts_us
                             + (buf.samples_per_channel as i64 * 1_000_000

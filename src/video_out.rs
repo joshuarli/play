@@ -127,6 +127,9 @@ unsafe impl Sync for SendPtr {}
 /// Global display layer (created on main thread, used from main thread timer).
 static DISPLAY_LAYER: OnceLock<SendPtr> = OnceLock::new();
 
+/// Cached CMVideoFormatDescription — identical for all frames (same resolution/pixel format).
+static CACHED_FORMAT_DESC: OnceLock<SendPtr> = OnceLock::new();
+
 /// Wrapper to make CMTimebaseRef Send+Sync for OnceLock.
 struct SendTimebase(CMTimebaseRef);
 unsafe impl Send for SendTimebase {}
@@ -186,25 +189,23 @@ pub fn enqueue_frame(mut frame: VideoFrame) {
         return;
     }
 
+    // Timebase handling: call get() once, then branch on seek_flush vs first-frame.
+    let timebase = TIMEBASE.get();
+
     // Flush display layer and reset timebase right before enqueuing, so the
     // old frame is replaced atomically with no VSync gap.
     if frame.seek_flush {
         let layer = layer_wrap.0 as *mut AnyObject;
         let _: () = unsafe { msg_send![layer, flush] };
-        if let Some(tb) = TIMEBASE.get() {
+        if let Some(tb) = timebase {
             unsafe {
                 CMTimebaseSetTime(tb.0, CMTime::from_us(frame.pts_us));
             }
             TIMEBASE_STARTED.store(true, Ordering::Relaxed);
         }
-    }
-
-    // Take ownership — we'll release after handing to CoreMedia
-    let pixel_buffer = frame.take_pixel_buffer();
-
-    // On the first valid frame, align the timebase to this frame's PTS and start it
-    if !TIMEBASE_STARTED.load(Ordering::Relaxed) {
-        if let Some(tb) = TIMEBASE.get() {
+    } else if !TIMEBASE_STARTED.load(Ordering::Relaxed) {
+        // On the first valid frame, align the timebase to this frame's PTS and start it
+        if let Some(tb) = timebase {
             unsafe {
                 CMTimebaseSetTime(tb.0, CMTime::from_us(frame.pts_us));
                 CMTimebaseSetRate(tb.0, 1.0);
@@ -214,20 +215,30 @@ pub fn enqueue_frame(mut frame: VideoFrame) {
         }
     }
 
-    // Create CMVideoFormatDescription
-    let mut format_desc: CMVideoFormatDescriptionRef = ptr::null_mut();
-    let status = unsafe {
-        CMVideoFormatDescriptionCreateForImageBuffer(
-            ptr::null(),
-            pixel_buffer,
-            &mut format_desc,
-        )
+    // Take ownership — we'll release after handing to CoreMedia
+    let pixel_buffer = frame.take_pixel_buffer();
+
+    // Reuse cached CMVideoFormatDescription (same resolution/pixel format for entire file)
+    let format_desc = if let Some(cached) = CACHED_FORMAT_DESC.get() {
+        cached.0
+    } else {
+        let mut desc: CMVideoFormatDescriptionRef = ptr::null_mut();
+        let status = unsafe {
+            CMVideoFormatDescriptionCreateForImageBuffer(ptr::null(), pixel_buffer, &mut desc)
+        };
+        if status != 0 {
+            log::error!("CMVideoFormatDescriptionCreateForImageBuffer failed: {status}");
+            unsafe { CVPixelBufferRelease(pixel_buffer) };
+            return;
+        }
+        // Store for all future frames — if another thread raced us, release ours
+        if CACHED_FORMAT_DESC.set(SendPtr(desc)).is_err() {
+            unsafe { CFRelease(desc) };
+            CACHED_FORMAT_DESC.get().unwrap().0
+        } else {
+            desc
+        }
     };
-    if status != 0 {
-        log::error!("CMVideoFormatDescriptionCreateForImageBuffer failed: {status}");
-        unsafe { CVPixelBufferRelease(pixel_buffer) };
-        return;
-    }
 
     // Create CMSampleBuffer
     let timing = CMSampleTimingInfo {
@@ -246,8 +257,6 @@ pub fn enqueue_frame(mut frame: VideoFrame) {
             &mut sample_buffer,
         )
     };
-
-    unsafe { CFRelease(format_desc) };
 
     if status != 0 {
         log::error!("CMSampleBufferCreateReadyWithImageBuffer failed: {status}");
