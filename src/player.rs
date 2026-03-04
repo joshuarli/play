@@ -1,6 +1,6 @@
 use std::sync::atomic::AtomicI64;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use crossbeam_channel::{Receiver, Sender};
@@ -14,12 +14,21 @@ use crate::subtitle::SubtitleTrack;
 use crate::sync::SyncClock;
 use crate::time::format_time;
 
-/// A seek waiting to be dispatched after the current in-flight seek completes.
-struct BufferedSeek {
-    target_pts: i64,
-    forward: bool,
+/// Accumulated relative seek waiting to be dispatched.
+/// Like mpv's `queue_seek()`: coalesces rapid key-repeat seeks so only one
+/// seek is in flight at a time, and the previous frame stays visible until
+/// the new one is decoded.
+struct QueuedSeek {
+    seconds: f64,
     exact: bool,
 }
+
+/// Minimum time between seek dispatches. Each frame must survive at least one
+/// VSync (~8ms at 120Hz, ~16ms at 60Hz) before the next seek_flush clears it.
+const SEEK_MIN_DISPLAY: Duration = Duration::from_millis(16);
+/// Safety timeout: if a seek completes but no frame arrives within this window,
+/// dispatch the queued seek anyway (prevents stuck decodes from freezing).
+const SEEK_COALESCE_TIMEOUT: Duration = Duration::from_millis(50);
 
 /// Player state machine.
 pub struct Player {
@@ -47,12 +56,20 @@ pub struct Player {
     audio_delay_us: i64,
     duration_us: i64,
     pending_seeks: u32,
-    /// Next seek to dispatch when the current in-flight seek completes.
-    buffered_seek: Option<BufferedSeek>,
+    /// Accumulated relative seek, dispatched by `execute_queued_seek()`.
+    queued_seek: Option<QueuedSeek>,
+    /// When the last seek was dispatched (for coalescing window).
+    last_seek_dispatched: Option<Instant>,
+    /// Set when the first post-seek frame is shown; unblocks the next queued seek.
+    seek_frame_shown: bool,
     /// After an exact seek, skip audio/video with PTS below this value.
     seek_floor_us: i64,
     /// For inexact seeks: waiting for first post-seek packet to land.
     seek_landed: bool,
+    /// Set by dispatch_seek, cleared when the first post-seek video frame
+    /// carries seek_flush=true to the display. Separate from seek_landed so
+    /// the video flush works even if audio lands first.
+    needs_display_flush: bool,
     /// Tracks the end PTS of the last scheduled audio buffer.
     last_audio_end_us: i64,
     /// After demuxer EOF: PTS at which all scheduled audio finishes.
@@ -99,9 +116,12 @@ impl Player {
             audio_delay_us: (initial_audio_delay * 1_000_000.0) as i64,
             duration_us: stream_info.duration_us,
             pending_seeks: 0,
-            buffered_seek: None,
+            queued_seek: None,
+            last_seek_dispatched: None,
+            seek_frame_shown: true,
             seek_floor_us: 0,
             seek_landed: true,
+            needs_display_flush: false,
             last_audio_end_us: 0,
             eof_audio_end_us: None,
             subtitle_tracks,
@@ -177,6 +197,7 @@ impl Player {
             forward,
         });
         self.flush_decoders();
+        self.needs_display_flush = self.video_decoder.is_some();
         if exact {
             self.seek_floor_us = target;
             self.sync_clock.set_position(target);
@@ -199,6 +220,55 @@ impl Player {
         if let Some(ref ao) = self.audio_output {
             ao.flush();
         }
+    }
+
+    fn queue_seek(&mut self, seconds: f64, exact: bool) {
+        if let Some(ref mut qs) = self.queued_seek {
+            qs.seconds += seconds;
+            qs.exact = qs.exact || exact;
+        } else {
+            self.queued_seek = Some(QueuedSeek { seconds, exact });
+        }
+    }
+
+    /// Dispatch the queued seek if enough time has passed or a frame has been shown.
+    /// Called each iteration of the main loop.
+    fn execute_queued_seek(&mut self) {
+        let Some(qs) = self.queued_seek.take() else {
+            return;
+        };
+
+        // Never dispatch while a seek is still in flight — its packets would
+        // be discarded (pending_seeks > 0 guard) and the frame never shown.
+        if self.pending_seeks > 0 {
+            self.queued_seek = Some(qs);
+            return;
+        }
+
+        if let Some(dispatched) = self.last_seek_dispatched {
+            let elapsed = dispatched.elapsed();
+            // Minimum display time: let each frame survive at least one VSync
+            // before the next seek_flush clears it.
+            if elapsed < SEEK_MIN_DISPLAY {
+                self.queued_seek = Some(qs);
+                return;
+            }
+            // After minimum time, still wait for frame to actually arrive
+            // (handles slow seeks). Safety timeout prevents stuck decodes.
+            if !self.seek_frame_shown && elapsed < SEEK_COALESCE_TIMEOUT {
+                self.queued_seek = Some(qs);
+                return;
+            }
+        }
+
+        let current = self.sync_clock.audio_pts();
+        let delta_us = (qs.seconds * 1_000_000.0) as i64;
+        let target = (current + delta_us).max(0).min(self.duration_us);
+        let forward = qs.seconds > 0.0;
+
+        self.dispatch_seek(target, !qs.exact && forward, qs.exact);
+        self.last_seek_dispatched = Some(Instant::now());
+        self.seek_frame_shown = false;
     }
 
     fn adjust_volume(&mut self, delta: i32) {
@@ -238,6 +308,7 @@ impl Player {
                 }
             }
 
+            self.execute_queued_seek();
             self.update_subtitles();
 
             // After EOF: wait for audio playback to finish
@@ -272,16 +343,14 @@ impl Player {
                 let _ = self.ui_update_tx.send(UiUpdate::Paused(self.paused));
             }
             Command::SeekRelative { seconds, exact } => {
-                let mut total_seconds = seconds;
-                let mut any_exact = exact;
-                let mut deferred = Vec::new();
+                self.queue_seek(seconds, exact);
 
                 // Drain cmd_rx for additional seeks that already arrived
+                let mut deferred = Vec::new();
                 while let Ok(cmd) = self.cmd_rx.try_recv() {
                     match cmd {
                         Command::SeekRelative { seconds: s, exact: e } => {
-                            total_seconds += s;
-                            any_exact = any_exact || e;
+                            self.queue_seek(s, e);
                         }
                         other => {
                             deferred.push(other);
@@ -289,26 +358,6 @@ impl Player {
                         }
                     }
                 }
-
-                let current = self.sync_clock.audio_pts();
-                let delta_us = (total_seconds * 1_000_000.0) as i64;
-                let target = (current + delta_us).max(0).min(self.duration_us);
-                let forward = total_seconds > 0.0;
-
-                if self.pending_seeks == 0 {
-                    // No seek in flight — dispatch immediately
-                    self.dispatch_seek(target, !any_exact && forward, any_exact);
-                } else {
-                    // Seek already in flight — buffer (overwrites previous buffer)
-                    self.buffered_seek = Some(BufferedSeek {
-                        target_pts: target,
-                        forward: !any_exact && forward,
-                        exact: any_exact,
-                    });
-                    // Update clock + UI so the scrub bar tracks instantly
-                    self.sync_clock.set_position(target);
-                }
-                let _ = self.ui_update_tx.send(UiUpdate::SeekFlush(target));
 
                 for cmd in deferred {
                     if self.handle_command(cmd) {
@@ -382,27 +431,9 @@ impl Player {
 
     fn handle_packet(&mut self, pkt: DemuxPacket) {
         match pkt {
-            // Seek completed — dispatch buffered seek or resume packet processing
+            // Seek completed — decrement in-flight counter
             DemuxPacket::Flush => {
-                if let Some(seek) = self.buffered_seek.take() {
-                    // Consumed Flush cancels out with the new seek's future
-                    // Flush, so pending_seeks stays unchanged. Decoders are
-                    // already clean (no packets fed since last flush).
-                    let _ = self.demux_cmd_tx.send(DemuxCommand::Seek {
-                        target_pts: seek.target_pts,
-                        forward: seek.forward,
-                    });
-                    if seek.exact {
-                        self.seek_floor_us = seek.target_pts;
-                        self.sync_clock.set_position(seek.target_pts);
-                    } else {
-                        self.seek_floor_us = 0;
-                        self.sync_clock.set_position(seek.target_pts);
-                        self.seek_landed = false;
-                    }
-                } else {
-                    self.pending_seeks = self.pending_seeks.saturating_sub(1);
-                }
+                self.pending_seeks = self.pending_seeks.saturating_sub(1);
                 return;
             }
             // Discard stale pre-seek packets
@@ -414,19 +445,24 @@ impl Player {
                     if decoder.send_packet(&packet).is_err() {
                         return;
                     }
-                    while let Some(frame) = decoder.receive_frame() {
+                    while let Some(mut frame) = decoder.receive_frame() {
                         // Exact seek: skip frames before the target
                         if frame.pts_us < self.seek_floor_us {
                             drop(frame);
                             continue;
                         }
+                        // First valid frame after a seek: flush the display layer
+                        // atomically with this frame (no VSync gap). Separate from
+                        // seek_landed so this works even if audio landed first.
+                        if self.needs_display_flush {
+                            self.needs_display_flush = false;
+                            self.seek_frame_shown = true;
+                            frame.seek_flush = true;
+                        }
                         // Inexact seek: first decoded frame reveals actual position
                         if !self.seek_landed {
                             self.seek_landed = true;
                             self.sync_clock.set_position(frame.pts_us);
-                            let _ = self
-                                .ui_update_tx
-                                .send(UiUpdate::SeekFlush(frame.pts_us));
                             let dur_str = format_time(self.duration_us);
                             let pos_str = format_time(frame.pts_us);
                             let _ = self
@@ -455,13 +491,20 @@ impl Player {
                         if buf.pts_us < self.seek_floor_us {
                             continue;
                         }
-                        // Audio-only: first post-seek buffer reveals actual position
+                        // First post-seek audio buffer reveals actual position
                         if !self.seek_landed {
                             self.seek_landed = true;
                             self.sync_clock.set_position(buf.pts_us);
-                            let _ = self
-                                .ui_update_tx
-                                .send(UiUpdate::SeekFlush(buf.pts_us));
+                            // Audio-only: flush display via UI channel (no video
+                            // frame to carry the flush). For video files, the video
+                            // handler sets frame.seek_flush instead.
+                            if self.video_decoder.is_none() {
+                                self.seek_frame_shown = true;
+                                self.needs_display_flush = false;
+                                let _ = self
+                                    .ui_update_tx
+                                    .send(UiUpdate::SeekFlush(buf.pts_us));
+                            }
                             let dur_str = format_time(self.duration_us);
                             let pos_str = format_time(buf.pts_us);
                             let _ = self
@@ -535,5 +578,263 @@ impl Player {
             self.last_subtitle_text = text.clone();
             let _ = self.ui_update_tx.send(UiUpdate::SubtitleText(text));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Create a Player wired to test channels (no decoders).
+    fn make_test_player() -> (
+        Player,
+        Sender<Command>,
+        Receiver<VideoFrame>,
+        Receiver<UiUpdate>,
+        Receiver<DemuxCommand>,
+    ) {
+        let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded();
+        let (demux_pkt_tx, demux_pkt_rx) = crossbeam_channel::unbounded();
+        let (demux_cmd_tx, demux_cmd_rx) = crossbeam_channel::unbounded();
+        let (video_frame_tx, video_frame_rx) = crossbeam_channel::bounded(8);
+        let (ui_update_tx, ui_update_rx) = crossbeam_channel::unbounded();
+        let audio_clock = Arc::new(AtomicI64::new(0));
+
+        let stream_info = StreamInfo {
+            duration_us: 3_600_000_000, // 1 hour
+            video_stream: None,
+            audio_streams: vec![],
+            subtitle_streams: vec![],
+        };
+
+        let player = Player::new(
+            cmd_rx,
+            demux_pkt_rx,
+            demux_cmd_tx,
+            video_frame_tx,
+            ui_update_tx,
+            stream_info,
+            100,
+            0.0,
+            vec![],
+            audio_clock,
+        )
+        .unwrap();
+
+        // Keep demux_pkt_tx alive so player channels don't disconnect
+        std::mem::forget(demux_pkt_tx);
+
+        (player, cmd_tx, video_frame_rx, ui_update_rx, demux_cmd_rx)
+    }
+
+    /// Simulate what happens after a seek completes: demux sends Flush,
+    /// then the first video frame is decoded. In real code this flows through
+    /// handle_packet; here we set the state directly since we have no decoder.
+    fn simulate_seek_completion(player: &mut Player, frame_pts_us: i64) {
+        player.pending_seeks = player.pending_seeks.saturating_sub(1);
+        player.seek_landed = true;
+        player.seek_frame_shown = true;
+        player.needs_display_flush = false;
+        player.sync_clock.set_position(frame_pts_us);
+    }
+
+    #[test]
+    fn first_seek_dispatches_immediately() {
+        let (mut player, _, _, _, demux_cmd_rx) = make_test_player();
+
+        player.queue_seek(5.0, false);
+        player.execute_queued_seek();
+
+        assert_eq!(player.pending_seeks, 1);
+        assert!(player.queued_seek.is_none());
+        assert!(demux_cmd_rx.try_recv().is_ok(), "Seek command should be sent to demuxer");
+    }
+
+    #[test]
+    fn pending_seeks_blocks_dispatch() {
+        let (mut player, _, _, _, _) = make_test_player();
+
+        // First seek dispatches
+        player.queue_seek(5.0, false);
+        player.execute_queued_seek();
+        assert_eq!(player.pending_seeks, 1);
+
+        // Second seek while first is in-flight: should be deferred
+        player.queue_seek(5.0, false);
+        player.execute_queued_seek();
+        assert_eq!(player.pending_seeks, 1, "Should not dispatch while seek in-flight");
+        assert!(player.queued_seek.is_some(), "Seek should remain queued");
+    }
+
+    #[test]
+    fn rapid_seeks_deferred_by_minimum_display_time() {
+        // Reproduces the core visual bug: when seeks complete instantly,
+        // each frame's seek_flush clears the previous frame before VSync
+        // can composite it. Without minimum display time, every seek
+        // dispatches immediately and no intermediate frame is ever visible.
+        let (mut player, _, _, _, demux_cmd_rx) = make_test_player();
+
+        // First seek: dispatches immediately (no prior seek)
+        player.queue_seek(5.0, false);
+        player.execute_queued_seek();
+        assert_eq!(player.pending_seeks, 1);
+        let mut dispatch_count = 1;
+
+        // Simulate instant completion
+        simulate_seek_completion(&mut player, 5_000_000);
+
+        // Queue and try to execute 5 more seeks without any real time passing.
+        // These should ALL be deferred — the first frame needs time on screen.
+        for _ in 0..5 {
+            player.queue_seek(5.0, false);
+            player.execute_queued_seek();
+            if player.pending_seeks > 0 {
+                dispatch_count += 1;
+                let pts = player.sync_clock.audio_pts();
+                simulate_seek_completion(&mut player, pts);
+            }
+        }
+
+        assert_eq!(
+            dispatch_count, 1,
+            "Only first seek should dispatch without waiting; got {dispatch_count}. \
+             Intermediate frames are being flushed before VSync can composite them."
+        );
+        assert!(player.queued_seek.is_some(), "Remaining seeks should be queued");
+
+        // Drain demux commands: only one Seek should have been sent
+        let mut seek_count = 0;
+        while demux_cmd_rx.try_recv().is_ok() {
+            seek_count += 1;
+        }
+        assert_eq!(seek_count, 1);
+    }
+
+    #[test]
+    fn deferred_seek_dispatches_after_minimum_display_time() {
+        let (mut player, _, _, _, _) = make_test_player();
+
+        // First seek dispatches
+        player.queue_seek(5.0, false);
+        player.execute_queued_seek();
+        simulate_seek_completion(&mut player, 5_000_000);
+
+        // Queue another — deferred (too soon)
+        player.queue_seek(5.0, false);
+        player.execute_queued_seek();
+        assert_eq!(player.pending_seeks, 0, "Should be deferred");
+        assert!(player.queued_seek.is_some());
+
+        // Wait for minimum display time
+        std::thread::sleep(SEEK_MIN_DISPLAY + Duration::from_millis(1));
+
+        // Now it should dispatch
+        player.execute_queued_seek();
+        assert_eq!(player.pending_seeks, 1, "Should dispatch after display time");
+        assert!(player.queued_seek.is_none());
+    }
+
+    #[test]
+    fn queued_seeks_accumulate_during_deferral() {
+        let (mut player, _, _, _, _) = make_test_player();
+
+        // First seek dispatches to 5s
+        player.queue_seek(5.0, false);
+        player.execute_queued_seek();
+        simulate_seek_completion(&mut player, 5_000_000);
+
+        // Queue 4 more while deferred
+        for _ in 0..4 {
+            player.queue_seek(5.0, false);
+        }
+
+        let qs = player.queued_seek.as_ref().unwrap();
+        assert!((qs.seconds - 20.0).abs() < 0.001, "Should accumulate to +20s");
+
+        // Wait and dispatch — should seek from 5s to 25s
+        std::thread::sleep(SEEK_MIN_DISPLAY + Duration::from_millis(1));
+        player.execute_queued_seek();
+        assert_eq!(player.pending_seeks, 1);
+
+        // Clock should target 25s (5s current + 20s accumulated)
+        let pos = player.sync_clock.audio_pts();
+        assert_eq!(pos, 25_000_000);
+    }
+
+    #[test]
+    fn safety_timeout_prevents_stuck_scrubbing() {
+        let (mut player, _, _, _, _) = make_test_player();
+
+        // First seek dispatches
+        player.queue_seek(5.0, false);
+        player.execute_queued_seek();
+
+        // Simulate: Flush arrives but NO frame (decoder stuck)
+        player.pending_seeks = 0;
+        // seek_frame_shown stays false
+
+        // Queue another seek
+        player.queue_seek(5.0, false);
+
+        // Before timeout: deferred
+        player.execute_queued_seek();
+        assert!(player.queued_seek.is_some(), "Should defer (no frame yet)");
+
+        // Wait past safety timeout
+        std::thread::sleep(SEEK_COALESCE_TIMEOUT + Duration::from_millis(1));
+
+        // Should dispatch now despite no frame shown
+        player.execute_queued_seek();
+        assert_eq!(player.pending_seeks, 1, "Should dispatch after timeout");
+    }
+
+    #[test]
+    fn needs_display_flush_independent_of_seek_landed() {
+        // The core display bug: if audio lands before video after a seek,
+        // seek_landed is set true. Without a separate needs_display_flush
+        // flag, the video handler wouldn't set frame.seek_flush=true,
+        // and the display flush would go through the UI channel (race).
+        let (mut player, _, _, _, _) = make_test_player();
+
+        // Simulate dispatch_seek for an inexact seek with video
+        player.pending_seeks = 1;
+        player.seek_landed = false;
+        player.needs_display_flush = true;
+        player.seek_frame_shown = false;
+
+        // Simulate audio landing first (sets seek_landed, NOT display flush)
+        player.seek_landed = true;
+        player.sync_clock.set_position(5_000_000);
+
+        // needs_display_flush must survive audio landing — it waits for video
+        assert!(
+            player.needs_display_flush,
+            "Display flush should wait for video frame, not audio"
+        );
+
+        // Simulate video frame arriving (clears needs_display_flush)
+        player.needs_display_flush = false;
+        player.seek_frame_shown = true;
+
+        assert!(
+            !player.needs_display_flush,
+            "Display flush should be cleared after video frame"
+        );
+    }
+
+    #[test]
+    fn audio_only_seek_flush_uses_ui_channel() {
+        // For audio-only files (no video decoder), SeekFlush must go through
+        // the UI channel since there's no video frame to carry it.
+        let (mut player, _, _, _, _) = make_test_player();
+        assert!(player.video_decoder.is_none());
+
+        // dispatch_seek should NOT set needs_display_flush for audio-only
+        player.queue_seek(5.0, false);
+        player.execute_queued_seek();
+        assert!(
+            !player.needs_display_flush,
+            "Audio-only files don't use needs_display_flush"
+        );
     }
 }

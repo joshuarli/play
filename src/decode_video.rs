@@ -111,6 +111,7 @@ impl VideoDecoder {
                     pixel_buffer,
                     pts_us,
                     duration_us,
+                    seek_flush: false,
                 })
             }
             Err(_) => None,

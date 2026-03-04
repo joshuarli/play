@@ -186,6 +186,19 @@ pub fn enqueue_frame(mut frame: VideoFrame) {
         return;
     }
 
+    // Flush display layer and reset timebase right before enqueuing, so the
+    // old frame is replaced atomically with no VSync gap.
+    if frame.seek_flush {
+        let layer = layer_wrap.0 as *mut AnyObject;
+        let _: () = unsafe { msg_send![layer, flush] };
+        if let Some(tb) = TIMEBASE.get() {
+            unsafe {
+                CMTimebaseSetTime(tb.0, CMTime::from_us(frame.pts_us));
+            }
+            TIMEBASE_STARTED.store(true, Ordering::Relaxed);
+        }
+    }
+
     // Take ownership — we'll release after handing to CoreMedia
     let pixel_buffer = frame.take_pixel_buffer();
 

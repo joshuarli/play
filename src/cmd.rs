@@ -46,6 +46,9 @@ pub struct VideoFrame {
     pub pts_us: i64,
     /// Duration of this frame in microseconds.
     pub duration_us: i64,
+    /// If true, flush the display layer and reset the timebase before enqueuing.
+    /// Bundled with the frame so flush+enqueue are atomic (no VSync gap).
+    pub seek_flush: bool,
 }
 
 unsafe impl Send for VideoFrame {}
