@@ -38,3 +38,10 @@ anyhow = "1"
 termion = "4"
 log = "0.4"
 env_logger = { version = "0.11", default-features = false, features = ["humantime"] }
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+panic = "abort"
