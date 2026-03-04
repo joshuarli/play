@@ -41,7 +41,7 @@ pub fn pts_to_us(pts: i64, time_base: ffmpeg_next::Rational) -> i64 {
     if den == 0 {
         return 0;
     }
-    pts * num * 1_000_000 / den
+    (pts as i128 * num as i128 * 1_000_000 / den as i128) as i64
 }
 
 /// Convert microseconds to ffmpeg timebase-based PTS.
@@ -52,7 +52,7 @@ pub fn us_to_pts(us: i64, time_base: ffmpeg_next::Rational) -> i64 {
     if num == 0 {
         return 0;
     }
-    us * den / (num * 1_000_000)
+    (us as i128 * den as i128 / (num as i128 * 1_000_000)) as i64
 }
 
 #[cfg(test)]
@@ -168,5 +168,14 @@ mod tests {
         let pts = us_to_pts(original_us, tb);
         let recovered = pts_to_us(pts, tb);
         assert_eq!(recovered, original_us);
+    }
+
+    #[test]
+    fn pts_to_us_large_value_no_overflow() {
+        let tb = Rational::new(1, 90000);
+        // 8 hours in 90kHz ticks — would overflow with i64 multiply
+        let pts: i64 = 8 * 3600 * 90000;
+        let us = pts_to_us(pts, tb);
+        assert_eq!(us, 8 * 3600 * 1_000_000);
     }
 }

@@ -20,11 +20,16 @@ pub struct SubtitleTrack {
 impl SubtitleTrack {
     /// Get the subtitle text at a given time (microseconds).
     pub fn text_at(&self, time_us: i64) -> Option<&str> {
-        // Binary search for efficiency
-        self.entries
-            .iter()
-            .find(|e| time_us >= e.start_us && time_us <= e.end_us)
-            .map(|e| e.text.as_str())
+        let idx = self
+            .entries
+            .partition_point(|e| e.start_us <= time_us);
+        if idx > 0 {
+            let e = &self.entries[idx - 1];
+            if time_us <= e.end_us {
+                return Some(&e.text);
+            }
+        }
+        None
     }
 }
 

@@ -40,10 +40,10 @@ pub enum DemuxCommand {
     Stop,
 }
 
-/// Video frame ready for display.
+/// Video frame ready for display. Releases CVPixelBuffer on drop.
 #[allow(dead_code)]
 pub struct VideoFrame {
-    /// Raw pointer to CVPixelBufferRef. Caller is responsible for retain/release.
+    /// Raw pointer to CVPixelBufferRef (retained, released on drop).
     pub pixel_buffer: *mut std::ffi::c_void,
     /// Presentation timestamp in stream timebase microseconds.
     pub pts_us: i64,
@@ -56,6 +56,22 @@ pub struct VideoFrame {
 }
 
 unsafe impl Send for VideoFrame {}
+
+impl Drop for VideoFrame {
+    fn drop(&mut self) {
+        if !self.pixel_buffer.is_null() {
+            unsafe { crate::decode_video::release_pixel_buffer(self.pixel_buffer) };
+            self.pixel_buffer = std::ptr::null_mut();
+        }
+    }
+}
+
+impl VideoFrame {
+    /// Take ownership of the pixel buffer pointer, preventing release on drop.
+    pub fn take_pixel_buffer(&mut self) -> *mut std::ffi::c_void {
+        std::mem::replace(&mut self.pixel_buffer, std::ptr::null_mut())
+    }
+}
 
 /// Updates sent from the player to the main (UI) thread.
 #[allow(dead_code)]

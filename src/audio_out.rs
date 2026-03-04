@@ -13,6 +13,7 @@ use crate::decode_audio::AudioBuffer;
 pub struct AudioOutput {
     engine: Retained<AnyObject>,
     player_node: Retained<AnyObject>,
+    format: Retained<AnyObject>,
     audio_clock: Arc<AtomicI64>,
     sample_rate: f64,
     channels: u32,
@@ -66,6 +67,7 @@ impl AudioOutput {
         Ok(Self {
             engine,
             player_node,
+            format,
             audio_clock,
             sample_rate: sample_rate as f64,
             channels: channels as u32,
@@ -80,20 +82,12 @@ impl AudioOutput {
             return;
         }
 
-        let format = match create_standard_format(buf.sample_rate as f64, buf.channels as u32) {
-            Ok(f) => f,
-            Err(e) => {
-                log::error!("Failed to create audio format: {e}");
-                return;
-            }
-        };
-
         // Create AVAudioPCMBuffer
         let pcm_buf_cls =
             AnyClass::get(c"AVAudioPCMBuffer").expect("AVAudioPCMBuffer not found");
         let pcm_alloc: Allocated<AnyObject> = unsafe { msg_send![pcm_buf_cls, alloc] };
         let pcm_buf: Retained<AnyObject> = unsafe {
-            msg_send![pcm_alloc, initWithPCMFormat: &*format, frameCapacity: frame_count]
+            msg_send![pcm_alloc, initWithPCMFormat: &*self.format, frameCapacity: frame_count]
         };
 
         // Set frame length

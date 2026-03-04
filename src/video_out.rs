@@ -177,18 +177,17 @@ pub fn display_layer_ptr() -> Option<*mut c_void> {
 }
 
 /// Enqueue a video frame for display. Must be called on main thread.
-pub fn enqueue_frame(frame: VideoFrame) {
+pub fn enqueue_frame(mut frame: VideoFrame) {
     let Some(layer_wrap) = DISPLAY_LAYER.get() else {
-        // No display layer — release the pixel buffer and return
-        if !frame.pixel_buffer.is_null() {
-            unsafe { CVPixelBufferRelease(frame.pixel_buffer) };
-        }
-        return;
+        return; // Drop releases the pixel buffer
     };
 
     if frame.pixel_buffer.is_null() {
         return;
     }
+
+    // Take ownership — we'll release after handing to CoreMedia
+    let pixel_buffer = frame.take_pixel_buffer();
 
     // On the first valid frame, align the timebase to this frame's PTS and start it
     if !TIMEBASE_STARTED.load(Ordering::Relaxed) {
@@ -207,13 +206,13 @@ pub fn enqueue_frame(frame: VideoFrame) {
     let status = unsafe {
         CMVideoFormatDescriptionCreateForImageBuffer(
             ptr::null(),
-            frame.pixel_buffer,
+            pixel_buffer,
             &mut format_desc,
         )
     };
     if status != 0 {
         log::error!("CMVideoFormatDescriptionCreateForImageBuffer failed: {status}");
-        unsafe { CVPixelBufferRelease(frame.pixel_buffer) };
+        unsafe { CVPixelBufferRelease(pixel_buffer) };
         return;
     }
 
@@ -228,7 +227,7 @@ pub fn enqueue_frame(frame: VideoFrame) {
     let status = unsafe {
         CMSampleBufferCreateReadyWithImageBuffer(
             ptr::null(),
-            frame.pixel_buffer,
+            pixel_buffer,
             format_desc,
             &timing,
             &mut sample_buffer,
@@ -239,7 +238,7 @@ pub fn enqueue_frame(frame: VideoFrame) {
 
     if status != 0 {
         log::error!("CMSampleBufferCreateReadyWithImageBuffer failed: {status}");
-        unsafe { CVPixelBufferRelease(frame.pixel_buffer) };
+        unsafe { CVPixelBufferRelease(pixel_buffer) };
         return;
     }
 
@@ -248,15 +247,15 @@ pub fn enqueue_frame(frame: VideoFrame) {
     let layer = layer_ptr as *mut AnyObject;
     let _: () = unsafe { msg_send![layer, enqueueSampleBuffer: sample_buffer] };
 
-    // Release
+    // Release — CMSampleBuffer retains the pixel buffer, so we release our reference
     unsafe {
         CFRelease(sample_buffer as *const c_void);
-        CVPixelBufferRelease(frame.pixel_buffer);
+        CVPixelBufferRelease(pixel_buffer);
     }
 }
 
 /// Sync the display layer timebase to the audio clock position.
-/// Only adjusts if drift exceeds 30ms to avoid fighting the timebase.
+/// Only adjusts if drift exceeds 5ms to avoid fighting the timebase.
 pub fn sync_timebase(audio_pts_us: i64) {
     if !TIMEBASE_STARTED.load(Ordering::Relaxed) {
         return;
@@ -264,7 +263,7 @@ pub fn sync_timebase(audio_pts_us: i64) {
     if let Some(tb) = TIMEBASE.get() {
         let tb_us = unsafe { CMTimebaseGetTime(tb.0) }.to_us();
         let drift = audio_pts_us - tb_us;
-        if drift.abs() > 30_000 {
+        if drift.abs() > 5_000 {
             unsafe {
                 CMTimebaseSetTime(tb.0, CMTime::from_us(audio_pts_us));
             }

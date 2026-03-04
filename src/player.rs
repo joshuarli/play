@@ -300,13 +300,11 @@ impl Player {
                         Some(_) => None, // turn off
                         None => Some(0), // turn back on
                     };
-                    let label = match self.current_subtitle_idx {
-                        Some(i) => self.subtitle_tracks[i].label.clone(),
-                        None => "off".to_string(),
+                    let msg = match self.current_subtitle_idx {
+                        Some(i) => format!("Subtitles: {}", self.subtitle_tracks[i].label),
+                        None => "Subtitles: off".to_string(),
                     };
-                    let _ = self
-                        .ui_update_tx
-                        .send(UiUpdate::Osd(format!("Subtitles: {label}")));
+                    let _ = self.ui_update_tx.send(UiUpdate::Osd(msg));
                     let _ = self
                         .ui_update_tx
                         .send(UiUpdate::SubtitleText(None));
@@ -356,13 +354,7 @@ impl Player {
                     while let Some(frame) = decoder.receive_frame() {
                         // Exact seek: skip frames before the target
                         if frame.pts_us < self.seek_floor_us {
-                            if !frame.pixel_buffer.is_null() {
-                                unsafe {
-                                    crate::decode_video::release_pixel_buffer(
-                                        frame.pixel_buffer,
-                                    );
-                                }
-                            }
+                            drop(frame);
                             continue;
                         }
                         // Inexact seek: first decoded frame reveals actual position
@@ -382,15 +374,7 @@ impl Player {
                         // presentation timing. Never block here so audio keeps flowing.
                         match self.video_frame_tx.try_send(frame) {
                             Ok(()) => {}
-                            Err(crossbeam_channel::TrySendError::Full(f)) => {
-                                if !f.pixel_buffer.is_null() {
-                                    unsafe {
-                                        crate::decode_video::release_pixel_buffer(
-                                            f.pixel_buffer,
-                                        );
-                                    }
-                                }
-                            }
+                            Err(crossbeam_channel::TrySendError::Full(_)) => {}
                             Err(crossbeam_channel::TrySendError::Disconnected(_)) => return,
                         }
                     }

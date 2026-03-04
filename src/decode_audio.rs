@@ -13,6 +13,7 @@ pub struct AudioDecoder {
     stream_time_base: ffmpeg::Rational,
     frame: Audio,
     resampled: Audio,
+    sample_buf: Vec<f32>,
     pub sample_rate: u32,
     pub channels: u16,
 }
@@ -49,6 +50,7 @@ impl AudioDecoder {
             stream_time_base: stream.time_base(),
             frame: Audio::empty(),
             resampled: Audio::empty(),
+            sample_buf: Vec::new(),
             sample_rate,
             channels,
         })
@@ -100,12 +102,13 @@ impl AudioDecoder {
                 }
 
                 let data_ptr = self.resampled.data(0);
-                let samples: Vec<f32> = unsafe {
-                    std::slice::from_raw_parts(data_ptr.as_ptr() as *const f32, total).to_vec()
-                };
+                self.sample_buf.clear();
+                self.sample_buf.extend_from_slice(unsafe {
+                    std::slice::from_raw_parts(data_ptr.as_ptr() as *const f32, total)
+                });
 
                 Some(AudioBuffer {
-                    samples,
+                    samples: std::mem::take(&mut self.sample_buf),
                     channels: self.channels,
                     sample_rate: self.sample_rate,
                     pts_us,
