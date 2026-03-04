@@ -9,7 +9,6 @@ fn main() {
         "AppKit",
         "VideoToolbox",
         "AudioToolbox",
-        "AVFAudio",
         "CoreFoundation",
     ] {
         println!("cargo:rustc-link-lib=framework={fw}");
