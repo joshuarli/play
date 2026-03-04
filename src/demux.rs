@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::path::Path;
 
 use anyhow::{Context, Result};
@@ -5,8 +6,179 @@ use crossbeam_channel::{Receiver, Sender};
 use ffmpeg_next as ffmpeg;
 use ffmpeg_next::format::context::Input;
 use ffmpeg_next::media::Type;
+use ffmpeg_sys_next as ffs;
 
 use crate::cmd::{DemuxCommand, DemuxPacket};
+use crate::time::pts_to_us;
+
+const CACHE_MAX_BYTES: usize = 150 * 1024 * 1024;
+
+/// Refcounted clone via av_packet_ref (shared buffer, no memcpy).
+/// Unlike Packet::clone() which calls av_packet_make_writable (deep copy),
+/// this shares the underlying AVBufferRef.
+fn clone_packet_ref(src: &ffmpeg::Packet) -> ffmpeg::Packet {
+    unsafe {
+        use ffmpeg::codec::packet::traits::{Mut, Ref};
+        let mut dst = ffmpeg::Packet::empty();
+        ffs::av_packet_ref(dst.as_mut_ptr(), src.as_ptr());
+        dst
+    }
+}
+
+struct CachedPacket {
+    packet: ffmpeg::Packet,
+    stream_index: usize,
+    pts_us: i64,
+    is_video_keyframe: bool,
+    data_size: usize,
+}
+
+struct PacketCache {
+    packets: VecDeque<CachedPacket>,
+    total_bytes: usize,
+    max_bytes: usize,
+    video_idx: Option<usize>,
+    time_bases: Vec<(usize, ffmpeg::Rational)>,
+}
+
+impl PacketCache {
+    fn new(
+        max_bytes: usize,
+        video_idx: Option<usize>,
+        audio_idx: Option<usize>,
+        subtitle_idx: Option<usize>,
+        ictx: &Input,
+    ) -> Self {
+        let mut indices = Vec::new();
+        if let Some(i) = video_idx {
+            indices.push(i);
+        }
+        if let Some(i) = audio_idx {
+            indices.push(i);
+        }
+        if let Some(i) = subtitle_idx {
+            indices.push(i);
+        }
+        let time_bases: Vec<(usize, ffmpeg::Rational)> = indices
+            .into_iter()
+            .map(|i| (i, ictx.stream(i).unwrap().time_base()))
+            .collect();
+        Self {
+            packets: VecDeque::new(),
+            total_bytes: 0,
+            max_bytes,
+            video_idx,
+            time_bases,
+        }
+    }
+
+    fn time_base_for(&self, stream_index: usize) -> Option<ffmpeg::Rational> {
+        self.time_bases
+            .iter()
+            .find(|(i, _)| *i == stream_index)
+            .map(|(_, tb)| *tb)
+    }
+
+    fn push(&mut self, packet: &ffmpeg::Packet, stream_index: usize) {
+        let tb = match self.time_base_for(stream_index) {
+            Some(tb) => tb,
+            None => return,
+        };
+        let pts_raw = packet.pts().or(packet.dts()).unwrap_or(0);
+        let pts_us = pts_to_us(pts_raw, tb);
+        let is_video_keyframe =
+            Some(stream_index) == self.video_idx && packet.is_key();
+        let data_size = packet.size();
+        let cloned = clone_packet_ref(packet);
+
+        self.packets.push_back(CachedPacket {
+            packet: cloned,
+            stream_index,
+            pts_us,
+            is_video_keyframe,
+            data_size,
+        });
+        self.total_bytes += data_size;
+
+        while self.total_bytes > self.max_bytes {
+            if let Some(evicted) = self.packets.pop_front() {
+                self.total_bytes -= evicted.data_size;
+            } else {
+                break;
+            }
+        }
+    }
+
+    /// Find the cache index to start replay from.
+    ///
+    /// - Backward seek: last video keyframe with `pts_us <= target_us`
+    ///   (matches `ictx.seek(target, ..target)`)
+    /// - Forward seek: first video keyframe with `pts_us >= target_us`
+    ///   (matches `ictx.seek(target, target..)`)
+    ///
+    /// Returns None if target is outside the cached range or no suitable
+    /// keyframe exists.
+    fn seek_position(&self, target_us: i64, forward: bool) -> Option<usize> {
+        if self.packets.is_empty() {
+            return None;
+        }
+        let first_pts = self.packets.front().unwrap().pts_us;
+        let last_pts = self.packets.back().unwrap().pts_us;
+        if target_us < first_pts || target_us > last_pts {
+            return None;
+        }
+
+        if forward {
+            // First video keyframe at or after target
+            for (i, cp) in self.packets.iter().enumerate() {
+                if cp.is_video_keyframe && cp.pts_us >= target_us {
+                    return Some(i);
+                }
+            }
+            // Audio-only fallback: first packet at or after target
+            if self.video_idx.is_none() {
+                for (i, cp) in self.packets.iter().enumerate() {
+                    if cp.pts_us >= target_us {
+                        return Some(i);
+                    }
+                }
+            }
+            None
+        } else {
+            // Last video keyframe at or before target
+            let mut best: Option<usize> = None;
+            for (i, cp) in self.packets.iter().enumerate() {
+                if cp.is_video_keyframe && cp.pts_us <= target_us {
+                    best = Some(i);
+                }
+                if cp.pts_us > target_us && best.is_some() {
+                    break;
+                }
+            }
+            if best.is_some() {
+                return best;
+            }
+            // Audio-only fallback: nearest packet at or before target
+            if self.video_idx.is_none() {
+                for (i, cp) in self.packets.iter().enumerate().rev() {
+                    if cp.pts_us <= target_us {
+                        return Some(i);
+                    }
+                }
+            }
+            None
+        }
+    }
+
+    fn clear(&mut self) {
+        self.packets.clear();
+        self.total_bytes = 0;
+    }
+
+    fn len(&self) -> usize {
+        self.packets.len()
+    }
+}
 
 /// Metadata about streams in the file.
 #[derive(Debug, Clone)]
@@ -137,6 +309,9 @@ pub fn run_demuxer(
     let mut ictx = ffmpeg::format::input(path)
         .with_context(|| format!("Failed to open: {}", path.display()))?;
 
+    let mut cache = PacketCache::new(CACHE_MAX_BYTES, video_idx, audio_idx, subtitle_idx, &ictx);
+    let mut replay_cursor: Option<usize> = None;
+
     loop {
         // Drain all pending commands — coalesce rapid seeks into one
         let mut last_seek: Option<DemuxCommand> = None;
@@ -158,61 +333,107 @@ pub fn run_demuxer(
         }
 
         if let Some(DemuxCommand::Seek { target_pts, forward }) = last_seek {
-            do_seek(&mut ictx, &packet_tx, target_pts, forward, seek_count);
+            replay_cursor =
+                try_cached_seek(&mut cache, &mut ictx, &packet_tx, target_pts, forward, seek_count);
             continue;
         }
 
-        // Read next packet
-        match read_next_packet(&mut ictx) {
-            Some((stream_idx, packet)) => {
+        // Replay from cache or read from file
+        if let Some(cursor) = replay_cursor {
+            if cursor < cache.len() {
+                let cp = &cache.packets[cursor];
+                let stream_idx = cp.stream_index;
+                let pkt = clone_packet_ref(&cp.packet);
+
                 let demux_pkt = if Some(stream_idx) == video_idx {
-                    DemuxPacket::Video(packet)
+                    DemuxPacket::Video(pkt)
                 } else if Some(stream_idx) == audio_idx {
-                    DemuxPacket::Audio(packet)
+                    DemuxPacket::Audio(pkt)
                 } else if Some(stream_idx) == subtitle_idx {
-                    DemuxPacket::Subtitle(packet)
+                    DemuxPacket::Subtitle(pkt)
                 } else {
-                    continue; // skip unwanted streams
+                    replay_cursor = Some(cursor + 1);
+                    continue;
                 };
 
-                // Send packet, but stay responsive to commands while
-                // the channel is full (avoids going deaf during backpressure).
                 crossbeam_channel::select! {
                     send(packet_tx, demux_pkt) -> res => {
                         if res.is_err() {
                             return Ok(());
                         }
+                        replay_cursor = Some(cursor + 1);
                     }
                     recv(cmd_rx) -> msg => {
-                        // Command arrived while blocked — stale packet is dropped
                         match msg {
                             Ok(DemuxCommand::Stop) => return Ok(()),
                             Ok(DemuxCommand::Seek { target_pts, forward }) => {
                                 let Some((t, f, n)) = coalesce_seeks(&cmd_rx, target_pts, forward) else {
                                     return Ok(());
                                 };
-                                do_seek(&mut ictx, &packet_tx, t, f, n);
+                                replay_cursor = try_cached_seek(&mut cache, &mut ictx, &packet_tx, t, f, n);
                                 continue;
                             }
                             Err(_) => return Ok(()),
                         }
                     }
                 }
+            } else {
+                // Replay exhausted — resume reading from ictx (already positioned)
+                replay_cursor = None;
+                continue;
             }
-            None => {
-                // End of file
-                let _ = packet_tx.send(DemuxPacket::Eof);
-                log::debug!("Demuxer: EOF");
+        } else {
+            // Normal read from file
+            match read_next_packet(&mut ictx) {
+                Some((stream_idx, packet)) => {
+                    cache.push(&packet, stream_idx);
 
-                // Wait for a seek command or stop
-                match cmd_rx.recv() {
-                    Ok(DemuxCommand::Stop) => return Ok(()),
-                    Ok(DemuxCommand::Seek { target_pts, .. }) => {
-                        let _ = ictx.seek(target_pts, ..target_pts);
-                        let _ = packet_tx.send(DemuxPacket::Flush);
+                    let demux_pkt = if Some(stream_idx) == video_idx {
+                        DemuxPacket::Video(packet)
+                    } else if Some(stream_idx) == audio_idx {
+                        DemuxPacket::Audio(packet)
+                    } else if Some(stream_idx) == subtitle_idx {
+                        DemuxPacket::Subtitle(packet)
+                    } else {
                         continue;
+                    };
+
+                    crossbeam_channel::select! {
+                        send(packet_tx, demux_pkt) -> res => {
+                            if res.is_err() {
+                                return Ok(());
+                            }
+                        }
+                        recv(cmd_rx) -> msg => {
+                            match msg {
+                                Ok(DemuxCommand::Stop) => return Ok(()),
+                                Ok(DemuxCommand::Seek { target_pts, forward }) => {
+                                    let Some((t, f, n)) = coalesce_seeks(&cmd_rx, target_pts, forward) else {
+                                        return Ok(());
+                                    };
+                                    replay_cursor = try_cached_seek(&mut cache, &mut ictx, &packet_tx, t, f, n);
+                                    continue;
+                                }
+                                Err(_) => return Ok(()),
+                            }
+                        }
                     }
-                    Err(_) => return Ok(()),
+                }
+                None => {
+                    let _ = packet_tx.send(DemuxPacket::Eof);
+                    log::debug!("Demuxer: EOF");
+
+                    match cmd_rx.recv() {
+                        Ok(DemuxCommand::Stop) => return Ok(()),
+                        Ok(DemuxCommand::Seek { target_pts, forward }) => {
+                            let Some((t, f, n)) = coalesce_seeks(&cmd_rx, target_pts, forward) else {
+                                return Ok(());
+                            };
+                            replay_cursor = try_cached_seek(&mut cache, &mut ictx, &packet_tx, t, f, n);
+                            continue;
+                        }
+                        Err(_) => return Ok(()),
+                    }
                 }
             }
         }
@@ -245,6 +466,30 @@ fn coalesce_seeks(
     Some((t, f, n))
 }
 
+/// Try to satisfy a seek from the packet cache. Returns a replay cursor if
+/// the target is within the cache, or None after falling back to a file seek.
+fn try_cached_seek(
+    cache: &mut PacketCache,
+    ictx: &mut Input,
+    packet_tx: &Sender<DemuxPacket>,
+    target: i64,
+    forward: bool,
+    count: u32,
+) -> Option<usize> {
+    if let Some(idx) = cache.seek_position(target, forward) {
+        log::debug!("Demuxer: cache hit at index {idx}, coalesced {count}");
+        for _ in 0..count {
+            let _ = packet_tx.send(DemuxPacket::Flush);
+        }
+        Some(idx)
+    } else {
+        log::debug!("Demuxer: cache miss, file seek");
+        cache.clear();
+        do_seek(ictx, packet_tx, target, forward, count);
+        None
+    }
+}
+
 /// Execute a seek and send the corresponding Flush packets.
 fn do_seek(ictx: &mut Input, packet_tx: &Sender<DemuxPacket>, target: i64, forward: bool, count: u32) {
     log::debug!("Demuxer: seek to {target}us, coalesced {count}");
@@ -267,6 +512,219 @@ fn read_next_packet(ictx: &mut Input) -> Option<(usize, ffmpeg::Packet)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ffmpeg::codec::packet::Flags;
+
+    /// Build a PacketCache without needing an Input context.
+    fn test_cache(max_bytes: usize, video_idx: Option<usize>) -> PacketCache {
+        // Use 1/1000000 time base so PTS values == microseconds directly
+        let tb = ffmpeg::Rational::new(1, 1_000_000);
+        let mut time_bases = Vec::new();
+        if let Some(i) = video_idx {
+            time_bases.push((i, tb));
+        }
+        // Also add audio stream index 1 if video is 0
+        if video_idx == Some(0) {
+            time_bases.push((1, tb));
+        }
+        PacketCache {
+            packets: VecDeque::new(),
+            total_bytes: 0,
+            max_bytes,
+            video_idx,
+            time_bases,
+        }
+    }
+
+    /// Build a test CachedPacket without FFI (empty packet, size tracked manually).
+    fn test_cached_packet(
+        stream_index: usize,
+        pts_us: i64,
+        is_video_keyframe: bool,
+        data_size: usize,
+    ) -> CachedPacket {
+        let mut pkt = ffmpeg::Packet::empty();
+        pkt.set_pts(Some(pts_us));
+        if is_video_keyframe {
+            pkt.set_flags(Flags::KEY);
+        }
+        pkt.set_stream(stream_index);
+        CachedPacket {
+            packet: pkt,
+            stream_index,
+            pts_us,
+            is_video_keyframe,
+            data_size,
+        }
+    }
+
+    fn push_test_packet(
+        cache: &mut PacketCache,
+        stream_index: usize,
+        pts_us: i64,
+        is_video_keyframe: bool,
+        data_size: usize,
+    ) {
+        let cp = test_cached_packet(stream_index, pts_us, is_video_keyframe, data_size);
+        cache.total_bytes += cp.data_size;
+        cache.packets.push_back(cp);
+        while cache.total_bytes > cache.max_bytes {
+            if let Some(evicted) = cache.packets.pop_front() {
+                cache.total_bytes -= evicted.data_size;
+            } else {
+                break;
+            }
+        }
+    }
+
+    // --- PacketCache::seek_position ---
+
+    #[test]
+    fn seek_position_empty_cache() {
+        let cache = test_cache(1024, Some(0));
+        assert_eq!(cache.seek_position(1_000_000, false), None);
+        assert_eq!(cache.seek_position(1_000_000, true), None);
+    }
+
+    #[test]
+    fn seek_position_target_before_cache() {
+        let mut cache = test_cache(1024, Some(0));
+        push_test_packet(&mut cache, 0, 5_000_000, true, 100);
+        push_test_packet(&mut cache, 0, 10_000_000, false, 100);
+        assert_eq!(cache.seek_position(1_000_000, false), None);
+        assert_eq!(cache.seek_position(1_000_000, true), None);
+    }
+
+    #[test]
+    fn seek_position_target_after_cache() {
+        let mut cache = test_cache(1024, Some(0));
+        push_test_packet(&mut cache, 0, 5_000_000, true, 100);
+        push_test_packet(&mut cache, 0, 10_000_000, false, 100);
+        assert_eq!(cache.seek_position(20_000_000, false), None);
+        assert_eq!(cache.seek_position(20_000_000, true), None);
+    }
+
+    #[test]
+    fn seek_position_backward_finds_keyframe_before() {
+        let mut cache = test_cache(4096, Some(0));
+        push_test_packet(&mut cache, 0, 0, true, 100);
+        push_test_packet(&mut cache, 0, 1_000_000, false, 100);
+        push_test_packet(&mut cache, 0, 2_000_000, true, 100);
+        push_test_packet(&mut cache, 0, 3_000_000, false, 100);
+        push_test_packet(&mut cache, 0, 4_000_000, true, 100);
+
+        // Backward seek to 2.5s → keyframe at 2s (index 2)
+        assert_eq!(cache.seek_position(2_500_000, false), Some(2));
+        // Backward seek to exactly 4s → keyframe at 4s (index 4)
+        assert_eq!(cache.seek_position(4_000_000, false), Some(4));
+        // Backward seek to 0 → keyframe at 0 (index 0)
+        assert_eq!(cache.seek_position(0, false), Some(0));
+    }
+
+    #[test]
+    fn seek_position_forward_finds_keyframe_after() {
+        let mut cache = test_cache(4096, Some(0));
+        push_test_packet(&mut cache, 0, 0, true, 100);
+        push_test_packet(&mut cache, 0, 1_000_000, false, 100);
+        push_test_packet(&mut cache, 0, 2_000_000, true, 100);
+        push_test_packet(&mut cache, 0, 3_000_000, false, 100);
+        push_test_packet(&mut cache, 0, 4_000_000, true, 100);
+
+        // Forward seek to 0.5s → first keyframe >= 0.5s is at 2s (index 2)
+        assert_eq!(cache.seek_position(500_000, true), Some(2));
+        // Forward seek to exactly 2s → keyframe at 2s (index 2)
+        assert_eq!(cache.seek_position(2_000_000, true), Some(2));
+        // Forward seek to 3.5s → keyframe at 4s (index 4)
+        assert_eq!(cache.seek_position(3_500_000, true), Some(4));
+        // Forward seek to exactly 4s → keyframe at 4s (index 4)
+        assert_eq!(cache.seek_position(4_000_000, true), Some(4));
+    }
+
+    #[test]
+    fn seek_position_forward_miss_no_keyframe_after() {
+        let mut cache = test_cache(4096, Some(0));
+        push_test_packet(&mut cache, 0, 0, true, 100);
+        push_test_packet(&mut cache, 0, 1_000_000, false, 100);
+        push_test_packet(&mut cache, 0, 2_000_000, false, 100);
+
+        // Forward seek to 0.5s — no keyframe >= 0.5s → cache miss
+        assert_eq!(cache.seek_position(500_000, true), None);
+    }
+
+    #[test]
+    fn seek_position_backward_miss_no_keyframe_before() {
+        let mut cache = test_cache(4096, Some(0));
+        push_test_packet(&mut cache, 0, 0, false, 100); // not a keyframe
+        push_test_packet(&mut cache, 0, 1_000_000, false, 100);
+        push_test_packet(&mut cache, 0, 2_000_000, true, 100);
+
+        // Backward seek to 1.5s — no keyframe <= 1.5s → cache miss
+        assert_eq!(cache.seek_position(1_500_000, false), None);
+    }
+
+    #[test]
+    fn seek_position_audio_only_backward() {
+        let mut cache = test_cache(4096, None);
+        cache.time_bases.push((1, ffmpeg::Rational::new(1, 1_000_000)));
+        push_test_packet(&mut cache, 1, 0, false, 100);
+        push_test_packet(&mut cache, 1, 1_000_000, false, 100);
+        push_test_packet(&mut cache, 1, 2_000_000, false, 100);
+
+        // Backward: packet at or before 1.5s → index 1
+        assert_eq!(cache.seek_position(1_500_000, false), Some(1));
+    }
+
+    #[test]
+    fn seek_position_audio_only_forward() {
+        let mut cache = test_cache(4096, None);
+        cache.time_bases.push((1, ffmpeg::Rational::new(1, 1_000_000)));
+        push_test_packet(&mut cache, 1, 0, false, 100);
+        push_test_packet(&mut cache, 1, 1_000_000, false, 100);
+        push_test_packet(&mut cache, 1, 2_000_000, false, 100);
+
+        // Forward: packet at or after 0.5s → index 1
+        assert_eq!(cache.seek_position(500_000, true), Some(1));
+    }
+
+    // --- PacketCache push + eviction ---
+
+    #[test]
+    fn push_evicts_when_over_budget() {
+        let mut cache = test_cache(250, Some(0));
+        push_test_packet(&mut cache, 0, 0, true, 100);
+        push_test_packet(&mut cache, 0, 1_000_000, false, 100);
+        assert_eq!(cache.packets.len(), 2);
+        assert_eq!(cache.total_bytes, 200);
+
+        // This push exceeds 250 bytes, should evict the oldest
+        push_test_packet(&mut cache, 0, 2_000_000, true, 100);
+        assert_eq!(cache.packets.len(), 2);
+        assert_eq!(cache.total_bytes, 200);
+        assert_eq!(cache.packets.front().unwrap().pts_us, 1_000_000);
+    }
+
+    #[test]
+    fn push_tracks_total_bytes() {
+        let mut cache = test_cache(10000, Some(0));
+        push_test_packet(&mut cache, 0, 0, true, 500);
+        push_test_packet(&mut cache, 0, 1_000_000, false, 300);
+        push_test_packet(&mut cache, 0, 2_000_000, true, 200);
+        assert_eq!(cache.total_bytes, 1000);
+        assert_eq!(cache.packets.len(), 3);
+    }
+
+    // --- PacketCache::clear ---
+
+    #[test]
+    fn clear_resets_state() {
+        let mut cache = test_cache(10000, Some(0));
+        push_test_packet(&mut cache, 0, 0, true, 500);
+        push_test_packet(&mut cache, 0, 1_000_000, false, 300);
+        cache.clear();
+        assert_eq!(cache.packets.len(), 0);
+        assert_eq!(cache.total_bytes, 0);
+    }
+
+    // --- coalesce_seeks ---
 
     #[test]
     fn coalesce_single_seek() {
