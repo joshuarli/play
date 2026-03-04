@@ -95,13 +95,13 @@ pub fn init_layers(parent_ptr: *mut c_void, bounds: CGRect) {
     // Subtitle layer — frame and font set dynamically in show_subtitle
     let sub: Retained<AnyObject> = unsafe { msg_send![cls, new] };
     let _: () = unsafe { msg_send![&*sub, setContentsScale: scale] };
-    let black = create_cgcolor(0.0, 0.0, 0.0, 0.8);
+    let black = create_cgcolor(0.0, 0.0, 0.0, 1.0);
     let _: () = unsafe { msg_send![&*sub, setShadowColor: black] };
     release_cgcolor(black);
     let _: () = unsafe { msg_send![&*sub, setShadowOpacity: 1.0f32] };
     let zero = CGSize::new(0.0, 0.0);
     let _: () = unsafe { msg_send![&*sub, setShadowOffset: zero] };
-    let _: () = unsafe { msg_send![&*sub, setShadowRadius: 1.0f64] };
+    let _: () = unsafe { msg_send![&*sub, setShadowRadius: 2.0f64] };
     let center = objc2_foundation::NSString::from_str("center");
     let _: () = unsafe { msg_send![&*sub, setAlignmentMode: &*center] };
     let _: () = unsafe { msg_send![&*sub, setWrapped: Bool::YES] };
@@ -173,19 +173,26 @@ pub fn show_message(text: &str) {
     inner.message_visible = true;
 }
 
-/// Build an NSAttributedString with mpv-style outlined text for subtitles.
+/// Build an NSAttributedString for subtitles.
+/// Uses NSShadow attribute for one outline pass; the CATextLayer's own
+/// shadow provides a second pass, combining into a thick crisp outline.
 fn build_sub_string(text: &str, font_size: f64) -> Retained<AnyObject> {
     unsafe {
         let font_cls = AnyClass::get(c"NSFont").unwrap();
-        let font: Retained<AnyObject> = msg_send![font_cls, systemFontOfSize: font_size];
+        let font: Retained<AnyObject> =
+            msg_send![font_cls, systemFontOfSize: font_size];
 
         let color_cls = AnyClass::get(c"NSColor").unwrap();
         let white: Retained<AnyObject> = msg_send![color_cls, whiteColor];
         let black: Retained<AnyObject> = msg_send![color_cls, blackColor];
 
-        // Negative NSStrokeWidth = fill + stroke (outline around each glyph)
-        let num_cls = AnyClass::get(c"NSNumber").unwrap();
-        let stroke_w: Retained<AnyObject> = msg_send![num_cls, numberWithDouble: -4.0f64];
+        // Text-level shadow (rendered by Core Text, independent of CALayer shadow)
+        let shadow_cls = AnyClass::get(c"NSShadow").unwrap();
+        let shadow: Retained<AnyObject> = msg_send![shadow_cls, new];
+        let _: () = msg_send![&*shadow, setShadowColor: &*black];
+        let zero = CGSize::new(0.0, 0.0);
+        let _: () = msg_send![&*shadow, setShadowOffset: zero];
+        let _: () = msg_send![&*shadow, setShadowBlurRadius: 2.0f64];
 
         // Center-aligned paragraph style
         let para_cls = AnyClass::get(c"NSMutableParagraphStyle").unwrap();
@@ -199,10 +206,8 @@ fn build_sub_string(text: &str, font_size: f64) -> Retained<AnyObject> {
         let _: () = msg_send![&*dict, setObject: &*font, forKey: &*k];
         let k = objc2_foundation::NSString::from_str("NSColor");
         let _: () = msg_send![&*dict, setObject: &*white, forKey: &*k];
-        let k = objc2_foundation::NSString::from_str("NSStrokeColor");
-        let _: () = msg_send![&*dict, setObject: &*black, forKey: &*k];
-        let k = objc2_foundation::NSString::from_str("NSStrokeWidth");
-        let _: () = msg_send![&*dict, setObject: &*stroke_w, forKey: &*k];
+        let k = objc2_foundation::NSString::from_str("NSShadow");
+        let _: () = msg_send![&*dict, setObject: &*shadow, forKey: &*k];
         let k = objc2_foundation::NSString::from_str("NSParagraphStyle");
         let _: () = msg_send![&*dict, setObject: &*para, forKey: &*k];
 
