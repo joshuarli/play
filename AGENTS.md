@@ -54,12 +54,12 @@ File → Demuxer → DemuxPacket ──┬── Video: VideoToolbox GPU decode
 |---|---|---|
 | `main.rs` | ~265 | Thread spawning, file probe, stream info logging |
 | `cmd.rs` | ~260 | Command/DemuxPacket/DemuxCommand/VideoFrame/UiUpdate/Args types, arg parser |
-| `player.rs` | ~430 | State machine: crossbeam select!, decode dispatch, seek, volume, subtitles |
-| `demux.rs` | ~205 | ffmpeg format::input, packet reading, seek handling, stream probe |
+| `player.rs` | ~540 | State machine: crossbeam select!, decode dispatch, seek buffering, volume, subtitles |
+| `demux.rs` | ~310 | ffmpeg format::input, packet reading, seek coalescing, stream probe |
 | `decode_video.rs` | ~170 | VideoToolbox hwaccel setup, CVPixelBuffer extraction from AVFrame.data[3] |
 | `decode_audio.rs` | ~130 | ffmpeg audio decode + resample to f32 planar via software::resampling |
 | `video_out.rs` | ~300 | AVSampleBufferDisplayLayer, CMSampleBuffer from CVPixelBuffer, timebase sync |
-| `audio_out.rs` | ~175 | AVAudioEngine + AVAudioPlayerNode, planar buffer scheduling, clock reporting |
+| `audio_out.rs` | ~415 | CoreAudio AudioUnit, non-interleaved f32 render callback, planar buffer scheduling, clock reporting |
 | `window.rs` | ~325 | NSWindow via objc2 define_class!, key monitor, GCD timer (~120Hz), layer setup |
 | `osd.rs` | ~265 | CATextLayer OSD messages, NSAttributedString subtitles with outline |
 | `sync.rs` | ~105 | Audio-master clock (AtomicI64), pause/resume, seek position |
@@ -85,6 +85,21 @@ writes the current PTS to `Arc<AtomicI64>`. The player reads it to decide per-fr
 - **> 50ms late**: drop frame (release CVPixelBuffer, don't enqueue)
 - **> 50ms early**: display anyway (layer handles timing in practice)
 - **within ±50ms**: display immediately
+
+## Seek Coalescing
+
+Holding an arrow key generates ~30 `SeekRelative` commands/sec. Without coalescing, each
+would trigger a full ffmpeg seek + decode flush round-trip. Two layers prevent this:
+
+1. **Player buffering** (`player.rs`): At most one seek is in flight to the demuxer. While
+   `pending_seeks > 0`, new seeks overwrite a `buffered_seek` field instead of dispatching.
+   When the Flush returns, the buffered seek is dispatched without redundant decoder flushes
+   (decoders are still clean — no packets were fed since the last flush).
+
+2. **Demuxer coalescing** (`demux.rs`): The demuxer drains all pending seeks from `cmd_rx`
+   at the top of each loop iteration (keeps only the last). The packet send uses
+   `crossbeam::select!` to race `send` vs `recv`, so a seek command is processed immediately
+   even when the packet channel is full (stale packet is dropped).
 
 ## OSD Rendering
 

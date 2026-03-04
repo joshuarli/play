@@ -138,27 +138,28 @@ pub fn run_demuxer(
         .with_context(|| format!("Failed to open: {}", path.display()))?;
 
     loop {
-        // Check for commands (non-blocking)
-        match cmd_rx.try_recv() {
-            Ok(DemuxCommand::Stop) => {
-                log::debug!("Demuxer: stop received");
-                return Ok(());
-            }
-            Ok(DemuxCommand::Seek { target_pts, forward }) => {
-                log::debug!("Demuxer: seek to {target_pts}us (forward={forward})");
-                let ts = target_pts;
-                if forward {
-                    // Keyframe at or after target
-                    let _ = ictx.seek(ts, ts..);
-                } else {
-                    // Keyframe at or before target
-                    let _ = ictx.seek(ts, ..ts);
+        // Drain all pending commands — coalesce rapid seeks into one
+        let mut last_seek: Option<DemuxCommand> = None;
+        let mut seek_count: u32 = 0;
+
+        loop {
+            match cmd_rx.try_recv() {
+                Ok(DemuxCommand::Stop) => {
+                    log::debug!("Demuxer: stop received");
+                    return Ok(());
                 }
-                let _ = packet_tx.send(DemuxPacket::Flush);
-                continue;
+                Ok(cmd @ DemuxCommand::Seek { .. }) => {
+                    seek_count += 1;
+                    last_seek = Some(cmd);
+                }
+                Err(crossbeam_channel::TryRecvError::Empty) => break,
+                Err(crossbeam_channel::TryRecvError::Disconnected) => return Ok(()),
             }
-            Err(crossbeam_channel::TryRecvError::Empty) => {}
-            Err(crossbeam_channel::TryRecvError::Disconnected) => return Ok(()),
+        }
+
+        if let Some(DemuxCommand::Seek { target_pts, forward }) = last_seek {
+            do_seek(&mut ictx, &packet_tx, target_pts, forward, seek_count);
+            continue;
         }
 
         // Read next packet
@@ -174,8 +175,28 @@ pub fn run_demuxer(
                     continue; // skip unwanted streams
                 };
 
-                if packet_tx.send(demux_pkt).is_err() {
-                    return Ok(()); // player disconnected
+                // Send packet, but stay responsive to commands while
+                // the channel is full (avoids going deaf during backpressure).
+                crossbeam_channel::select! {
+                    send(packet_tx, demux_pkt) -> res => {
+                        if res.is_err() {
+                            return Ok(());
+                        }
+                    }
+                    recv(cmd_rx) -> msg => {
+                        // Command arrived while blocked — stale packet is dropped
+                        match msg {
+                            Ok(DemuxCommand::Stop) => return Ok(()),
+                            Ok(DemuxCommand::Seek { target_pts, forward }) => {
+                                let Some((t, f, n)) = coalesce_seeks(&cmd_rx, target_pts, forward) else {
+                                    return Ok(());
+                                };
+                                do_seek(&mut ictx, &packet_tx, t, f, n);
+                                continue;
+                            }
+                            Err(_) => return Ok(()),
+                        }
+                    }
                 }
             }
             None => {
@@ -198,8 +219,90 @@ pub fn run_demuxer(
     }
 }
 
+/// Drain additional seeks from the command channel, keeping only the last.
+/// Returns None if a Stop was consumed (caller must exit).
+fn coalesce_seeks(
+    cmd_rx: &Receiver<DemuxCommand>,
+    target_pts: i64,
+    forward: bool,
+) -> Option<(i64, bool, u32)> {
+    let mut t = target_pts;
+    let mut f = forward;
+    let mut n: u32 = 1;
+    while let Ok(cmd) = cmd_rx.try_recv() {
+        match cmd {
+            DemuxCommand::Stop => return None,
+            DemuxCommand::Seek {
+                target_pts: t2,
+                forward: f2,
+            } => {
+                t = t2;
+                f = f2;
+                n += 1;
+            }
+        }
+    }
+    Some((t, f, n))
+}
+
+/// Execute a seek and send the corresponding Flush packets.
+fn do_seek(ictx: &mut Input, packet_tx: &Sender<DemuxPacket>, target: i64, forward: bool, count: u32) {
+    log::debug!("Demuxer: seek to {target}us, coalesced {count}");
+    if forward {
+        let _ = ictx.seek(target, target..);
+    } else {
+        let _ = ictx.seek(target, ..target);
+    }
+    for _ in 0..count {
+        let _ = packet_tx.send(DemuxPacket::Flush);
+    }
+}
+
 fn read_next_packet(ictx: &mut Input) -> Option<(usize, ffmpeg::Packet)> {
     ictx.packets()
         .next()
         .map(|(stream, packet)| (stream.index(), packet))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn coalesce_single_seek() {
+        let (_, rx) = crossbeam_channel::unbounded::<DemuxCommand>();
+        let result = coalesce_seeks(&rx, 5_000_000, true);
+        assert_eq!(result, Some((5_000_000, true, 1)));
+    }
+
+    #[test]
+    fn coalesce_multiple_seeks_keeps_last() {
+        let (tx, rx) = crossbeam_channel::unbounded::<DemuxCommand>();
+        tx.send(DemuxCommand::Seek { target_pts: 10_000_000, forward: true }).unwrap();
+        tx.send(DemuxCommand::Seek { target_pts: 15_000_000, forward: false }).unwrap();
+        tx.send(DemuxCommand::Seek { target_pts: 20_000_000, forward: true }).unwrap();
+
+        let result = coalesce_seeks(&rx, 5_000_000, true);
+        assert_eq!(result, Some((20_000_000, true, 4)));
+    }
+
+    #[test]
+    fn coalesce_returns_none_on_stop() {
+        let (tx, rx) = crossbeam_channel::unbounded::<DemuxCommand>();
+        tx.send(DemuxCommand::Seek { target_pts: 10_000_000, forward: true }).unwrap();
+        tx.send(DemuxCommand::Stop).unwrap();
+        tx.send(DemuxCommand::Seek { target_pts: 99_000_000, forward: true }).unwrap();
+
+        let result = coalesce_seeks(&rx, 5_000_000, true);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn coalesce_empty_channel() {
+        let (tx, rx) = crossbeam_channel::unbounded::<DemuxCommand>();
+        drop(tx);
+        // Disconnected channel — no messages to drain
+        let result = coalesce_seeks(&rx, 1_000_000, false);
+        assert_eq!(result, Some((1_000_000, false, 1)));
+    }
 }

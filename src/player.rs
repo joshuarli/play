@@ -14,6 +14,13 @@ use crate::subtitle::SubtitleTrack;
 use crate::sync::SyncClock;
 use crate::time::format_time;
 
+/// A seek waiting to be dispatched after the current in-flight seek completes.
+struct BufferedSeek {
+    target_pts: i64,
+    forward: bool,
+    exact: bool,
+}
+
 /// Player state machine.
 pub struct Player {
     // Channels
@@ -40,6 +47,8 @@ pub struct Player {
     audio_delay_us: i64,
     duration_us: i64,
     pending_seeks: u32,
+    /// Next seek to dispatch when the current in-flight seek completes.
+    buffered_seek: Option<BufferedSeek>,
     /// After an exact seek, skip audio/video with PTS below this value.
     seek_floor_us: i64,
     /// For inexact seeks: waiting for first post-seek packet to land.
@@ -90,6 +99,7 @@ impl Player {
             audio_delay_us: (initial_audio_delay * 1_000_000.0) as i64,
             duration_us: stream_info.duration_us,
             pending_seeks: 0,
+            buffered_seek: None,
             seek_floor_us: 0,
             seek_landed: true,
             last_audio_end_us: 0,
@@ -158,6 +168,23 @@ impl Player {
         self.sync_clock.set_position(target_us);
         self.seek_floor_us = target_us;
         let _ = self.ui_update_tx.send(UiUpdate::SeekFlush(target_us));
+    }
+
+    fn dispatch_seek(&mut self, target: i64, forward: bool, exact: bool) {
+        self.pending_seeks += 1;
+        let _ = self.demux_cmd_tx.send(DemuxCommand::Seek {
+            target_pts: target,
+            forward,
+        });
+        self.flush_decoders();
+        if exact {
+            self.seek_floor_us = target;
+            self.sync_clock.set_position(target);
+        } else {
+            self.seek_floor_us = 0;
+            self.sync_clock.set_position(target);
+            self.seek_landed = false;
+        }
     }
 
     fn flush_decoders(&mut self) {
@@ -245,35 +272,49 @@ impl Player {
                 let _ = self.ui_update_tx.send(UiUpdate::Paused(self.paused));
             }
             Command::SeekRelative { seconds, exact } => {
+                let mut total_seconds = seconds;
+                let mut any_exact = exact;
+                let mut deferred = Vec::new();
+
+                // Drain cmd_rx for additional seeks that already arrived
+                while let Ok(cmd) = self.cmd_rx.try_recv() {
+                    match cmd {
+                        Command::SeekRelative { seconds: s, exact: e } => {
+                            total_seconds += s;
+                            any_exact = any_exact || e;
+                        }
+                        other => {
+                            deferred.push(other);
+                            break;
+                        }
+                    }
+                }
+
                 let current = self.sync_clock.audio_pts();
-                let delta_us = (seconds * 1_000_000.0) as i64;
+                let delta_us = (total_seconds * 1_000_000.0) as i64;
                 let target = (current + delta_us).max(0).min(self.duration_us);
-                let forward = seconds > 0.0;
+                let forward = total_seconds > 0.0;
 
-                // Track pending seek so stale packets are discarded until Flush arrives
-                self.pending_seeks += 1;
-
-                // Send seek to demuxer
-                let _ = self.demux_cmd_tx.send(DemuxCommand::Seek {
-                    target_pts: target,
-                    forward: !exact && forward,
-                });
-
-                self.flush_decoders();
-
-                if exact {
-                    // Exact seek: decode from keyframe but skip to target
-                    self.seek_floor_us = target;
-                    self.sync_clock.set_position(target);
+                if self.pending_seeks == 0 {
+                    // No seek in flight — dispatch immediately
+                    self.dispatch_seek(target, !any_exact && forward, any_exact);
                 } else {
-                    // Inexact seek: snap to keyframe, no decode waste.
-                    // Position will be updated when the first post-seek
-                    // video frame arrives (see seek_landed).
-                    self.seek_floor_us = 0;
+                    // Seek already in flight — buffer (overwrites previous buffer)
+                    self.buffered_seek = Some(BufferedSeek {
+                        target_pts: target,
+                        forward: !any_exact && forward,
+                        exact: any_exact,
+                    });
+                    // Update clock + UI so the scrub bar tracks instantly
                     self.sync_clock.set_position(target);
-                    self.seek_landed = false;
                 }
                 let _ = self.ui_update_tx.send(UiUpdate::SeekFlush(target));
+
+                for cmd in deferred {
+                    if self.handle_command(cmd) {
+                        return true;
+                    }
+                }
             }
             Command::VolumeUp => self.adjust_volume(5),
             Command::VolumeDown => self.adjust_volume(-5),
@@ -341,9 +382,27 @@ impl Player {
 
     fn handle_packet(&mut self, pkt: DemuxPacket) {
         match pkt {
-            // Seek completed — subsequent packets are from the new position
+            // Seek completed — dispatch buffered seek or resume packet processing
             DemuxPacket::Flush => {
-                self.pending_seeks = self.pending_seeks.saturating_sub(1);
+                if let Some(seek) = self.buffered_seek.take() {
+                    // Consumed Flush cancels out with the new seek's future
+                    // Flush, so pending_seeks stays unchanged. Decoders are
+                    // already clean (no packets fed since last flush).
+                    let _ = self.demux_cmd_tx.send(DemuxCommand::Seek {
+                        target_pts: seek.target_pts,
+                        forward: seek.forward,
+                    });
+                    if seek.exact {
+                        self.seek_floor_us = seek.target_pts;
+                        self.sync_clock.set_position(seek.target_pts);
+                    } else {
+                        self.seek_floor_us = 0;
+                        self.sync_clock.set_position(seek.target_pts);
+                        self.seek_landed = false;
+                    }
+                } else {
+                    self.pending_seeks = self.pending_seeks.saturating_sub(1);
+                }
                 return;
             }
             // Discard stale pre-seek packets
