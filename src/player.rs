@@ -24,7 +24,7 @@ struct QueuedSeek {
 }
 
 /// Minimum time between seek dispatches. Must be >= the display timer tick
-/// (8ms / 120Hz) so at most one seek_flush frame lands per tick — otherwise
+/// (4ms / 240Hz) so at most one seek_flush frame lands per tick — otherwise
 /// the second flush clears the first before the compositor runs.
 const SEEK_MIN_DISPLAY: Duration = Duration::from_millis(4);
 /// Safety timeout: if a seek completes but no frame arrives within this window,
@@ -841,6 +841,51 @@ mod tests {
             !player.needs_display_flush,
             "Display flush should be cleared after video frame"
         );
+    }
+
+    #[test]
+    fn constants_min_display_less_than_coalesce_timeout() {
+        // SEEK_MIN_DISPLAY must be < SEEK_COALESCE_TIMEOUT, otherwise the
+        // "wait for frame" window inside execute_queued_seek is unreachable
+        // and every seek blocks until the safety timeout.
+        assert!(
+            SEEK_MIN_DISPLAY < SEEK_COALESCE_TIMEOUT,
+            "SEEK_MIN_DISPLAY ({SEEK_MIN_DISPLAY:?}) must be < SEEK_COALESCE_TIMEOUT ({SEEK_COALESCE_TIMEOUT:?})"
+        );
+    }
+
+    #[test]
+    fn frame_shown_gates_dispatch_within_coalesce_window() {
+        // After SEEK_MIN_DISPLAY elapses, execute_queued_seek should still
+        // defer if seek_frame_shown is false (no frame decoded yet) — the
+        // coalesce window gives the decoder time to produce a frame so it
+        // can be seen before the next seek_flush clears it.
+        let (mut player, _, _, _, _) = make_test_player();
+
+        // First seek dispatches
+        player.queue_seek(5.0, false);
+        player.execute_queued_seek();
+
+        // Simulate Flush arriving but NO video frame (decoder still working)
+        player.pending_seeks = 0;
+        // seek_frame_shown stays false
+
+        // Wait past SEEK_MIN_DISPLAY but within SEEK_COALESCE_TIMEOUT
+        std::thread::sleep(SEEK_MIN_DISPLAY + Duration::from_millis(1));
+
+        // Queue a second seek — should defer (no frame shown yet)
+        player.queue_seek(5.0, false);
+        player.execute_queued_seek();
+        assert_eq!(player.pending_seeks, 0, "Should defer: no frame shown yet");
+        assert!(player.queued_seek.is_some());
+
+        // Now simulate the frame arriving
+        player.seek_frame_shown = true;
+
+        // Should dispatch immediately (MIN_DISPLAY already elapsed + frame shown)
+        player.execute_queued_seek();
+        assert_eq!(player.pending_seeks, 1, "Should dispatch: frame shown and MIN_DISPLAY passed");
+        assert!(player.queued_seek.is_none());
     }
 
     #[test]
