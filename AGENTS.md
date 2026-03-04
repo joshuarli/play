@@ -1,6 +1,6 @@
 # play — Architecture
 
-Minimal macOS media player in Rust. ~2600 lines across 15 source files.
+Minimal media player for apple silicon only.
 
 ## Threading Model
 
@@ -52,21 +52,21 @@ File → Demuxer → DemuxPacket ──┬── Video: VideoToolbox GPU decode
 
 | File | Lines | Responsibility |
 |---|---|---|
-| `main.rs` | 258 | CLI parsing (clap), thread spawning, file probe, playlist entry |
-| `cmd.rs` | 99 | Command/DemuxPacket/DemuxCommand/VideoFrame/UiUpdate/Args types |
-| `player.rs` | 403 | State machine: crossbeam select! loop, decode dispatch, seek, volume, subtitles |
-| `demux.rs` | 214 | ffmpeg format::input, packet reading loop, seek handling, stream probe |
+| `main.rs` | 265 | CLI parsing, thread spawning, file probe, playlist entry |
+| `cmd.rs` | 267 | Command/DemuxPacket/DemuxCommand/VideoFrame/UiUpdate/Args types, hand-rolled arg parser |
+| `player.rs` | 455 | State machine: crossbeam select! loop, decode dispatch, seek, volume, subtitles |
+| `demux.rs` | 218 | ffmpeg format::input, packet reading loop, seek handling, stream probe |
 | `decode_video.rs` | 176 | VideoToolbox hwaccel setup, CVPixelBuffer extraction from AVFrame.data[3] |
 | `decode_audio.rs` | 122 | ffmpeg audio decode + resample to f32 packed via software::resampling |
-| `video_out.rs` | 186 | AVSampleBufferDisplayLayer, CMSampleBuffer creation from CVPixelBuffer |
-| `audio_out.rs` | 187 | AVAudioEngine + AVAudioPlayerNode, buffer scheduling, clock reporting |
-| `window.rs` | 291 | NSWindow via objc2 define_class!, key monitor, GCD timer (~120Hz), layer setup |
-| `osd.rs` | 191 | CATextLayer for OSD messages + subtitles, CGColor helpers, fade timer |
-| `sync.rs` | 86 | Audio-master clock, SyncAction decisions (±50ms thresholds) |
-| `subtitle.rs` | 134 | SRT parser, auto-detection of .srt files alongside video |
-| `input.rs` | 63 | Virtual key code → Command mapping (Carbon key codes + characters) |
-| `time.rs` | 56 | PTS↔microseconds conversion, HH:MM:SS formatting/parsing |
-| `terminal.rs` | 79 | Audio-only mode: crossterm raw terminal, keyboard controls |
+| `video_out.rs` | 299 | AVSampleBufferDisplayLayer, CMSampleBuffer creation from CVPixelBuffer |
+| `audio_out.rs` | 186 | AVAudioEngine + AVAudioPlayerNode, buffer scheduling, clock reporting |
+| `window.rs` | 326 | NSWindow via objc2 define_class!, key monitor, GCD timer (~120Hz), layer setup |
+| `osd.rs` | 263 | CATextLayer for OSD messages, NSAttributedString subtitles with outline, CGColor helpers |
+| `sync.rs` | 108 | Audio-master clock, SyncAction decisions (±50ms thresholds) |
+| `subtitle.rs` | 259 | SRT parser, auto-detection of .srt files alongside video |
+| `input.rs` | 163 | Virtual key code → Command mapping (Carbon key codes + characters) |
+| `time.rs` | 172 | PTS↔microseconds conversion, HH:MM:SS formatting/parsing |
+| `terminal.rs` | 80 | Audio-only mode: termion raw terminal, keyboard controls |
 | `build.rs` | 17 | Links Apple frameworks (AVFoundation, CoreMedia, CoreVideo, etc.) |
 
 ## Key Dependencies
@@ -76,7 +76,7 @@ File → Demuxer → DemuxPacket ──┬── Video: VideoToolbox GPU decode
 - **block2 0.6** for Objective-C blocks (audio completion handlers, key monitor, timer)
 - **dispatch2 0.3** for GCD timer on main queue
 - **crossbeam-channel 0.5** for inter-thread communication
-- **clap 4** for CLI, **crossterm 0.28** for terminal mode, **anyhow** for errors
+- **termion 4** for terminal raw mode (audio-only mode), **anyhow** for errors
 
 ## A/V Sync
 
@@ -90,10 +90,12 @@ writes the current PTS to `Arc<AtomicI64>`. The player reads it to decide per-fr
 
 Two `CATextLayer` sublayers on the content view's layer, above the display layer:
 - **Message** (bottom-left, 16pt): seek position, volume, audio delay. Fades after 2s.
-- **Subtitle** (bottom-center, 22pt, wrapped): SRT text. Shown/hidden by PTS lookup.
+- **Subtitle** (bottom-center, dynamic size): NSAttributedString with stroke outline. Shown/hidden by PTS lookup.
 
-White text + black shadow (radius 2-3px) for contrast. `CATransaction` disables implicit
-animations. Font sizing is fixed (not scaled to video height).
+Subtitle font size scales with window height (mpv-style: `height * 33/720`, matching
+`sub-font-size=55` with `sub-scale=0.6`). Black stroke outline via negative `NSStrokeWidth`
+plus subtle shadow for readability. Frame and margins recalculated on each update.
+`CATransaction` disables implicit animations.
 
 ## Gotchas
 

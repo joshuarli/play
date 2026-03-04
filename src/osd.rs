@@ -42,6 +42,7 @@ pub(crate) fn release_cgcolor(color: *mut CGColor) {
 }
 
 struct OsdInner {
+    parent: *mut AnyObject,
     message: *mut AnyObject,
     subtitle: *mut AnyObject,
     message_deadline_ms: u64,
@@ -91,24 +92,27 @@ pub fn init_layers(parent_ptr: *mut c_void, bounds: CGRect) {
     );
     let _: () = unsafe { msg_send![parent, addSublayer: &*msg] };
 
-    // Subtitle layer (bottom-center)
+    // Subtitle layer — frame and font set dynamically in show_subtitle
     let sub: Retained<AnyObject> = unsafe { msg_send![cls, new] };
-    setup_text_layer(
-        &sub,
-        CGRect::new(
-            CGPoint::new(40.0, 50.0),
-            CGSize::new(bounds.size.width - 80.0, 120.0),
-        ),
-        22.0,
-        scale,
-        true,
-    );
+    let _: () = unsafe { msg_send![&*sub, setContentsScale: scale] };
+    let black = create_cgcolor(0.0, 0.0, 0.0, 0.8);
+    let _: () = unsafe { msg_send![&*sub, setShadowColor: black] };
+    release_cgcolor(black);
+    let _: () = unsafe { msg_send![&*sub, setShadowOpacity: 1.0f32] };
+    let zero = CGSize::new(0.0, 0.0);
+    let _: () = unsafe { msg_send![&*sub, setShadowOffset: zero] };
+    let _: () = unsafe { msg_send![&*sub, setShadowRadius: 1.0f64] };
+    let center = objc2_foundation::NSString::from_str("center");
+    let _: () = unsafe { msg_send![&*sub, setAlignmentMode: &*center] };
+    let _: () = unsafe { msg_send![&*sub, setWrapped: Bool::YES] };
+    let _: () = unsafe { msg_send![&*sub, setOpacity: 0.0f32] };
     let _: () = unsafe { msg_send![parent, addSublayer: &*sub] };
 
     let msg_ptr = Retained::into_raw(msg) as *mut AnyObject;
     let sub_ptr = Retained::into_raw(sub) as *mut AnyObject;
 
     *OSD.lock().unwrap() = Some(OsdInner {
+        parent,
         message: msg_ptr,
         subtitle: sub_ptr,
         message_deadline_ms: 0,
@@ -169,6 +173,48 @@ pub fn show_message(text: &str) {
     inner.message_visible = true;
 }
 
+/// Build an NSAttributedString with mpv-style outlined text for subtitles.
+fn build_sub_string(text: &str, font_size: f64) -> Retained<AnyObject> {
+    unsafe {
+        let font_cls = AnyClass::get(c"NSFont").unwrap();
+        let font: Retained<AnyObject> = msg_send![font_cls, systemFontOfSize: font_size];
+
+        let color_cls = AnyClass::get(c"NSColor").unwrap();
+        let white: Retained<AnyObject> = msg_send![color_cls, whiteColor];
+        let black: Retained<AnyObject> = msg_send![color_cls, blackColor];
+
+        // Negative NSStrokeWidth = fill + stroke (outline around each glyph)
+        let num_cls = AnyClass::get(c"NSNumber").unwrap();
+        let stroke_w: Retained<AnyObject> = msg_send![num_cls, numberWithDouble: -4.0f64];
+
+        // Center-aligned paragraph style
+        let para_cls = AnyClass::get(c"NSMutableParagraphStyle").unwrap();
+        let para: Retained<AnyObject> = msg_send![para_cls, new];
+        let _: () = msg_send![&*para, setAlignment: 2i64]; // NSTextAlignmentCenter (macOS)
+
+        let dict_cls = AnyClass::get(c"NSMutableDictionary").unwrap();
+        let dict: Retained<AnyObject> = msg_send![dict_cls, new];
+
+        let k = objc2_foundation::NSString::from_str("NSFont");
+        let _: () = msg_send![&*dict, setObject: &*font, forKey: &*k];
+        let k = objc2_foundation::NSString::from_str("NSColor");
+        let _: () = msg_send![&*dict, setObject: &*white, forKey: &*k];
+        let k = objc2_foundation::NSString::from_str("NSStrokeColor");
+        let _: () = msg_send![&*dict, setObject: &*black, forKey: &*k];
+        let k = objc2_foundation::NSString::from_str("NSStrokeWidth");
+        let _: () = msg_send![&*dict, setObject: &*stroke_w, forKey: &*k];
+        let k = objc2_foundation::NSString::from_str("NSParagraphStyle");
+        let _: () = msg_send![&*dict, setObject: &*para, forKey: &*k];
+
+        let ns_text = objc2_foundation::NSString::from_str(text);
+        let raw: *mut AnyObject =
+            msg_send![AnyClass::get(c"NSAttributedString").unwrap(), alloc];
+        let raw: *mut AnyObject =
+            msg_send![raw, initWithString: &*ns_text, attributes: &*dict];
+        Retained::from_raw(raw).unwrap()
+    }
+}
+
 /// Show or hide subtitle text (bottom-center). Main thread only.
 pub fn show_subtitle(text: Option<&str>) {
     let mut osd = OSD.lock().unwrap();
@@ -177,8 +223,25 @@ pub fn show_subtitle(text: Option<&str>) {
     disable_animations();
     match text {
         Some(t) => {
-            let ns = objc2_foundation::NSString::from_str(t);
-            let _: () = unsafe { msg_send![inner.subtitle, setString: &*ns] };
+            // Query parent bounds for dynamic font sizing
+            let bounds: CGRect = unsafe { msg_send![inner.parent, bounds] };
+            let h = bounds.size.height;
+            let w = bounds.size.width;
+
+            // Scaled to ~2/3 of mpv sub-scale=0.6 (33 * 2/3 ≈ 22 at 720p ref)
+            let font_size = (h * 22.0 / 720.0).max(10.0);
+            let margin_y = h * 22.0 / 720.0;
+            let margin_x = w * 0.05;
+            let layer_h = font_size * 4.0;
+
+            let frame = CGRect::new(
+                CGPoint::new(margin_x, margin_y),
+                CGSize::new(w - margin_x * 2.0, layer_h),
+            );
+            let _: () = unsafe { msg_send![inner.subtitle, setFrame: frame] };
+
+            let attr = build_sub_string(t, font_size);
+            let _: () = unsafe { msg_send![inner.subtitle, setString: &*attr] };
             let _: () = unsafe { msg_send![inner.subtitle, setOpacity: 1.0f32] };
         }
         None => {

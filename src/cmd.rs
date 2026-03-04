@@ -104,7 +104,7 @@ Options:
       --audio-track <N>     Audio track index, 1-based [default: 1]
       --sub-file <PATH>     External SRT subtitle file
       --start <TIME>        Start position (HH:MM:SS, MM:SS, or seconds)
-      --fullscreen          Start in fullscreen
+      --no-fullscreen       Start windowed instead of fullscreen
   -v                        Verbose logging (-v info, -vv debug)
   -h, --help                Print help";
 
@@ -119,7 +119,7 @@ fn parse_from(argv: Vec<String>) -> anyhow::Result<Args> {
     let mut audio_track: usize = 1;
     let mut sub_file: Option<PathBuf> = None;
     let mut start: Option<String> = None;
-    let mut fullscreen = false;
+    let mut fullscreen = true;
     let mut verbose: u8 = 0;
 
     let mut iter = argv.into_iter();
@@ -166,6 +166,7 @@ fn parse_from(argv: Vec<String>) -> anyhow::Result<Args> {
                 start = Some(val);
             }
             "--fullscreen" => fullscreen = true,
+            "--no-fullscreen" => fullscreen = false,
             s if s.starts_with("-v") && s.chars().skip(1).all(|c| c == 'v') => {
                 verbose = (s.len() - 1).min(255) as u8;
             }
@@ -208,7 +209,7 @@ mod tests {
         assert_eq!(a.audio_delay, 0.0);
         assert_eq!(a.audio_track, 1);
         assert_eq!(a.verbose, 0);
-        assert!(!a.fullscreen);
+        assert!(a.fullscreen);
     }
 
     #[test]
@@ -224,7 +225,7 @@ mod tests {
             "subs.srt",
             "--start",
             "1:30",
-            "--fullscreen",
+            "--no-fullscreen",
             "-vv",
             "file.mp4",
         ]))
@@ -234,7 +235,7 @@ mod tests {
         assert_eq!(a.audio_track, 2);
         assert_eq!(a.sub_file, Some(PathBuf::from("subs.srt")));
         assert_eq!(a.start, Some("1:30".to_string()));
-        assert!(a.fullscreen);
+        assert!(!a.fullscreen);
         assert_eq!(a.verbose, 2);
         assert_eq!(a.files, vec![PathBuf::from("file.mp4")]);
     }
