@@ -18,12 +18,16 @@ use crate::input::map_key;
 
 // ── Global state ───────────────────────────────────────────────────────────
 
-// Channels: Mutex<Option<_>> so they can be replaced between files.
-static CMD_TX: Mutex<Option<Sender<Command>>> = Mutex::new(None);
-static VIDEO_FRAME_RX: Mutex<Option<crossbeam_channel::Receiver<VideoFrame>>> = Mutex::new(None);
-static UI_UPDATE_RX: Mutex<Option<crossbeam_channel::Receiver<UiUpdate>>> = Mutex::new(None);
-static AUDIO_CLOCK: Mutex<Option<Arc<AtomicI64>>> = Mutex::new(None);
-static DURATION_US: Mutex<i64> = Mutex::new(0);
+/// Per-file state that gets replaced between playlist entries.
+struct FileState {
+    cmd_tx: Sender<Command>,
+    video_frame_rx: crossbeam_channel::Receiver<VideoFrame>,
+    ui_update_rx: crossbeam_channel::Receiver<UiUpdate>,
+    audio_clock: Arc<AtomicI64>,
+    duration_us: i64,
+}
+
+static FILE_STATE: Mutex<Option<FileState>> = Mutex::new(None);
 
 // Window is only accessed from main thread; use a thread-local instead of Mutex
 use std::cell::RefCell;
@@ -36,26 +40,16 @@ static START_FULLSCREEN: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
 /// Stored EndReason from EndOfFile or Quit, read after app.run() returns.
 static END_REASON: Mutex<Option<EndReason>> = Mutex::new(None);
 
-/// Set all per-file channels atomically.
-fn set_channels(
-    cmd_tx: Sender<Command>,
-    video_frame_rx: crossbeam_channel::Receiver<VideoFrame>,
-    ui_update_rx: crossbeam_channel::Receiver<UiUpdate>,
-    audio_clock: Arc<AtomicI64>,
-    duration_us: i64,
-) {
-    *CMD_TX.lock().unwrap() = Some(cmd_tx);
-    *VIDEO_FRAME_RX.lock().unwrap() = Some(video_frame_rx);
-    *UI_UPDATE_RX.lock().unwrap() = Some(ui_update_rx);
-    *AUDIO_CLOCK.lock().unwrap() = Some(audio_clock);
-    *DURATION_US.lock().unwrap() = duration_us;
+/// Replace all per-file state atomically (single lock).
+fn set_file_state(state: FileState) {
+    *FILE_STATE.lock().unwrap() = Some(state);
     *END_REASON.lock().unwrap() = None;
 }
 
-/// Send a command to the player thread via CMD_TX.
+/// Send a command to the player thread.
 fn send_cmd(cmd: Command) {
-    if let Some(ref tx) = *CMD_TX.lock().unwrap() {
-        let _ = tx.send(cmd);
+    if let Some(ref state) = *FILE_STATE.lock().unwrap() {
+        let _ = state.cmd_tx.send(cmd);
     }
 }
 
@@ -281,7 +275,8 @@ fn install_mouse_monitor() {
                 let location = event.locationInWindow();
                 if location.y <= crate::osd::bar_height() {
                     if let Some(fraction) = crate::osd::bar_fraction_at_x(location.x) {
-                        let duration = *DURATION_US.lock().unwrap();
+                        let duration = FILE_STATE.lock().unwrap()
+                            .as_ref().map(|s| s.duration_us).unwrap_or(0);
                         let target_us = (fraction * duration as f64) as i64;
                         send_cmd(Command::SeekAbsolute { target_us });
                         crate::osd::seek_bar(target_us, duration);
@@ -318,33 +313,34 @@ fn start_main_timer() {
     let drift_counter = std::cell::Cell::new(0u32);
     let progress_counter = std::cell::Cell::new(0u32);
     let handler = block2::RcBlock::new(move || {
-        process_pending_ui_updates();
-        process_pending_frames();
-        crate::osd::tick();
+        let guard = FILE_STATE.lock().unwrap();
+        let Some(ref state) = *guard else { return };
+
+        process_pending_ui_updates(state);
+        process_pending_frames(state);
 
         let c = drift_counter.get() + 1;
-        // Sync timebase to audio ~once per second (every 250 ticks at 4ms)
         if c >= 250 {
             drift_counter.set(0);
-            if let Some(ref clock) = *AUDIO_CLOCK.lock().unwrap() {
-                crate::video_out::sync_timebase(clock.load(Ordering::Relaxed));
-            }
+            crate::video_out::sync_timebase(state.audio_clock.load(Ordering::Relaxed));
         } else {
             drift_counter.set(c);
         }
 
-        // Update progress bar ~4Hz (every 60 ticks at 4ms = ~240ms)
-        let p = progress_counter.get() + 1;
-        if p >= 60 {
-            progress_counter.set(0);
-            if let Some(ref clock) = *AUDIO_CLOCK.lock().unwrap() {
-                let current = clock.load(Ordering::Relaxed);
-                let duration = *DURATION_US.lock().unwrap();
-                crate::osd::update_progress(current, duration);
+        let progress = {
+            let p = progress_counter.get() + 1;
+            if p >= 60 {
+                progress_counter.set(0);
+                let current = state.audio_clock.load(Ordering::Relaxed);
+                Some((current, state.duration_us))
+            } else {
+                progress_counter.set(p);
+                None
             }
-        } else {
-            progress_counter.set(p);
-        }
+        };
+
+        drop(guard);
+        crate::osd::tick(progress);
     });
 
     unsafe {
@@ -358,11 +354,9 @@ fn start_main_timer() {
     std::mem::forget(handler);
 }
 
-fn process_pending_frames() {
-    let rx = VIDEO_FRAME_RX.lock().unwrap();
-    let Some(ref rx) = *rx else { return };
+fn process_pending_frames(state: &FileState) {
     for _ in 0..4 {
-        match rx.try_recv() {
+        match state.video_frame_rx.try_recv() {
             Ok(frame) => {
                 let flush = frame.seek_flush;
                 crate::video_out::enqueue_frame(frame);
@@ -377,10 +371,8 @@ fn process_pending_frames() {
     }
 }
 
-fn process_pending_ui_updates() {
-    let rx = UI_UPDATE_RX.lock().unwrap();
-    let Some(ref rx) = *rx else { return };
-    while let Ok(update) = rx.try_recv() {
+fn process_pending_ui_updates(state: &FileState) {
+    while let Ok(update) = state.ui_update_rx.try_recv() {
         match update {
             UiUpdate::Osd(text) => crate::osd::show_message(&text),
             UiUpdate::SubtitleText(text) => crate::osd::show_subtitle(text.as_deref()),
@@ -389,10 +381,7 @@ fn process_pending_ui_updates() {
             }
             UiUpdate::Paused(paused) => {
                 if !paused {
-                    // Sync timebase to audio clock before resuming so they agree
-                    if let Some(ref clock) = *AUDIO_CLOCK.lock().unwrap() {
-                        crate::video_out::sync_timebase(clock.load(Ordering::Relaxed));
-                    }
+                    crate::video_out::sync_timebase(state.audio_clock.load(Ordering::Relaxed));
                 }
                 crate::video_out::set_playback_rate(if paused { 0.0 } else { 1.0 });
             }
@@ -401,7 +390,7 @@ fn process_pending_ui_updates() {
             }
             UiUpdate::EndOfFile(reason) => {
                 *END_REASON.lock().unwrap() = Some(reason);
-                send_cmd(Command::Quit);
+                let _ = state.cmd_tx.send(Command::Quit);
                 stop_app();
             }
         }
@@ -422,7 +411,13 @@ pub fn run_app(
     title: &str,
     first_run: bool,
 ) -> EndReason {
-    set_channels(cmd_tx, video_frame_rx, ui_update_rx, audio_clock, duration_us);
+    set_file_state(FileState {
+        cmd_tx,
+        video_frame_rx,
+        ui_update_rx,
+        audio_clock,
+        duration_us,
+    });
 
     let mtm = MainThreadMarker::new().expect("must run on main thread");
     let app = NSApplication::sharedApplication(mtm);

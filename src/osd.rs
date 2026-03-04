@@ -57,6 +57,9 @@ struct OsdInner {
     bar_hide_deadline_ms: u64,
     current_us: i64,
     duration_us: i64,
+    /// Cached second values to skip redundant NSString updates.
+    last_left_secs: u64,
+    last_right_secs: u64,
     /// After a click-seek, hold the bar position until the audio clock catches up.
     seek_hold_until_ms: u64,
 }
@@ -230,6 +233,8 @@ pub fn init_layers(parent_ptr: *mut c_void, bounds: CGRect) {
         bar_hide_deadline_ms: 0,
         current_us: 0,
         duration_us: 0,
+        last_left_secs: u64::MAX,
+        last_right_secs: u64::MAX,
         seek_hold_until_ms: 0,
     });
 }
@@ -389,39 +394,37 @@ pub fn show_subtitle(text: Option<&str>) {
     commit_animations();
 }
 
-/// Called on main thread to expire OSD messages and progress bar.
-pub fn tick() {
+/// Called on main thread to expire OSD messages, auto-hide bar, and
+/// optionally update the progress bar position. Single lock acquisition.
+pub fn tick(progress: Option<(i64, i64)>) {
     let mut osd = OSD.lock().unwrap();
     let Some(ref mut inner) = *osd else { return };
 
-    if inner.message_visible && now_ms() >= inner.message_deadline_ms {
+    let now = now_ms();
+
+    if inner.message_visible && now >= inner.message_deadline_ms {
         disable_animations();
         let _: () = unsafe { msg_send![inner.message, setOpacity: 0.0f32] };
         commit_animations();
         inner.message_visible = false;
     }
 
-    if inner.bar_visible && now_ms() >= inner.bar_hide_deadline_ms {
+    if inner.bar_visible && now >= inner.bar_hide_deadline_ms {
         disable_animations();
         let _: () = unsafe { msg_send![inner.bar_bg, setOpacity: 0.0f32] };
         commit_animations();
         inner.bar_visible = false;
     }
-}
 
-/// Update the progress bar with current playback position. Main thread only.
-/// Called periodically by the timer — skipped if a seek hold is active.
-pub fn update_progress(current_us: i64, duration_us: i64) {
-    let mut osd = OSD.lock().unwrap();
-    let Some(ref mut inner) = *osd else { return };
-    // Don't let timer overwrite a recent click-seek position
-    if now_ms() < inner.seek_hold_until_ms {
-        return;
-    }
-    inner.current_us = current_us;
-    inner.duration_us = duration_us;
-    if inner.bar_visible {
-        render_bar(inner);
+    // Update progress bar if new values provided and no seek hold active
+    if let Some((current_us, duration_us)) = progress {
+        if now >= inner.seek_hold_until_ms {
+            inner.current_us = current_us;
+            inner.duration_us = duration_us;
+            if inner.bar_visible {
+                render_bar(inner);
+            }
+        }
     }
 }
 
@@ -476,12 +479,7 @@ pub fn bar_fraction_at_x(x: f64) -> Option<f64> {
     Some(((x - start) / (end - start)).clamp(0.0, 1.0))
 }
 
-fn render_bar(inner: &OsdInner) {
-    use crate::time::format_time;
-
-    let left = format_time(inner.current_us);
-    let right = format_time(inner.duration_us);
-
+fn render_bar(inner: &mut OsdInner) {
     let fraction = if inner.duration_us > 0 {
         (inner.current_us as f64 / inner.duration_us as f64).clamp(0.0, 1.0)
     } else {
@@ -494,13 +492,21 @@ fn render_bar(inner: &OsdInner) {
 
     disable_animations();
 
-    // Update timestamps
-    let ns_left = objc2_foundation::NSString::from_str(&left);
-    let _: () = unsafe { msg_send![inner.bar_left_time, setString: &*ns_left] };
-    let ns_right = objc2_foundation::NSString::from_str(&right);
-    let _: () = unsafe { msg_send![inner.bar_right_time, setString: &*ns_right] };
+    // Only update timestamp strings when the displayed second changes
+    let left_secs = inner.current_us.unsigned_abs() / 1_000_000;
+    let right_secs = inner.duration_us.unsigned_abs() / 1_000_000;
+    if left_secs != inner.last_left_secs || right_secs != inner.last_right_secs {
+        inner.last_left_secs = left_secs;
+        inner.last_right_secs = right_secs;
+        let left = crate::time::format_time(inner.current_us);
+        let right = crate::time::format_time(inner.duration_us);
+        let ns_left = objc2_foundation::NSString::from_str(&left);
+        let _: () = unsafe { msg_send![inner.bar_left_time, setString: &*ns_left] };
+        let ns_right = objc2_foundation::NSString::from_str(&right);
+        let _: () = unsafe { msg_send![inner.bar_right_time, setString: &*ns_right] };
+    }
 
-    // Update fill width (pixel-smooth)
+    // Update fill width (pixel-smooth, every call)
     let fill_frame = CGRect::new(
         track_frame.origin,
         CGSize::new(fill_w, TRACK_HEIGHT),
