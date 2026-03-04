@@ -3,8 +3,14 @@ use ffmpeg_next as ffmpeg;
 use ffmpeg_next::codec::context::Context as CodecContext;
 use ffmpeg_next::software::resampling;
 use ffmpeg_next::util::frame::audio::Audio;
+use ffmpeg_sys_next as ffs;
 
 use crate::time::pts_to_us;
+
+/// Target accumulation size before returning a buffer.
+/// Larger = fewer AVAudioPCMBuffers scheduled = smoother playback.
+/// 8192 samples ≈ 186ms at 44.1kHz, 170ms at 48kHz.
+const ACCUM_TARGET: usize = 8192;
 
 /// Audio decoder: decodes packets to planar f32 PCM.
 pub struct AudioDecoder {
@@ -13,9 +19,14 @@ pub struct AudioDecoder {
     stream_time_base: ffmpeg::Rational,
     frame: Audio,
     resampled: Audio,
-    sample_buf: Vec<f32>,
     pub sample_rate: u32,
     pub channels: u16,
+    /// Per-channel accumulation planes.
+    accum_planes: Vec<Vec<f32>>,
+    /// PTS of the first accumulated sample (microseconds).
+    accum_pts_us: i64,
+    /// Samples per channel accumulated so far.
+    accum_count: usize,
 }
 
 unsafe impl Send for AudioDecoder {}
@@ -36,15 +47,28 @@ pub struct AudioBuffer {
 
 impl AudioDecoder {
     pub fn new(stream: &ffmpeg::Stream) -> Result<Self> {
-        let codec_ctx = CodecContext::from_parameters(stream.parameters())
+        let mut codec_ctx = CodecContext::from_parameters(stream.parameters())
             .context("Failed to create audio codec context")?;
+
+        // Set packet timebase so decoders can handle priming samples (opus, aac)
+        let avctx = unsafe { codec_ctx.as_mut_ptr() };
+        unsafe {
+            (*avctx).pkt_timebase = ffs::AVRational {
+                num: stream.time_base().numerator(),
+                den: stream.time_base().denominator(),
+            };
+        }
+
+        // Read channel count from the modern ch_layout API — the old
+        // channel_layout bitmask is unset for opus/aac, giving 0 channels.
+        let channels = unsafe { (*avctx).ch_layout.nb_channels } as u16;
+
         let decoder = codec_ctx
             .decoder()
             .audio()
             .context("Failed to open audio decoder")?;
 
         let sample_rate = decoder.rate();
-        let channels = decoder.channel_layout().channels() as u16;
 
         Ok(Self {
             decoder,
@@ -52,9 +76,11 @@ impl AudioDecoder {
             stream_time_base: stream.time_base(),
             frame: Audio::empty(),
             resampled: Audio::empty(),
-            sample_buf: Vec::new(),
             sample_rate,
             channels,
+            accum_planes: Vec::new(),
+            accum_pts_us: 0,
+            accum_count: 0,
         })
     }
 
@@ -68,63 +94,128 @@ impl AudioDecoder {
         Ok(())
     }
 
+    /// Receive the next decoded audio buffer. Accumulates small decoded
+    /// frames into larger buffers (~8192 samples per channel) to reduce
+    /// the number of AVAudioPCMBuffers scheduled on the audio engine.
     pub fn receive_buffer(&mut self) -> Option<AudioBuffer> {
-        match self.decoder.receive_frame(&mut self.frame) {
-            Ok(()) => {
-                let pts = self.frame.pts().unwrap_or(0);
-                let pts_us = pts_to_us(pts, self.stream_time_base);
+        loop {
+            match self.decoder.receive_frame(&mut self.frame) {
+                Ok(()) => {
+                    let pts = self.frame.pts().unwrap_or(0);
+                    let pts_us = pts_to_us(pts, self.stream_time_base);
 
-                // Ensure resampler is set up (to f32 planar)
-                let resampler = self.resampler.get_or_insert_with(|| {
-                    resampling::Context::get(
-                        self.frame.format(),
-                        self.frame.channel_layout(),
-                        self.frame.rate(),
-                        ffmpeg::format::Sample::F32(ffmpeg::format::sample::Type::Planar),
-                        self.frame.channel_layout(),
-                        self.frame.rate(),
-                    )
-                    .expect("Failed to create resampler")
-                });
+                    let channels =
+                        unsafe { (*self.frame.as_ptr()).ch_layout.nb_channels } as usize;
+                    let nb_samples = self.frame.samples() as usize;
 
-                let mut delay = resampler.run(&self.frame, &mut self.resampled).ok();
+                    if self.channels == 0 || self.channels != channels as u16 {
+                        self.channels = channels as u16;
+                    }
 
-                // Drain any remaining samples
-                while let Some(Some(_)) = delay.as_ref().map(|d| d.as_ref()) {
-                    delay = resampler.flush(&mut self.resampled).ok();
+                    if nb_samples == 0 || channels == 0 {
+                        continue;
+                    }
+
+                    let target_fmt =
+                        ffmpeg::format::Sample::F32(ffmpeg::format::sample::Type::Planar);
+
+                    let source: &Audio = if self.frame.format() == target_fmt {
+                        &self.frame
+                    } else {
+                        let layout = ffmpeg::ChannelLayout::default(channels as i32);
+                        let resampler = self.resampler.get_or_insert_with(|| {
+                            resampling::Context::get(
+                                self.frame.format(),
+                                layout,
+                                self.frame.rate(),
+                                target_fmt,
+                                layout,
+                                self.frame.rate(),
+                            )
+                            .expect("Failed to create resampler")
+                        });
+
+                        let mut delay =
+                            resampler.run(&self.frame, &mut self.resampled).ok();
+                        while let Some(Some(_)) = delay.as_ref().map(|d| d.as_ref()) {
+                            delay = resampler.flush(&mut self.resampled).ok();
+                        }
+                        &self.resampled
+                    };
+
+                    let nb_samples = source.samples() as usize;
+                    if nb_samples == 0 {
+                        continue;
+                    }
+
+                    // Initialize accumulator planes if needed
+                    if self.accum_planes.len() != channels {
+                        self.accum_planes = vec![Vec::new(); channels];
+                    }
+
+                    // Record PTS of the first frame in this accumulation
+                    if self.accum_count == 0 {
+                        self.accum_pts_us = pts_us;
+                    }
+
+                    // Append decoded samples to per-channel accumulation planes
+                    for ch in 0..channels {
+                        self.accum_planes[ch]
+                            .extend_from_slice(source.plane::<f32>(ch));
+                    }
+                    self.accum_count += nb_samples;
+
+                    // Return accumulated buffer if we've reached the target
+                    if self.accum_count >= ACCUM_TARGET {
+                        return Some(self.take_accum());
+                    }
+                    // Otherwise keep decoding more frames
                 }
-
-                // Extract planar f32 samples: [ch0_0..ch0_N, ch1_0..ch1_N, ...]
-                let nb_samples = self.resampled.samples() as usize;
-                let channels = self.channels as usize;
-
-                if nb_samples == 0 {
+                Err(_) => {
+                    // No more frames — return whatever's accumulated
+                    if self.accum_count > 0 {
+                        return Some(self.take_accum());
+                    }
                     return None;
                 }
-
-                self.sample_buf.clear();
-                self.sample_buf.reserve(nb_samples * channels);
-                for ch in 0..channels {
-                    let plane = self.resampled.data(ch);
-                    self.sample_buf.extend_from_slice(unsafe {
-                        std::slice::from_raw_parts(plane.as_ptr() as *const f32, nb_samples)
-                    });
-                }
-
-                Some(AudioBuffer {
-                    samples: std::mem::take(&mut self.sample_buf),
-                    samples_per_channel: nb_samples,
-                    channels: self.channels,
-                    sample_rate: self.sample_rate,
-                    pts_us,
-                })
             }
-            Err(_) => None,
+        }
+    }
+
+    /// Drain any remaining accumulated samples (call after send_eof + receive_buffer loop).
+    pub fn drain_accum(&mut self) -> Option<AudioBuffer> {
+        if self.accum_count > 0 {
+            Some(self.take_accum())
+        } else {
+            None
+        }
+    }
+
+    fn take_accum(&mut self) -> AudioBuffer {
+        let count = self.accum_count;
+        let channels = self.accum_planes.len();
+        let mut samples = Vec::with_capacity(count * channels);
+        for plane in &mut self.accum_planes {
+            samples.append(plane);
+        }
+        self.accum_count = 0;
+
+        AudioBuffer {
+            samples,
+            samples_per_channel: count,
+            channels: self.channels,
+            sample_rate: self.sample_rate,
+            pts_us: self.accum_pts_us,
         }
     }
 
     pub fn flush(&mut self) {
         self.decoder.flush();
-        self.resampler = None; // recreate on next decode
+        self.resampler = None;
+        // Discard any partially accumulated buffer
+        for plane in &mut self.accum_planes {
+            plane.clear();
+        }
+        self.accum_count = 0;
     }
 }

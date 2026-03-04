@@ -44,6 +44,10 @@ pub struct Player {
     seek_floor_us: i64,
     /// For inexact seeks: waiting for first post-seek packet to land.
     seek_landed: bool,
+    /// Tracks the end PTS of the last scheduled audio buffer.
+    last_audio_end_us: i64,
+    /// After demuxer EOF: PTS at which all scheduled audio finishes.
+    eof_audio_end_us: Option<i64>,
 
     // Subtitles
     subtitle_tracks: Vec<SubtitleTrack>,
@@ -88,6 +92,8 @@ impl Player {
             pending_seeks: 0,
             seek_floor_us: 0,
             seek_landed: true,
+            last_audio_end_us: 0,
+            eof_audio_end_us: None,
             subtitle_tracks,
             current_subtitle_idx: None,
             last_subtitle_text: None,
@@ -155,6 +161,8 @@ impl Player {
     }
 
     fn flush_decoders(&mut self) {
+        self.last_audio_end_us = 0;
+        self.eof_audio_end_us = None;
         if let Some(ref mut vd) = self.video_decoder {
             vd.flush();
         }
@@ -204,6 +212,14 @@ impl Player {
             }
 
             self.update_subtitles();
+
+            // After EOF: wait for audio playback to finish
+            if let Some(end_us) = self.eof_audio_end_us {
+                if self.sync_clock.audio_pts() >= end_us {
+                    self.eof_audio_end_us = None;
+                    let _ = self.ui_update_tx.send(UiUpdate::EndOfFile);
+                }
+            }
         }
     }
 
@@ -370,7 +386,8 @@ impl Player {
             }
             DemuxPacket::Audio(packet) => {
                 if let Some(ref mut decoder) = self.audio_decoder {
-                    if decoder.send_packet(&packet).is_err() {
+                    if let Err(e) = decoder.send_packet(&packet) {
+                        log::debug!("Audio send_packet error: {e}");
                         return;
                     }
                     while let Some(mut buf) = decoder.receive_buffer() {
@@ -379,6 +396,23 @@ impl Player {
                         if buf.pts_us < self.seek_floor_us {
                             continue;
                         }
+                        // Audio-only: first post-seek buffer reveals actual position
+                        if !self.seek_landed {
+                            self.seek_landed = true;
+                            self.sync_clock.set_position(buf.pts_us);
+                            let _ = self
+                                .ui_update_tx
+                                .send(UiUpdate::SeekFlush(buf.pts_us));
+                            let dur_str = format_time(self.duration_us);
+                            let pos_str = format_time(buf.pts_us);
+                            let _ = self
+                                .ui_update_tx
+                                .send(UiUpdate::Osd(format!("{pos_str} / {dur_str}")));
+                        }
+                        let end_us = buf.pts_us
+                            + (buf.samples_per_channel as i64 * 1_000_000
+                                / buf.sample_rate as i64);
+                        self.last_audio_end_us = self.last_audio_end_us.max(end_us);
                         if let Some(ref ao) = self.audio_output {
                             ao.schedule_buffer(&buf);
                         }
@@ -399,12 +433,31 @@ impl Player {
                 if let Some(ref mut ad) = self.audio_decoder {
                     let _ = ad.send_eof();
                     while let Some(buf) = ad.receive_buffer() {
+                        let end = buf.pts_us
+                            + (buf.samples_per_channel as i64 * 1_000_000
+                                / buf.sample_rate as i64);
+                        self.last_audio_end_us = self.last_audio_end_us.max(end);
+                        if let Some(ref ao) = self.audio_output {
+                            ao.schedule_buffer(&buf);
+                        }
+                    }
+                    // Flush any remaining accumulated samples
+                    if let Some(buf) = ad.drain_accum() {
+                        let end = buf.pts_us
+                            + (buf.samples_per_channel as i64 * 1_000_000
+                                / buf.sample_rate as i64);
+                        self.last_audio_end_us = self.last_audio_end_us.max(end);
                         if let Some(ref ao) = self.audio_output {
                             ao.schedule_buffer(&buf);
                         }
                     }
                 }
-                let _ = self.ui_update_tx.send(UiUpdate::EndOfFile);
+                if self.audio_output.is_some() && self.last_audio_end_us > 0 {
+                    // Wait for audio to finish playing before signaling EOF
+                    self.eof_audio_end_us = Some(self.last_audio_end_us);
+                } else {
+                    let _ = self.ui_update_tx.send(UiUpdate::EndOfFile);
+                }
             }
         }
     }

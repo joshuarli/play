@@ -188,6 +188,7 @@ pub fn run_demuxer(
                     Ok(DemuxCommand::Stop) => return Ok(()),
                     Ok(DemuxCommand::Seek { target_pts, .. }) => {
                         let _ = ictx.seek(target_pts, ..target_pts);
+                        let _ = packet_tx.send(DemuxPacket::Flush);
                         continue;
                     }
                     Err(_) => return Ok(()),
