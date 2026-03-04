@@ -635,6 +635,7 @@ mod tests {
             video_stream: None,
             audio_streams: vec![],
             subtitle_streams: vec![],
+            metadata: vec![],
         };
 
         let player = Player::new(

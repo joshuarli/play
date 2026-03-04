@@ -187,6 +187,8 @@ pub struct StreamInfo {
     pub audio_streams: Vec<AudioStreamInfo>,
     pub subtitle_streams: Vec<SubtitleStreamInfo>,
     pub duration_us: i64,
+    /// Container-level metadata (title, artist, album, etc.)
+    pub metadata: Vec<(String, String)>,
 }
 
 #[derive(Debug, Clone)]
@@ -287,11 +289,18 @@ pub fn probe(path: &Path) -> Result<StreamInfo> {
         })
         .collect();
 
+    let metadata: Vec<(String, String)> = ictx
+        .metadata()
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+
     Ok(StreamInfo {
         video_stream,
         audio_streams,
         subtitle_streams,
         duration_us,
+        metadata,
     })
 }
 

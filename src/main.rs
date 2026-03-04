@@ -19,6 +19,7 @@ use std::sync::Arc;
 use std::thread;
 
 use anyhow::{bail, Context, Result};
+use termion::input::TermRead;
 
 use cmd::{Args, Command, DemuxCommand, DemuxPacket, EndReason, UiUpdate, VideoFrame};
 use player::Player;
@@ -53,12 +54,16 @@ fn main() -> Result<()> {
         }
     }
 
+    // Single async stdin reader for the entire playlist (avoids spawning
+    // a new background thread per file, which eats keystrokes during transitions).
+    let mut term_keys = termion::async_stdin().keys();
+
     // Playlist loop
     let mut index = 0;
     let mut first_run = true;
     while index < files.len() {
         let file = &files[index];
-        match play_file(file, &args, first_run, index, files.len()) {
+        match play_file(file, &args, first_run, index, files.len(), &mut term_keys) {
             Ok(reason) => {
                 match reason {
                     EndReason::Quit => break,
@@ -88,12 +93,10 @@ fn play_file(
     first_run: bool,
     file_index: usize,
     file_count: usize,
+    term_keys: &mut termion::input::Keys<termion::AsyncReader>,
 ) -> Result<EndReason> {
     // Probe the file
     let info = demux::probe(path)?;
-
-    // Always print stream info
-    log_stream_info(&info);
 
     let has_video = info.video_stream.is_some();
     let has_audio = !info.audio_streams.is_empty();
@@ -170,14 +173,14 @@ fn play_file(
         .map(|s| s.height)
         .unwrap_or(480);
 
-    // Show OSD for playlist position
     let filename = path
         .file_name()
         .and_then(|s| s.to_str())
         .unwrap_or("unknown");
-    if file_count > 1 {
+    // Show OSD for playlist position (video mode only; terminal prints its own header)
+    if file_count > 1 && has_video {
         let _ = ui_update_tx.send(UiUpdate::Osd(format!(
-            "[{}/{}] {filename}",
+            "({}/{}) {filename}",
             file_index + 1,
             file_count
         )));
@@ -262,6 +265,9 @@ fn play_file(
         .context("Failed to spawn player thread")?;
 
     let title = format!("play - {filename}");
+    if has_video {
+        log_stream_info(&info);
+    }
     let reason = if has_video {
         window::run_app(
             cmd_tx,
@@ -276,7 +282,16 @@ fn play_file(
             first_run,
         )
     } else {
-        terminal::run_terminal(cmd_tx, ui_update_rx, filename, info.duration_us)
+        terminal::run_terminal(
+            cmd_tx,
+            ui_update_rx,
+            audio_clock,
+            term_keys,
+            filename,
+            &info,
+            file_index,
+            file_count,
+        )
     };
 
     player_thread.join().ok();
