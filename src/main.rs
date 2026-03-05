@@ -42,7 +42,7 @@ fn main() -> Result<()> {
     ffmpeg_next::init().context("Failed to initialize ffmpeg")?;
 
     // Expand directories into sorted media files
-    let files = cmd::expand_files(args.files.clone());
+    let files = cmd::expand_files(&args.files);
     if files.is_empty() {
         bail!("No media files found in the given paths");
     }
@@ -133,7 +133,7 @@ fn play_file(
     }
 
     // --sub-file flag
-    if let Some(ref sub_path) = args.sub_file {
+    if let Some(sub_path) = &args.sub_file {
         match subtitle::parse_srt(sub_path) {
             Ok(entries) => {
                 subtitle_tracks.insert(
@@ -287,7 +287,7 @@ fn play_file(
 }
 
 fn log_stream_info(info: &demux::StreamInfo) {
-    if let Some(ref v) = info.video_stream {
+    if let Some(v) = &info.video_stream {
         eprintln!(
             "Video: {} {}x{} [stream {}]",
             v.codec_name, v.width, v.height, v.index

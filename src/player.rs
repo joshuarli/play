@@ -138,7 +138,7 @@ impl Player {
     pub fn init_decoders(&mut self) -> Result<()> {
         let ictx = ffmpeg_next::format::input(&self.file_path)
             .with_context(|| format!("Failed to open: {}", self.file_path.display()))?;
-        if let Some(ref vs) = self.stream_info.video_stream {
+        if let Some(vs) = &self.stream_info.video_stream {
             let stream = ictx.stream(vs.index).context("Video stream not found")?;
             let vd = VideoDecoder::new(&stream)?;
             let _ = self.ui_update_tx.send(UiUpdate::VideoSize {
@@ -167,7 +167,7 @@ impl Player {
             }
 
             if self.volume < 100
-                && let Some(ref mut ao) = self.audio_output
+                && let Some(ao) = self.audio_output.as_mut()
             {
                 ao.set_volume(self.volume as f32 / 100.0);
             }
@@ -216,10 +216,10 @@ impl Player {
             self.pending_seeks += 1;
             self.last_audio_end_us = 0;
             self.eof_audio_end_us = None;
-            if let Some(ref mut ad) = self.audio_decoder {
+            if let Some(ad) = self.audio_decoder.as_mut() {
                 ad.flush();
             }
-            if let Some(ref ao) = self.audio_output {
+            if let Some(ao) = self.audio_output.as_ref() {
                 ao.flush_quick();
                 ao.set_clock_position(target);
             }
@@ -232,13 +232,13 @@ impl Player {
     fn flush_decoders(&mut self) {
         self.last_audio_end_us = 0;
         self.eof_audio_end_us = None;
-        if let Some(ref mut vd) = self.video_decoder {
+        if let Some(vd) = self.video_decoder.as_mut() {
             vd.flush();
         }
-        if let Some(ref mut ad) = self.audio_decoder {
+        if let Some(ad) = self.audio_decoder.as_mut() {
             ad.flush();
         }
-        if let Some(ref ao) = self.audio_output {
+        if let Some(ao) = self.audio_output.as_ref() {
             ao.flush();
         }
     }
@@ -299,7 +299,7 @@ impl Player {
         if !has_video
             && forward
             && !qs.exact
-            && let Some(ref ao) = self.audio_output
+            && let Some(ao) = self.audio_output.as_ref()
         {
             let sample_rate = self
                 .stream_info
@@ -344,7 +344,7 @@ impl Player {
 
     fn adjust_volume(&mut self, delta: i32) {
         self.volume = (self.volume as i32 + delta).clamp(0, 100) as u32;
-        if let Some(ref mut ao) = self.audio_output {
+        if let Some(ao) = self.audio_output.as_mut() {
             ao.set_volume(self.volume as f32 / 100.0);
         }
         let _ = self
@@ -508,7 +508,7 @@ impl Player {
         match cmd {
             Command::Quit => {
                 let _ = self.demux_cmd_tx.send(DemuxCommand::Stop);
-                if let Some(ref ao) = self.audio_output {
+                if let Some(ao) = self.audio_output.as_ref() {
                     ao.stop();
                 }
                 return true;
@@ -516,7 +516,7 @@ impl Player {
             Command::PlayPause => {
                 self.paused = !self.paused;
                 self.sync_clock.set_paused(self.paused);
-                if let Some(ref ao) = self.audio_output {
+                if let Some(ao) = self.audio_output.as_ref() {
                     if self.paused {
                         ao.pause();
                     } else {
@@ -565,10 +565,10 @@ impl Player {
                     let new_info = self.stream_info.audio_streams[self.current_audio_track].clone();
 
                     // Flush current audio pipeline
-                    if let Some(ref mut ad) = self.audio_decoder {
+                    if let Some(ad) = self.audio_decoder.as_mut() {
                         ad.flush();
                     }
-                    if let Some(ref ao) = self.audio_output {
+                    if let Some(ao) = self.audio_output.as_ref() {
                         ao.flush();
                     }
 
@@ -651,10 +651,10 @@ impl Player {
                 if self.stream_info.video_stream.is_none() {
                     // Audio-only: flush decoder + ring + pending audio now
                     // that new-position packets are about to arrive.
-                    if let Some(ref mut ad) = self.audio_decoder {
+                    if let Some(ad) = self.audio_decoder.as_mut() {
                         ad.flush();
                     }
-                    if let Some(ref ao) = self.audio_output {
+                    if let Some(ao) = self.audio_output.as_ref() {
                         ao.flush_quick();
                     }
                     self.pending_audio.clear();
@@ -663,7 +663,7 @@ impl Player {
             // Discard stale pre-seek packets
             _ if self.pending_seeks > 0 => {}
             DemuxPacket::Video(packet) => {
-                if let Some(ref mut decoder) = self.video_decoder {
+                if let Some(decoder) = self.video_decoder.as_mut() {
                     if decoder.send_packet(&packet).is_err() {
                         return;
                     }
@@ -701,7 +701,7 @@ impl Player {
                 if self.scrubbing {
                     return;
                 }
-                if let Some(ref mut decoder) = self.audio_decoder {
+                if let Some(decoder) = self.audio_decoder.as_mut() {
                     if let Err(e) = decoder.send_packet(&packet) {
                         log::debug!("Audio send_packet error: {e}");
                         return;
@@ -721,7 +721,7 @@ impl Player {
                             }
                         }
                         self.last_audio_end_us = self.last_audio_end_us.max(buf.end_us());
-                        if let Some(ref ao) = self.audio_output {
+                        if let Some(ao) = self.audio_output.as_ref() {
                             if has_video {
                                 ao.schedule_buffer(&buf);
                             } else if !ao.try_schedule_buffer(&buf) {
@@ -737,17 +737,17 @@ impl Player {
             DemuxPacket::Eof => {
                 let has_video = self.stream_info.video_stream.is_some();
                 // Drain decoders
-                if let Some(ref mut vd) = self.video_decoder {
+                if let Some(vd) = self.video_decoder.as_mut() {
                     let _ = vd.send_eof();
                     while let Some(frame) = vd.receive_frame() {
                         let _ = self.video_frame_tx.send(frame);
                     }
                 }
-                if let Some(ref mut ad) = self.audio_decoder {
+                if let Some(ad) = self.audio_decoder.as_mut() {
                     let _ = ad.send_eof();
                     while let Some(buf) = ad.receive_buffer() {
                         self.last_audio_end_us = self.last_audio_end_us.max(buf.end_us());
-                        if let Some(ref ao) = self.audio_output {
+                        if let Some(ao) = self.audio_output.as_ref() {
                             if has_video {
                                 ao.schedule_buffer(&buf);
                             } else if !ao.try_schedule_buffer(&buf) {
@@ -758,7 +758,7 @@ impl Player {
                     // Flush any remaining accumulated samples
                     if let Some(buf) = ad.drain_accum() {
                         self.last_audio_end_us = self.last_audio_end_us.max(buf.end_us());
-                        if let Some(ref ao) = self.audio_output {
+                        if let Some(ao) = self.audio_output.as_ref() {
                             if has_video {
                                 ao.schedule_buffer(&buf);
                             } else if !ao.try_schedule_buffer(&buf) {

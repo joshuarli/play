@@ -123,7 +123,7 @@ unsafe extern "C" {
 const RING_CAPACITY: usize = 524288;
 
 struct SpscRing {
-    buf: *mut f32,
+    buf: *mut f32, // owned via Box<[f32]>::into_raw
     mask: usize,
     /// Written by producer, read by consumer.
     head: AtomicUsize,
@@ -133,13 +133,8 @@ struct SpscRing {
 
 impl SpscRing {
     fn new() -> Self {
-        let layout = std::alloc::Layout::from_size_align(
-            RING_CAPACITY * std::mem::size_of::<f32>(),
-            std::mem::align_of::<f32>(),
-        )
-        .unwrap();
-        let buf = unsafe { std::alloc::alloc_zeroed(layout) as *mut f32 };
-        assert!(!buf.is_null(), "ring buffer allocation failed");
+        let boxed: Box<[f32]> = vec![0.0f32; RING_CAPACITY].into_boxed_slice();
+        let buf = Box::into_raw(boxed) as *mut f32;
         Self {
             buf,
             mask: RING_CAPACITY - 1,
@@ -212,12 +207,13 @@ impl SpscRing {
 
 impl Drop for SpscRing {
     fn drop(&mut self) {
-        let layout = std::alloc::Layout::from_size_align(
-            RING_CAPACITY * std::mem::size_of::<f32>(),
-            std::mem::align_of::<f32>(),
-        )
-        .unwrap();
-        unsafe { std::alloc::dealloc(self.buf as *mut u8, layout) };
+        // SAFETY: buf was created via Box<[f32]>::into_raw
+        unsafe {
+            drop(Box::from_raw(std::ptr::slice_from_raw_parts_mut(
+                self.buf,
+                RING_CAPACITY,
+            )))
+        };
     }
 }
 

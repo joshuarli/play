@@ -132,11 +132,11 @@ const MEDIA_EXTENSIONS: &[&str] = &[
 ];
 
 /// Expand directories into sorted media files; pass through regular files.
-pub fn expand_files(paths: Vec<PathBuf>) -> Vec<PathBuf> {
+pub fn expand_files(paths: &[PathBuf]) -> Vec<PathBuf> {
     let mut out = Vec::new();
     for p in paths {
         if p.is_dir() {
-            let mut files: Vec<PathBuf> = std::fs::read_dir(&p)
+            let mut files: Vec<PathBuf> = std::fs::read_dir(p)
                 .into_iter()
                 .flatten()
                 .filter_map(|e| e.ok())
@@ -150,7 +150,7 @@ pub fn expand_files(paths: Vec<PathBuf>) -> Vec<PathBuf> {
             files.sort();
             out.extend(files);
         } else {
-            out.push(p);
+            out.push(p.clone());
         }
     }
     out

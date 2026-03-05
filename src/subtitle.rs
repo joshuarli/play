@@ -80,25 +80,20 @@ pub fn parse_srt(path: &Path) -> Result<Vec<SrtEntry>> {
 }
 
 fn parse_timing_line(line: &str) -> Option<(i64, i64)> {
-    let parts: Vec<&str> = line.split("-->").collect();
-    if parts.len() != 2 {
-        return None;
-    }
-    let start = parse_srt_time(parts[0].trim())?;
-    let end = parse_srt_time(parts[1].trim())?;
+    let (left, right) = line.split_once("-->")?;
+    let start = parse_srt_time(left.trim())?;
+    let end = parse_srt_time(right.trim())?;
     Some((start, end))
 }
 
 fn parse_srt_time(s: &str) -> Option<i64> {
     // Format: HH:MM:SS,mmm
     let s = s.replace(',', ".");
-    let parts: Vec<&str> = s.split(':').collect();
-    if parts.len() != 3 {
-        return None;
-    }
-    let h: f64 = parts[0].parse().ok()?;
-    let m: f64 = parts[1].parse().ok()?;
-    let secs: f64 = parts[2].parse().ok()?;
+    let (h_str, rest) = s.split_once(':')?;
+    let (m_str, secs_str) = rest.split_once(':')?;
+    let h: f64 = h_str.parse().ok()?;
+    let m: f64 = m_str.parse().ok()?;
+    let secs: f64 = secs_str.parse().ok()?;
     Some(((h * 3600.0 + m * 60.0 + secs) * 1_000_000.0) as i64)
 }
 
