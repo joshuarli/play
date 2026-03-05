@@ -46,7 +46,7 @@ struct OsdInner {
     message: *mut AnyObject,
     subtitle: *mut AnyObject,
     // Progress bar layers
-    bar_bg: *mut AnyObject,        // container: semi-transparent background
+    bar_bg: *mut AnyObject,         // container: semi-transparent background
     bar_left_time: *mut AnyObject,  // CATextLayer: left timestamp
     bar_right_time: *mut AnyObject, // CATextLayer: right timestamp
     bar_track: *mut AnyObject,      // CALayer: unfilled track
@@ -222,28 +222,28 @@ pub fn init_layers(parent_ptr: *mut c_void, bounds: CGRect) {
         let zero = CGSize::new(0.0, 0.0);
         let _: () = msg_send![&*shadow, setShadowOffset: zero];
         let _: () = msg_send![&*shadow, setShadowBlurRadius: 2.0f64];
-        Retained::into_raw(shadow) as *mut AnyObject
+        Retained::into_raw(shadow)
     };
     let cached_sub_para: *mut AnyObject = unsafe {
         let para_cls = AnyClass::get(c"NSMutableParagraphStyle").unwrap();
         let para: Retained<AnyObject> = msg_send![para_cls, new];
         let _: () = msg_send![&*para, setAlignment: 2i64]; // NSTextAlignmentCenter
-        Retained::into_raw(para) as *mut AnyObject
+        Retained::into_raw(para)
     };
 
     // Store raw pointers
-    let msg_ptr = Retained::into_raw(msg) as *mut AnyObject;
-    let sub_ptr = Retained::into_raw(sub) as *mut AnyObject;
+    let msg_ptr = Retained::into_raw(msg);
+    let sub_ptr = Retained::into_raw(sub);
 
     *OSD.lock().unwrap() = Some(OsdInner {
         parent,
         message: msg_ptr,
         subtitle: sub_ptr,
-        bar_bg: Retained::into_raw(bar_bg) as *mut AnyObject,
-        bar_left_time: Retained::into_raw(bar_left) as *mut AnyObject,
-        bar_right_time: Retained::into_raw(bar_right) as *mut AnyObject,
-        bar_track: Retained::into_raw(bar_track) as *mut AnyObject,
-        bar_fill: Retained::into_raw(bar_fill) as *mut AnyObject,
+        bar_bg: Retained::into_raw(bar_bg),
+        bar_left_time: Retained::into_raw(bar_left),
+        bar_right_time: Retained::into_raw(bar_right),
+        bar_track: Retained::into_raw(bar_track),
+        bar_fill: Retained::into_raw(bar_fill),
         message_deadline_ms: 0,
         message_visible: false,
         bar_visible: false,
@@ -258,13 +258,7 @@ pub fn init_layers(parent_ptr: *mut c_void, bounds: CGRect) {
     });
 }
 
-fn setup_text_layer(
-    layer: &AnyObject,
-    frame: CGRect,
-    font_size: f64,
-    scale: f64,
-    centered: bool,
-) {
+fn setup_text_layer(layer: &AnyObject, frame: CGRect, font_size: f64, scale: f64, centered: bool) {
     let _: () = unsafe { msg_send![layer, setFrame: frame] };
     let _: () = unsafe { msg_send![layer, setFontSize: font_size] };
     let _: () = unsafe { msg_send![layer, setContentsScale: scale] };
@@ -342,8 +336,7 @@ fn build_sub_string(
 ) -> Retained<AnyObject> {
     unsafe {
         let font_cls = AnyClass::get(c"NSFont").unwrap();
-        let font: Retained<AnyObject> =
-            msg_send![font_cls, systemFontOfSize: font_size];
+        let font: Retained<AnyObject> = msg_send![font_cls, systemFontOfSize: font_size];
 
         let color_cls = AnyClass::get(c"NSColor").unwrap();
         let white: Retained<AnyObject> = msg_send![color_cls, whiteColor];
@@ -361,10 +354,8 @@ fn build_sub_string(
         let _: () = msg_send![&*dict, setObject: para, forKey: &*k];
 
         let ns_text = objc2_foundation::NSString::from_str(text);
-        let raw: *mut AnyObject =
-            msg_send![AnyClass::get(c"NSAttributedString").unwrap(), alloc];
-        let raw: *mut AnyObject =
-            msg_send![raw, initWithString: &*ns_text, attributes: &*dict];
+        let raw: *mut AnyObject = msg_send![AnyClass::get(c"NSAttributedString").unwrap(), alloc];
+        let raw: *mut AnyObject = msg_send![raw, initWithString: &*ns_text, attributes: &*dict];
         Retained::from_raw(raw).unwrap()
     }
 }
@@ -394,12 +385,8 @@ pub fn show_subtitle(text: Option<&str>) {
             );
             let _: () = unsafe { msg_send![inner.subtitle, setFrame: frame] };
 
-            let attr = build_sub_string(
-                t,
-                font_size,
-                inner.cached_sub_shadow,
-                inner.cached_sub_para,
-            );
+            let attr =
+                build_sub_string(t, font_size, inner.cached_sub_shadow, inner.cached_sub_para);
             let _: () = unsafe { msg_send![inner.subtitle, setString: &*attr] };
             let _: () = unsafe { msg_send![inner.subtitle, setOpacity: 1.0f32] };
         }
@@ -433,13 +420,13 @@ pub fn tick(progress: Option<(i64, i64)>) {
     }
 
     // Update progress bar if new values provided and no seek hold active
-    if let Some((current_us, duration_us)) = progress {
-        if now >= inner.seek_hold_until_ms {
-            inner.current_us = current_us;
-            inner.duration_us = duration_us;
-            if inner.bar_visible {
-                render_bar(inner);
-            }
+    if let Some((current_us, duration_us)) = progress
+        && now >= inner.seek_hold_until_ms
+    {
+        inner.current_us = current_us;
+        inner.duration_us = duration_us;
+        if inner.bar_visible {
+            render_bar(inner);
         }
     }
 }
@@ -523,10 +510,7 @@ fn render_bar(inner: &mut OsdInner) {
     }
 
     // Update fill width (pixel-smooth, every call)
-    let fill_frame = CGRect::new(
-        track_frame.origin,
-        CGSize::new(fill_w, TRACK_HEIGHT),
-    );
+    let fill_frame = CGRect::new(track_frame.origin, CGSize::new(fill_w, TRACK_HEIGHT));
     let _: () = unsafe { msg_send![inner.bar_fill, setFrame: fill_frame] };
 
     commit_animations();

@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use crossbeam_channel::Sender;
 use objc2::rc::Retained;
 use objc2::runtime::{AnyClass, AnyObject, ProtocolObject};
-use objc2::{define_class, msg_send, MainThreadOnly};
+use objc2::{MainThreadOnly, define_class, msg_send};
 use objc2_app_kit::{
     NSApplication, NSApplicationActivationPolicy, NSApplicationDelegate, NSBackingStoreType,
     NSEvent, NSEventModifierFlags, NSWindow, NSWindowDelegate, NSWindowStyleMask,
@@ -150,15 +150,11 @@ define_class!(
                     // Add display layer
                     if let Some(display_ptr) = crate::video_out::display_layer_ptr() {
                         let display_layer = display_ptr as *mut AnyObject;
-                        let _: () =
-                            unsafe { msg_send![&*layer, addSublayer: display_layer] };
+                        let _: () = unsafe { msg_send![&*layer, addSublayer: display_layer] };
                         let bounds: CGRect = unsafe { msg_send![&*layer, bounds] };
-                        let _: () =
-                            unsafe { msg_send![display_layer, setFrame: bounds] };
+                        let _: () = unsafe { msg_send![display_layer, setFrame: bounds] };
                         let mask: u32 = 18; // kCALayerWidthSizable | kCALayerHeightSizable
-                        let _: () = unsafe {
-                            msg_send![display_layer, setAutoresizingMask: mask]
-                        };
+                        let _: () = unsafe { msg_send![display_layer, setAutoresizingMask: mask] };
                     }
 
                     // Init OSD + subtitle layers
@@ -217,7 +213,8 @@ fn install_key_monitor() {
         let key_code = event.keyCode();
         let mods = event.modifierFlags();
         let shift = mods.contains(NSEventModifierFlags::Shift);
-        let chars = event.charactersIgnoringModifiers()
+        let chars = event
+            .charactersIgnoringModifiers()
             .map(|s| s.to_string())
             .unwrap_or_default();
 
@@ -247,7 +244,7 @@ fn install_key_monitor() {
     });
 
     unsafe {
-        let _monitor = NSEvent::addLocalMonitorForEventsMatchingMask_handler(mask, &*handler);
+        let _monitor = NSEvent::addLocalMonitorForEventsMatchingMask_handler(mask, &handler);
     }
 }
 
@@ -258,9 +255,7 @@ fn install_mouse_monitor() {
     use objc2_app_kit::NSEventMask;
     use std::ptr::NonNull;
 
-    let mask = NSEventMask::MouseMoved
-        | NSEventMask::LeftMouseDown
-        | NSEventMask::LeftMouseDragged;
+    let mask = NSEventMask::MouseMoved | NSEventMask::LeftMouseDown | NSEventMask::LeftMouseDragged;
 
     let handler = RcBlock::new(|event_ptr: NonNull<NSEvent>| -> *mut NSEvent {
         let event = unsafe { event_ptr.as_ref() };
@@ -273,14 +268,18 @@ fn install_mouse_monitor() {
             }
             NSEventType::LeftMouseDown | NSEventType::LeftMouseDragged => {
                 let location = event.locationInWindow();
-                if location.y <= crate::osd::bar_height() {
-                    if let Some(fraction) = crate::osd::bar_fraction_at_x(location.x) {
-                        let duration = FILE_STATE.lock().unwrap()
-                            .as_ref().map(|s| s.duration_us).unwrap_or(0);
-                        let target_us = (fraction * duration as f64) as i64;
-                        send_cmd(Command::SeekAbsolute { target_us });
-                        crate::osd::seek_bar(target_us, duration);
-                    }
+                if location.y <= crate::osd::bar_height()
+                    && let Some(fraction) = crate::osd::bar_fraction_at_x(location.x)
+                {
+                    let duration = FILE_STATE
+                        .lock()
+                        .unwrap()
+                        .as_ref()
+                        .map(|s| s.duration_us)
+                        .unwrap_or(0);
+                    let target_us = (fraction * duration as f64) as i64;
+                    send_cmd(Command::SeekAbsolute { target_us });
+                    crate::osd::seek_bar(target_us, duration);
                 }
             }
             _ => {}
@@ -290,7 +289,7 @@ fn install_mouse_monitor() {
     });
 
     unsafe {
-        let _monitor = NSEvent::addLocalMonitorForEventsMatchingMask_handler(mask, &*handler);
+        let _monitor = NSEvent::addLocalMonitorForEventsMatchingMask_handler(mask, &handler);
     }
 }
 
@@ -345,8 +344,7 @@ fn start_main_timer() {
 
     unsafe {
         source.set_event_handler_with_block(
-            &*handler as *const block2::DynBlock<dyn Fn()>
-                as *mut block2::DynBlock<dyn Fn()>,
+            &*handler as *const block2::DynBlock<dyn Fn()> as *mut block2::DynBlock<dyn Fn()>,
         );
     }
     source.resume();
@@ -399,6 +397,7 @@ fn process_pending_ui_updates(state: &FileState) {
 
 // ── Public API ─────────────────────────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 pub fn run_app(
     cmd_tx: Sender<Command>,
     video_frame_rx: crossbeam_channel::Receiver<VideoFrame>,

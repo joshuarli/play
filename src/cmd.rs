@@ -94,7 +94,10 @@ pub struct VideoFrame {
 pub enum UiUpdate {
     Osd(String),
     SubtitleText(Option<String>),
-    VideoSize { width: u32, height: u32 },
+    VideoSize {
+        width: u32,
+        height: u32,
+    },
     /// Pause or unpause video display layer.
     Paused(bool),
     /// Flush the display layer and reset timebase after a seek.
@@ -139,9 +142,9 @@ pub fn expand_files(paths: Vec<PathBuf>) -> Vec<PathBuf> {
                 .filter_map(|e| e.ok())
                 .map(|e| e.path())
                 .filter(|f| {
-                    f.extension()
-                        .and_then(|e| e.to_str())
-                        .is_some_and(|e| MEDIA_EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()))
+                    f.extension().and_then(|e| e.to_str()).is_some_and(|e| {
+                        MEDIA_EXTENSIONS.contains(&e.to_ascii_lowercase().as_str())
+                    })
                 })
                 .collect();
             files.sort();

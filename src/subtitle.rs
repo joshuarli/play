@@ -20,9 +20,7 @@ pub struct SubtitleTrack {
 impl SubtitleTrack {
     /// Get the subtitle text at a given time (microseconds).
     pub fn text_at(&self, time_us: i64) -> Option<&str> {
-        let idx = self
-            .entries
-            .partition_point(|e| e.start_us <= time_us);
+        let idx = self.entries.partition_point(|e| e.start_us <= time_us);
         if idx > 0 {
             let e = &self.entries[idx - 1];
             if time_us <= e.end_us {
@@ -102,6 +100,37 @@ fn parse_srt_time(s: &str) -> Option<i64> {
     let m: f64 = parts[1].parse().ok()?;
     let secs: f64 = parts[2].parse().ok()?;
     Some(((h * 3600.0 + m * 60.0 + secs) * 1_000_000.0) as i64)
+}
+
+/// Look for SRT files alongside a video file.
+/// Checks: video.srt, video.*.srt
+pub fn find_srt_files(video_path: &Path) -> Vec<PathBuf> {
+    let stem = match video_path.file_stem().and_then(|s| s.to_str()) {
+        Some(s) => s.to_string(),
+        None => return Vec::new(),
+    };
+    let dir = video_path.parent().unwrap_or(Path::new("."));
+
+    let mut results = Vec::new();
+
+    // Check video.srt
+    let direct = dir.join(format!("{stem}.srt"));
+    if direct.exists() {
+        results.push(direct);
+    }
+
+    // Check video.*.srt (e.g., video.en.srt)
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.starts_with(&stem) && name.ends_with(".srt") && name != format!("{stem}.srt") {
+                results.push(entry.path());
+            }
+        }
+    }
+
+    results
 }
 
 #[cfg(test)]
@@ -191,7 +220,11 @@ BOM test";
     fn text_at_before_first() {
         let track = SubtitleTrack {
             label: "test".into(),
-            entries: vec![SrtEntry { start_us: 1_000_000, end_us: 2_000_000, text: "hi".into() }],
+            entries: vec![SrtEntry {
+                start_us: 1_000_000,
+                end_us: 2_000_000,
+                text: "hi".into(),
+            }],
         };
         assert_eq!(track.text_at(500_000), None);
     }
@@ -200,7 +233,11 @@ BOM test";
     fn text_at_during_entry() {
         let track = SubtitleTrack {
             label: "test".into(),
-            entries: vec![SrtEntry { start_us: 1_000_000, end_us: 2_000_000, text: "hi".into() }],
+            entries: vec![SrtEntry {
+                start_us: 1_000_000,
+                end_us: 2_000_000,
+                text: "hi".into(),
+            }],
         };
         assert_eq!(track.text_at(1_500_000), Some("hi"));
     }
@@ -210,8 +247,16 @@ BOM test";
         let track = SubtitleTrack {
             label: "test".into(),
             entries: vec![
-                SrtEntry { start_us: 1_000_000, end_us: 2_000_000, text: "first".into() },
-                SrtEntry { start_us: 3_000_000, end_us: 4_000_000, text: "second".into() },
+                SrtEntry {
+                    start_us: 1_000_000,
+                    end_us: 2_000_000,
+                    text: "first".into(),
+                },
+                SrtEntry {
+                    start_us: 3_000_000,
+                    end_us: 4_000_000,
+                    text: "second".into(),
+                },
             ],
         };
         assert_eq!(track.text_at(2_500_000), None); // between
@@ -222,43 +267,13 @@ BOM test";
     fn text_at_exact_boundary() {
         let track = SubtitleTrack {
             label: "test".into(),
-            entries: vec![SrtEntry { start_us: 1_000_000, end_us: 2_000_000, text: "hi".into() }],
+            entries: vec![SrtEntry {
+                start_us: 1_000_000,
+                end_us: 2_000_000,
+                text: "hi".into(),
+            }],
         };
         assert_eq!(track.text_at(1_000_000), Some("hi")); // start
         assert_eq!(track.text_at(2_000_000), Some("hi")); // end (inclusive)
     }
-}
-
-/// Look for SRT files alongside a video file.
-/// Checks: video.srt, video.*.srt
-pub fn find_srt_files(video_path: &Path) -> Vec<PathBuf> {
-    let stem = match video_path.file_stem().and_then(|s| s.to_str()) {
-        Some(s) => s.to_string(),
-        None => return Vec::new(),
-    };
-    let dir = video_path.parent().unwrap_or(Path::new("."));
-
-    let mut results = Vec::new();
-
-    // Check video.srt
-    let direct = dir.join(format!("{stem}.srt"));
-    if direct.exists() {
-        results.push(direct);
-    }
-
-    // Check video.*.srt (e.g., video.en.srt)
-    if let Ok(entries) = std::fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            let name = entry.file_name();
-            let name = name.to_string_lossy();
-            if name.starts_with(&stem)
-                && name.ends_with(".srt")
-                && name != format!("{stem}.srt")
-            {
-                results.push(entry.path());
-            }
-        }
-    }
-
-    results
 }

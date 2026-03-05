@@ -14,11 +14,11 @@ mod video_out;
 mod window;
 
 use std::path::Path;
-use std::sync::atomic::AtomicI64;
 use std::sync::Arc;
+use std::sync::atomic::AtomicI64;
 use std::thread;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use termion::input::TermRead;
 
 use cmd::{Args, Command, DemuxCommand, DemuxPacket, EndReason, UiUpdate, VideoFrame};
@@ -162,16 +162,8 @@ fn play_file(
     // Audio clock shared between player (writer) and main thread (reader for timebase sync)
     let audio_clock = Arc::new(AtomicI64::new(0));
 
-    let video_width = info
-        .video_stream
-        .as_ref()
-        .map(|s| s.width)
-        .unwrap_or(640);
-    let video_height = info
-        .video_stream
-        .as_ref()
-        .map(|s| s.height)
-        .unwrap_or(480);
+    let video_width = info.video_stream.as_ref().map(|s| s.width).unwrap_or(640);
+    let video_height = info.video_stream.as_ref().map(|s| s.height).unwrap_or(480);
 
     let filename = path
         .file_name()
@@ -249,7 +241,7 @@ fn play_file(
 
             // Seek to start position if specified
             if start_pos > 0 {
-                let _ = player.seek_to(start_pos);
+                player.seek_to(start_pos);
             }
 
             player.run();

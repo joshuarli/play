@@ -1,9 +1,9 @@
 use std::cell::Cell;
 use std::ffi::c_void;
-use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 
 use crate::decode_audio::AudioBuffer;
 
@@ -403,6 +403,8 @@ impl AudioOutput {
     }
 
     /// Push decoded audio into the ring buffers. Starts the unit if stopped.
+    /// Blocks if the ring is full, waiting for the CoreAudio callback to
+    /// drain enough space. This naturally throttles decode to real-time.
     pub fn schedule_buffer(&self, buf: &AudioBuffer) {
         let n = buf.samples_per_channel;
         if n == 0 {
@@ -411,12 +413,23 @@ impl AudioOutput {
         let ctx = unsafe { &*self.ctx_ptr };
 
         // If rings are empty, set the read PTS to this buffer's PTS
-        if ctx.rings.first().map_or(true, |r| r.available_read() == 0) {
+        if ctx.rings.first().is_none_or(|r| r.available_read() == 0) {
             ctx.read_pts_us.store(buf.pts_us, Ordering::Relaxed);
         }
 
+        // Push all samples, spinning briefly if the ring is full.
+        // The CoreAudio callback drains the ring in real-time, so waits
+        // are bounded and short (a few ms at most).
         for ch in 0..buf.channels as usize {
-            ctx.rings[ch].push_slice(&buf.planes[ch]);
+            let mut offset = 0;
+            let samples = &buf.planes[ch];
+            while offset < samples.len() {
+                let written = ctx.rings[ch].push_slice(&samples[offset..]);
+                offset += written;
+                if offset < samples.len() {
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+            }
         }
 
         if self.stopped.get() && !self.paused.get() {
@@ -437,7 +450,7 @@ impl AudioOutput {
         self.paused.set(false);
         if self.stopped.get() {
             let ctx = unsafe { &*self.ctx_ptr };
-            let has_audio = ctx.rings.first().map_or(false, |r| r.available_read() > 0);
+            let has_audio = ctx.rings.first().is_some_and(|r| r.available_read() > 0);
             if has_audio {
                 unsafe { AudioOutputUnitStart(self.unit) };
                 self.stopped.set(false);

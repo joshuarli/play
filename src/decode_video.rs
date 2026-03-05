@@ -52,7 +52,10 @@ impl VideoDecoder {
             log::warn!("VideoToolbox not available (err={ret}), using software decode");
         }
 
-        let decoder = codec_ctx.decoder().video().context("Failed to open video decoder")?;
+        let decoder = codec_ctx
+            .decoder()
+            .video()
+            .context("Failed to open video decoder")?;
         let width = decoder.width();
         let height = decoder.height();
 
@@ -88,9 +91,7 @@ impl VideoDecoder {
                 let duration = unsafe { (*raw).duration };
                 let duration_us = pts_to_us(duration, self.stream_time_base);
 
-                if unsafe { (*raw).format }
-                    != ffs::AVPixelFormat::AV_PIX_FMT_VIDEOTOOLBOX as i32
-                {
+                if unsafe { (*raw).format } != ffs::AVPixelFormat::AV_PIX_FMT_VIDEOTOOLBOX as i32 {
                     log::error!("Software decoded frame has no CVPixelBuffer — skipping");
                     return None;
                 }

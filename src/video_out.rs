@@ -31,8 +31,7 @@ struct OpaqueCMTimebase {
 }
 
 unsafe impl RefEncode for OpaqueCMTimebase {
-    const ENCODING_REF: Encoding =
-        Encoding::Pointer(&Encoding::Struct("OpaqueCMTimebase", &[]));
+    const ENCODING_REF: Encoding = Encoding::Pointer(&Encoding::Struct("OpaqueCMTimebase", &[]));
 }
 
 type CMTimebaseRef = *mut OpaqueCMTimebase;
@@ -323,10 +322,10 @@ pub fn reset_for_new_file() {
     // Release and clear cached format description (resolution may differ)
     {
         let mut guard = CACHED_FORMAT_DESC.lock().unwrap();
-        if let Some(desc) = guard.take() {
-            if !desc.0.is_null() {
-                unsafe { CFRelease(desc.0) };
-            }
+        if let Some(desc) = guard.take()
+            && !desc.0.is_null()
+        {
+            unsafe { CFRelease(desc.0) };
         }
     }
     // Reset timebase state so next file starts fresh

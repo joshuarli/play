@@ -111,9 +111,8 @@ impl AudioDecoder {
                     let pts = self.frame.pts().unwrap_or(0);
                     let pts_us = pts_to_us(pts, self.stream_time_base);
 
-                    let channels =
-                        unsafe { (*self.frame.as_ptr()).ch_layout.nb_channels } as usize;
-                    let nb_samples = self.frame.samples() as usize;
+                    let channels = unsafe { (*self.frame.as_ptr()).ch_layout.nb_channels } as usize;
+                    let nb_samples = self.frame.samples();
 
                     if self.channels == 0 || self.channels != channels as u16 {
                         self.channels = channels as u16;
@@ -142,15 +141,14 @@ impl AudioDecoder {
                             .expect("Failed to create resampler")
                         });
 
-                        let mut delay =
-                            resampler.run(&self.frame, &mut self.resampled).ok();
+                        let mut delay = resampler.run(&self.frame, &mut self.resampled).ok();
                         while let Some(Some(_)) = delay.as_ref().map(|d| d.as_ref()) {
                             delay = resampler.flush(&mut self.resampled).ok();
                         }
                         &self.resampled
                     };
 
-                    let nb_samples = source.samples() as usize;
+                    let nb_samples = source.samples();
                     if nb_samples == 0 {
                         continue;
                     }
@@ -167,8 +165,7 @@ impl AudioDecoder {
 
                     // Append decoded samples to per-channel accumulation planes
                     for ch in 0..channels {
-                        self.accum_planes[ch]
-                            .extend_from_slice(source.plane::<f32>(ch));
+                        self.accum_planes[ch].extend_from_slice(source.plane::<f32>(ch));
                     }
                     self.accum_count += nb_samples;
 
@@ -200,11 +197,7 @@ impl AudioDecoder {
 
     fn take_accum(&mut self) -> AudioBuffer {
         let count = self.accum_count;
-        let planes: Vec<Vec<f32>> = self
-            .accum_planes
-            .iter_mut()
-            .map(|p| std::mem::take(p))
-            .collect();
+        let planes: Vec<Vec<f32>> = self.accum_planes.iter_mut().map(std::mem::take).collect();
         self.accum_count = 0;
 
         AudioBuffer {

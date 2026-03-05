@@ -1,6 +1,6 @@
 use std::path::PathBuf;
-use std::sync::atomic::AtomicI64;
 use std::sync::Arc;
+use std::sync::atomic::AtomicI64;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
@@ -13,7 +13,6 @@ use crate::decode_video::VideoDecoder;
 use crate::demux::StreamInfo;
 use crate::subtitle::SubtitleTrack;
 use crate::sync::SyncClock;
-
 
 /// Accumulated relative seek waiting to be dispatched.
 /// Like mpv's `queue_seek()`: coalesces rapid key-repeat seeks so only one
@@ -89,6 +88,7 @@ pub struct Player {
 }
 
 impl Player {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         cmd_rx: Receiver<Command>,
         demux_packet_rx: Receiver<DemuxPacket>,
@@ -169,10 +169,10 @@ impl Player {
                 }
             }
 
-            if self.volume < 100 {
-                if let Some(ref mut ao) = self.audio_output {
-                    ao.set_volume(self.volume as f32 / 100.0);
-                }
+            if self.volume < 100
+                && let Some(ref mut ao) = self.audio_output
+            {
+                ao.set_volume(self.volume as f32 / 100.0);
             }
         }
 
@@ -339,13 +339,11 @@ impl Player {
             self.update_subtitles();
 
             // After EOF: wait for audio playback to finish
-            if let Some(end_us) = self.eof_audio_end_us {
-                if self.sync_clock.audio_pts() >= end_us {
-                    self.eof_audio_end_us = None;
-                    let _ = self
-                        .ui_update_tx
-                        .send(UiUpdate::EndOfFile(EndReason::Eof));
-                }
+            if let Some(end_us) = self.eof_audio_end_us
+                && self.sync_clock.audio_pts() >= end_us
+            {
+                self.eof_audio_end_us = None;
+                let _ = self.ui_update_tx.send(UiUpdate::EndOfFile(EndReason::Eof));
             }
         }
     }
@@ -385,7 +383,10 @@ impl Player {
                 let mut deferred: Option<Command> = None;
                 while let Ok(cmd) = self.cmd_rx.try_recv() {
                     match cmd {
-                        Command::SeekRelative { seconds: s, exact: e } => {
+                        Command::SeekRelative {
+                            seconds: s,
+                            exact: e,
+                        } => {
                             self.queue_seek(s, e);
                         }
                         other => {
@@ -395,10 +396,10 @@ impl Player {
                     }
                 }
 
-                if let Some(cmd) = deferred {
-                    if self.handle_command(cmd) {
-                        return true;
-                    }
+                if let Some(cmd) = deferred
+                    && self.handle_command(cmd)
+                {
+                    return true;
                 }
             }
             Command::VolumeUp => self.adjust_volume(5),
@@ -442,9 +443,7 @@ impl Player {
                                             ) {
                                                 Ok(mut ao) => {
                                                     if self.volume < 100 {
-                                                        ao.set_volume(
-                                                            self.volume as f32 / 100.0,
-                                                        );
+                                                        ao.set_volume(self.volume as f32 / 100.0);
                                                     }
                                                     self.audio_output = Some(ao);
                                                 }
@@ -461,10 +460,7 @@ impl Player {
                                     }
                                 }
                                 None => {
-                                    log::error!(
-                                        "Audio stream {} not found",
-                                        new_info.index
-                                    );
+                                    log::error!("Audio stream {} not found", new_info.index);
                                 }
                             }
                         }
@@ -500,9 +496,7 @@ impl Player {
                         None => "Subtitles: off".to_string(),
                     };
                     let _ = self.ui_update_tx.send(UiUpdate::Osd(msg));
-                    let _ = self
-                        .ui_update_tx
-                        .send(UiUpdate::SubtitleText(None));
+                    let _ = self.ui_update_tx.send(UiUpdate::SubtitleText(None));
                 }
             }
             Command::AudioDelayIncrease => {
@@ -542,12 +536,9 @@ impl Player {
             // Seek completed — decrement in-flight counter
             DemuxPacket::Flush => {
                 self.pending_seeks = self.pending_seeks.saturating_sub(1);
-                return;
             }
             // Discard stale pre-seek packets
-            _ if self.pending_seeks > 0 => {
-                return;
-            }
+            _ if self.pending_seeks > 0 => {}
             DemuxPacket::Video(packet) => {
                 if let Some(ref mut decoder) = self.video_decoder {
                     if decoder.send_packet(&packet).is_err() {
@@ -604,9 +595,7 @@ impl Player {
                             if self.video_decoder.is_none() {
                                 self.seek_frame_shown = true;
                                 self.needs_display_flush = false;
-                                let _ = self
-                                    .ui_update_tx
-                                    .send(UiUpdate::SeekFlush(buf.pts_us));
+                                let _ = self.ui_update_tx.send(UiUpdate::SeekFlush(buf.pts_us));
                             }
                         }
                         self.last_audio_end_us = self.last_audio_end_us.max(buf.end_us());
@@ -647,9 +636,7 @@ impl Player {
                     // Wait for audio to finish playing before signaling EOF
                     self.eof_audio_end_us = Some(self.last_audio_end_us);
                 } else {
-                    let _ = self
-                        .ui_update_tx
-                        .send(UiUpdate::EndOfFile(EndReason::Eof));
+                    let _ = self.ui_update_tx.send(UiUpdate::EndOfFile(EndReason::Eof));
                 }
             }
         }
@@ -747,7 +734,10 @@ mod tests {
 
         assert_eq!(player.pending_seeks, 1);
         assert!(player.queued_seek.is_none());
-        assert!(demux_cmd_rx.try_recv().is_ok(), "Seek command should be sent to demuxer");
+        assert!(
+            demux_cmd_rx.try_recv().is_ok(),
+            "Seek command should be sent to demuxer"
+        );
     }
 
     #[test]
@@ -762,7 +752,10 @@ mod tests {
         // Second seek while first is in-flight: should be deferred
         player.queue_seek(5.0, false);
         player.execute_queued_seek();
-        assert_eq!(player.pending_seeks, 1, "Should not dispatch while seek in-flight");
+        assert_eq!(
+            player.pending_seeks, 1,
+            "Should not dispatch while seek in-flight"
+        );
         assert!(player.queued_seek.is_some(), "Seek should remain queued");
     }
 
@@ -800,7 +793,10 @@ mod tests {
             "Only first seek should dispatch without waiting; got {dispatch_count}. \
              Intermediate frames are being flushed before VSync can composite them."
         );
-        assert!(player.queued_seek.is_some(), "Remaining seeks should be queued");
+        assert!(
+            player.queued_seek.is_some(),
+            "Remaining seeks should be queued"
+        );
 
         // Drain demux commands: only one Seek should have been sent
         let mut seek_count = 0;
@@ -830,7 +826,10 @@ mod tests {
 
         // Now it should dispatch
         player.execute_queued_seek();
-        assert_eq!(player.pending_seeks, 1, "Should dispatch after display time");
+        assert_eq!(
+            player.pending_seeks, 1,
+            "Should dispatch after display time"
+        );
         assert!(player.queued_seek.is_none());
     }
 
@@ -849,7 +848,10 @@ mod tests {
         }
 
         let qs = player.queued_seek.as_ref().unwrap();
-        assert!((qs.seconds - 20.0).abs() < 0.001, "Should accumulate to +20s");
+        assert!(
+            (qs.seconds - 20.0).abs() < 0.001,
+            "Should accumulate to +20s"
+        );
 
         // Wait and dispatch — should seek from 5s to 25s
         std::thread::sleep(SEEK_MIN_DISPLAY + Duration::from_millis(1));
@@ -963,7 +965,10 @@ mod tests {
 
         // Should dispatch immediately (MIN_DISPLAY already elapsed + frame shown)
         player.execute_queued_seek();
-        assert_eq!(player.pending_seeks, 1, "Should dispatch: frame shown and MIN_DISPLAY passed");
+        assert_eq!(
+            player.pending_seeks, 1,
+            "Should dispatch: frame shown and MIN_DISPLAY passed"
+        );
         assert!(player.queued_seek.is_none());
     }
 

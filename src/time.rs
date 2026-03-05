@@ -1,6 +1,6 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 
 /// Current wall-clock time in milliseconds (monotonic-ish, for OSD timeouts).
 pub fn now_ms() -> u64 {
@@ -12,7 +12,7 @@ pub fn now_ms() -> u64 {
 
 /// Format microseconds as HH:MM:SS.
 pub fn format_time(us: i64) -> String {
-    let total_secs = (us.unsigned_abs() / 1_000_000) as u64;
+    let total_secs = us.unsigned_abs() / 1_000_000;
     let hours = total_secs / 3600;
     let mins = (total_secs % 3600) / 60;
     let secs = total_secs % 60;
@@ -80,7 +80,7 @@ mod tests {
     #[test]
     fn format_time_positive() {
         // 1h 23m 45s
-        let us = (1 * 3600 + 23 * 60 + 45) * 1_000_000;
+        let us = (3600 + 23 * 60 + 45) * 1_000_000;
         assert_eq!(format_time(us), "01:23:45");
     }
 

@@ -1,14 +1,14 @@
 use std::io::{self, Write};
-use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::thread;
 use std::time::Duration;
 
 use crossbeam_channel::{Receiver, Sender};
+use termion::AsyncReader;
 use termion::event::Key;
 use termion::input::Keys;
 use termion::raw::IntoRawMode;
-use termion::AsyncReader;
 
 use crate::cmd::{Command, EndReason, UiUpdate};
 use crate::demux::{AudioStreamInfo, StreamInfo};
@@ -16,6 +16,7 @@ use crate::time::format_time;
 
 /// Run audio-only terminal mode. Blocks until quit or EOF.
 /// `keys` is a shared async stdin reader, created once for the whole playlist.
+#[allow(clippy::too_many_arguments)]
 pub fn run_terminal(
     cmd_tx: Sender<Command>,
     ui_update_rx: Receiver<UiUpdate>,
@@ -26,7 +27,9 @@ pub fn run_terminal(
     file_index: usize,
     file_count: usize,
 ) -> EndReason {
-    let mut stdout = io::stdout().into_raw_mode().expect("failed to enter raw mode");
+    let mut stdout = io::stdout()
+        .into_raw_mode()
+        .expect("failed to enter raw mode");
 
     // Enter alternate screen and clear it
     write!(stdout, "\x1b[?1049h\x1b[H\x1b[2J").ok();
@@ -116,10 +119,10 @@ pub fn run_terminal(
         }
 
         // Clear expired OSD message
-        if let Some((_, deadline)) = &osd_message {
-            if now_ms() >= *deadline {
-                osd_message = None;
-            }
+        if let Some((_, deadline)) = &osd_message
+            && now_ms() >= *deadline
+        {
+            osd_message = None;
         }
 
         // Update the timestamp line
@@ -155,14 +158,21 @@ enum Action {
 }
 
 fn format_audio_info(a: &AudioStreamInfo) -> String {
-    format!("{} {}Hz {}", a.codec_name, a.sample_rate, a.channel_layout_desc)
+    format!(
+        "{} {}Hz {}",
+        a.codec_name, a.sample_rate, a.channel_layout_desc
+    )
 }
 
 /// Print metadata lines.
 fn print_metadata(stdout: &mut impl Write, info: &StreamInfo) {
     let keys = ["title", "artist", "album_artist", "album", "date", "genre"];
     for key in &keys {
-        if let Some(val) = info.metadata.iter().find(|(k, _)| k.eq_ignore_ascii_case(key)) {
+        if let Some(val) = info
+            .metadata
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(key))
+        {
             write!(stdout, "{}: {}\r\n", capitalize(key), val.1).ok();
         }
     }

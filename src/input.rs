@@ -84,7 +84,10 @@ mod tests {
     fn left_arrow_seek_back_5s() {
         assert_eq!(
             map_key(KVK_LEFT, false, ""),
-            Some(Command::SeekRelative { seconds: -5.0, exact: false })
+            Some(Command::SeekRelative {
+                seconds: -5.0,
+                exact: false
+            })
         );
     }
 
@@ -92,7 +95,10 @@ mod tests {
     fn right_arrow_seek_forward_5s() {
         assert_eq!(
             map_key(KVK_RIGHT, false, ""),
-            Some(Command::SeekRelative { seconds: 5.0, exact: false })
+            Some(Command::SeekRelative {
+                seconds: 5.0,
+                exact: false
+            })
         );
     }
 
@@ -100,7 +106,10 @@ mod tests {
     fn shift_left_seek_back_1s_exact() {
         assert_eq!(
             map_key(KVK_LEFT, true, ""),
-            Some(Command::SeekRelative { seconds: -1.0, exact: true })
+            Some(Command::SeekRelative {
+                seconds: -1.0,
+                exact: true
+            })
         );
     }
 
@@ -108,7 +117,10 @@ mod tests {
     fn shift_right_seek_forward_1s_exact() {
         assert_eq!(
             map_key(KVK_RIGHT, true, ""),
-            Some(Command::SeekRelative { seconds: 1.0, exact: true })
+            Some(Command::SeekRelative {
+                seconds: 1.0,
+                exact: true
+            })
         );
     }
 
@@ -116,7 +128,10 @@ mod tests {
     fn shift_up_seek_forward_60s() {
         assert_eq!(
             map_key(KVK_UP, true, ""),
-            Some(Command::SeekRelative { seconds: 60.0, exact: false })
+            Some(Command::SeekRelative {
+                seconds: 60.0,
+                exact: false
+            })
         );
     }
 
@@ -124,7 +139,10 @@ mod tests {
     fn shift_down_seek_back_60s() {
         assert_eq!(
             map_key(KVK_DOWN, true, ""),
-            Some(Command::SeekRelative { seconds: -60.0, exact: false })
+            Some(Command::SeekRelative {
+                seconds: -60.0,
+                exact: false
+            })
         );
     }
 

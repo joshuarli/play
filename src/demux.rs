@@ -86,8 +86,7 @@ impl PacketCache {
         };
         let pts_raw = packet.pts().or(packet.dts()).unwrap_or(0);
         let pts_us = pts_to_us(pts_raw, tb);
-        let is_video_keyframe =
-            Some(stream_index) == self.video_idx && packet.is_key();
+        let is_video_keyframe = Some(stream_index) == self.video_idx && packet.is_key();
         let data_size = packet.size();
         let cloned = clone_packet_ref(packet);
 
@@ -130,9 +129,7 @@ impl PacketCache {
 
         if forward {
             // Binary search: first packet with pts_us >= target_us
-            let start = self
-                .packets
-                .partition_point(|cp| cp.pts_us < target_us);
+            let start = self.packets.partition_point(|cp| cp.pts_us < target_us);
             // First video keyframe at or after target
             for i in start..self.packets.len() {
                 if self.packets[i].is_video_keyframe && self.packets[i].pts_us >= target_us {
@@ -146,9 +143,7 @@ impl PacketCache {
             None
         } else {
             // Binary search: first packet with pts_us > target_us
-            let end = self
-                .packets
-                .partition_point(|cp| cp.pts_us <= target_us);
+            let end = self.packets.partition_point(|cp| cp.pts_us <= target_us);
             // Scan backward from end for last video keyframe at or before target
             for i in (0..end).rev() {
                 if self.packets[i].is_video_keyframe && self.packets[i].pts_us <= target_us {
@@ -219,27 +214,24 @@ pub fn probe(path: &Path) -> Result<StreamInfo> {
         0
     };
 
-    let video_stream = ictx
-        .streams()
-        .best(Type::Video)
-        .map(|s| {
-            let params = s.parameters();
-            let codec = ffmpeg::codec::context::Context::from_parameters(params).ok();
-            let codec_name = codec
-                .as_ref()
-                .map(|c| c.id().name().to_string())
-                .unwrap_or_else(|| "unknown".to_string());
-            let (width, height) = codec
-                .and_then(|c| c.decoder().video().ok())
-                .map(|v| (v.width(), v.height()))
-                .unwrap_or((0, 0));
-            VideoStreamInfo {
-                index: s.index(),
-                width,
-                height,
-                codec_name,
-            }
-        });
+    let video_stream = ictx.streams().best(Type::Video).map(|s| {
+        let params = s.parameters();
+        let codec = ffmpeg::codec::context::Context::from_parameters(params).ok();
+        let codec_name = codec
+            .as_ref()
+            .map(|c| c.id().name().to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+        let (width, height) = codec
+            .and_then(|c| c.decoder().video().ok())
+            .map(|v| (v.width(), v.height()))
+            .unwrap_or((0, 0));
+        VideoStreamInfo {
+            index: s.index(),
+            width,
+            height,
+            codec_name,
+        }
+    });
 
     let audio_streams: Vec<AudioStreamInfo> = ictx
         .streams()
@@ -334,7 +326,11 @@ pub fn run_demuxer(
                     audio_idx = Some(new_idx);
                     cache.clear();
                     cache = PacketCache::new(
-                        CACHE_MAX_BYTES, video_idx, audio_idx, subtitle_idx, &ictx,
+                        CACHE_MAX_BYTES,
+                        video_idx,
+                        audio_idx,
+                        subtitle_idx,
+                        &ictx,
                     );
                     replay_cursor = None;
                 }
@@ -343,9 +339,14 @@ pub fn run_demuxer(
             }
         }
 
-        if let Some(DemuxCommand::Seek { target_pts, forward }) = last_seek {
-            replay_cursor =
-                try_cached_seek(&mut cache, &mut ictx, &packet_tx, target_pts, forward, seek_count);
+        if let Some(DemuxCommand::Seek {
+            target_pts,
+            forward,
+        }) = last_seek
+        {
+            replay_cursor = try_cached_seek(
+                &mut cache, &mut ictx, &packet_tx, target_pts, forward, seek_count,
+            );
             continue;
         }
 
@@ -454,18 +455,27 @@ pub fn run_demuxer(
 
                     match cmd_rx.recv() {
                         Ok(DemuxCommand::Stop) => return Ok(()),
-                        Ok(DemuxCommand::Seek { target_pts, forward }) => {
-                            let Some((t, f, n)) = coalesce_seeks(&cmd_rx, target_pts, forward) else {
+                        Ok(DemuxCommand::Seek {
+                            target_pts,
+                            forward,
+                        }) => {
+                            let Some((t, f, n)) = coalesce_seeks(&cmd_rx, target_pts, forward)
+                            else {
                                 return Ok(());
                             };
-                            replay_cursor = try_cached_seek(&mut cache, &mut ictx, &packet_tx, t, f, n);
+                            replay_cursor =
+                                try_cached_seek(&mut cache, &mut ictx, &packet_tx, t, f, n);
                             continue;
                         }
                         Ok(DemuxCommand::ChangeAudio(new_idx)) => {
                             audio_idx = Some(new_idx);
                             cache.clear();
                             cache = PacketCache::new(
-                                CACHE_MAX_BYTES, video_idx, audio_idx, subtitle_idx, &ictx,
+                                CACHE_MAX_BYTES,
+                                video_idx,
+                                audio_idx,
+                                subtitle_idx,
+                                &ictx,
                             );
                             replay_cursor = None;
                             continue;
@@ -532,7 +542,13 @@ fn try_cached_seek(
 }
 
 /// Execute a seek and send the corresponding Flush packets.
-fn do_seek(ictx: &mut Input, packet_tx: &Sender<DemuxPacket>, target: i64, forward: bool, count: u32) {
+fn do_seek(
+    ictx: &mut Input,
+    packet_tx: &Sender<DemuxPacket>,
+    target: i64,
+    forward: bool,
+    count: u32,
+) {
     log::debug!("Demuxer: seek to {target}us, coalesced {count}");
     if forward {
         let _ = ictx.seek(target, target..);
@@ -705,7 +721,9 @@ mod tests {
     #[test]
     fn seek_position_audio_only_backward() {
         let mut cache = test_cache(4096, None);
-        cache.time_bases.push((1, ffmpeg::Rational::new(1, 1_000_000)));
+        cache
+            .time_bases
+            .push((1, ffmpeg::Rational::new(1, 1_000_000)));
         push_test_packet(&mut cache, 1, 0, false, 100);
         push_test_packet(&mut cache, 1, 1_000_000, false, 100);
         push_test_packet(&mut cache, 1, 2_000_000, false, 100);
@@ -717,7 +735,9 @@ mod tests {
     #[test]
     fn seek_position_audio_only_forward() {
         let mut cache = test_cache(4096, None);
-        cache.time_bases.push((1, ffmpeg::Rational::new(1, 1_000_000)));
+        cache
+            .time_bases
+            .push((1, ffmpeg::Rational::new(1, 1_000_000)));
         push_test_packet(&mut cache, 1, 0, false, 100);
         push_test_packet(&mut cache, 1, 1_000_000, false, 100);
         push_test_packet(&mut cache, 1, 2_000_000, false, 100);
@@ -777,9 +797,21 @@ mod tests {
     #[test]
     fn coalesce_multiple_seeks_keeps_last() {
         let (tx, rx) = crossbeam_channel::unbounded::<DemuxCommand>();
-        tx.send(DemuxCommand::Seek { target_pts: 10_000_000, forward: true }).unwrap();
-        tx.send(DemuxCommand::Seek { target_pts: 15_000_000, forward: false }).unwrap();
-        tx.send(DemuxCommand::Seek { target_pts: 20_000_000, forward: true }).unwrap();
+        tx.send(DemuxCommand::Seek {
+            target_pts: 10_000_000,
+            forward: true,
+        })
+        .unwrap();
+        tx.send(DemuxCommand::Seek {
+            target_pts: 15_000_000,
+            forward: false,
+        })
+        .unwrap();
+        tx.send(DemuxCommand::Seek {
+            target_pts: 20_000_000,
+            forward: true,
+        })
+        .unwrap();
 
         let result = coalesce_seeks(&rx, 5_000_000, true);
         assert_eq!(result, Some((20_000_000, true, 4)));
@@ -788,9 +820,17 @@ mod tests {
     #[test]
     fn coalesce_returns_none_on_stop() {
         let (tx, rx) = crossbeam_channel::unbounded::<DemuxCommand>();
-        tx.send(DemuxCommand::Seek { target_pts: 10_000_000, forward: true }).unwrap();
+        tx.send(DemuxCommand::Seek {
+            target_pts: 10_000_000,
+            forward: true,
+        })
+        .unwrap();
         tx.send(DemuxCommand::Stop).unwrap();
-        tx.send(DemuxCommand::Seek { target_pts: 99_000_000, forward: true }).unwrap();
+        tx.send(DemuxCommand::Seek {
+            target_pts: 99_000_000,
+            forward: true,
+        })
+        .unwrap();
 
         let result = coalesce_seeks(&rx, 5_000_000, true);
         assert_eq!(result, None);
