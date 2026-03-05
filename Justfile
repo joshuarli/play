@@ -18,3 +18,6 @@ release:
       -Z build-std=std \
       -Z build-std-features= \
       --target {{ target }}
+
+install: release
+    sudo cp target/{{target}}/release/{{ name }} /usr/local/bin/{{ name }}
