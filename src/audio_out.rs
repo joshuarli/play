@@ -1,7 +1,7 @@
 use std::cell::Cell;
 use std::ffi::c_void;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 
 use anyhow::{Result, bail};
 
@@ -230,6 +230,12 @@ struct CallbackContext {
     sample_rate: u32,
     clock: Arc<AtomicI64>,
     channels: u32,
+    /// Samples to skip on next callback (set by player, consumed by callback).
+    skip_samples: AtomicUsize,
+    /// Set by flush_quick(); the callback clears all rings on next invocation.
+    /// This avoids the data race of clearing rings from the player thread
+    /// while the callback (sole consumer) is reading from them.
+    flush_pending: AtomicBool,
 }
 
 // ── Render callback (lock-free) ───────────────────────────────────
@@ -246,6 +252,37 @@ unsafe extern "C" fn render_callback(
         let ctx = &*(in_ref_con as *const CallbackContext);
         let count = in_number_frames as usize;
         let ch_count = ctx.channels as usize;
+
+        // Handle pending flush (from flush_quick). Must run in the callback
+        // because only the consumer may modify tail — avoids a data race.
+        if ctx.flush_pending.load(Ordering::Acquire) {
+            for ring in &ctx.rings {
+                let head = ring.head.load(Ordering::Acquire);
+                ring.tail.store(head, Ordering::Release);
+            }
+            ctx.skip_samples.store(0, Ordering::Relaxed);
+            ctx.flush_pending.store(false, Ordering::Release);
+        }
+
+        // Handle pending skip (requested by player thread for instant seeking).
+        // The callback is the sole ring consumer, so advancing tail is safe.
+        // Use fetch_sub (not swap) to preserve any excess that couldn't be
+        // skipped this callback — it carries over to the next invocation.
+        let skip = ctx.skip_samples.load(Ordering::Relaxed);
+        if skip > 0 {
+            let avail = ctx.rings.first().map_or(0, |r| r.available_read());
+            let to_skip = skip.min(avail);
+            if to_skip > 0 {
+                for ring in &ctx.rings {
+                    let tail = ring.tail.load(Ordering::Relaxed);
+                    ring.tail
+                        .store(tail.wrapping_add(to_skip), Ordering::Release);
+                }
+                let us = to_skip as i64 * 1_000_000 / ctx.sample_rate as i64;
+                ctx.read_pts_us.fetch_add(us, Ordering::Relaxed);
+            }
+            ctx.skip_samples.fetch_sub(to_skip, Ordering::Relaxed);
+        }
 
         // Read from first ring to determine available samples
         let available = ctx.rings.first().map_or(0, |r| r.available_read());
@@ -356,6 +393,8 @@ impl AudioOutput {
             sample_rate,
             clock: audio_clock.clone(),
             channels: channels as u32,
+            skip_samples: AtomicUsize::new(0),
+            flush_pending: AtomicBool::new(false),
         });
         let ctx_ptr = Box::into_raw(ctx);
 
@@ -438,6 +477,34 @@ impl AudioOutput {
         }
     }
 
+    /// Non-blocking push: push the entire buffer if the ring has space,
+    /// otherwise do nothing. Returns true if all samples were pushed.
+    pub fn try_schedule_buffer(&self, buf: &AudioBuffer) -> bool {
+        let n = buf.samples_per_channel;
+        if n == 0 {
+            return true;
+        }
+        let ctx = unsafe { &*self.ctx_ptr };
+        let avail = ctx.rings.first().map_or(0, |r| r.available_write());
+        if avail < n {
+            return false;
+        }
+
+        if ctx.rings.first().is_none_or(|r| r.available_read() == 0) {
+            ctx.read_pts_us.store(buf.pts_us, Ordering::Relaxed);
+        }
+
+        for ch in 0..buf.channels as usize {
+            ctx.rings[ch].push_slice(&buf.planes[ch]);
+        }
+
+        if self.stopped.get() && !self.paused.get() {
+            unsafe { AudioOutputUnitStart(self.unit) };
+            self.stopped.set(false);
+        }
+        true
+    }
+
     pub fn pause(&self) {
         if !self.stopped.get() {
             unsafe { AudioOutputUnitStop(self.unit) };
@@ -490,6 +557,43 @@ impl AudioOutput {
         for ring in &ctx.rings {
             ring.clear();
         }
+    }
+
+    /// Request the callback to skip `samples` per channel on its next
+    /// invocation. Returns immediately — the skip happens in the callback
+    /// thread within ~2-5ms, respecting the SPSC ring contract.
+    pub fn request_skip(&self, samples: usize) {
+        let ctx = unsafe { &*self.ctx_ptr };
+        ctx.skip_samples.fetch_add(samples, Ordering::Relaxed);
+    }
+
+    /// How many decoded samples are buffered ahead of the playback position,
+    /// minus any pending skip that hasn't been consumed by the callback yet.
+    pub fn buffered_samples(&self) -> usize {
+        let ctx = unsafe { &*self.ctx_ptr };
+        let pending = ctx.skip_samples.load(Ordering::Relaxed);
+        ctx.rings
+            .iter()
+            .map(|r| r.available_read())
+            .min()
+            .unwrap_or(0)
+            .saturating_sub(pending)
+    }
+
+    /// Update the callback's PTS tracking so the clock advances from the
+    /// new position immediately, even while old audio drains from the ring.
+    pub fn set_clock_position(&self, pts_us: i64) {
+        let ctx = unsafe { &*self.ctx_ptr };
+        ctx.read_pts_us.store(pts_us, Ordering::Relaxed);
+        ctx.clock.store(pts_us, Ordering::Relaxed);
+    }
+
+    /// Clear buffered audio without stopping the unit. The actual clear
+    /// happens in the next callback invocation (the callback is the sole
+    /// ring consumer, so only it may safely modify tail pointers).
+    pub fn flush_quick(&self) {
+        let ctx = unsafe { &*self.ctx_ptr };
+        ctx.flush_pending.store(true, Ordering::Release);
     }
 }
 

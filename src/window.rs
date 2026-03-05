@@ -25,6 +25,8 @@ struct FileState {
     ui_update_rx: crossbeam_channel::Receiver<UiUpdate>,
     audio_clock: Arc<AtomicI64>,
     duration_us: i64,
+    file_index: usize,
+    file_count: usize,
 }
 
 static FILE_STATE: Mutex<Option<FileState>> = Mutex::new(None);
@@ -49,6 +51,13 @@ fn set_file_state(state: FileState) {
 /// Send a command to the player thread.
 fn send_cmd(cmd: Command) {
     if let Some(ref state) = *FILE_STATE.lock().unwrap() {
+        // Ignore next/prev when already at playlist boundary
+        if matches!(cmd, Command::NextFile) && state.file_index + 1 >= state.file_count {
+            return;
+        }
+        if matches!(cmd, Command::PrevFile) && state.file_index == 0 {
+            return;
+        }
         let _ = state.cmd_tx.send(cmd);
     }
 }
@@ -409,6 +418,8 @@ pub fn run_app(
     duration_us: i64,
     title: &str,
     first_run: bool,
+    file_index: usize,
+    file_count: usize,
 ) -> EndReason {
     set_file_state(FileState {
         cmd_tx,
@@ -416,6 +427,8 @@ pub fn run_app(
         ui_update_rx,
         audio_clock,
         duration_us,
+        file_index,
+        file_count,
     });
 
     let mtm = MainThreadMarker::new().expect("must run on main thread");

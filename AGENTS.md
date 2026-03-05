@@ -56,19 +56,19 @@ File → Demuxer (PacketCache, binary search) → DemuxPacket
 |---|---|---|
 | `main.rs` | ~320 | Thread spawning, file probe, playlist loop, stream info logging |
 | `cmd.rs` | ~330 | Command/DemuxPacket/DemuxCommand/VideoFrame/PixelBuffer(RAII)/UiUpdate/Args types, arg parser |
-| `player.rs` | ~985 | State machine: crossbeam select!, decode dispatch, seek coalescing, volume, subtitles, audio track switching |
+| `player.rs` | ~1180 | State machine: run_video (select!) / run_audio_only (command-first), decode dispatch, seek coalescing, volume, subtitles, audio track switching |
 | `demux.rs` | ~810 | ffmpeg format::input, 150MB packet cache (binary search), seek coalescing, ChangeAudio, stream probe |
 | `decode_video.rs` | ~170 | VideoToolbox hwaccel setup, PixelBuffer extraction from AVFrame.data[3] |
 | `decode_audio.rs` | ~230 | ffmpeg audio decode + resample to f32 planar, per-channel planes, 8192-sample accumulation, end_us() |
 | `video_out.rs` | ~340 | AVSampleBufferDisplayLayer, CMSampleBuffer from PixelBuffer, CMTimebase sync |
-| `audio_out.rs` | ~490 | CoreAudio AudioUnit, lock-free SPSC ring buffers (65536 samples/ch), non-interleaved f32 render callback |
+| `audio_out.rs` | ~610 | CoreAudio AudioUnit, lock-free SPSC ring buffers (65536 samples/ch), non-interleaved f32 render callback, ring skip/flush_quick |
 | `window.rs` | ~455 | NSWindow via objc2 define_class!, key/mouse monitors, GCD timer (240Hz / 4ms), layer setup |
 | `osd.rs` | ~535 | CATextLayer OSD messages, NSAttributedString subtitles (cached shadow/paragraph style), clickable progress bar |
 | `sync.rs` | ~100 | Audio-master clock (AtomicI64), pause/resume, seek position |
 | `subtitle.rs` | ~265 | SRT parser, binary search lookup, auto-detection of .srt files |
 | `input.rs` | ~165 | Virtual key code → Command mapping (Carbon key codes + characters) |
 | `time.rs` | ~190 | PTS↔microseconds conversion (i128 overflow-safe), HH:MM:SS format/parse, now_ms() |
-| `terminal.rs` | ~180 | Audio-only mode: termion raw terminal, metadata display, keyboard controls |
+| `terminal.rs` | ~205 | Audio-only mode: termion raw terminal, metadata display, keyboard controls, key-repeat batching |
 | `build.rs` | ~16 | Links Apple frameworks (AVFoundation, CoreMedia, CoreVideo, etc.) |
 
 ## Key Dependencies
@@ -92,19 +92,47 @@ are implicitly dropped (try_send returns Full).
 ## Seek Coalescing
 
 Holding an arrow key generates ~30 `SeekRelative` commands/sec. Without coalescing, each
-would trigger a full ffmpeg seek + decode flush round-trip. Two layers prevent this:
+would trigger a full ffmpeg seek + decode flush round-trip. Multiple layers prevent this:
 
-1. **Player buffering** (`player.rs`): At most one seek is in flight to the demuxer. While
+1. **Terminal key batching** (`terminal.rs`): Drains all queued key events per iteration,
+   accumulating left/right arrow presses into a single `SeekRelative` command with the
+   summed offset. This collapses OS key-repeat bursts before they reach the player.
+
+2. **Player buffering** (`player.rs`): At most one seek is in flight to the demuxer. While
    `pending_seeks > 0`, new seeks accumulate into a `queued_seek` field instead of dispatching.
    A minimum display time (`SEEK_MIN_DISPLAY` = 4ms) ensures each seek-flush frame survives
    at least one VSync before the next flush clears it. A safety timeout (`SEEK_COALESCE_TIMEOUT`
    = 50ms) prevents stuck decodes from freezing scrubbing.
 
-2. **Demuxer coalescing** (`demux.rs`): The demuxer drains all pending seeks from `cmd_rx`
+3. **Demuxer coalescing** (`demux.rs`): The demuxer drains all pending seeks from `cmd_rx`
    at the top of each loop iteration (keeps only the last). The packet send uses
    `crossbeam::select!` to race `send` vs `recv`, so a seek command is processed immediately
    even when the packet channel is full (stale packet is dropped). Seeks are served from the
    150MB in-memory packet cache when possible (instant replay, no file I/O).
+
+## Audio-Only Player Loop
+
+Audio-only files use a dedicated `run_audio_only()` loop that differs from the video
+`select!`-based `run_video()` loop. The key problem it solves: `schedule_buffer()` blocks
+the player thread for 1-20ms (spinning with 1ms sleep waiting for ring space), preventing
+seek commands from being processed during that time.
+
+The audio-only loop uses a **command-first architecture**:
+1. Always drain ALL pending commands first via `try_recv` — seeks get immediate processing
+2. Execute queued seek (ring buffer skip or demuxer dispatch)
+3. Drain `pending_audio: VecDeque<AudioBuffer>` into the ring via non-blocking `try_schedule_buffer()`
+4. Process demux packets only if pending queue has room (<16 buffers), limited to 8 per iteration
+5. `select!` wait only when idle (no pending audio, no queued seek)
+
+Additional audio-only seeking optimizations:
+- **Ring buffer skipping**: Forward seeks skip directly in the SPSC ring buffer via
+  `request_skip()` + `AtomicUsize`. The callback (sole consumer) advances its tail pointer —
+  instant, no file I/O or decoder flush. Falls back to demuxer seek when ring is exhausted.
+- **`flush_quick()` via `AtomicBool`**: Signals the callback to clear rings on its next
+  invocation, avoiding a data race (only the callback may modify tail pointers).
+- **`pending_seeks` for audio-only**: Stale pre-seek packets still in the demux channel
+  (up to 64) are discarded instantly instead of being decoded and scheduled.
+- **`buffered_samples()` subtracts pending skips**: Prevents over-committing ring skips.
 
 ## OSD Rendering
 
@@ -129,7 +157,8 @@ recalculated on each update. `CATransaction` disables implicit animations.
 - Opus/AAC `ch_layout.nb_channels` must be read from the modern API — the legacy
   `channel_layout` bitmask is often unset, giving 0 channels.
 - `SpscRing::clear()` is only safe after `AudioOutputUnitStop` returns (guarantees callback
-  is not running). Always call `flush()` which stops first, then clears.
+  is not running). `flush()` stops first then clears. `flush_quick()` uses an `AtomicBool`
+  flag so the callback clears rings on its next invocation (no stop required).
 - `PixelBuffer` RAII owns a retained CVPixelBufferRef. Use `.take()` to transfer ownership
   to CoreMedia without triggering Drop. Forgetting to take leaks the buffer.
 - Audio track switching (`CycleAudioTrack`) re-opens the file with `format::input` to get

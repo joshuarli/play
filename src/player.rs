@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicI64;
@@ -75,6 +76,9 @@ pub struct Player {
     last_audio_end_us: i64,
     /// After demuxer EOF: PTS at which all scheduled audio finishes.
     eof_audio_end_us: Option<i64>,
+    /// Decoded audio buffers waiting for ring space. Decouples decode from
+    /// the blocking ring push so the player can always check commands.
+    pending_audio: VecDeque<crate::decode_audio::AudioBuffer>,
 
     // Subtitles
     subtitle_tracks: Vec<SubtitleTrack>,
@@ -128,6 +132,7 @@ impl Player {
             needs_display_flush: false,
             last_audio_end_us: 0,
             eof_audio_end_us: None,
+            pending_audio: VecDeque::new(),
             subtitle_tracks,
             current_subtitle_idx: None,
             last_subtitle_text: None,
@@ -198,21 +203,36 @@ impl Player {
     }
 
     fn dispatch_seek(&mut self, target: i64, forward: bool, exact: bool) {
-        self.pending_seeks += 1;
         let _ = self.demux_cmd_tx.send(DemuxCommand::Seek {
             target_pts: target,
             forward,
         });
-        self.flush_decoders();
-        self.needs_display_flush = self.video_decoder.is_some();
-        if exact {
-            self.seek_floor_us = target;
-            self.sync_clock.set_position(target);
+        if self.stream_info.video_stream.is_some() {
+            self.pending_seeks += 1;
+            self.flush_decoders();
+            self.needs_display_flush = true;
+            if !exact {
+                self.seek_landed = false;
+            }
         } else {
-            self.seek_floor_us = 0;
-            self.sync_clock.set_position(target);
-            self.seek_landed = false;
+            // Audio-only: use pending_seeks to discard stale pre-seek packets
+            // still queued in the demux channel (up to 64). Without this, the
+            // player decodes + schedule_buffers every stale packet, blocking
+            // for 10-50ms before the Flush and new audio can arrive.
+            self.pending_seeks += 1;
+            self.last_audio_end_us = 0;
+            self.eof_audio_end_us = None;
+            if let Some(ref mut ad) = self.audio_decoder {
+                ad.flush();
+            }
+            if let Some(ref ao) = self.audio_output {
+                ao.flush_quick();
+                ao.set_clock_position(target);
+            }
+            self.pending_audio.clear();
         }
+        self.seek_floor_us = if exact { target } else { 0 };
+        self.sync_clock.set_position(target);
     }
 
     fn flush_decoders(&mut self) {
@@ -245,23 +265,26 @@ impl Player {
             return;
         };
 
-        // Never dispatch while a seek is still in flight — its packets would
-        // be discarded (pending_seeks > 0 guard) and the frame never shown.
-        if self.pending_seeks > 0 {
+        let has_video = self.stream_info.video_stream.is_some();
+
+        // For video: never dispatch while a seek is in flight — its packets
+        // would be discarded and the frame never shown. Audio-only fires
+        // immediately; the demuxer coalesces rapid seeks and stale packets
+        // are discarded via the pending_seeks counter in handle_packet.
+        if has_video && self.pending_seeks > 0 {
             self.queued_seek = Some(qs);
             return;
         }
 
-        if let Some(dispatched) = self.last_seek_dispatched {
+        // Video-specific debouncing: let each frame survive at least one VSync
+        // before the next seek_flush clears it, and wait for the frame to decode.
+        // Audio-only has no display layer, so skip both gates.
+        if has_video && let Some(dispatched) = self.last_seek_dispatched {
             let elapsed = dispatched.elapsed();
-            // Minimum display time: let each frame survive at least one VSync
-            // before the next seek_flush clears it.
             if elapsed < SEEK_MIN_DISPLAY {
                 self.queued_seek = Some(qs);
                 return;
             }
-            // After minimum time, still wait for frame to actually arrive
-            // (handles slow seeks). Safety timeout prevents stuck decodes.
             if !self.seek_frame_shown && elapsed < SEEK_COALESCE_TIMEOUT {
                 self.queued_seek = Some(qs);
                 return;
@@ -272,6 +295,32 @@ impl Player {
         let delta_us = (qs.seconds * 1_000_000.0) as i64;
         let target = (current + delta_us).max(0).min(self.duration_us);
         let forward = qs.seconds > 0.0;
+
+        // Audio-only forward seek: skip directly in the ring buffer instead
+        // of going through the demuxer. Instant — no file I/O, no channel
+        // round-trips, no decoder flush.
+        if !has_video
+            && forward
+            && !qs.exact
+            && let Some(ref ao) = self.audio_output
+        {
+            let sample_rate = self
+                .stream_info
+                .audio_streams
+                .get(self.current_audio_track)
+                .map(|a| a.sample_rate)
+                .unwrap_or(48000);
+            let samples_needed = (delta_us as u64 * sample_rate as u64 / 1_000_000) as usize;
+            let available = ao.buffered_samples();
+            if samples_needed > 0 && available > 0 {
+                let actual_skip = samples_needed.min(available);
+                ao.request_skip(actual_skip);
+                let actual_us = actual_skip as i64 * 1_000_000 / sample_rate as i64;
+                let actual_target = (current + actual_us).min(self.duration_us);
+                self.sync_clock.set_position(actual_target);
+                return;
+            }
+        }
 
         self.dispatch_seek(target, !qs.exact && forward, qs.exact);
         self.last_seek_dispatched = Some(Instant::now());
@@ -292,9 +341,18 @@ impl Player {
     pub fn run(&mut self) {
         log::info!("Player: starting event loop");
 
+        if self.stream_info.video_stream.is_none() {
+            self.run_audio_only();
+        } else {
+            self.run_video();
+        }
+    }
+
+    /// Video mode: select! balances commands and packets. schedule_buffer
+    /// may block but that's fine — video paces the decode via the display
+    /// timebase, so the ring rarely overflows.
+    fn run_video(&mut self) {
         loop {
-            // Tight poll when a seek is queued so execute_queued_seek runs
-            // promptly once SEEK_MIN_DISPLAY elapses. Otherwise 16ms is fine.
             let timeout = if self.queued_seek.is_some() {
                 Duration::from_millis(1)
             } else {
@@ -316,10 +374,6 @@ impl Player {
                     match msg {
                         Ok(pkt) => {
                             self.handle_packet(pkt);
-                            // Batch-drain packets that arrived together. After a
-                            // Flush the first video packet is usually already
-                            // queued — processing it in the same iteration saves
-                            // a full round-trip through the select loop.
                             for _ in 0..8 {
                                 match self.demux_packet_rx.try_recv() {
                                     Ok(p) => self.handle_packet(p),
@@ -330,20 +384,85 @@ impl Player {
                         Err(_) => return,
                     }
                 }
-                default(timeout) => {
-                    // Timeout — periodic work below
-                }
+                default(timeout) => {}
             }
 
             self.execute_queued_seek();
             self.update_subtitles();
 
-            // After EOF: wait for audio playback to finish
             if let Some(end_us) = self.eof_audio_end_us
                 && self.sync_clock.audio_pts() >= end_us
             {
                 self.eof_audio_end_us = None;
                 let _ = self.ui_update_tx.send(UiUpdate::EndOfFile(EndReason::Eof));
+            }
+        }
+    }
+
+    /// Audio-only mode: commands ALWAYS get priority. Decoded audio is
+    /// queued in `pending_audio` and drained to the ring non-blockingly,
+    /// so the player thread is never stuck in schedule_buffer when a seek
+    /// command arrives.
+    fn run_audio_only(&mut self) {
+        loop {
+            // 1. Always drain ALL pending commands first — seeks get
+            //    immediate processing regardless of audio backpressure.
+            while let Ok(cmd) = self.cmd_rx.try_recv() {
+                if self.handle_command(cmd) {
+                    return;
+                }
+            }
+
+            self.execute_queued_seek();
+
+            // 2. Drain pending audio to ring (non-blocking).
+            self.drain_pending_audio();
+
+            // 3. Process packets if we have room in pending queue.
+            //    Limit to avoid starving command checks.
+            if self.pending_audio.len() < 16 {
+                for _ in 0..8 {
+                    match self.demux_packet_rx.try_recv() {
+                        Ok(pkt) => self.handle_packet(pkt),
+                        Err(_) => break,
+                    }
+                }
+            }
+
+            self.update_subtitles();
+
+            if let Some(end_us) = self.eof_audio_end_us
+                && self.sync_clock.audio_pts() >= end_us
+            {
+                self.eof_audio_end_us = None;
+                let _ = self.ui_update_tx.send(UiUpdate::EndOfFile(EndReason::Eof));
+            }
+
+            // 4. If nothing to do, wait for new events.
+            if self.pending_audio.is_empty() && self.queued_seek.is_none() {
+                let timeout = Duration::from_millis(4);
+                crossbeam_channel::select! {
+                    recv(self.cmd_rx) -> msg => {
+                        match msg {
+                            Ok(cmd) => {
+                                if self.handle_command(cmd) {
+                                    return;
+                                }
+                            }
+                            Err(_) => return,
+                        }
+                    }
+                    recv(self.demux_packet_rx) -> msg => {
+                        match msg {
+                            Ok(pkt) => self.handle_packet(pkt),
+                            Err(_) => return,
+                        }
+                    }
+                    default(timeout) => {}
+                }
+            } else if !self.pending_audio.is_empty() {
+                // Pending audio waiting for ring space — brief yield
+                std::thread::sleep(Duration::from_micros(100));
             }
         }
     }
@@ -533,9 +652,19 @@ impl Player {
 
     fn handle_packet(&mut self, pkt: DemuxPacket) {
         match pkt {
-            // Seek completed — decrement in-flight counter
             DemuxPacket::Flush => {
                 self.pending_seeks = self.pending_seeks.saturating_sub(1);
+                if self.stream_info.video_stream.is_none() {
+                    // Audio-only: flush decoder + ring + pending audio now
+                    // that new-position packets are about to arrive.
+                    if let Some(ref mut ad) = self.audio_decoder {
+                        ad.flush();
+                    }
+                    if let Some(ref ao) = self.audio_output {
+                        ao.flush_quick();
+                    }
+                    self.pending_audio.clear();
+                }
             }
             // Discard stale pre-seek packets
             _ if self.pending_seeks > 0 => {}
@@ -579,20 +708,16 @@ impl Player {
                         log::debug!("Audio send_packet error: {e}");
                         return;
                     }
+                    let has_video = self.stream_info.video_stream.is_some();
                     while let Some(mut buf) = decoder.receive_buffer() {
                         buf.pts_us += self.audio_delay_us;
-                        // After a seek, skip audio before the target
                         if buf.pts_us < self.seek_floor_us {
                             continue;
                         }
-                        // First post-seek audio buffer reveals actual position
                         if !self.seek_landed {
                             self.seek_landed = true;
                             self.sync_clock.set_position(buf.pts_us);
-                            // Audio-only: flush display via UI channel (no video
-                            // frame to carry the flush). For video files, the video
-                            // handler sets frame.seek_flush instead.
-                            if self.video_decoder.is_none() {
+                            if !has_video {
                                 self.seek_frame_shown = true;
                                 self.needs_display_flush = false;
                                 let _ = self.ui_update_tx.send(UiUpdate::SeekFlush(buf.pts_us));
@@ -600,7 +725,11 @@ impl Player {
                         }
                         self.last_audio_end_us = self.last_audio_end_us.max(buf.end_us());
                         if let Some(ref ao) = self.audio_output {
-                            ao.schedule_buffer(&buf);
+                            if has_video {
+                                ao.schedule_buffer(&buf);
+                            } else if !ao.try_schedule_buffer(&buf) {
+                                self.pending_audio.push_back(buf);
+                            }
                         }
                     }
                 }
@@ -609,6 +738,7 @@ impl Player {
                 // TODO: decode embedded subtitles
             }
             DemuxPacket::Eof => {
+                let has_video = self.stream_info.video_stream.is_some();
                 // Drain decoders
                 if let Some(ref mut vd) = self.video_decoder {
                     let _ = vd.send_eof();
@@ -621,14 +751,22 @@ impl Player {
                     while let Some(buf) = ad.receive_buffer() {
                         self.last_audio_end_us = self.last_audio_end_us.max(buf.end_us());
                         if let Some(ref ao) = self.audio_output {
-                            ao.schedule_buffer(&buf);
+                            if has_video {
+                                ao.schedule_buffer(&buf);
+                            } else if !ao.try_schedule_buffer(&buf) {
+                                self.pending_audio.push_back(buf);
+                            }
                         }
                     }
                     // Flush any remaining accumulated samples
                     if let Some(buf) = ad.drain_accum() {
                         self.last_audio_end_us = self.last_audio_end_us.max(buf.end_us());
                         if let Some(ref ao) = self.audio_output {
-                            ao.schedule_buffer(&buf);
+                            if has_video {
+                                ao.schedule_buffer(&buf);
+                            } else if !ao.try_schedule_buffer(&buf) {
+                                self.pending_audio.push_back(buf);
+                            }
                         }
                     }
                 }
@@ -638,6 +776,21 @@ impl Player {
                 } else {
                     let _ = self.ui_update_tx.send(UiUpdate::EndOfFile(EndReason::Eof));
                 }
+            }
+        }
+    }
+
+    /// Try to drain pending audio buffers into the ring. Non-blocking.
+    fn drain_pending_audio(&mut self) {
+        let Some(ref ao) = self.audio_output else {
+            self.pending_audio.clear();
+            return;
+        };
+        while let Some(buf) = self.pending_audio.front() {
+            if ao.try_schedule_buffer(buf) {
+                self.pending_audio.pop_front();
+            } else {
+                break; // ring full
             }
         }
     }
@@ -671,7 +824,11 @@ mod tests {
     use super::*;
 
     /// Create a Player wired to test channels (no decoders).
-    fn make_test_player() -> (
+    /// `with_video` controls whether the player has a video stream (affects
+    /// seek debouncing — video mode debounces, audio-only does not).
+    fn make_test_player_ex(
+        with_video: bool,
+    ) -> (
         Player,
         Sender<Command>,
         Receiver<VideoFrame>,
@@ -685,9 +842,20 @@ mod tests {
         let (ui_update_tx, ui_update_rx) = crossbeam_channel::unbounded();
         let audio_clock = Arc::new(AtomicI64::new(0));
 
+        let video_stream = if with_video {
+            Some(crate::demux::VideoStreamInfo {
+                index: 0,
+                width: 1920,
+                height: 1080,
+                codec_name: "h264".into(),
+            })
+        } else {
+            None
+        };
+
         let stream_info = StreamInfo {
             duration_us: 3_600_000_000, // 1 hour
-            video_stream: None,
+            video_stream,
             audio_streams: vec![],
             subtitle_streams: vec![],
             metadata: vec![],
@@ -714,6 +882,28 @@ mod tests {
         (player, cmd_tx, video_frame_rx, ui_update_rx, demux_cmd_rx)
     }
 
+    /// Audio-only test player (no seek debouncing).
+    fn make_test_player() -> (
+        Player,
+        Sender<Command>,
+        Receiver<VideoFrame>,
+        Receiver<UiUpdate>,
+        Receiver<DemuxCommand>,
+    ) {
+        make_test_player_ex(false)
+    }
+
+    /// Video test player (with seek debouncing).
+    fn make_video_test_player() -> (
+        Player,
+        Sender<Command>,
+        Receiver<VideoFrame>,
+        Receiver<UiUpdate>,
+        Receiver<DemuxCommand>,
+    ) {
+        make_test_player_ex(true)
+    }
+
     /// Simulate what happens after a seek completes: demux sends Flush,
     /// then the first video frame is decoded. In real code this flows through
     /// handle_packet; here we set the state directly since we have no decoder.
@@ -732,6 +922,7 @@ mod tests {
         player.queue_seek(5.0, false);
         player.execute_queued_seek();
 
+        // Audio-only now uses pending_seeks to discard stale pre-seek packets
         assert_eq!(player.pending_seeks, 1);
         assert!(player.queued_seek.is_none());
         assert!(
@@ -742,7 +933,7 @@ mod tests {
 
     #[test]
     fn pending_seeks_blocks_dispatch() {
-        let (mut player, _, _, _, _) = make_test_player();
+        let (mut player, _, _, _, _) = make_video_test_player();
 
         // First seek dispatches
         player.queue_seek(5.0, false);
@@ -765,7 +956,7 @@ mod tests {
         // each frame's seek_flush clears the previous frame before VSync
         // can composite it. Without minimum display time, every seek
         // dispatches immediately and no intermediate frame is ever visible.
-        let (mut player, _, _, _, demux_cmd_rx) = make_test_player();
+        let (mut player, _, _, _, demux_cmd_rx) = make_video_test_player();
 
         // First seek: dispatches immediately (no prior seek)
         player.queue_seek(5.0, false);
@@ -808,7 +999,7 @@ mod tests {
 
     #[test]
     fn deferred_seek_dispatches_after_minimum_display_time() {
-        let (mut player, _, _, _, _) = make_test_player();
+        let (mut player, _, _, _, _) = make_video_test_player();
 
         // First seek dispatches
         player.queue_seek(5.0, false);
@@ -835,7 +1026,7 @@ mod tests {
 
     #[test]
     fn queued_seeks_accumulate_during_deferral() {
-        let (mut player, _, _, _, _) = make_test_player();
+        let (mut player, _, _, _, _) = make_video_test_player();
 
         // First seek dispatches to 5s
         player.queue_seek(5.0, false);
@@ -865,7 +1056,7 @@ mod tests {
 
     #[test]
     fn safety_timeout_prevents_stuck_scrubbing() {
-        let (mut player, _, _, _, _) = make_test_player();
+        let (mut player, _, _, _, _) = make_video_test_player();
 
         // First seek dispatches
         player.queue_seek(5.0, false);
@@ -941,7 +1132,7 @@ mod tests {
         // defer if seek_frame_shown is false (no frame decoded yet) — the
         // coalesce window gives the decoder time to produce a frame so it
         // can be seen before the next seek_flush clears it.
-        let (mut player, _, _, _, _) = make_test_player();
+        let (mut player, _, _, _, _) = make_video_test_player();
 
         // First seek dispatches
         player.queue_seek(5.0, false);

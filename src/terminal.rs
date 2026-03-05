@@ -59,24 +59,30 @@ pub fn run_terminal(
     let mut paused = false;
 
     loop {
-        if let Some(Ok(key)) = keys.next() {
-            // Quit/Next/Prev are handled directly — no player round-trip needed.
-            // We just tell the player to stop and return the reason to the playlist loop.
+        // Drain ALL available keys so rapid key-repeat during seeking is
+        // batched into a single accumulated seek command per iteration.
+        let mut seek_accum: f64 = 0.0;
+        let mut end_from_keys = false;
+        while let Some(Ok(key)) = keys.next() {
             let action = match key {
                 Key::Char('q') => Action::End(EndReason::Quit),
-                Key::Char('>') | Key::Char('.') | Key::Char('\n') => {
+                Key::Char('>') | Key::Char('.') | Key::Char('\n')
+                    if file_index + 1 < file_count =>
+                {
                     Action::End(EndReason::NextFile)
                 }
-                Key::Char('<') | Key::Char(',') => Action::End(EndReason::PrevFile),
+                Key::Char('<') | Key::Char(',') if file_index > 0 => {
+                    Action::End(EndReason::PrevFile)
+                }
                 Key::Char(' ') => Action::Send(Command::PlayPause),
-                Key::Left => Action::Send(Command::SeekRelative {
-                    seconds: -5.0,
-                    exact: false,
-                }),
-                Key::Right => Action::Send(Command::SeekRelative {
-                    seconds: 5.0,
-                    exact: false,
-                }),
+                Key::Left => {
+                    seek_accum -= 1.0;
+                    Action::None
+                }
+                Key::Right => {
+                    seek_accum += 1.0;
+                    Action::None
+                }
                 Key::Up => Action::Send(Command::VolumeUp),
                 Key::Down => Action::Send(Command::VolumeDown),
                 Key::Char('a') => Action::Send(Command::CycleAudioTrack),
@@ -88,6 +94,7 @@ pub fn run_terminal(
                 Action::End(reason) => {
                     end_reason = reason;
                     let _ = cmd_tx.send(Command::Quit);
+                    end_from_keys = true;
                     break;
                 }
                 Action::Send(cmd) => {
@@ -95,6 +102,15 @@ pub fn run_terminal(
                 }
                 Action::None => {}
             }
+        }
+        if end_from_keys {
+            break;
+        }
+        if seek_accum != 0.0 {
+            let _ = cmd_tx.send(Command::SeekRelative {
+                seconds: seek_accum,
+                exact: false,
+            });
         }
 
         let mut should_break = false;
@@ -137,7 +153,7 @@ pub fn run_terminal(
         }
         stdout.flush().ok();
 
-        thread::sleep(Duration::from_millis(50));
+        thread::sleep(Duration::from_millis(10));
     }
 
     // Stay in alternate screen for next/prev (next call clears and redraws).

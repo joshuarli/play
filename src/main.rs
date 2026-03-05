@@ -264,6 +264,8 @@ fn play_file(
             info.duration_us,
             &title,
             first_run,
+            file_index,
+            file_count,
         )
     } else {
         terminal::run_terminal(
