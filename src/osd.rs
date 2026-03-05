@@ -71,6 +71,9 @@ struct OsdInner {
 unsafe impl Send for OsdInner {}
 
 static OSD: Mutex<Option<OsdInner>> = Mutex::new(None);
+/// Fast-path flag: true when message or bar is visible and tick() has work to do.
+/// Checked before acquiring the OSD Mutex to avoid lock overhead during normal playback.
+static OSD_NEEDS_TICK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 use crate::time::now_ms;
 
@@ -322,6 +325,7 @@ pub fn show_message(text: &str) {
 
     inner.message_deadline_ms = now_ms() + 2000;
     inner.message_visible = true;
+    OSD_NEEDS_TICK.store(true, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// Build an NSAttributedString for subtitles.
@@ -398,8 +402,15 @@ pub fn show_subtitle(text: Option<&str>) {
 }
 
 /// Called on main thread to expire OSD messages, auto-hide bar, and
-/// optionally update the progress bar position. Single lock acquisition.
-pub fn tick(progress: Option<(i64, i64)>) {
+/// update the progress bar position. Single lock acquisition.
+pub fn tick(progress: (i64, i64)) {
+    use std::sync::atomic::Ordering;
+
+    // Fast path: nothing visible, skip the mutex entirely
+    if !OSD_NEEDS_TICK.load(Ordering::Relaxed) {
+        return;
+    }
+
     let mut osd = OSD.lock().unwrap();
     let Some(ref mut inner) = *osd else { return };
 
@@ -419,10 +430,15 @@ pub fn tick(progress: Option<(i64, i64)>) {
         inner.bar_visible = false;
     }
 
-    // Update progress bar if new values provided and no seek hold active
-    if let Some((current_us, duration_us)) = progress
-        && now >= inner.seek_hold_until_ms
-    {
+    // Clear atomic when nothing needs attention
+    if !inner.message_visible && !inner.bar_visible {
+        OSD_NEEDS_TICK.store(false, Ordering::Relaxed);
+        return;
+    }
+
+    // Update progress bar position (no seek hold override)
+    let (current_us, duration_us) = progress;
+    if now >= inner.seek_hold_until_ms {
         inner.current_us = current_us;
         inner.duration_us = duration_us;
         if inner.bar_visible {
@@ -457,6 +473,7 @@ fn set_bar_visible(inner: &mut OsdInner) {
         inner.bar_visible = true;
     }
     inner.bar_hide_deadline_ms = now_ms() + 2000;
+    OSD_NEEDS_TICK.store(true, std::sync::atomic::Ordering::Relaxed);
     render_bar(inner);
 }
 

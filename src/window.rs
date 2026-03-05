@@ -312,14 +312,15 @@ fn start_main_timer() {
         &raw const dispatch2::_dispatch_source_type_timer as *mut _;
     let source = unsafe { DispatchSource::new(timer_type, 0, 0, Some(queue)) };
 
-    // 4ms interval (~240Hz), 500μs leeway
-    let interval_ns: u64 = 4_000_000;
-    let leeway_ns: u64 = 500_000;
+    // 16ms interval (~60Hz), 2ms leeway — AVSampleBufferDisplayLayer's
+    // CMTimebase handles frame presentation timing, so we only need to
+    // feed frames fast enough to keep its queue non-empty.
+    let interval_ns: u64 = 16_000_000;
+    let leeway_ns: u64 = 2_000_000;
     source.set_timer(DispatchTime::NOW, interval_ns, leeway_ns);
 
-    // Counters for periodic work
+    // Counter for periodic drift correction (~1s)
     let drift_counter = std::cell::Cell::new(0u32);
-    let progress_counter = std::cell::Cell::new(0u32);
     let handler = block2::RcBlock::new(move || {
         let guard = FILE_STATE.lock().unwrap();
         let Some(ref state) = *guard else { return };
@@ -328,24 +329,16 @@ fn start_main_timer() {
         process_pending_frames(state);
 
         let c = drift_counter.get() + 1;
-        if c >= 250 {
+        if c >= 62 {
             drift_counter.set(0);
             crate::video_out::sync_timebase(state.audio_clock.load(Ordering::Relaxed));
         } else {
             drift_counter.set(c);
         }
 
-        let progress = {
-            let p = progress_counter.get() + 1;
-            if p >= 4 {
-                progress_counter.set(0);
-                let current = state.audio_clock.load(Ordering::Relaxed);
-                Some((current, state.duration_us))
-            } else {
-                progress_counter.set(p);
-                None
-            }
-        };
+        // At 60Hz, every tick provides progress (was gated by counter at 240Hz)
+        let current = state.audio_clock.load(Ordering::Relaxed);
+        let progress = (current, state.duration_us);
 
         drop(guard);
         crate::osd::tick(progress);
@@ -362,7 +355,7 @@ fn start_main_timer() {
 }
 
 fn process_pending_frames(state: &FileState) {
-    for _ in 0..4 {
+    for _ in 0..8 {
         match state.video_frame_rx.try_recv() {
             Ok(frame) => {
                 crate::video_out::enqueue_frame(frame);

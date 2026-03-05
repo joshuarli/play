@@ -388,10 +388,14 @@ impl Player {
             }
 
             // 3. Wait for new events when idle.
+            // During normal playback, select! wakes instantly on packet/command
+            // arrival — the timeout only matters when channels are quiet (paused,
+            // near EOF). 50ms keeps subtitle timing reasonable while cutting
+            // idle wakeups from 250/s to 20/s.
             let timeout = if self.queued_seek.is_some() {
                 Duration::from_millis(1)
             } else {
-                Duration::from_millis(4)
+                Duration::from_millis(50)
             };
             crossbeam_channel::select! {
                 recv(self.cmd_rx) -> msg => {
