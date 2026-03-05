@@ -1,5 +1,6 @@
 use std::cell::Cell;
 use std::ffi::c_void;
+use std::ptr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 
@@ -227,7 +228,9 @@ struct CallbackContext {
     rings: Vec<SpscRing>,
     /// PTS of the next sample to be consumed (microseconds).
     read_pts_us: AtomicI64,
-    sample_rate: u32,
+    /// Precomputed `1_000_000.0 / sample_rate` — avoids integer division
+    /// (ARM64 `sdiv`, ~10 cycles) in the audio render callback hot path.
+    us_per_sample: f64,
     clock: Arc<AtomicI64>,
     channels: u32,
     /// Samples to skip on next callback (set by player, consumed by callback).
@@ -278,7 +281,7 @@ unsafe extern "C" fn render_callback(
                     ring.tail
                         .store(tail.wrapping_add(to_skip), Ordering::Release);
                 }
-                let us = to_skip as i64 * 1_000_000 / ctx.sample_rate as i64;
+                let us = (to_skip as f64 * ctx.us_per_sample) as i64;
                 ctx.read_pts_us.fetch_add(us, Ordering::Relaxed);
             }
             ctx.skip_samples.fetch_sub(to_skip, Ordering::Relaxed);
@@ -296,14 +299,14 @@ unsafe extern "C" fn render_callback(
             let ab = &(*io_data).buffers.as_ptr().add(ch).read();
             let dest = ab.data as *mut f32;
             let read = ctx.rings[ch].pop_to_ptr(dest, to_read);
-            // Zero any remaining frames
-            for i in read..count {
-                *dest.add(i) = 0.0;
+            // Zero any remaining frames (memset, not scalar loop)
+            if read < count {
+                ptr::write_bytes(dest.add(read), 0, count - read);
             }
         }
 
         // Advance PTS clock
-        let us = to_read as i64 * 1_000_000 / ctx.sample_rate as i64;
+        let us = (to_read as f64 * ctx.us_per_sample) as i64;
         let prev = ctx.read_pts_us.fetch_add(us, Ordering::Relaxed);
         ctx.clock.store(prev + us, Ordering::Relaxed);
 
@@ -315,7 +318,7 @@ fn zero_output(abl: *mut AudioBufferList, channels: usize, count: usize) {
     unsafe {
         for ch in 0..channels {
             let buf = &(*abl).buffers.as_ptr().add(ch).read();
-            std::ptr::write_bytes(buf.data as *mut f32, 0, count);
+            ptr::write_bytes(buf.data as *mut f32, 0, count);
         }
     }
 }
@@ -390,7 +393,7 @@ impl AudioOutput {
         let ctx = Box::new(CallbackContext {
             rings,
             read_pts_us: AtomicI64::new(0),
-            sample_rate,
+            us_per_sample: 1_000_000.0 / sample_rate as f64,
             clock: audio_clock.clone(),
             channels: channels as u32,
             skip_samples: AtomicUsize::new(0),

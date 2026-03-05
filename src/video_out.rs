@@ -1,7 +1,8 @@
+use std::cell::RefCell;
 use std::ffi::c_void;
 use std::ptr;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Mutex, OnceLock};
 
 use objc2::encode::{Encoding, RefEncode};
 use objc2::msg_send;
@@ -126,9 +127,11 @@ unsafe impl Sync for SendPtr {}
 /// Global display layer (created on main thread, used from main thread timer).
 static DISPLAY_LAYER: OnceLock<SendPtr> = OnceLock::new();
 
-/// Cached CMVideoFormatDescription — identical for all frames of the same file.
-/// Mutex instead of OnceLock so it can be reset between files (different resolutions).
-static CACHED_FORMAT_DESC: Mutex<Option<SendPtr>> = Mutex::new(None);
+// Cached CMVideoFormatDescription — identical for all frames of the same file.
+// Thread-local RefCell (main-thread-only) instead of Mutex; reset between files.
+std::thread_local! {
+    static CACHED_FORMAT_DESC: RefCell<Option<SendPtr>> = const { RefCell::new(None) };
+}
 
 /// Wrapper to make CMTimebaseRef Send+Sync for OnceLock.
 struct SendTimebase(CMTimebaseRef);
@@ -219,9 +222,9 @@ pub fn enqueue_frame(mut frame: VideoFrame) {
     let pixel_buffer = pb.take();
 
     // Reuse cached CMVideoFormatDescription (same resolution/pixel format for entire file)
-    let format_desc = {
-        let mut guard = CACHED_FORMAT_DESC.lock().unwrap();
-        if let Some(ref cached) = *guard {
+    let format_desc = CACHED_FORMAT_DESC.with(|fd| {
+        let mut fd = fd.borrow_mut();
+        if let Some(ref cached) = *fd {
             cached.0
         } else {
             let mut desc: CMVideoFormatDescriptionRef = ptr::null_mut();
@@ -231,12 +234,15 @@ pub fn enqueue_frame(mut frame: VideoFrame) {
             if status != 0 {
                 log::error!("CMVideoFormatDescriptionCreateForImageBuffer failed: {status}");
                 unsafe { CVPixelBufferRelease(pixel_buffer) };
-                return;
+                return ptr::null_mut();
             }
-            *guard = Some(SendPtr(desc));
+            *fd = Some(SendPtr(desc));
             desc
         }
-    };
+    });
+    if format_desc.is_null() {
+        return;
+    }
 
     // Create CMSampleBuffer
     let timing = CMSampleTimingInfo {
@@ -320,14 +326,13 @@ pub fn flush_and_seek(pts_us: i64) {
 /// Reset state between files. Must be called on the main thread.
 pub fn reset_for_new_file() {
     // Release and clear cached format description (resolution may differ)
-    {
-        let mut guard = CACHED_FORMAT_DESC.lock().unwrap();
-        if let Some(desc) = guard.take()
+    CACHED_FORMAT_DESC.with(|fd| {
+        if let Some(desc) = fd.borrow_mut().take()
             && !desc.0.is_null()
         {
             unsafe { CFRelease(desc.0) };
         }
-    }
+    });
     // Reset timebase state so next file starts fresh
     TIMEBASE_STARTED.store(false, Ordering::Relaxed);
     // Flush display layer
