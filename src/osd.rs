@@ -1,5 +1,5 @@
+use std::cell::RefCell;
 use std::ffi::c_void;
-use std::sync::Mutex;
 
 use objc2::encode::{Encoding, RefEncode};
 use objc2::msg_send;
@@ -68,12 +68,12 @@ struct OsdInner {
     cached_sub_para: *mut AnyObject,
 }
 
-unsafe impl Send for OsdInner {}
-
-static OSD: Mutex<Option<OsdInner>> = Mutex::new(None);
-/// Fast-path flag: true when message or bar is visible and tick() has work to do.
-/// Checked before acquiring the OSD Mutex to avoid lock overhead during normal playback.
-static OSD_NEEDS_TICK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+// OSD state is main-thread-only (timer, key handler, mouse handler all run on
+// the main GCD queue). RefCell enforces this at the type level and avoids the
+// Mutex lock/unlock overhead that fired every 16ms on the timer path.
+std::thread_local! {
+    static OSD: RefCell<Option<OsdInner>> = const { RefCell::new(None) };
+}
 
 use crate::time::now_ms;
 
@@ -238,26 +238,28 @@ pub fn init_layers(parent_ptr: *mut c_void, bounds: CGRect) {
     let msg_ptr = Retained::into_raw(msg);
     let sub_ptr = Retained::into_raw(sub);
 
-    *OSD.lock().unwrap() = Some(OsdInner {
-        parent,
-        message: msg_ptr,
-        subtitle: sub_ptr,
-        bar_bg: Retained::into_raw(bar_bg),
-        bar_left_time: Retained::into_raw(bar_left),
-        bar_right_time: Retained::into_raw(bar_right),
-        bar_track: Retained::into_raw(bar_track),
-        bar_fill: Retained::into_raw(bar_fill),
-        message_deadline_ms: 0,
-        message_visible: false,
-        bar_visible: false,
-        bar_hide_deadline_ms: 0,
-        current_us: 0,
-        duration_us: 0,
-        last_left_secs: u64::MAX,
-        last_right_secs: u64::MAX,
-        seek_hold_until_ms: 0,
-        cached_sub_shadow,
-        cached_sub_para,
+    OSD.with(|osd| {
+        *osd.borrow_mut() = Some(OsdInner {
+            parent,
+            message: msg_ptr,
+            subtitle: sub_ptr,
+            bar_bg: Retained::into_raw(bar_bg),
+            bar_left_time: Retained::into_raw(bar_left),
+            bar_right_time: Retained::into_raw(bar_right),
+            bar_track: Retained::into_raw(bar_track),
+            bar_fill: Retained::into_raw(bar_fill),
+            message_deadline_ms: 0,
+            message_visible: false,
+            bar_visible: false,
+            bar_hide_deadline_ms: 0,
+            current_us: 0,
+            duration_us: 0,
+            last_left_secs: u64::MAX,
+            last_right_secs: u64::MAX,
+            seek_hold_until_ms: 0,
+            cached_sub_shadow,
+            cached_sub_para,
+        });
     });
 }
 
@@ -314,18 +316,19 @@ fn setup_bar_text_layer(layer: &AnyObject, frame: CGRect, scale: f64, right_alig
 
 /// Show a transient OSD message (bottom-left, fades after 2s). Main thread only.
 pub fn show_message(text: &str) {
-    let mut osd = OSD.lock().unwrap();
-    let Some(ref mut inner) = *osd else { return };
+    OSD.with(|osd| {
+        let mut osd = osd.borrow_mut();
+        let Some(ref mut inner) = *osd else { return };
 
-    let ns = objc2_foundation::NSString::from_str(text);
-    disable_animations();
-    let _: () = unsafe { msg_send![inner.message, setString: &*ns] };
-    let _: () = unsafe { msg_send![inner.message, setOpacity: 1.0f32] };
-    commit_animations();
+        let ns = objc2_foundation::NSString::from_str(text);
+        disable_animations();
+        let _: () = unsafe { msg_send![inner.message, setString: &*ns] };
+        let _: () = unsafe { msg_send![inner.message, setOpacity: 1.0f32] };
+        commit_animations();
 
-    inner.message_deadline_ms = now_ms() + 2000;
-    inner.message_visible = true;
-    OSD_NEEDS_TICK.store(true, std::sync::atomic::Ordering::Relaxed);
+        inner.message_deadline_ms = now_ms() + 2000;
+        inner.message_visible = true;
+    });
 }
 
 /// Build an NSAttributedString for subtitles.
@@ -366,103 +369,101 @@ fn build_sub_string(
 
 /// Show or hide subtitle text (bottom-center). Main thread only.
 pub fn show_subtitle(text: Option<&str>) {
-    let mut osd = OSD.lock().unwrap();
-    let Some(ref mut inner) = *osd else { return };
+    OSD.with(|osd| {
+        let mut osd = osd.borrow_mut();
+        let Some(ref mut inner) = *osd else { return };
 
-    disable_animations();
-    match text {
-        Some(t) => {
-            // Query parent bounds for dynamic font sizing
-            let bounds: CGRect = unsafe { msg_send![inner.parent, bounds] };
-            let h = bounds.size.height;
-            let w = bounds.size.width;
+        disable_animations();
+        match text {
+            Some(t) => {
+                // Query parent bounds for dynamic font sizing
+                let bounds: CGRect = unsafe { msg_send![inner.parent, bounds] };
+                let h = bounds.size.height;
+                let w = bounds.size.width;
 
-            // Scaled to ~2/3 of mpv sub-scale=0.6 (33 * 2/3 ≈ 22 at 720p ref)
-            let font_size = (h * 22.0 / 720.0).max(10.0);
-            let margin_y = h * 22.0 / 720.0;
-            let margin_x = w * 0.05;
-            let layer_h = font_size * 4.0;
+                // Scaled to ~2/3 of mpv sub-scale=0.6 (33 * 2/3 ≈ 22 at 720p ref)
+                let font_size = (h * 22.0 / 720.0).max(10.0);
+                let margin_y = h * 22.0 / 720.0;
+                let margin_x = w * 0.05;
+                let layer_h = font_size * 4.0;
 
-            let frame = CGRect::new(
-                CGPoint::new(margin_x, margin_y),
-                CGSize::new(w - margin_x * 2.0, layer_h),
-            );
-            let _: () = unsafe { msg_send![inner.subtitle, setFrame: frame] };
+                let frame = CGRect::new(
+                    CGPoint::new(margin_x, margin_y),
+                    CGSize::new(w - margin_x * 2.0, layer_h),
+                );
+                let _: () = unsafe { msg_send![inner.subtitle, setFrame: frame] };
 
-            let attr =
-                build_sub_string(t, font_size, inner.cached_sub_shadow, inner.cached_sub_para);
-            let _: () = unsafe { msg_send![inner.subtitle, setString: &*attr] };
-            let _: () = unsafe { msg_send![inner.subtitle, setOpacity: 1.0f32] };
+                let attr =
+                    build_sub_string(t, font_size, inner.cached_sub_shadow, inner.cached_sub_para);
+                let _: () = unsafe { msg_send![inner.subtitle, setString: &*attr] };
+                let _: () = unsafe { msg_send![inner.subtitle, setOpacity: 1.0f32] };
+            }
+            None => {
+                let _: () = unsafe { msg_send![inner.subtitle, setOpacity: 0.0f32] };
+            }
         }
-        None => {
-            let _: () = unsafe { msg_send![inner.subtitle, setOpacity: 0.0f32] };
-        }
-    }
-    commit_animations();
+        commit_animations();
+    });
 }
 
 /// Called on main thread to expire OSD messages, auto-hide bar, and
 /// update the progress bar position. Single lock acquisition.
 pub fn tick(progress: (i64, i64)) {
-    use std::sync::atomic::Ordering;
+    OSD.with(|osd| {
+        let mut osd = osd.borrow_mut();
+        let Some(ref mut inner) = *osd else { return };
 
-    // Fast path: nothing visible, skip the mutex entirely
-    if !OSD_NEEDS_TICK.load(Ordering::Relaxed) {
-        return;
-    }
+        // Fast path: nothing visible, no work to do
+        if !inner.message_visible && !inner.bar_visible {
+            return;
+        }
 
-    let mut osd = OSD.lock().unwrap();
-    let Some(ref mut inner) = *osd else { return };
+        let now = now_ms();
 
-    let now = now_ms();
+        if inner.message_visible && now >= inner.message_deadline_ms {
+            disable_animations();
+            let _: () = unsafe { msg_send![inner.message, setOpacity: 0.0f32] };
+            commit_animations();
+            inner.message_visible = false;
+        }
 
-    if inner.message_visible && now >= inner.message_deadline_ms {
-        disable_animations();
-        let _: () = unsafe { msg_send![inner.message, setOpacity: 0.0f32] };
-        commit_animations();
-        inner.message_visible = false;
-    }
+        if inner.bar_visible && now >= inner.bar_hide_deadline_ms {
+            disable_animations();
+            let _: () = unsafe { msg_send![inner.bar_bg, setOpacity: 0.0f32] };
+            commit_animations();
+            inner.bar_visible = false;
+        }
 
-    if inner.bar_visible && now >= inner.bar_hide_deadline_ms {
-        disable_animations();
-        let _: () = unsafe { msg_send![inner.bar_bg, setOpacity: 0.0f32] };
-        commit_animations();
-        inner.bar_visible = false;
-    }
-
-    // Clear atomic when nothing needs attention
-    if !inner.message_visible && !inner.bar_visible {
-        OSD_NEEDS_TICK.store(false, Ordering::Relaxed);
-        return;
-    }
-
-    // Update progress bar position (no seek hold override)
-    let (current_us, duration_us) = progress;
-    if now >= inner.seek_hold_until_ms {
-        inner.current_us = current_us;
-        inner.duration_us = duration_us;
-        if inner.bar_visible {
+        // Update progress bar position unless held by a recent seek
+        let (current_us, duration_us) = progress;
+        if inner.bar_visible && now >= inner.seek_hold_until_ms {
+            inner.current_us = current_us;
+            inner.duration_us = duration_us;
             render_bar(inner);
         }
-    }
+    });
 }
 
 /// Seek via the progress bar: snap position, show bar, hold against timer updates.
 pub fn seek_bar(target_us: i64, duration_us: i64) {
-    let mut osd = OSD.lock().unwrap();
-    let Some(ref mut inner) = *osd else { return };
-    inner.current_us = target_us;
-    inner.duration_us = duration_us;
-    // Hold for 500ms so the timer doesn't snap it back before the audio clock catches up
-    inner.seek_hold_until_ms = now_ms() + 500;
-    set_bar_visible(inner);
+    OSD.with(|osd| {
+        let mut osd = osd.borrow_mut();
+        let Some(ref mut inner) = *osd else { return };
+        inner.current_us = target_us;
+        inner.duration_us = duration_us;
+        // Hold for 500ms so the timer doesn't snap it back before the audio clock catches up
+        inner.seek_hold_until_ms = now_ms() + 500;
+        set_bar_visible(inner);
+    });
 }
 
 /// Show the progress bar and reset the auto-hide timer. Main thread only.
 pub fn show_bar() {
-    let mut osd = OSD.lock().unwrap();
-    let Some(ref mut inner) = *osd else { return };
-    set_bar_visible(inner);
+    OSD.with(|osd| {
+        let mut osd = osd.borrow_mut();
+        let Some(ref mut inner) = *osd else { return };
+        set_bar_visible(inner);
+    });
 }
 
 fn set_bar_visible(inner: &mut OsdInner) {
@@ -473,7 +474,6 @@ fn set_bar_visible(inner: &mut OsdInner) {
         inner.bar_visible = true;
     }
     inner.bar_hide_deadline_ms = now_ms() + 2000;
-    OSD_NEEDS_TICK.store(true, std::sync::atomic::Ordering::Relaxed);
     render_bar(inner);
 }
 
@@ -485,18 +485,20 @@ pub fn bar_height() -> f64 {
 /// Map a click x-coordinate (in window points) to a 0.0–1.0 fraction within
 /// the bar's track region. Returns None if the bar isn't initialized.
 pub fn bar_fraction_at_x(x: f64) -> Option<f64> {
-    let osd = OSD.lock().unwrap();
-    let inner = osd.as_ref()?;
+    OSD.with(|osd| {
+        let osd = osd.borrow();
+        let inner = osd.as_ref()?;
 
-    // Read the track layer's actual frame (handles window resize)
-    let track_frame: CGRect = unsafe { msg_send![inner.bar_track, frame] };
-    let start = track_frame.origin.x;
-    let end = start + track_frame.size.width;
-    if track_frame.size.width <= 0.0 {
-        return None;
-    }
+        // Read the track layer's actual frame (handles window resize)
+        let track_frame: CGRect = unsafe { msg_send![inner.bar_track, frame] };
+        let start = track_frame.origin.x;
+        let end = start + track_frame.size.width;
+        if track_frame.size.width <= 0.0 {
+            return None;
+        }
 
-    Some(((x - start) / (end - start)).clamp(0.0, 1.0))
+        Some(((x - start) / (end - start)).clamp(0.0, 1.0))
+    })
 }
 
 fn render_bar(inner: &mut OsdInner) {

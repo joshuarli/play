@@ -1,6 +1,7 @@
+use std::cell::RefCell;
 use std::ffi::c_void;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
-use std::sync::{Arc, Mutex};
 
 use crossbeam_channel::Sender;
 use objc2::rc::Retained;
@@ -29,28 +30,28 @@ struct FileState {
     file_count: usize,
 }
 
-static FILE_STATE: Mutex<Option<FileState>> = Mutex::new(None);
-
-// Window is only accessed from main thread; use a thread-local instead of Mutex
-use std::cell::RefCell;
+// All state below is main-thread-only (timer, key handler, mouse handler,
+// run_app all execute on the main GCD queue). RefCell enforces this at the
+// type level and avoids Mutex lock/unlock overhead on every timer tick.
 std::thread_local! {
+    static FILE_STATE: RefCell<Option<FileState>> = const { RefCell::new(None) };
     static WINDOW: RefCell<Option<Retained<NSWindow>>> = const { RefCell::new(None) };
+    static END_REASON: RefCell<Option<EndReason>> = const { RefCell::new(None) };
 }
 static INITIAL_SIZE: std::sync::OnceLock<(u32, u32)> = std::sync::OnceLock::new();
 static START_FULLSCREEN: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
 
-/// Stored EndReason from EndOfFile or Quit, read after app.run() returns.
-static END_REASON: Mutex<Option<EndReason>> = Mutex::new(None);
-
-/// Replace all per-file state atomically (single lock).
+/// Replace all per-file state.
 fn set_file_state(state: FileState) {
-    *FILE_STATE.lock().unwrap() = Some(state);
-    *END_REASON.lock().unwrap() = None;
+    FILE_STATE.with(|fs| *fs.borrow_mut() = Some(state));
+    END_REASON.with(|er| *er.borrow_mut() = None);
 }
 
 /// Send a command to the player thread.
 fn send_cmd(cmd: Command) {
-    if let Some(ref state) = *FILE_STATE.lock().unwrap() {
+    FILE_STATE.with(|fs| {
+        let fs = fs.borrow();
+        let Some(ref state) = *fs else { return };
         // Ignore next/prev when already at playlist boundary
         if matches!(cmd, Command::NextFile) && state.file_index + 1 >= state.file_count {
             return;
@@ -59,7 +60,7 @@ fn send_cmd(cmd: Command) {
             return;
         }
         let _ = state.cmd_tx.send(cmd);
-    }
+    });
 }
 
 /// Stop the NSApp run loop so run_app() can return.
@@ -195,7 +196,7 @@ define_class!(
     unsafe impl NSWindowDelegate for AppDelegate {
         #[unsafe(method(windowWillClose:))]
         fn window_will_close(&self, _: &NSNotification) {
-            *END_REASON.lock().unwrap() = Some(EndReason::Quit);
+            END_REASON.with(|er| *er.borrow_mut() = Some(EndReason::Quit));
             send_cmd(Command::Quit);
             stop_app();
         }
@@ -244,7 +245,7 @@ fn install_key_monitor() {
                 crate::osd::show_bar();
             }
             if is_quit {
-                *END_REASON.lock().unwrap() = Some(EndReason::Quit);
+                END_REASON.with(|er| *er.borrow_mut() = Some(EndReason::Quit));
                 stop_app();
             }
             return std::ptr::null_mut();
@@ -281,10 +282,7 @@ fn install_mouse_monitor() {
                     && let Some(fraction) = crate::osd::bar_fraction_at_x(location.x)
                 {
                     let duration = FILE_STATE
-                        .lock()
-                        .unwrap()
-                        .as_ref()
-                        .map(|s| s.duration_us)
+                        .with(|fs| fs.borrow().as_ref().map(|s| s.duration_us))
                         .unwrap_or(0);
                     let target_us = (fraction * duration as f64) as i64;
                     send_cmd(Command::SeekAbsolute { target_us });
@@ -322,26 +320,27 @@ fn start_main_timer() {
     // Counter for periodic drift correction (~1s)
     let drift_counter = std::cell::Cell::new(0u32);
     let handler = block2::RcBlock::new(move || {
-        let guard = FILE_STATE.lock().unwrap();
-        let Some(ref state) = *guard else { return };
+        FILE_STATE.with(|fs| {
+            let fs = fs.borrow();
+            let Some(ref state) = *fs else { return };
 
-        process_pending_ui_updates(state);
-        process_pending_frames(state);
+            process_pending_ui_updates(state);
+            process_pending_frames(state);
 
-        let c = drift_counter.get() + 1;
-        if c >= 62 {
-            drift_counter.set(0);
-            crate::video_out::sync_timebase(state.audio_clock.load(Ordering::Relaxed));
-        } else {
-            drift_counter.set(c);
-        }
+            let c = drift_counter.get() + 1;
+            if c >= 62 {
+                drift_counter.set(0);
+                crate::video_out::sync_timebase(state.audio_clock.load(Ordering::Relaxed));
+            } else {
+                drift_counter.set(c);
+            }
 
-        // At 60Hz, every tick provides progress (was gated by counter at 240Hz)
-        let current = state.audio_clock.load(Ordering::Relaxed);
-        let progress = (current, state.duration_us);
+            let current = state.audio_clock.load(Ordering::Relaxed);
+            let progress = (current, state.duration_us);
 
-        drop(guard);
-        crate::osd::tick(progress);
+            drop(fs);
+            crate::osd::tick(progress);
+        });
     });
 
     unsafe {
@@ -383,7 +382,7 @@ fn process_pending_ui_updates(state: &FileState) {
                 crate::video_out::flush_and_seek(pts_us);
             }
             UiUpdate::EndOfFile(reason) => {
-                *END_REASON.lock().unwrap() = Some(reason);
+                END_REASON.with(|er| *er.borrow_mut() = Some(reason));
                 let _ = state.cmd_tx.send(Command::Quit);
                 stop_app();
             }
@@ -448,5 +447,7 @@ pub fn run_app(
 
     app.run();
 
-    END_REASON.lock().unwrap().take().unwrap_or(EndReason::Quit)
+    END_REASON
+        .with(|er| er.borrow_mut().take())
+        .unwrap_or(EndReason::Quit)
 }

@@ -171,8 +171,11 @@ Steady-state playback is optimized to minimize wakeups and allocations:
 - **50ms player idle timeout** (`player.rs`): The `select!` timeout only fires when channels are
   quiet (paused, near EOF). During normal playback, select wakes instantly on packet arrival. 50ms
   cuts idle wakeups from 250/s to 20/s while keeping subtitle timing acceptable.
-- **Atomic OSD guard** (`osd.rs`): `OSD_NEEDS_TICK` AtomicBool lets `tick()` skip the OSD mutex
-  entirely when nothing is visible (the common case during normal playback).
+- **Thread-local state** (`window.rs`, `osd.rs`): `FILE_STATE`, `END_REASON`, and `OSD` are
+  `thread_local! RefCell` instead of `Mutex` — all accesses are main-thread-only (timer, key/mouse
+  handlers, run_app). Eliminates lock/unlock overhead on every timer tick and input event.
+- **Monotonic clock** (`time.rs`): `now_ms()` uses `Instant` instead of `SystemTime` — immune to
+  NTP adjustments and cheaper on Apple Silicon (`mach_absolute_time` vs `gettimeofday`).
 - **Stream discard** (`demux.rs`): Sets `AVDISCARD_ALL` on unused ffmpeg streams so the demuxer
   skips parsing packets for streams we don't decode (data, extra audio, attachments).
 - **Unbounded packet drain** (`player.rs`): Processes all available demux packets per loop iteration
@@ -187,8 +190,9 @@ Steady-state playback is optimized to minimize wakeups and allocations:
   objc2's runtime type checking for `enqueueSampleBuffer:`.
 - ffmpeg-sys-next `build-audiotoolbox` feature is broken on macOS (adds iOS flags). Omit it;
   audio output uses CoreAudio AudioUnit via C FFI instead.
-- `NSWindow` is not `Send`/`Sync` — stored in a `thread_local! RefCell`. Display layer pointer
-  wrapped in `SendPtr` newtype for `OnceLock`.
+- Main-thread state (`NSWindow`, `FileState`, `EndReason`, `OsdInner`) uses `thread_local! RefCell`
+  — not `Mutex` — since all access is on the main GCD queue. Display layer pointer wrapped in
+  `SendPtr` newtype for `OnceLock`.
 - `define_class!` in objc2 0.6 requires unit structs (no inline ivars). State goes in globals.
 - Opus/AAC `ch_layout.nb_channels` must be read from the modern API — the legacy
   `channel_layout` bitmask is often unset, giving 0 channels.

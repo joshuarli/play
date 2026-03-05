@@ -1,13 +1,14 @@
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::OnceLock;
+use std::time::Instant;
 
 use anyhow::{Result, bail};
 
-/// Current wall-clock time in milliseconds (monotonic-ish, for OSD timeouts).
+/// Monotonic milliseconds since process start (for OSD timeouts, bar auto-hide).
+/// Uses `Instant` instead of `SystemTime` — immune to NTP adjustments and
+/// cheaper on Apple Silicon (`mach_absolute_time` vs `gettimeofday`).
 pub fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64
+    static EPOCH: OnceLock<Instant> = OnceLock::new();
+    EPOCH.get_or_init(Instant::now).elapsed().as_millis() as u64
 }
 
 /// Format microseconds as HH:MM:SS.
