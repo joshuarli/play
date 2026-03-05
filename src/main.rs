@@ -11,6 +11,7 @@ mod sync;
 mod terminal;
 mod time;
 mod video_out;
+mod visualizer;
 mod window;
 
 use std::path::Path;
@@ -23,6 +24,7 @@ use termion::input::TermRead;
 
 use cmd::{Args, Command, DemuxCommand, DemuxPacket, EndReason, UiUpdate, VideoFrame};
 use player::Player;
+use visualizer::VizRing;
 
 fn main() -> Result<()> {
     let args = cmd::parse_args()?;
@@ -162,6 +164,13 @@ fn play_file(
     // Audio clock shared between player (writer) and main thread (reader for timebase sync)
     let audio_clock = Arc::new(AtomicI64::new(0));
 
+    // Visualizer ring buffer for audio-only terminal mode
+    let viz_ring = if !has_video && has_audio {
+        Some(VizRing::new())
+    } else {
+        None
+    };
+
     let video_width = info
         .video_stream
         .as_ref()
@@ -219,6 +228,7 @@ fn play_file(
     };
 
     let player_clock = audio_clock.clone();
+    let player_viz_ring = viz_ring.clone();
     let player_thread = thread::Builder::new()
         .name("player".into())
         .spawn(move || {
@@ -234,6 +244,7 @@ fn play_file(
                 initial_audio_delay,
                 subtitle_tracks,
                 player_clock,
+                player_viz_ring,
             ) {
                 Ok(p) => p,
                 Err(e) => {
@@ -283,6 +294,7 @@ fn play_file(
             &info,
             file_index,
             file_count,
+            viz_ring,
         )
     };
 

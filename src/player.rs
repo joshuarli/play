@@ -13,6 +13,7 @@ use crate::decode_video::VideoDecoder;
 use crate::demux::StreamInfo;
 use crate::subtitle::SubtitleTrack;
 use crate::sync::SyncClock;
+use crate::visualizer::VizRing;
 
 
 /// Accumulated relative seek waiting to be dispatched.
@@ -86,6 +87,9 @@ pub struct Player {
     file_path: PathBuf,
     stream_info: StreamInfo,
     current_audio_track: usize,
+
+    // Visualizer
+    viz_ring: Option<Arc<VizRing>>,
 }
 
 impl Player {
@@ -101,6 +105,7 @@ impl Player {
         initial_audio_delay: f64,
         subtitle_tracks: Vec<SubtitleTrack>,
         audio_clock: Arc<AtomicI64>,
+        viz_ring: Option<Arc<VizRing>>,
     ) -> Result<Self> {
         let sync_clock = SyncClock::new(audio_clock.clone());
 
@@ -134,6 +139,7 @@ impl Player {
             file_path,
             stream_info,
             current_audio_track: 0,
+            viz_ring,
         })
     }
 
@@ -613,6 +619,9 @@ impl Player {
                         if let Some(ref ao) = self.audio_output {
                             ao.schedule_buffer(&buf);
                         }
+                        if let Some(ref vr) = self.viz_ring {
+                            vr.push_audio(&buf);
+                        }
                     }
                 }
             }
@@ -634,12 +643,18 @@ impl Player {
                         if let Some(ref ao) = self.audio_output {
                             ao.schedule_buffer(&buf);
                         }
+                        if let Some(ref vr) = self.viz_ring {
+                            vr.push_audio(&buf);
+                        }
                     }
                     // Flush any remaining accumulated samples
                     if let Some(buf) = ad.drain_accum() {
                         self.last_audio_end_us = self.last_audio_end_us.max(buf.end_us());
                         if let Some(ref ao) = self.audio_output {
                             ao.schedule_buffer(&buf);
+                        }
+                        if let Some(ref vr) = self.viz_ring {
+                            vr.push_audio(&buf);
                         }
                     }
                 }
@@ -718,6 +733,7 @@ mod tests {
             0.0,
             vec![],
             audio_clock,
+            None,
         )
         .unwrap();
 
