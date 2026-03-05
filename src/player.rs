@@ -371,11 +371,8 @@ impl Player {
             }
 
             // 2. Process packets (video frames + audio).
-            for _ in 0..9 {
-                match self.demux_packet_rx.try_recv() {
-                    Ok(pkt) => self.handle_packet(pkt),
-                    Err(_) => break,
-                }
+            while let Ok(pkt) = self.demux_packet_rx.try_recv() {
+                self.handle_packet(pkt);
             }
 
             self.update_subtitles();

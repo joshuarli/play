@@ -303,6 +303,20 @@ pub fn run_demuxer(
     let mut ictx = ffmpeg::format::input(path)
         .with_context(|| format!("Failed to open: {}", path.display()))?;
 
+    // Tell ffmpeg to discard packets from streams we don't need.
+    // This avoids demuxing/parsing overhead for unused streams.
+    // Tell ffmpeg to discard packets from streams we don't need.
+    // This avoids demuxing/parsing overhead for unused streams.
+    let wanted: [Option<usize>; 3] = [video_idx, audio_idx, subtitle_idx];
+    for stream in ictx.streams() {
+        if !wanted.iter().any(|&w| w == Some(stream.index())) {
+            unsafe {
+                let s = stream.as_ptr() as *mut ffs::AVStream;
+                (*s).discard = ffs::AVDiscard::AVDISCARD_ALL;
+            }
+        }
+    }
+
     let mut cache = PacketCache::new(CACHE_MAX_BYTES, video_idx, audio_idx, subtitle_idx, &ictx);
     let mut replay_cursor: Option<usize> = None;
 

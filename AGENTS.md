@@ -36,7 +36,7 @@ File → Demuxer (PacketCache, binary search) → DemuxPacket
    ├── Video: VideoToolbox GPU decode
    │   → PixelBuffer (RAII, CVPixelBufferRelease on Drop)
    │   → try_send to bounded(8) channel
-   │   → Main Thread 240Hz timer
+   │   → Main Thread 60Hz timer
    │   → CMSampleBuffer → AVSampleBufferDisplayLayer
    │
    ├── Audio: ffmpeg CPU decode
@@ -62,7 +62,7 @@ File → Demuxer (PacketCache, binary search) → DemuxPacket
 | `decode_audio.rs` | ~230 | ffmpeg audio decode + resample to f32 planar, per-channel planes, 8192-sample accumulation, end_us() |
 | `video_out.rs` | ~340 | AVSampleBufferDisplayLayer, CMSampleBuffer from PixelBuffer, CMTimebase sync |
 | `audio_out.rs` | ~610 | CoreAudio AudioUnit, lock-free SPSC ring buffers (65536 samples/ch), non-interleaved f32 render callback, ring skip/flush_quick |
-| `window.rs` | ~455 | NSWindow via objc2 define_class!, key/mouse monitors, GCD timer (240Hz / 4ms), layer setup |
+| `window.rs` | ~455 | NSWindow via objc2 define_class!, key/mouse monitors, GCD timer (60Hz / 16ms), layer setup |
 | `osd.rs` | ~535 | CATextLayer OSD messages, NSAttributedString subtitles (cached shadow/paragraph style), clickable progress bar |
 | `sync.rs` | ~100 | Audio-master clock (AtomicI64), pause/resume, seek position |
 | `subtitle.rs` | ~265 | SRT parser, binary search lookup, auto-detection of .srt files |
@@ -160,6 +160,26 @@ Two `CATextLayer` sublayers on the content view's layer, above the display layer
 Subtitle font size scales with window height (`height * 22/720`). Shadow outline via
 NSShadow attribute plus CATextLayer shadow for double-pass crispness. Frame and margins
 recalculated on each update. `CATransaction` disables implicit animations.
+
+## CPU Efficiency
+
+Steady-state playback is optimized to minimize wakeups and allocations:
+
+- **60Hz main timer** (`window.rs`): GCD dispatch timer at 16ms/2ms leeway. AVSampleBufferDisplayLayer
+  handles frame presentation timing via CMTimebase, so we only need to feed frames fast enough to
+  keep its queue non-empty — 60Hz is sufficient. Batch-drains up to 8 frames per tick.
+- **50ms player idle timeout** (`player.rs`): The `select!` timeout only fires when channels are
+  quiet (paused, near EOF). During normal playback, select wakes instantly on packet arrival. 50ms
+  cuts idle wakeups from 250/s to 20/s while keeping subtitle timing acceptable.
+- **Atomic OSD guard** (`osd.rs`): `OSD_NEEDS_TICK` AtomicBool lets `tick()` skip the OSD mutex
+  entirely when nothing is visible (the common case during normal playback).
+- **Stream discard** (`demux.rs`): Sets `AVDISCARD_ALL` on unused ffmpeg streams so the demuxer
+  skips parsing packets for streams we don't decode (data, extra audio, attachments).
+- **Unbounded packet drain** (`player.rs`): Processes all available demux packets per loop iteration
+  instead of capping at a fixed batch size, reducing select! round-trips.
+- **Audio Vec reuse** (`decode_audio.rs`): `take_accum` swaps planes with pre-allocated
+  `Vec::with_capacity(ACCUM_TARGET)` instead of `std::mem::take`, so the next accumulation
+  cycle reuses the allocation rather than growing from zero every ~170ms.
 
 ## Gotchas
 
