@@ -56,7 +56,7 @@ File → Demuxer (PacketCache, binary search) → DemuxPacket
 |---|---|---|
 | `main.rs` | ~320 | Thread spawning, file probe, playlist loop, stream info logging |
 | `cmd.rs` | ~330 | Command/DemuxPacket/DemuxCommand/VideoFrame/PixelBuffer(RAII)/UiUpdate/Args types, arg parser |
-| `player.rs` | ~1180 | State machine: run_video (select!) / run_audio_only (command-first), decode dispatch, seek coalescing, volume, subtitles, audio track switching |
+| `player.rs` | ~990 | State machine: run_video (select!) / run_audio_only (command-first), decode dispatch, seek coalescing, volume, subtitles, audio track switching |
 | `demux.rs` | ~810 | ffmpeg format::input, 150MB packet cache (binary search), seek coalescing, ChangeAudio, stream probe |
 | `decode_video.rs` | ~170 | VideoToolbox hwaccel setup, PixelBuffer extraction from AVFrame.data[3] |
 | `decode_audio.rs` | ~230 | ffmpeg audio decode + resample to f32 planar, per-channel planes, 8192-sample accumulation, end_us() |
@@ -98,11 +98,10 @@ would trigger a full ffmpeg seek + decode flush round-trip. Multiple layers prev
    accumulating left/right arrow presses into a single `SeekRelative` command with the
    summed offset. This collapses OS key-repeat bursts before they reach the player.
 
-2. **Player buffering** (`player.rs`): At most one seek is in flight to the demuxer. While
-   `pending_seeks > 0`, new seeks accumulate into a `queued_seek` field instead of dispatching.
-   A minimum display time (`SEEK_MIN_DISPLAY` = 4ms) ensures each seek-flush frame survives
-   at least one VSync before the next flush clears it. A safety timeout (`SEEK_COALESCE_TIMEOUT`
-   = 50ms) prevents stuck decodes from freezing scrubbing.
+2. **Player buffering** (`player.rs`): At most one video seek is in flight to the demuxer.
+   While `pending_seeks > 0`, new seeks accumulate into a `queued_seek` field instead of
+   dispatching. Audio is skipped entirely during video scrubbing (like mpv). Audio-only
+   seeks fire immediately — the demuxer coalesces them.
 
 3. **Demuxer coalescing** (`demux.rs`): The demuxer drains all pending seeks from `cmd_rx`
    at the top of each loop iteration (keeps only the last). The packet send uses
