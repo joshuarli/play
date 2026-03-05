@@ -337,7 +337,7 @@ fn start_main_timer() {
 
         let progress = {
             let p = progress_counter.get() + 1;
-            if p >= 60 {
+            if p >= 4 {
                 progress_counter.set(0);
                 let current = state.audio_clock.load(Ordering::Relaxed);
                 Some((current, state.duration_us))

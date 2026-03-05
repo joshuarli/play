@@ -258,12 +258,35 @@ impl Player {
         let Some(qs) = self.queued_seek.take() else {
             return;
         };
+        // Skip no-op seeks (can happen when clock was projected eagerly)
+        if qs.seconds.abs() < 0.001 && !qs.exact {
+            return;
+        }
 
         let has_video = self.stream_info.video_stream.is_some();
 
-        // No gating on pending_seeks — seeks fire immediately and the
-        // demuxer coalesces rapid seeks (keeps only the last). Stale
-        // packets from earlier seeks are discarded via pending_seeks > 0.
+        // During scrubbing, serialize seeks: one in flight at a time.
+        // The queued seek accumulates key-repeats, so when the Flush
+        // arrives we dispatch a single coalesced seek instead of many.
+        // This cuts CPU decode work proportionally (~30 seeks/sec → ~15).
+        // Single seeks (not scrubbing) always fire immediately.
+        if self.scrubbing && self.pending_seeks > 0 {
+            // Project the clock to the intended position so the progress
+            // bar tracks the user's input instantly, even before the
+            // demuxer round-trip completes.
+            let current = self.sync_clock.audio_pts();
+            let projected = (current + (qs.seconds * 1_000_000.0) as i64)
+                .max(0)
+                .min(self.duration_us);
+            self.sync_clock.set_position(projected);
+            // Zero the offset since the clock now reflects it.
+            // New key-repeats accumulate fresh from the projected position.
+            self.queued_seek = Some(QueuedSeek {
+                seconds: 0.0,
+                exact: qs.exact,
+            });
+            return;
+        }
 
         let current = self.sync_clock.audio_pts();
         let delta_us = (qs.seconds * 1_000_000.0) as i64;
@@ -915,25 +938,42 @@ mod tests {
     }
 
     #[test]
-    fn rapid_seeks_dispatch_freely() {
+    fn scrubbing_serializes_video_seeks() {
         let (mut player, _, _, _, demux_cmd_rx) = make_video_test_player();
 
-        // Multiple seeks dispatch without waiting for completion —
-        // the demuxer coalesces them and pending_seeks tracks in-flight count.
+        // First seek dispatches immediately (not yet scrubbing)
         player.queue_seek(5.0, false);
         player.execute_queued_seek();
         assert_eq!(player.pending_seeks, 1);
+        assert!(player.scrubbing);
 
+        // Second seek deferred: scrubbing + pending_seeks > 0.
+        // Clock is projected eagerly, queued seek zeroed.
         player.queue_seek(5.0, false);
         player.execute_queued_seek();
-        assert_eq!(player.pending_seeks, 2);
+        assert_eq!(
+            player.pending_seeks, 1,
+            "Should not dispatch while scrubbing"
+        );
+        // Clock projected to 10s (5s dispatched + 5s projected)
+        assert_eq!(player.sync_clock.audio_pts(), 10_000_000);
 
-        // Both seeks sent to demuxer
+        // Only one seek sent to demuxer
         let mut count = 0;
         while demux_cmd_rx.try_recv().is_ok() {
             count += 1;
         }
-        assert_eq!(count, 2);
+        assert_eq!(count, 1);
+
+        // Simulate Flush arrival + new key-repeat while waiting
+        player.pending_seeks = 0;
+        player.queue_seek(5.0, false);
+        player.execute_queued_seek();
+        assert_eq!(
+            player.pending_seeks, 1,
+            "New seek should dispatch after Flush"
+        );
+        assert!(player.queued_seek.is_none());
     }
 
     #[test]
