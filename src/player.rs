@@ -322,6 +322,26 @@ impl Player {
         self.dispatch_seek(target, !qs.exact && forward, qs.exact);
     }
 
+    fn switch_audio_decoder(&mut self, stream_index: usize) -> anyhow::Result<()> {
+        let ictx = ffmpeg_next::format::input(&self.file_path)
+            .context("Failed to re-open file for audio switch")?;
+        let stream = ictx
+            .stream(stream_index)
+            .ok_or_else(|| anyhow::anyhow!("Audio stream {stream_index} not found"))?;
+        let decoder = AudioDecoder::new(&stream).context("Failed to create audio decoder")?;
+        let new_rate = decoder.sample_rate;
+        let new_channels = decoder.channels;
+        self.audio_decoder = Some(decoder);
+        self.audio_output = None;
+        let mut ao = AudioOutput::new(new_rate, new_channels, self.audio_clock.clone())
+            .context("Failed to create audio output")?;
+        if self.volume < 100 {
+            ao.set_volume(self.volume as f32 / 100.0);
+        }
+        self.audio_output = Some(ao);
+        Ok(())
+    }
+
     fn adjust_volume(&mut self, delta: i32) {
         self.volume = (self.volume as i32 + delta).clamp(0, 100) as u32;
         if let Some(ref mut ao) = self.audio_output {
@@ -542,7 +562,7 @@ impl Player {
                 if self.stream_info.audio_streams.len() > 1 {
                     self.current_audio_track =
                         (self.current_audio_track + 1) % self.stream_info.audio_streams.len();
-                    let new_info = &self.stream_info.audio_streams[self.current_audio_track];
+                    let new_info = self.stream_info.audio_streams[self.current_audio_track].clone();
 
                     // Flush current audio pipeline
                     if let Some(ref mut ad) = self.audio_decoder {
@@ -558,49 +578,8 @@ impl Player {
                         .send(DemuxCommand::ChangeAudio(new_info.index));
 
                     // Re-open input to get new stream parameters and create new decoder
-                    match ffmpeg_next::format::input(&self.file_path) {
-                        Ok(ictx) => {
-                            match ictx.stream(new_info.index) {
-                                Some(stream) => {
-                                    match AudioDecoder::new(&stream) {
-                                        Ok(decoder) => {
-                                            let new_rate = decoder.sample_rate;
-                                            let new_channels = decoder.channels;
-                                            self.audio_decoder = Some(decoder);
-
-                                            // Recreate audio output for new stream params
-                                            self.audio_output = None;
-                                            match AudioOutput::new(
-                                                new_rate,
-                                                new_channels,
-                                                self.audio_clock.clone(),
-                                            ) {
-                                                Ok(mut ao) => {
-                                                    if self.volume < 100 {
-                                                        ao.set_volume(self.volume as f32 / 100.0);
-                                                    }
-                                                    self.audio_output = Some(ao);
-                                                }
-                                                Err(e) => {
-                                                    log::error!(
-                                                        "Failed to create audio output: {e}"
-                                                    );
-                                                }
-                                            }
-                                        }
-                                        Err(e) => {
-                                            log::error!("Failed to create audio decoder: {e}");
-                                        }
-                                    }
-                                }
-                                None => {
-                                    log::error!("Audio stream {} not found", new_info.index);
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            log::error!("Failed to re-open file for audio switch: {e}");
-                        }
+                    if let Err(e) = self.switch_audio_decoder(new_info.index) {
+                        log::error!("Audio switch failed: {e}");
                     }
 
                     let _ = self.ui_update_tx.send(UiUpdate::Osd(format!(

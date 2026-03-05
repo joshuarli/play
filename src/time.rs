@@ -54,17 +54,6 @@ pub fn pts_to_us(pts: i64, time_base: ffmpeg_next::Rational) -> i64 {
     (pts as i128 * num as i128 * 1_000_000 / den as i128) as i64
 }
 
-/// Convert microseconds to ffmpeg timebase-based PTS.
-#[allow(dead_code)]
-pub fn us_to_pts(us: i64, time_base: ffmpeg_next::Rational) -> i64 {
-    let num = time_base.numerator() as i64;
-    let den = time_base.denominator() as i64;
-    if num == 0 {
-        return 0;
-    }
-    (us as i128 * den as i128 / (num as i128 * 1_000_000)) as i64
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -138,7 +127,7 @@ mod tests {
         assert!(parse_time("abc").is_err());
     }
 
-    // --- pts_to_us / us_to_pts ---
+    // --- pts_to_us ---
 
     #[test]
     fn pts_to_us_90k_timebase() {
@@ -157,27 +146,6 @@ mod tests {
     fn pts_to_us_zero_denominator() {
         let tb = Rational::new(0, 0);
         assert_eq!(pts_to_us(12345, tb), 0);
-    }
-
-    #[test]
-    fn us_to_pts_90k_timebase() {
-        let tb = Rational::new(1, 90000);
-        assert_eq!(us_to_pts(1_000_000, tb), 90000);
-    }
-
-    #[test]
-    fn us_to_pts_zero_numerator() {
-        let tb = Rational::new(0, 48000);
-        assert_eq!(us_to_pts(1_000_000, tb), 0);
-    }
-
-    #[test]
-    fn pts_us_round_trip() {
-        let tb = Rational::new(1, 90000);
-        let original_us: i64 = 5_000_000; // 5 seconds
-        let pts = us_to_pts(original_us, tb);
-        let recovered = pts_to_us(pts, tb);
-        assert_eq!(recovered, original_us);
     }
 
     #[test]

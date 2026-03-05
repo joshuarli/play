@@ -305,8 +305,6 @@ pub fn run_demuxer(
 
     // Tell ffmpeg to discard packets from streams we don't need.
     // This avoids demuxing/parsing overhead for unused streams.
-    // Tell ffmpeg to discard packets from streams we don't need.
-    // This avoids demuxing/parsing overhead for unused streams.
     let wanted: [Option<usize>; 3] = [video_idx, audio_idx, subtitle_idx];
     for stream in ictx.streams() {
         if !wanted.iter().any(|&w| w == Some(stream.index())) {
@@ -319,6 +317,17 @@ pub fn run_demuxer(
 
     let mut cache = PacketCache::new(CACHE_MAX_BYTES, video_idx, audio_idx, subtitle_idx, &ictx);
     let mut replay_cursor: Option<usize> = None;
+
+    // Macro for ChangeAudio handling (same logic in 4 match arms).
+    macro_rules! handle_change_audio {
+        ($new_idx:expr) => {{
+            log::debug!("Demuxer: changing audio stream to {}", $new_idx);
+            audio_idx = Some($new_idx);
+            cache.clear();
+            cache = PacketCache::new(CACHE_MAX_BYTES, video_idx, audio_idx, subtitle_idx, &ictx);
+            replay_cursor = None;
+        }};
+    }
 
     loop {
         // Drain all pending commands — coalesce rapid seeks into one
@@ -336,17 +345,7 @@ pub fn run_demuxer(
                     last_seek = Some(cmd);
                 }
                 Ok(DemuxCommand::ChangeAudio(new_idx)) => {
-                    log::debug!("Demuxer: changing audio stream to {new_idx}");
-                    audio_idx = Some(new_idx);
-                    cache.clear();
-                    cache = PacketCache::new(
-                        CACHE_MAX_BYTES,
-                        video_idx,
-                        audio_idx,
-                        subtitle_idx,
-                        &ictx,
-                    );
-                    replay_cursor = None;
+                    handle_change_audio!(new_idx);
                 }
                 Err(crossbeam_channel::TryRecvError::Empty) => break,
                 Err(crossbeam_channel::TryRecvError::Disconnected) => return Ok(()),
@@ -400,12 +399,7 @@ pub fn run_demuxer(
                                 continue;
                             }
                             Ok(DemuxCommand::ChangeAudio(new_idx)) => {
-                                audio_idx = Some(new_idx);
-                                cache.clear();
-                                cache = PacketCache::new(
-                                    CACHE_MAX_BYTES, video_idx, audio_idx, subtitle_idx, &ictx,
-                                );
-                                replay_cursor = None;
+                                handle_change_audio!(new_idx);
                                 continue;
                             }
                             Err(_) => return Ok(()),
@@ -450,12 +444,7 @@ pub fn run_demuxer(
                                     continue;
                                 }
                                 Ok(DemuxCommand::ChangeAudio(new_idx)) => {
-                                    audio_idx = Some(new_idx);
-                                    cache.clear();
-                                    cache = PacketCache::new(
-                                        CACHE_MAX_BYTES, video_idx, audio_idx, subtitle_idx, &ictx,
-                                    );
-                                    replay_cursor = None;
+                                    handle_change_audio!(new_idx);
                                     continue;
                                 }
                                 Err(_) => return Ok(()),
@@ -482,16 +471,7 @@ pub fn run_demuxer(
                             continue;
                         }
                         Ok(DemuxCommand::ChangeAudio(new_idx)) => {
-                            audio_idx = Some(new_idx);
-                            cache.clear();
-                            cache = PacketCache::new(
-                                CACHE_MAX_BYTES,
-                                video_idx,
-                                audio_idx,
-                                subtitle_idx,
-                                &ictx,
-                            );
-                            replay_cursor = None;
+                            handle_change_audio!(new_idx);
                             continue;
                         }
                         Err(_) => return Ok(()),
