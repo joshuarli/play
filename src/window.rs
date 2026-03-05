@@ -365,13 +365,7 @@ fn process_pending_frames(state: &FileState) {
     for _ in 0..4 {
         match state.video_frame_rx.try_recv() {
             Ok(frame) => {
-                let flush = frame.seek_flush;
                 crate::video_out::enqueue_frame(frame);
-                // After a seek-flush frame, yield so the compositor can
-                // present it before the next flush replaces it.
-                if flush {
-                    break;
-                }
             }
             Err(_) => break,
         }

@@ -98,10 +98,10 @@ would trigger a full ffmpeg seek + decode flush round-trip. Multiple layers prev
    accumulating left/right arrow presses into a single `SeekRelative` command with the
    summed offset. This collapses OS key-repeat bursts before they reach the player.
 
-2. **Player buffering** (`player.rs`): At most one video seek is in flight to the demuxer.
-   While `pending_seeks > 0`, new seeks accumulate into a `queued_seek` field instead of
-   dispatching. Audio is skipped entirely during video scrubbing (like mpv). Audio-only
-   seeks fire immediately — the demuxer coalesces them.
+2. **Player** (`player.rs`): Both video and audio-only use command-first loops — commands
+   always drain before packets. Video seeks fire immediately (no gating on pending_seeks);
+   the demuxer coalesces them. Audio is suppressed during video scrubbing (`scrubbing` flag
+   with 100ms settling window). Audio-only seeks also fire immediately.
 
 3. **Demuxer coalescing** (`demux.rs`): The demuxer drains all pending seeks from `cmd_rx`
    at the top of each loop iteration (keeps only the last). The packet send uses
@@ -132,6 +132,23 @@ Additional audio-only seeking optimizations:
 - **`pending_seeks` for audio-only**: Stale pre-seek packets still in the demux channel
   (up to 64) are discarded instantly instead of being decoded and scheduled.
 - **`buffered_samples()` subtracts pending skips**: Prevents over-committing ring skips.
+
+## Video Rendering Architecture
+
+We delegate nearly all GPU work to macOS, unlike mpv which runs its own shader pipeline:
+
+| | **play** | **mpv** |
+|---|---|---|
+| Decode | VideoToolbox → CVPixelBuffer (NV12) | VideoToolbox → CVPixelBuffer |
+| Color conversion | AVSampleBufferDisplayLayer (system) | Custom YUV→RGB shaders |
+| Scaling | System compositor | Lanczos/bicubic compute shaders |
+| OSD/subtitles | CATextLayer (system text rendering) | libass + GPU compositing |
+| Presentation | Display layer → compositor → VSync | Own OpenGL/Vulkan swap chain |
+
+This makes us very GPU-efficient but means we don't control frame presentation timing.
+AVSampleBufferDisplayLayer is optimized for smooth playback, not rapid single-frame
+updates during seeking — each seek-flush frame goes through layer → compositor → VSync,
+adding latency we can't eliminate without switching to direct Metal rendering (CAMetalLayer).
 
 ## OSD Rendering
 
