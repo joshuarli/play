@@ -271,11 +271,16 @@ impl PlayerCore {
     }
 
     fn check_eof(&mut self) {
-        if let Some(end_us) = self.eof_audio_end_us
-            && self.sync_clock.audio_pts() >= end_us
-        {
-            self.eof_audio_end_us = None;
-            let _ = self.ui_update_tx.send(UiUpdate::EndOfFile(EndReason::Eof));
+        if self.eof_audio_end_us.is_some() {
+            let done = self.sync_clock.audio_pts() >= self.eof_audio_end_us.unwrap()
+                || self
+                    .audio_output
+                    .as_ref()
+                    .is_some_and(|ao| ao.buffered_samples() == 0);
+            if done {
+                self.eof_audio_end_us = None;
+                let _ = self.ui_update_tx.send(UiUpdate::EndOfFile(EndReason::Eof));
+            }
         }
     }
 

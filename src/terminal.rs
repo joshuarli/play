@@ -76,11 +76,11 @@ pub fn run_terminal(
                 }
                 Key::Char(' ') => Action::Send(Command::PlayPause),
                 Key::Left => {
-                    seek_accum -= 1.0;
+                    seek_accum -= 3.0;
                     Action::None
                 }
                 Key::Right => {
-                    seek_accum += 1.0;
+                    seek_accum += 3.0;
                     Action::None
                 }
                 Key::Up => Action::Send(Command::VolumeUp),
