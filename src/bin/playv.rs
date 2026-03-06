@@ -1,33 +1,17 @@
-mod audio_out;
-mod cmd;
-mod decode_audio;
-mod decode_video;
-mod demux;
-mod input;
-mod osd;
-mod player;
-mod subtitle;
-mod sync;
-mod terminal;
-mod time;
-mod video_out;
-mod window;
-
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::AtomicI64;
 use std::thread;
 
 use anyhow::{Context, Result, bail};
-use termion::input::TermRead;
 
-use cmd::{Args, Command, DemuxCommand, DemuxPacket, EndReason, UiUpdate, VideoFrame};
-use player::Player;
+use play::cmd::{self, Command, DemuxCommand, DemuxPacket, EndReason, UiUpdate, VideoFrame};
+use play::player::Player;
+use play::{demux, subtitle, time, window};
 
 fn main() -> Result<()> {
     let args = cmd::parse_args()?;
 
-    // Set up logging
     let log_level = match args.verbose {
         0 => log::LevelFilter::Warn,
         1 => log::LevelFilter::Info,
@@ -38,47 +22,32 @@ fn main() -> Result<()> {
         .format_timestamp_millis()
         .init();
 
-    // Initialize ffmpeg
     ffmpeg_next::init().context("Failed to initialize ffmpeg")?;
 
-    // Expand directories into sorted media files
     let files = cmd::expand_files(&args.files);
     if files.is_empty() {
         bail!("No media files found in the given paths");
     }
 
-    // Validate files exist
     for file in &files {
         if !file.exists() {
             bail!("File not found: {}", file.display());
         }
     }
 
-    // Single async stdin reader for the entire playlist (avoids spawning
-    // a new background thread per file, which eats keystrokes during transitions).
-    let mut term_keys = termion::async_stdin().keys();
-
-    // Playlist loop
     let mut index = 0;
     let mut first_run = true;
     while index < files.len() {
         let file = &files[index];
-        match play_file(file, &args, first_run, index, files.len(), &mut term_keys) {
-            Ok(reason) => {
-                match reason {
-                    EndReason::Quit => break,
-                    EndReason::Eof | EndReason::NextFile => {
-                        index += 1;
-                        // Eof past last file: done
-                    }
-                    EndReason::PrevFile => {
-                        index = index.saturating_sub(1);
-                    }
-                }
-            }
+        match play_file(file, &args, first_run, index, files.len()) {
+            Ok(reason) => match reason {
+                EndReason::Quit => break,
+                EndReason::Eof | EndReason::NextFile => index += 1,
+                EndReason::PrevFile => index = index.saturating_sub(1),
+            },
             Err(e) => {
                 log::error!("Error playing {}: {e}", file.display());
-                index += 1; // skip to next
+                index += 1;
             }
         }
         first_run = false;
@@ -89,23 +58,20 @@ fn main() -> Result<()> {
 
 fn play_file(
     path: &Path,
-    args: &Args,
+    args: &cmd::Args,
     first_run: bool,
     file_index: usize,
     file_count: usize,
-    term_keys: &mut termion::input::Keys<termion::AsyncReader>,
 ) -> Result<EndReason> {
-    // Probe the file
     let info = demux::probe(path)?;
 
-    let has_video = info.video_stream.is_some();
-    let has_audio = !info.audio_streams.is_empty();
-
-    if !has_video && !has_audio {
-        bail!("No playable streams found in {}", path.display());
+    if info.video_stream.is_none() {
+        bail!(
+            "No video stream in {}. Use playm for audio-only files.",
+            path.display()
+        );
     }
 
-    // Determine stream indices
     let video_idx = info.video_stream.as_ref().map(|s| s.index);
     let audio_idx = info
         .audio_streams
@@ -116,8 +82,6 @@ fn play_file(
 
     // Load external subtitles
     let mut subtitle_tracks = Vec::new();
-
-    // Auto-detect SRT files
     for srt_path in subtitle::find_srt_files(path) {
         match subtitle::parse_srt(&srt_path) {
             Ok(entries) => {
@@ -131,8 +95,6 @@ fn play_file(
             Err(e) => log::warn!("Failed to parse {}: {e}", srt_path.display()),
         }
     }
-
-    // --sub-file flag
     if let Some(sub_path) = &args.sub_file {
         match subtitle::parse_srt(sub_path) {
             Ok(entries) => {
@@ -159,7 +121,6 @@ fn play_file(
     let (video_frame_tx, video_frame_rx) = crossbeam_channel::bounded::<VideoFrame>(8);
     let (ui_update_tx, ui_update_rx) = crossbeam_channel::unbounded::<UiUpdate>();
 
-    // Audio clock shared between player (writer) and main thread (reader for timebase sync)
     let audio_clock = Arc::new(AtomicI64::new(0));
 
     let video_width = info.video_stream.as_ref().map(|s| s.width).unwrap_or(640);
@@ -169,8 +130,8 @@ fn play_file(
         .file_name()
         .and_then(|s| s.to_str())
         .unwrap_or("unknown");
-    // Show OSD for playlist position (video mode only; terminal prints its own header)
-    if file_count > 1 && has_video {
+
+    if file_count > 1 {
         let _ = ui_update_tx.send(UiUpdate::Osd(format!(
             "({}/{}) {filename}",
             file_index + 1,
@@ -239,7 +200,6 @@ fn play_file(
                 return;
             }
 
-            // Seek to start position if specified
             if start_pos > 0 {
                 player.seek_to(start_pos);
             }
@@ -248,37 +208,23 @@ fn play_file(
         })
         .context("Failed to spawn player thread")?;
 
-    let title = format!("play - {filename}");
-    if has_video {
-        log_stream_info(&info);
-    }
-    let reason = if has_video {
-        window::run_app(
-            cmd_tx,
-            video_frame_rx,
-            ui_update_rx,
-            video_width,
-            video_height,
-            args.fullscreen,
-            audio_clock,
-            info.duration_us,
-            &title,
-            first_run,
-            file_index,
-            file_count,
-        )
-    } else {
-        terminal::run_terminal(
-            cmd_tx,
-            ui_update_rx,
-            audio_clock,
-            term_keys,
-            filename,
-            &info,
-            file_index,
-            file_count,
-        )
-    };
+    let title = format!("playv - {filename}");
+    log_stream_info(&info);
+
+    let reason = window::run_app(
+        cmd_tx,
+        video_frame_rx,
+        ui_update_rx,
+        video_width,
+        video_height,
+        args.fullscreen,
+        audio_clock,
+        info.duration_us,
+        &title,
+        first_run,
+        file_index,
+        file_count,
+    );
 
     player_thread.join().ok();
     demux_thread.join().ok();
@@ -312,5 +258,5 @@ fn log_stream_info(info: &demux::StreamInfo) {
             s.index
         );
     }
-    eprintln!("Duration: {}", crate::time::format_time(info.duration_us));
+    eprintln!("Duration: {}", time::format_time(info.duration_us));
 }

@@ -3,6 +3,18 @@ name = "play"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+name = "play"
+path = "src/lib.rs"
+
+[[bin]]
+name = "playv"
+path = "src/bin/playv.rs"
+
+[[bin]]
+name = "playm"
+path = "src/bin/playm.rs"
+
 [dependencies]
 ffmpeg-next = { version = "7", default-features = false, features = [
     "codec",

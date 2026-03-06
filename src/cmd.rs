@@ -157,7 +157,7 @@ pub fn expand_files(paths: &[PathBuf]) -> Vec<PathBuf> {
 }
 
 const USAGE: &str = "\
-Usage: play [OPTIONS] <FILE|DIR>...
+Usage: playv [OPTIONS] <FILE|DIR>...
 
 Arguments:
   <FILE|DIR>...  One or more media files or directories
