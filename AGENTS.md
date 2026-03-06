@@ -56,14 +56,14 @@ File → Demuxer (PacketCache, binary search) → DemuxPacket
 |---|---|---|
 | `main.rs` | ~320 | Thread spawning, file probe, playlist loop, stream info logging |
 | `cmd.rs` | ~330 | Command/DemuxPacket/DemuxCommand/VideoFrame/PixelBuffer(RAII)/UiUpdate/Args types, arg parser |
-| `player.rs` | ~990 | State machine: run_video (select!) / run_audio_only (command-first), decode dispatch, seek coalescing, volume, subtitles, audio track switching |
-| `demux.rs` | ~810 | ffmpeg format::input, 150MB packet cache (binary search), seek coalescing, ChangeAudio, stream probe |
+| `player.rs` | ~1110 | PlayerCore (shared state) + VideoPlayer / AudioOnlyPlayer (mode-specific loops, seek, packet handling). Video-only state (scrubbing, display flush) in VideoPlayer; audio-only state (pending_audio, ring skip) in AudioOnlyPlayer. |
+| `demux.rs` | ~870 | DemuxState struct encapsulates loop state; classify_packet/handle_command/send_or_handle_command/drain_commands collapse formerly-duplicated select! arms. PacketCache (binary search), seek coalescing, ChangeAudio, stream probe. |
 | `decode_video.rs` | ~170 | VideoToolbox hwaccel setup, PixelBuffer extraction from AVFrame.data[3] |
-| `decode_audio.rs` | ~230 | ffmpeg audio decode + resample to f32 planar, per-channel planes, 8192-sample accumulation, end_us() |
+| `decode_audio.rs` | ~230 | ffmpeg audio decode + resample to f32 planar, per-channel planes, 8192-sample accumulation with Vec reuse, end_us() |
 | `video_out.rs` | ~340 | AVSampleBufferDisplayLayer, CMSampleBuffer from PixelBuffer, CMTimebase sync |
-| `audio_out.rs` | ~610 | CoreAudio AudioUnit, lock-free SPSC ring buffers (65536 samples/ch), non-interleaved f32 render callback, ring skip/flush_quick |
+| `audio_out.rs` | ~610 | CoreAudio AudioUnit, lock-free SPSC ring buffers (524288 samples/ch), non-interleaved f32 render callback, ring skip/flush_quick |
 | `window.rs` | ~455 | NSWindow via objc2 define_class!, key/mouse monitors, GCD timer (60Hz / 16ms), layer setup |
-| `osd.rs` | ~535 | CATextLayer OSD messages, NSAttributedString subtitles (cached shadow/paragraph style), clickable progress bar |
+| `osd.rs` | ~590 | Typed Layer/TextLayer/ProgressBar wrappers confine msg_send! to small surface. CATextLayer OSD, NSAttributedString subtitles (cached styles), clickable progress bar. |
 | `sync.rs` | ~100 | Audio-master clock (AtomicI64), pause/resume, seek position |
 | `subtitle.rs` | ~265 | SRT parser, binary search lookup, auto-detection of .srt files |
 | `input.rs` | ~165 | Virtual key code → Command mapping (Carbon key codes + characters) |

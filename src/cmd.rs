@@ -31,6 +31,7 @@ pub enum EndReason {
 pub enum DemuxPacket {
     Video(ffmpeg_next::Packet),
     Audio(ffmpeg_next::Packet),
+    #[allow(dead_code)]
     Subtitle(ffmpeg_next::Packet),
     /// Seek completed — all subsequent packets are from the new position.
     Flush,

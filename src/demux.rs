@@ -289,193 +289,261 @@ pub fn probe(path: &Path) -> Result<StreamInfo> {
     })
 }
 
+/// Mutable demuxer state threaded through the loop, eliminating global/duplicated handling.
+struct DemuxState {
+    ictx: Input,
+    cache: PacketCache,
+    replay_cursor: Option<usize>,
+    video_idx: Option<usize>,
+    audio_idx: Option<usize>,
+    subtitle_idx: Option<usize>,
+    cmd_rx: Receiver<DemuxCommand>,
+    packet_tx: Sender<DemuxPacket>,
+}
+
+/// What the demuxer loop should do after processing a command.
+enum Action {
+    Continue,
+    Stop,
+}
+
+impl DemuxState {
+    fn new(
+        path: &Path,
+        video_idx: Option<usize>,
+        audio_idx: Option<usize>,
+        subtitle_idx: Option<usize>,
+        cmd_rx: Receiver<DemuxCommand>,
+        packet_tx: Sender<DemuxPacket>,
+    ) -> Result<Self> {
+        let ictx = ffmpeg::format::input(path)
+            .with_context(|| format!("Failed to open: {}", path.display()))?;
+
+        // Tell ffmpeg to discard packets from streams we don't need.
+        let wanted: [Option<usize>; 3] = [video_idx, audio_idx, subtitle_idx];
+        for stream in ictx.streams() {
+            if !wanted.iter().any(|&w| w == Some(stream.index())) {
+                unsafe {
+                    let s = stream.as_ptr() as *mut ffs::AVStream;
+                    (*s).discard = ffs::AVDiscard::AVDISCARD_ALL;
+                }
+            }
+        }
+
+        let cache = PacketCache::new(CACHE_MAX_BYTES, video_idx, audio_idx, subtitle_idx, &ictx);
+
+        Ok(Self {
+            ictx,
+            cache,
+            replay_cursor: None,
+            video_idx,
+            audio_idx,
+            subtitle_idx,
+            cmd_rx,
+            packet_tx,
+        })
+    }
+
+    /// Classify a packet by stream index into the appropriate DemuxPacket variant.
+    /// Returns None for streams we don't care about.
+    fn classify_packet(&self, stream_idx: usize, packet: ffmpeg::Packet) -> Option<DemuxPacket> {
+        if Some(stream_idx) == self.video_idx {
+            Some(DemuxPacket::Video(packet))
+        } else if Some(stream_idx) == self.audio_idx {
+            Some(DemuxPacket::Audio(packet))
+        } else if Some(stream_idx) == self.subtitle_idx {
+            Some(DemuxPacket::Subtitle(packet))
+        } else {
+            None
+        }
+    }
+
+    /// Handle a single demux command. Returns Stop if the loop should exit.
+    fn handle_command(&mut self, cmd: DemuxCommand) -> Action {
+        match cmd {
+            DemuxCommand::Stop => Action::Stop,
+            DemuxCommand::Seek {
+                target_pts,
+                forward,
+            } => {
+                // Coalesce any additional queued seeks, keeping only the last.
+                let (target, fwd, count) = match coalesce_seeks(&self.cmd_rx, target_pts, forward) {
+                    Some(v) => v,
+                    None => return Action::Stop,
+                };
+                self.replay_cursor = self.try_cached_seek(target, fwd, count);
+                Action::Continue
+            }
+            DemuxCommand::ChangeAudio(new_idx) => {
+                self.change_audio(new_idx);
+                Action::Continue
+            }
+        }
+    }
+
+    /// Drain all pending commands, coalescing seeks. Returns Stop if a Stop
+    /// command was encountered.
+    fn drain_commands(&mut self) -> Action {
+        let mut last_seek: Option<(i64, bool)> = None;
+        let mut seek_count: u32 = 0;
+
+        loop {
+            match self.cmd_rx.try_recv() {
+                Ok(DemuxCommand::Stop) => return Action::Stop,
+                Ok(DemuxCommand::Seek {
+                    target_pts,
+                    forward,
+                }) => {
+                    seek_count += 1;
+                    last_seek = Some((target_pts, forward));
+                }
+                Ok(DemuxCommand::ChangeAudio(new_idx)) => {
+                    self.change_audio(new_idx);
+                }
+                Err(crossbeam_channel::TryRecvError::Empty) => break,
+                Err(crossbeam_channel::TryRecvError::Disconnected) => return Action::Stop,
+            }
+        }
+
+        if let Some((target, forward)) = last_seek {
+            self.replay_cursor = self.try_cached_seek(target, forward, seek_count);
+        }
+        Action::Continue
+    }
+
+    /// Send a packet, racing against incoming commands. If a command arrives
+    /// while the send is blocked (channel full), handle it immediately.
+    /// Returns Stop if the loop should exit.
+    fn send_or_handle_command(&mut self, pkt: DemuxPacket) -> Action {
+        crossbeam_channel::select! {
+            send(self.packet_tx, pkt) -> res => {
+                if res.is_err() { return Action::Stop; }
+                Action::Continue
+            }
+            recv(self.cmd_rx) -> msg => {
+                match msg {
+                    Ok(cmd) => self.handle_command(cmd),
+                    Err(_) => Action::Stop,
+                }
+            }
+        }
+    }
+
+    fn change_audio(&mut self, new_idx: usize) {
+        log::debug!("Demuxer: changing audio stream to {new_idx}");
+        self.audio_idx = Some(new_idx);
+        self.cache.clear();
+        self.cache = PacketCache::new(
+            CACHE_MAX_BYTES,
+            self.video_idx,
+            self.audio_idx,
+            self.subtitle_idx,
+            &self.ictx,
+        );
+        self.replay_cursor = None;
+    }
+
+    /// Try to satisfy a seek from the packet cache. Returns a replay cursor if
+    /// the target is within the cache, or None after falling back to a file seek.
+    fn try_cached_seek(&mut self, target: i64, forward: bool, count: u32) -> Option<usize> {
+        if let Some(idx) = self.cache.seek_position(target, forward) {
+            log::debug!("Demuxer: cache hit at index {idx}, coalesced {count}");
+            for _ in 0..count {
+                let _ = self.packet_tx.send(DemuxPacket::Flush);
+            }
+            Some(idx)
+        } else {
+            log::debug!("Demuxer: cache miss, file seek");
+            self.cache.clear();
+            self.do_seek(target, forward, count);
+            None
+        }
+    }
+
+    /// Execute a seek and send the corresponding Flush packets.
+    fn do_seek(&mut self, target: i64, forward: bool, count: u32) {
+        log::debug!("Demuxer: seek to {target}us, coalesced {count}");
+        if forward {
+            let _ = self.ictx.seek(target, target..);
+        } else {
+            let _ = self.ictx.seek(target, ..target);
+        }
+        for _ in 0..count {
+            let _ = self.packet_tx.send(DemuxPacket::Flush);
+        }
+    }
+}
+
 /// Run the demuxer read loop on a dedicated thread.
 /// Reads packets from the file and sends them to the player thread.
 /// Listens for seek/flush/stop commands from the player.
 pub fn run_demuxer(
     path: &Path,
     video_idx: Option<usize>,
-    mut audio_idx: Option<usize>,
+    audio_idx: Option<usize>,
     subtitle_idx: Option<usize>,
     cmd_rx: Receiver<DemuxCommand>,
     packet_tx: Sender<DemuxPacket>,
 ) -> Result<()> {
-    let mut ictx = ffmpeg::format::input(path)
-        .with_context(|| format!("Failed to open: {}", path.display()))?;
-
-    // Tell ffmpeg to discard packets from streams we don't need.
-    // This avoids demuxing/parsing overhead for unused streams.
-    let wanted: [Option<usize>; 3] = [video_idx, audio_idx, subtitle_idx];
-    for stream in ictx.streams() {
-        if !wanted.iter().any(|&w| w == Some(stream.index())) {
-            unsafe {
-                let s = stream.as_ptr() as *mut ffs::AVStream;
-                (*s).discard = ffs::AVDiscard::AVDISCARD_ALL;
-            }
-        }
-    }
-
-    let mut cache = PacketCache::new(CACHE_MAX_BYTES, video_idx, audio_idx, subtitle_idx, &ictx);
-    let mut replay_cursor: Option<usize> = None;
-
-    // Macro for ChangeAudio handling (same logic in 4 match arms).
-    macro_rules! handle_change_audio {
-        ($new_idx:expr) => {{
-            log::debug!("Demuxer: changing audio stream to {}", $new_idx);
-            audio_idx = Some($new_idx);
-            cache.clear();
-            cache = PacketCache::new(CACHE_MAX_BYTES, video_idx, audio_idx, subtitle_idx, &ictx);
-            replay_cursor = None;
-        }};
-    }
+    let mut state = DemuxState::new(path, video_idx, audio_idx, subtitle_idx, cmd_rx, packet_tx)?;
 
     loop {
-        // Drain all pending commands — coalesce rapid seeks into one
-        let mut last_seek: Option<DemuxCommand> = None;
-        let mut seek_count: u32 = 0;
-
-        loop {
-            match cmd_rx.try_recv() {
-                Ok(DemuxCommand::Stop) => {
-                    log::debug!("Demuxer: stop received");
-                    return Ok(());
-                }
-                Ok(cmd @ DemuxCommand::Seek { .. }) => {
-                    seek_count += 1;
-                    last_seek = Some(cmd);
-                }
-                Ok(DemuxCommand::ChangeAudio(new_idx)) => {
-                    handle_change_audio!(new_idx);
-                }
-                Err(crossbeam_channel::TryRecvError::Empty) => break,
-                Err(crossbeam_channel::TryRecvError::Disconnected) => return Ok(()),
-            }
+        // Drain all pending commands — coalesce rapid seeks into one.
+        if matches!(state.drain_commands(), Action::Stop) {
+            return Ok(());
         }
 
-        if let Some(DemuxCommand::Seek {
-            target_pts,
-            forward,
-        }) = last_seek
-        {
-            replay_cursor = try_cached_seek(
-                &mut cache, &mut ictx, &packet_tx, target_pts, forward, seek_count,
-            );
-            continue;
-        }
-
-        // Replay from cache or read from file
-        if let Some(cursor) = replay_cursor {
-            if cursor < cache.len() {
-                let cp = &cache.packets[cursor];
+        // Replay from cache
+        if let Some(cursor) = state.replay_cursor {
+            if cursor < state.cache.len() {
+                let cp = &state.cache.packets[cursor];
                 let stream_idx = cp.stream_index;
                 let pkt = clone_packet_ref(&cp.packet);
 
-                let demux_pkt = if Some(stream_idx) == video_idx {
-                    DemuxPacket::Video(pkt)
-                } else if Some(stream_idx) == audio_idx {
-                    DemuxPacket::Audio(pkt)
-                } else if Some(stream_idx) == subtitle_idx {
-                    DemuxPacket::Subtitle(pkt)
-                } else {
-                    replay_cursor = Some(cursor + 1);
+                let Some(demux_pkt) = state.classify_packet(stream_idx, pkt) else {
+                    state.replay_cursor = Some(cursor + 1);
                     continue;
                 };
 
-                crossbeam_channel::select! {
-                    send(packet_tx, demux_pkt) -> res => {
-                        if res.is_err() {
-                            return Ok(());
-                        }
-                        replay_cursor = Some(cursor + 1);
-                    }
-                    recv(cmd_rx) -> msg => {
-                        match msg {
-                            Ok(DemuxCommand::Stop) => return Ok(()),
-                            Ok(DemuxCommand::Seek { target_pts, forward }) => {
-                                let Some((t, f, n)) = coalesce_seeks(&cmd_rx, target_pts, forward) else {
-                                    return Ok(());
-                                };
-                                replay_cursor = try_cached_seek(&mut cache, &mut ictx, &packet_tx, t, f, n);
-                                continue;
-                            }
-                            Ok(DemuxCommand::ChangeAudio(new_idx)) => {
-                                handle_change_audio!(new_idx);
-                                continue;
-                            }
-                            Err(_) => return Ok(()),
-                        }
-                    }
+                if matches!(state.send_or_handle_command(demux_pkt), Action::Stop) {
+                    return Ok(());
+                }
+                // Only advance cursor if we actually sent the packet (not preempted by seek)
+                if state.replay_cursor == Some(cursor) {
+                    state.replay_cursor = Some(cursor + 1);
                 }
             } else {
                 // Replay exhausted — resume reading from ictx (already positioned)
-                replay_cursor = None;
-                continue;
+                state.replay_cursor = None;
             }
-        } else {
-            // Normal read from file
-            match read_next_packet(&mut ictx) {
-                Some((stream_idx, packet)) => {
-                    cache.push(&packet, stream_idx);
+            continue;
+        }
 
-                    let demux_pkt = if Some(stream_idx) == video_idx {
-                        DemuxPacket::Video(packet)
-                    } else if Some(stream_idx) == audio_idx {
-                        DemuxPacket::Audio(packet)
-                    } else if Some(stream_idx) == subtitle_idx {
-                        DemuxPacket::Subtitle(packet)
-                    } else {
-                        continue;
-                    };
+        // Normal read from file
+        match read_next_packet(&mut state.ictx) {
+            Some((stream_idx, packet)) => {
+                state.cache.push(&packet, stream_idx);
 
-                    crossbeam_channel::select! {
-                        send(packet_tx, demux_pkt) -> res => {
-                            if res.is_err() {
-                                return Ok(());
-                            }
-                        }
-                        recv(cmd_rx) -> msg => {
-                            match msg {
-                                Ok(DemuxCommand::Stop) => return Ok(()),
-                                Ok(DemuxCommand::Seek { target_pts, forward }) => {
-                                    let Some((t, f, n)) = coalesce_seeks(&cmd_rx, target_pts, forward) else {
-                                        return Ok(());
-                                    };
-                                    replay_cursor = try_cached_seek(&mut cache, &mut ictx, &packet_tx, t, f, n);
-                                    continue;
-                                }
-                                Ok(DemuxCommand::ChangeAudio(new_idx)) => {
-                                    handle_change_audio!(new_idx);
-                                    continue;
-                                }
-                                Err(_) => return Ok(()),
-                            }
-                        }
-                    }
+                let Some(demux_pkt) = state.classify_packet(stream_idx, packet) else {
+                    continue;
+                };
+
+                if matches!(state.send_or_handle_command(demux_pkt), Action::Stop) {
+                    return Ok(());
                 }
-                None => {
-                    let _ = packet_tx.send(DemuxPacket::Eof);
-                    log::debug!("Demuxer: EOF");
+            }
+            None => {
+                let _ = state.packet_tx.send(DemuxPacket::Eof);
+                log::debug!("Demuxer: EOF");
 
-                    match cmd_rx.recv() {
-                        Ok(DemuxCommand::Stop) => return Ok(()),
-                        Ok(DemuxCommand::Seek {
-                            target_pts,
-                            forward,
-                        }) => {
-                            let Some((t, f, n)) = coalesce_seeks(&cmd_rx, target_pts, forward)
-                            else {
-                                return Ok(());
-                            };
-                            replay_cursor =
-                                try_cached_seek(&mut cache, &mut ictx, &packet_tx, t, f, n);
-                            continue;
+                // Block until a command arrives (seek back or stop).
+                match state.cmd_rx.recv() {
+                    Ok(cmd) => {
+                        if matches!(state.handle_command(cmd), Action::Stop) {
+                            return Ok(());
                         }
-                        Ok(DemuxCommand::ChangeAudio(new_idx)) => {
-                            handle_change_audio!(new_idx);
-                            continue;
-                        }
-                        Err(_) => return Ok(()),
                     }
+                    Err(_) => return Ok(()),
                 }
             }
         }
@@ -509,49 +577,6 @@ fn coalesce_seeks(
         }
     }
     Some((t, f, n))
-}
-
-/// Try to satisfy a seek from the packet cache. Returns a replay cursor if
-/// the target is within the cache, or None after falling back to a file seek.
-fn try_cached_seek(
-    cache: &mut PacketCache,
-    ictx: &mut Input,
-    packet_tx: &Sender<DemuxPacket>,
-    target: i64,
-    forward: bool,
-    count: u32,
-) -> Option<usize> {
-    if let Some(idx) = cache.seek_position(target, forward) {
-        log::debug!("Demuxer: cache hit at index {idx}, coalesced {count}");
-        for _ in 0..count {
-            let _ = packet_tx.send(DemuxPacket::Flush);
-        }
-        Some(idx)
-    } else {
-        log::debug!("Demuxer: cache miss, file seek");
-        cache.clear();
-        do_seek(ictx, packet_tx, target, forward, count);
-        None
-    }
-}
-
-/// Execute a seek and send the corresponding Flush packets.
-fn do_seek(
-    ictx: &mut Input,
-    packet_tx: &Sender<DemuxPacket>,
-    target: i64,
-    forward: bool,
-    count: u32,
-) {
-    log::debug!("Demuxer: seek to {target}us, coalesced {count}");
-    if forward {
-        let _ = ictx.seek(target, target..);
-    } else {
-        let _ = ictx.seek(target, ..target);
-    }
-    for _ in 0..count {
-        let _ = packet_tx.send(DemuxPacket::Flush);
-    }
 }
 
 fn read_next_packet(ictx: &mut Input) -> Option<(usize, ffmpeg::Packet)> {

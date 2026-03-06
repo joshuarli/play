@@ -197,7 +197,15 @@ impl AudioDecoder {
 
     fn take_accum(&mut self) -> AudioBuffer {
         let count = self.accum_count;
-        let planes: Vec<Vec<f32>> = self.accum_planes.iter_mut().map(std::mem::take).collect();
+        let planes: Vec<Vec<f32>> = self
+            .accum_planes
+            .iter_mut()
+            .map(|plane| {
+                let mut fresh = Vec::with_capacity(ACCUM_TARGET);
+                std::mem::swap(plane, &mut fresh);
+                fresh // the filled plane; `plane` now has ACCUM_TARGET capacity
+            })
+            .collect();
         self.accum_count = 0;
 
         AudioBuffer {
