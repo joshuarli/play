@@ -178,8 +178,6 @@ Steady-state playback is optimized to minimize wakeups and allocations:
   NTP adjustments and cheaper on Apple Silicon (`mach_absolute_time` vs `gettimeofday`).
 - **Stream discard** (`demux.rs`): Sets `AVDISCARD_ALL` on unused ffmpeg streams so the demuxer
   skips parsing packets for streams we don't decode (data, extra audio, attachments).
-- **Unbounded packet drain** (`player.rs`): Processes all available demux packets per loop iteration
-  instead of capping at a fixed batch size, reducing select! round-trips.
 - **Audio Vec reuse** (`decode_audio.rs`): `take_accum` swaps planes with pre-allocated
   `Vec::with_capacity(ACCUM_TARGET)` instead of `std::mem::take`, so the next accumulation
   cycle reuses the allocation rather than growing from zero every ~170ms.

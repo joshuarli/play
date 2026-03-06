@@ -528,8 +528,11 @@ impl VideoPlayer {
                 self.scrubbing = false;
             }
 
-            while let Ok(pkt) = self.core.demux_packet_rx.try_recv() {
-                self.handle_packet(pkt);
+            for _ in 0..9 {
+                match self.core.demux_packet_rx.try_recv() {
+                    Ok(pkt) => self.handle_packet(pkt),
+                    Err(_) => break,
+                }
             }
 
             self.core.update_subtitles();
