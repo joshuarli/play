@@ -214,24 +214,45 @@ pub fn probe(path: &Path) -> Result<StreamInfo> {
         0
     };
 
-    let video_stream = ictx.streams().best(Type::Video).map(|s| {
-        let params = s.parameters();
-        let codec = ffmpeg::codec::context::Context::from_parameters(params).ok();
-        let codec_name = codec
-            .as_ref()
-            .map(|c| c.id().name().to_string())
-            .unwrap_or_else(|| "unknown".to_string());
-        let (width, height) = codec
-            .and_then(|c| c.decoder().video().ok())
-            .map(|v| (v.width(), v.height()))
-            .unwrap_or((0, 0));
-        VideoStreamInfo {
-            index: s.index(),
-            width,
-            height,
-            codec_name,
-        }
-    });
+    let video_stream = ictx
+        .streams()
+        .filter(|s| {
+            s.parameters().medium() == Type::Video
+                && !s
+                    .disposition()
+                    .contains(ffmpeg::format::stream::Disposition::ATTACHED_PIC)
+        })
+        .max_by_key(|s| {
+            // Prefer default-flagged stream, then highest resolution
+            let params = s.parameters();
+            let is_default = s
+                .disposition()
+                .contains(ffmpeg::format::stream::Disposition::DEFAULT);
+            let codec = ffmpeg::codec::context::Context::from_parameters(params).ok();
+            let pixels = codec
+                .and_then(|c| c.decoder().video().ok())
+                .map(|v| v.width() as u64 * v.height() as u64)
+                .unwrap_or(0);
+            (is_default as u64, pixels)
+        })
+        .map(|s| {
+            let params = s.parameters();
+            let codec = ffmpeg::codec::context::Context::from_parameters(params).ok();
+            let codec_name = codec
+                .as_ref()
+                .map(|c| c.id().name().to_string())
+                .unwrap_or_else(|| "unknown".to_string());
+            let (width, height) = codec
+                .and_then(|c| c.decoder().video().ok())
+                .map(|v| (v.width(), v.height()))
+                .unwrap_or((0, 0));
+            VideoStreamInfo {
+                index: s.index(),
+                width,
+                height,
+                codec_name,
+            }
+        });
 
     let audio_streams: Vec<AudioStreamInfo> = ictx
         .streams()
