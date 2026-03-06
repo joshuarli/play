@@ -156,9 +156,10 @@ pub fn run_terminal(
         thread::sleep(Duration::from_millis(10));
     }
 
-    // Stay in alternate screen for next/prev (next call clears and redraws).
-    // Exit on quit or EOF — for EOF mid-playlist, main.rs will re-enter.
-    if !matches!(end_reason, EndReason::NextFile | EndReason::PrevFile) {
+    // Stay in alternate screen when advancing within a playlist.
+    let advancing = matches!(end_reason, EndReason::NextFile | EndReason::PrevFile)
+        || (end_reason == EndReason::Eof && file_index + 1 < file_count);
+    if !advancing {
         write!(stdout, "\x1b[?1049l").ok();
         stdout.flush().ok();
     }
