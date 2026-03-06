@@ -104,7 +104,9 @@ impl PlayerCore {
     fn handle_command_shared(&mut self, cmd: Command) -> bool {
         match cmd {
             Command::Quit => {
-                let _ = self.demux_cmd_tx.send(DemuxCommand::Stop);
+                if self.demux_cmd_tx.send(DemuxCommand::Stop).is_err() {
+                    log::warn!("Demuxer already disconnected on quit");
+                }
                 if let Some(ao) = self.audio_output.as_ref() {
                     ao.stop();
                 }
@@ -147,14 +149,22 @@ impl PlayerCore {
                     .send(UiUpdate::Osd(format!("Audio delay: {ms:+}ms")));
             }
             Command::NextFile => {
-                let _ = self
+                if self
                     .ui_update_tx
-                    .send(UiUpdate::EndOfFile(EndReason::NextFile));
+                    .send(UiUpdate::EndOfFile(EndReason::NextFile))
+                    .is_err()
+                {
+                    log::warn!("UI disconnected on NextFile");
+                }
             }
             Command::PrevFile => {
-                let _ = self
+                if self
                     .ui_update_tx
-                    .send(UiUpdate::EndOfFile(EndReason::PrevFile));
+                    .send(UiUpdate::EndOfFile(EndReason::PrevFile))
+                    .is_err()
+                {
+                    log::warn!("UI disconnected on PrevFile");
+                }
             }
             // SeekAbsolute is mode-specific (video uses dispatch_seek_video,
             // audio-only uses dispatch_seek_audio_only)
@@ -188,9 +198,13 @@ impl PlayerCore {
             ao.flush();
         }
 
-        let _ = self
+        if self
             .demux_cmd_tx
-            .send(DemuxCommand::ChangeAudio(new_info.index));
+            .send(DemuxCommand::ChangeAudio(new_info.index))
+            .is_err()
+        {
+            log::warn!("Demuxer disconnected on audio track change");
+        }
 
         if let Err(e) = self.switch_audio_decoder(new_info.index) {
             log::error!("Audio switch failed: {e}");
@@ -279,7 +293,13 @@ impl PlayerCore {
                     .is_some_and(|ao| ao.buffered_samples() == 0);
             if done {
                 self.eof_audio_end_us = None;
-                let _ = self.ui_update_tx.send(UiUpdate::EndOfFile(EndReason::Eof));
+                if self
+                    .ui_update_tx
+                    .send(UiUpdate::EndOfFile(EndReason::Eof))
+                    .is_err()
+                {
+                    log::warn!("UI disconnected on EOF check");
+                }
             }
         }
     }
@@ -365,8 +385,12 @@ impl PlayerCore {
     fn signal_eof(&mut self) {
         if self.audio_output.is_some() && self.last_audio_end_us > 0 {
             self.eof_audio_end_us = Some(self.last_audio_end_us);
-        } else {
-            let _ = self.ui_update_tx.send(UiUpdate::EndOfFile(EndReason::Eof));
+        } else if self
+            .ui_update_tx
+            .send(UiUpdate::EndOfFile(EndReason::Eof))
+            .is_err()
+        {
+            log::warn!("UI disconnected on EOF signal");
         }
     }
 
@@ -379,6 +403,22 @@ impl PlayerCore {
         if let Some(ao) = self.audio_output.as_ref() {
             ao.flush();
         }
+    }
+
+    /// Common seek dispatch shared between video and audio-only modes.
+    /// Mode-specific code (video decoder flush, scrubbing, display flush,
+    /// ring skip) is handled by the caller before/after this.
+    fn dispatch_seek_common(&mut self, target: i64, forward: bool, exact: bool) {
+        let _ = self.demux_cmd_tx.send(DemuxCommand::Seek {
+            target_pts: target,
+            forward,
+        });
+        self.pending_seeks += 1;
+        if !exact {
+            self.seek_landed = false;
+        }
+        self.seek_floor_us = if exact { target } else { 0 };
+        self.sync_clock.set_position(target);
     }
 }
 
@@ -399,24 +439,14 @@ struct VideoPlayer {
 
 impl VideoPlayer {
     fn dispatch_seek(&mut self, target: i64, forward: bool, exact: bool) {
-        let _ = self.core.demux_cmd_tx.send(DemuxCommand::Seek {
-            target_pts: target,
-            forward,
-        });
-        self.core.pending_seeks += 1;
+        self.core.dispatch_seek_common(target, forward, exact);
         self.scrubbing = true;
         self.last_seek_time = Some(Instant::now());
-        // Flush decoders + AudioUnit + rings
         if let Some(vd) = self.video_decoder.as_mut() {
             vd.flush();
         }
         self.core.flush_audio_pipeline();
         self.needs_display_flush = true;
-        if !exact {
-            self.core.seek_landed = false;
-        }
-        self.core.seek_floor_us = if exact { target } else { 0 };
-        self.core.sync_clock.set_position(target);
     }
 
     fn execute_queued_seek(&mut self) {
@@ -583,11 +613,7 @@ struct AudioOnlyPlayer {
 
 impl AudioOnlyPlayer {
     fn dispatch_seek(&mut self, target: i64, forward: bool, exact: bool) {
-        let _ = self.core.demux_cmd_tx.send(DemuxCommand::Seek {
-            target_pts: target,
-            forward,
-        });
-        self.core.pending_seeks += 1;
+        self.core.dispatch_seek_common(target, forward, exact);
         self.core.last_audio_end_us = 0;
         self.core.eof_audio_end_us = None;
         if let Some(ad) = self.core.audio_decoder.as_mut() {
@@ -598,8 +624,6 @@ impl AudioOnlyPlayer {
             ao.set_clock_position(target);
         }
         self.pending_audio.clear();
-        self.core.seek_floor_us = if exact { target } else { 0 };
-        self.core.sync_clock.set_position(target);
     }
 
     fn execute_queued_seek(&mut self) {

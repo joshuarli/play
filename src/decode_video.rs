@@ -20,6 +20,8 @@ pub struct VideoDecoder {
     height: u32,
 }
 
+// SAFETY: VideoDecoder is only accessed from the player thread. The hw_device_ctx
+// is an ffmpeg-managed reference that outlives all decoded frames.
 unsafe impl Send for VideoDecoder {}
 
 impl VideoDecoder {
@@ -28,10 +30,16 @@ impl VideoDecoder {
         let mut codec_ctx = CodecContext::from_parameters(stream.parameters())
             .context("Failed to create video codec context")?;
 
+        // SAFETY: as_mut_ptr() returns the underlying AVCodecContext. We set
+        // hw_device_ctx and get_format before opening the decoder, which is
+        // the required ordering per ffmpeg docs.
         let avctx = unsafe { codec_ctx.as_mut_ptr() };
 
         // Try to set up VideoToolbox hardware acceleration
         let mut hw_device_ctx: *mut ffs::AVBufferRef = ptr::null_mut();
+        // SAFETY: av_hwdevice_ctx_create allocates a new HW device context.
+        // On success, hw_device_ctx is a valid AVBufferRef we must eventually
+        // free with av_buffer_unref.
         let ret = unsafe {
             ffs::av_hwdevice_ctx_create(
                 &mut hw_device_ctx,
@@ -43,6 +51,9 @@ impl VideoDecoder {
         };
 
         if ret >= 0 {
+            // SAFETY: avctx is valid; av_buffer_ref increments the refcount
+            // of hw_device_ctx so the codec context shares ownership. We set
+            // get_format to prefer the VideoToolbox pixel format.
             unsafe {
                 (*avctx).hw_device_ctx = ffs::av_buffer_ref(hw_device_ctx);
                 (*avctx).get_format = Some(get_hw_format);
@@ -85,6 +96,9 @@ impl VideoDecoder {
     pub fn receive_frame(&mut self) -> Option<VideoFrame> {
         match self.decoder.receive_frame(&mut self.frame) {
             Ok(()) => {
+                // SAFETY: as_mut_ptr() returns the underlying AVFrame. We read
+                // pts, duration, format, and data[3] which are valid after a
+                // successful receive_frame().
                 let raw = unsafe { self.frame.as_mut_ptr() };
                 let pts = unsafe { (*raw).pts };
                 let pts_us = pts_to_us(pts, self.stream_time_base);
@@ -96,12 +110,16 @@ impl VideoDecoder {
                     return None;
                 }
 
-                // data[3] is the CVPixelBufferRef
+                // SAFETY: For VideoToolbox frames, data[3] is the
+                // CVPixelBufferRef per ffmpeg convention. We retain it so it
+                // outlives the AVFrame (which may reuse its internal buffer).
                 let cvbuf = unsafe { (*raw).data[3] as *mut c_void };
                 if cvbuf.is_null() {
                     return None;
                 }
-                // Retain the CVPixelBuffer so it outlives the frame
+                // SAFETY: CVPixelBufferRetain increments the refcount of a
+                // valid CVPixelBuffer. PixelBuffer::new takes ownership of
+                // the retained reference and releases it on drop.
                 unsafe { CVPixelBufferRetain(cvbuf) };
 
                 Some(VideoFrame {
@@ -132,6 +150,10 @@ impl VideoDecoder {
 impl Drop for VideoDecoder {
     fn drop(&mut self) {
         if !self.hw_device_ctx.is_null() {
+            // SAFETY: hw_device_ctx was allocated by av_hwdevice_ctx_create
+            // in new(). av_buffer_unref decrements the refcount and NULLs the
+            // pointer. The codec context's copy (set via av_buffer_ref) is
+            // freed separately when the decoder is dropped.
             unsafe {
                 ffs::av_buffer_unref(&mut self.hw_device_ctx);
             }
@@ -144,6 +166,9 @@ unsafe extern "C" fn get_hw_format(
     _ctx: *mut ffs::AVCodecContext,
     pix_fmts: *const ffs::AVPixelFormat,
 ) -> ffs::AVPixelFormat {
+    // SAFETY: ffmpeg passes a NULL-terminated array of pixel formats the
+    // codec supports. We iterate until we find VideoToolbox or reach the
+    // sentinel NONE value.
     let mut p = pix_fmts;
     while unsafe { *p } != ffs::AVPixelFormat::AV_PIX_FMT_NONE {
         if unsafe { *p } == ffs::AVPixelFormat::AV_PIX_FMT_VIDEOTOOLBOX {
@@ -157,6 +182,7 @@ unsafe extern "C" fn get_hw_format(
 /// Release a CVPixelBuffer that was retained by the decoder.
 pub unsafe fn release_pixel_buffer(buf: *mut c_void) {
     if !buf.is_null() {
+        // SAFETY: Caller guarantees `buf` is a valid, retained CVPixelBuffer.
         unsafe { CVPixelBufferRelease(buf) };
     }
 }

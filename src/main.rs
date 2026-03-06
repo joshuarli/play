@@ -40,6 +40,8 @@ fn main() -> Result<()> {
 
     // Initialize ffmpeg
     ffmpeg_next::init().context("Failed to initialize ffmpeg")?;
+    // SAFETY: av_log_set_level is thread-safe and accepts any valid log level.
+    // Called once before any ffmpeg operations.
     unsafe {
         let ff_log = match args.verbose {
             0 => ffmpeg_sys_next::AV_LOG_ERROR,

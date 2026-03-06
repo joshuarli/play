@@ -1,8 +1,6 @@
 use std::cell::RefCell;
 use std::ffi::c_void;
 use std::ptr;
-use std::sync::OnceLock;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use objc2::encode::{Encoding, RefEncode};
 use objc2::msg_send;
@@ -11,36 +9,39 @@ use objc2::runtime::{AnyClass, AnyObject};
 
 use crate::cmd::VideoFrame;
 
-/// Opaque CoreMedia/CoreVideo types with proper ObjC encoding.
+// ── Opaque CoreMedia types ─────────────────────────────────────────
+
 #[repr(C)]
 struct OpaqueCMSampleBuffer {
     _priv: [u8; 0],
 }
 
+// SAFETY: Encoding matches CoreMedia's opaqueCMSampleBuffer struct pointer.
 unsafe impl RefEncode for OpaqueCMSampleBuffer {
     const ENCODING_REF: Encoding =
         Encoding::Pointer(&Encoding::Struct("opaqueCMSampleBuffer", &[]));
 }
 
-type CVPixelBufferRef = *mut c_void;
-type CMSampleBufferRef = *mut OpaqueCMSampleBuffer;
-type CMVideoFormatDescriptionRef = *mut c_void;
-/// Opaque CMTimebase with correct ObjC encoding for msg_send! validation.
 #[repr(C)]
 struct OpaqueCMTimebase {
     _priv: [u8; 0],
 }
 
+// SAFETY: Encoding matches CoreMedia's OpaqueCMTimebase struct pointer.
 unsafe impl RefEncode for OpaqueCMTimebase {
     const ENCODING_REF: Encoding = Encoding::Pointer(&Encoding::Struct("OpaqueCMTimebase", &[]));
 }
 
+type CVPixelBufferRef = *mut c_void;
+type CMSampleBufferRef = *mut OpaqueCMSampleBuffer;
+type CMVideoFormatDescriptionRef = *mut c_void;
 type CMTimebaseRef = *mut OpaqueCMTimebase;
 type CMClockRef = *mut c_void;
 type CFAllocatorRef = *const c_void;
 type OSStatus = i32;
 
-/// CMTime
+// ── CMTime ─────────────────────────────────────────────────────────
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 struct CMTime {
@@ -74,7 +75,6 @@ impl CMTime {
     }
 }
 
-/// CMSampleTimingInfo
 #[repr(C)]
 struct CMSampleTimingInfo {
     duration: CMTime,
@@ -89,7 +89,8 @@ const K_CM_TIME_INVALID: CMTime = CMTime {
     epoch: 0,
 };
 
-// CoreMedia C FFI
+// ── CoreMedia FFI ──────────────────────────────────────────────────
+
 unsafe extern "C" {
     fn CMVideoFormatDescriptionCreateForImageBuffer(
         allocator: CFAllocatorRef,
@@ -119,225 +120,319 @@ unsafe extern "C" {
     fn CMTimebaseGetTime(timebase: CMTimebaseRef) -> CMTime;
 }
 
-/// Wrapper to make *mut c_void Send+Sync for OnceLock.
-struct SendPtr(*mut c_void);
-unsafe impl Send for SendPtr {}
-unsafe impl Sync for SendPtr {}
+// ── RAII wrappers ──────────────────────────────────────────────────
 
-/// Global display layer (created on main thread, used from main thread timer).
-static DISPLAY_LAYER: OnceLock<SendPtr> = OnceLock::new();
+/// RAII wrapper for a CMTimebaseRef. Manages the timebase lifecycle and
+/// provides safe accessors for time/rate operations.
+struct Timebase(CMTimebaseRef);
 
-// Cached CMVideoFormatDescription — identical for all frames of the same file.
-// Thread-local RefCell (main-thread-only) instead of Mutex; reset between files.
-std::thread_local! {
-    static CACHED_FORMAT_DESC: RefCell<Option<SendPtr>> = const { RefCell::new(None) };
-}
-
-/// Wrapper to make CMTimebaseRef Send+Sync for OnceLock.
-struct SendTimebase(CMTimebaseRef);
-unsafe impl Send for SendTimebase {}
-unsafe impl Sync for SendTimebase {}
-
-/// CMTimebase driving the display layer's presentation timing.
-static TIMEBASE: OnceLock<SendTimebase> = OnceLock::new();
-/// Whether the timebase has been started (aligned to first frame).
-static TIMEBASE_STARTED: AtomicBool = AtomicBool::new(false);
-
-/// Initialize the AVSampleBufferDisplayLayer. Must be called on main thread.
-pub fn init_display_layer(width: u32, height: u32) {
-    let cls = AnyClass::get(c"AVSampleBufferDisplayLayer")
-        .expect("AVSampleBufferDisplayLayer class not found");
-    let layer: Retained<AnyObject> = unsafe { msg_send![cls, new] };
-
-    // Set video gravity to resize aspect
-    let gravity = objc2_foundation::NSString::from_str("AVLayerVideoGravityResizeAspect");
-    let _: () = unsafe { msg_send![&*layer, setVideoGravity: &*gravity] };
-
-    // Create a CMTimebase — start paused (rate 0.0) until the first frame arrives
-    let mut timebase: CMTimebaseRef = ptr::null_mut();
-    let status = unsafe {
-        CMTimebaseCreateWithSourceClock(ptr::null(), CMClockGetHostTimeClock(), &mut timebase)
-    };
-    if status == 0 && !timebase.is_null() {
-        unsafe {
-            CMTimebaseSetTime(timebase, CMTime::from_us(0));
-            CMTimebaseSetRate(timebase, 0.0);
+impl Timebase {
+    /// Create a new CMTimebase driven by the host time clock, starting paused.
+    fn new() -> Option<Self> {
+        let mut tb: CMTimebaseRef = ptr::null_mut();
+        // SAFETY: CMTimebaseCreateWithSourceClock allocates a new timebase.
+        // On success (status 0), tb is a valid CMTimebaseRef.
+        let status = unsafe {
+            CMTimebaseCreateWithSourceClock(ptr::null(), CMClockGetHostTimeClock(), &mut tb)
+        };
+        if status == 0 && !tb.is_null() {
+            // SAFETY: tb is valid; set initial time and paused rate.
+            unsafe {
+                CMTimebaseSetTime(tb, CMTime::from_us(0));
+                CMTimebaseSetRate(tb, 0.0);
+            }
+            Some(Self(tb))
+        } else {
+            log::warn!("Failed to create CMTimebase (status={status})");
+            None
         }
-        let _: () = unsafe { msg_send![&*layer, setControlTimebase: timebase] };
-        TIMEBASE.set(SendTimebase(timebase)).ok();
-        log::debug!("Display layer timebase created (paused until first frame)");
-    } else {
-        log::warn!("Failed to create CMTimebase (status={status}), playback timing may be wrong");
     }
 
-    // Store the raw pointer
-    let ptr: *mut c_void = Retained::into_raw(layer) as *mut c_void;
-    DISPLAY_LAYER.set(SendPtr(ptr)).ok();
+    fn set_time(&self, us: i64) {
+        // SAFETY: self.0 is a valid CMTimebase (from new()).
+        unsafe { CMTimebaseSetTime(self.0, CMTime::from_us(us)) };
+    }
 
-    log::debug!("Display layer initialized for {width}x{height}");
+    fn set_rate(&self, rate: f64) {
+        // SAFETY: self.0 is a valid CMTimebase.
+        unsafe { CMTimebaseSetRate(self.0, rate) };
+    }
+
+    fn time_us(&self) -> i64 {
+        // SAFETY: self.0 is a valid CMTimebase.
+        unsafe { CMTimebaseGetTime(self.0) }.to_us()
+    }
+
+    fn raw(&self) -> CMTimebaseRef {
+        self.0
+    }
 }
 
-/// Get the display layer as a CALayer to add as sublayer.
-pub fn display_layer_ptr() -> Option<*mut c_void> {
-    DISPLAY_LAYER.get().map(|p| p.0)
-}
+// Timebase is not dropped (lives for process lifetime via DisplayOutput).
+// If we needed Drop: CMTimebase is a CFType, released via CFRelease.
 
-/// Enqueue a video frame for display. Must be called on main thread.
-pub fn enqueue_frame(mut frame: VideoFrame) {
-    let Some(layer_wrap) = DISPLAY_LAYER.get() else {
-        return; // Drop releases the pixel buffer
-    };
+/// RAII wrapper for a CMVideoFormatDescriptionRef.
+struct FormatDescription(*mut c_void);
 
-    let Some(pb) = frame.pixel_buffer.take() else {
-        return;
-    };
-
-    // Timebase handling: call get() once, then branch on seek_flush vs first-frame.
-    let timebase = TIMEBASE.get();
-
-    // Flush display layer and reset timebase right before enqueuing, so the
-    // old frame is replaced atomically with no VSync gap.
-    if frame.seek_flush {
-        let layer = layer_wrap.0 as *mut AnyObject;
-        let _: () = unsafe { msg_send![layer, flush] };
-        if let Some(tb) = timebase {
-            unsafe {
-                CMTimebaseSetTime(tb.0, CMTime::from_us(frame.pts_us));
-            }
-            TIMEBASE_STARTED.store(true, Ordering::Relaxed);
+impl FormatDescription {
+    fn from_pixel_buffer(pixel_buffer: CVPixelBufferRef) -> Option<Self> {
+        let mut desc: CMVideoFormatDescriptionRef = ptr::null_mut();
+        // SAFETY: pixel_buffer is a valid, retained CVPixelBuffer.
+        let status = unsafe {
+            CMVideoFormatDescriptionCreateForImageBuffer(ptr::null(), pixel_buffer, &mut desc)
+        };
+        if status != 0 {
+            log::error!("CMVideoFormatDescriptionCreateForImageBuffer failed: {status}");
+            return None;
         }
-    } else if !TIMEBASE_STARTED.load(Ordering::Relaxed) {
-        // On the first valid frame, align the timebase to this frame's PTS and start it
-        if let Some(tb) = timebase {
-            unsafe {
-                CMTimebaseSetTime(tb.0, CMTime::from_us(frame.pts_us));
-                CMTimebaseSetRate(tb.0, 1.0);
+        Some(Self(desc))
+    }
+
+    fn raw(&self) -> *mut c_void {
+        self.0
+    }
+}
+
+impl Drop for FormatDescription {
+    fn drop(&mut self) {
+        if !self.0.is_null() {
+            // SAFETY: self.0 is a valid CMVideoFormatDescriptionRef (CFType).
+            unsafe { CFRelease(self.0) };
+        }
+    }
+}
+
+// ── DisplayOutput ──────────────────────────────────────────────────
+
+/// Owns the AVSampleBufferDisplayLayer and its associated state.
+/// Created once on the main thread; state is reset between files.
+pub struct DisplayOutput {
+    /// Raw pointer to the AVSampleBufferDisplayLayer (Retained::into_raw).
+    layer: *mut AnyObject,
+    timebase: Option<Timebase>,
+    timebase_started: bool,
+    cached_format_desc: Option<FormatDescription>,
+}
+
+impl DisplayOutput {
+    /// Create a new DisplayOutput with an AVSampleBufferDisplayLayer.
+    pub fn new(width: u32, height: u32) -> Self {
+        let cls = AnyClass::get(c"AVSampleBufferDisplayLayer")
+            .expect("AVSampleBufferDisplayLayer class not found");
+        // SAFETY: [AVSampleBufferDisplayLayer new] creates a new layer.
+        let layer: Retained<AnyObject> = unsafe { msg_send![cls, new] };
+
+        // SAFETY: setVideoGravity: is a valid method.
+        let gravity = objc2_foundation::NSString::from_str("AVLayerVideoGravityResizeAspect");
+        let _: () = unsafe { msg_send![&*layer, setVideoGravity: &*gravity] };
+
+        let timebase = Timebase::new();
+        if let Some(ref tb) = timebase {
+            // SAFETY: layer and tb.raw() are valid; setControlTimebase:
+            // transfers timing control to our timebase.
+            let _: () = unsafe { msg_send![&*layer, setControlTimebase: tb.raw()] };
+            log::debug!("Display layer timebase created (paused until first frame)");
+        }
+
+        let layer_ptr = Retained::into_raw(layer);
+        log::debug!("Display layer initialized for {width}x{height}");
+
+        Self {
+            layer: layer_ptr,
+            timebase,
+            timebase_started: false,
+            cached_format_desc: None,
+        }
+    }
+
+    /// Get the raw layer pointer (for adding as sublayer).
+    pub fn layer_ptr(&self) -> *mut c_void {
+        self.layer as *mut c_void
+    }
+
+    /// Enqueue a video frame for display.
+    pub fn enqueue_frame(&mut self, mut frame: VideoFrame) {
+        let Some(pb) = frame.pixel_buffer.take() else {
+            return;
+        };
+
+        // Flush + reset timebase on seek
+        if frame.seek_flush {
+            // SAFETY: self.layer is a valid AVSampleBufferDisplayLayer.
+            let _: () = unsafe { msg_send![self.layer, flush] };
+            if let Some(ref tb) = self.timebase {
+                tb.set_time(frame.pts_us);
             }
-            TIMEBASE_STARTED.store(true, Ordering::Relaxed);
+            self.timebase_started = true;
+        } else if !self.timebase_started {
+            // First frame: align timebase and start playback
+            if let Some(ref tb) = self.timebase {
+                tb.set_time(frame.pts_us);
+                tb.set_rate(1.0);
+            }
+            self.timebase_started = true;
             log::debug!("Timebase started at PTS {}us", frame.pts_us);
         }
-    }
 
-    // Take ownership — we'll release after handing to CoreMedia
-    let pixel_buffer = pb.take();
+        // Take ownership of the pixel buffer
+        let pixel_buffer = pb.take();
 
-    // Reuse cached CMVideoFormatDescription (same resolution/pixel format for entire file)
-    let format_desc = CACHED_FORMAT_DESC.with(|fd| {
-        let mut fd = fd.borrow_mut();
-        if let Some(ref cached) = *fd {
-            cached.0
+        // Reuse cached format description (same resolution/format per file)
+        let format_desc_raw = if let Some(ref fd) = self.cached_format_desc {
+            fd.raw()
         } else {
-            let mut desc: CMVideoFormatDescriptionRef = ptr::null_mut();
-            let status = unsafe {
-                CMVideoFormatDescriptionCreateForImageBuffer(ptr::null(), pixel_buffer, &mut desc)
-            };
-            if status != 0 {
-                log::error!("CMVideoFormatDescriptionCreateForImageBuffer failed: {status}");
-                unsafe { CVPixelBufferRelease(pixel_buffer) };
-                return ptr::null_mut();
+            match FormatDescription::from_pixel_buffer(pixel_buffer) {
+                Some(fd) => {
+                    let raw = fd.raw();
+                    self.cached_format_desc = Some(fd);
+                    raw
+                }
+                None => {
+                    // SAFETY: pixel_buffer is valid.
+                    unsafe { CVPixelBufferRelease(pixel_buffer) };
+                    return;
+                }
             }
-            *fd = Some(SendPtr(desc));
-            desc
+        };
+
+        // Create CMSampleBuffer
+        let timing = CMSampleTimingInfo {
+            duration: CMTime::from_us(frame.duration_us),
+            presentation_time_stamp: CMTime::from_us(frame.pts_us),
+            decode_time_stamp: K_CM_TIME_INVALID,
+        };
+
+        let mut sample_buffer: CMSampleBufferRef = ptr::null_mut();
+        // SAFETY: pixel_buffer and format_desc_raw are valid.
+        let status = unsafe {
+            CMSampleBufferCreateReadyWithImageBuffer(
+                ptr::null(),
+                pixel_buffer,
+                format_desc_raw,
+                &timing,
+                &mut sample_buffer,
+            )
+        };
+
+        if status != 0 {
+            log::error!("CMSampleBufferCreateReadyWithImageBuffer failed: {status}");
+            // SAFETY: pixel_buffer is still valid.
+            unsafe { CVPixelBufferRelease(pixel_buffer) };
+            return;
         }
-    });
-    if format_desc.is_null() {
-        return;
+
+        // SAFETY: layer is valid; enqueueSampleBuffer: retains the sample
+        // buffer internally.
+        let _: () = unsafe { msg_send![self.layer, enqueueSampleBuffer: sample_buffer] };
+
+        // SAFETY: Release our references. CMSampleBuffer retains the pixel
+        // buffer internally.
+        unsafe {
+            CFRelease(sample_buffer as *const c_void);
+            CVPixelBufferRelease(pixel_buffer);
+        }
     }
 
-    // Create CMSampleBuffer
-    let timing = CMSampleTimingInfo {
-        duration: CMTime::from_us(frame.duration_us),
-        presentation_time_stamp: CMTime::from_us(frame.pts_us),
-        decode_time_stamp: K_CM_TIME_INVALID,
-    };
-
-    let mut sample_buffer: CMSampleBufferRef = ptr::null_mut();
-    let status = unsafe {
-        CMSampleBufferCreateReadyWithImageBuffer(
-            ptr::null(),
-            pixel_buffer,
-            format_desc,
-            &timing,
-            &mut sample_buffer,
-        )
-    };
-
-    if status != 0 {
-        log::error!("CMSampleBufferCreateReadyWithImageBuffer failed: {status}");
-        unsafe { CVPixelBufferRelease(pixel_buffer) };
-        return;
+    /// Sync timebase to audio clock. Only adjusts if drift exceeds 5ms.
+    pub fn sync_timebase(&self, audio_pts_us: i64) {
+        if !self.timebase_started {
+            return;
+        }
+        if let Some(ref tb) = self.timebase {
+            let drift = audio_pts_us - tb.time_us();
+            if drift.abs() > 5_000 {
+                tb.set_time(audio_pts_us);
+                log::debug!("Timebase drift corrected: {drift}us");
+            }
+        }
     }
 
-    // Enqueue to display layer
-    let layer_ptr = layer_wrap.0;
-    let layer = layer_ptr as *mut AnyObject;
-    let _: () = unsafe { msg_send![layer, enqueueSampleBuffer: sample_buffer] };
+    /// Set the timebase rate (1.0 = playing, 0.0 = paused).
+    pub fn set_playback_rate(&self, rate: f64) {
+        if let Some(ref tb) = self.timebase {
+            tb.set_rate(rate);
+        }
+    }
 
-    // Release — CMSampleBuffer retains the pixel buffer, so we release our reference
-    unsafe {
-        CFRelease(sample_buffer as *const c_void);
-        CVPixelBufferRelease(pixel_buffer);
+    /// Flush the display layer and reset timebase for a seek.
+    pub fn flush_and_seek(&mut self, pts_us: i64) {
+        // SAFETY: self.layer is a valid AVSampleBufferDisplayLayer.
+        let _: () = unsafe { msg_send![self.layer, flush] };
+        if let Some(ref tb) = self.timebase {
+            tb.set_time(pts_us);
+        }
+        self.timebase_started = true;
+    }
+
+    /// Reset state between files (new resolution, new format description).
+    pub fn reset_for_new_file(&mut self) {
+        self.cached_format_desc = None;
+        self.timebase_started = false;
+        // SAFETY: self.layer is a valid AVSampleBufferDisplayLayer.
+        let _: () = unsafe { msg_send![self.layer, flush] };
     }
 }
 
-/// Sync the display layer timebase to the audio clock position.
-/// Only adjusts if drift exceeds 5ms to avoid fighting the timebase.
+// ── Global access (main-thread-only) ───────────────────────────────
+//
+// DisplayOutput lives in a thread-local RefCell because AppKit requires
+// main-thread access patterns and define_class! structs can't hold ivars.
+
+std::thread_local! {
+    static DISPLAY: RefCell<Option<DisplayOutput>> = const { RefCell::new(None) };
+}
+
+/// Initialize the global DisplayOutput. Must be called on main thread.
+pub fn init_display(width: u32, height: u32) {
+    DISPLAY.with(|d| *d.borrow_mut() = Some(DisplayOutput::new(width, height)));
+}
+
+/// Get the raw display layer pointer (for adding as sublayer).
+pub fn display_layer_ptr() -> Option<*mut c_void> {
+    DISPLAY.with(|d| d.borrow().as_ref().map(|d| d.layer_ptr()))
+}
+
+/// Enqueue a video frame. Must be called on main thread.
+pub fn enqueue_frame(frame: VideoFrame) {
+    DISPLAY.with(|d| {
+        if let Some(ref mut display) = *d.borrow_mut() {
+            display.enqueue_frame(frame);
+        }
+    });
+}
+
+/// Sync timebase to audio clock. Must be called on main thread.
 pub fn sync_timebase(audio_pts_us: i64) {
-    if !TIMEBASE_STARTED.load(Ordering::Relaxed) {
-        return;
-    }
-    if let Some(tb) = TIMEBASE.get() {
-        let tb_us = unsafe { CMTimebaseGetTime(tb.0) }.to_us();
-        let drift = audio_pts_us - tb_us;
-        if drift.abs() > 5_000 {
-            unsafe {
-                CMTimebaseSetTime(tb.0, CMTime::from_us(audio_pts_us));
-            }
-            log::debug!("Timebase drift corrected: {drift}us");
-        }
-    }
-}
-
-/// Set the timebase rate (1.0 = playing, 0.0 = paused).
-pub fn set_playback_rate(rate: f64) {
-    if let Some(tb) = TIMEBASE.get() {
-        unsafe {
-            CMTimebaseSetRate(tb.0, rate);
-        }
-    }
-}
-
-/// Flush the display layer and reset timebase for a seek.
-/// Must be called on the main thread.
-pub fn flush_and_seek(pts_us: i64) {
-    if let Some(layer_wrap) = DISPLAY_LAYER.get() {
-        let layer = layer_wrap.0 as *mut AnyObject;
-        let _: () = unsafe { msg_send![layer, flush] };
-    }
-    if let Some(tb) = TIMEBASE.get() {
-        unsafe {
-            CMTimebaseSetTime(tb.0, CMTime::from_us(pts_us));
-        }
-        // Ensure it's running after seek
-        TIMEBASE_STARTED.store(true, Ordering::Relaxed);
-    }
-}
-
-/// Reset state between files. Must be called on the main thread.
-pub fn reset_for_new_file() {
-    // Release and clear cached format description (resolution may differ)
-    CACHED_FORMAT_DESC.with(|fd| {
-        if let Some(desc) = fd.borrow_mut().take()
-            && !desc.0.is_null()
-        {
-            unsafe { CFRelease(desc.0) };
+    DISPLAY.with(|d| {
+        if let Some(ref display) = *d.borrow() {
+            display.sync_timebase(audio_pts_us);
         }
     });
-    // Reset timebase state so next file starts fresh
-    TIMEBASE_STARTED.store(false, Ordering::Relaxed);
-    // Flush display layer
-    if let Some(layer_wrap) = DISPLAY_LAYER.get() {
-        let layer = layer_wrap.0 as *mut AnyObject;
-        let _: () = unsafe { msg_send![layer, flush] };
-    }
+}
+
+/// Set playback rate. Must be called on main thread.
+pub fn set_playback_rate(rate: f64) {
+    DISPLAY.with(|d| {
+        if let Some(ref display) = *d.borrow() {
+            display.set_playback_rate(rate);
+        }
+    });
+}
+
+/// Flush and seek. Must be called on main thread.
+pub fn flush_and_seek(pts_us: i64) {
+    DISPLAY.with(|d| {
+        if let Some(ref mut display) = *d.borrow_mut() {
+            display.flush_and_seek(pts_us);
+        }
+    });
+}
+
+/// Reset for new file. Must be called on main thread.
+pub fn reset_for_new_file() {
+    DISPLAY.with(|d| {
+        if let Some(ref mut display) = *d.borrow_mut() {
+            display.reset_for_new_file();
+        }
+    });
 }

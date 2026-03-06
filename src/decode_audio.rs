@@ -29,6 +29,8 @@ pub struct AudioDecoder {
     accum_count: usize,
 }
 
+// SAFETY: AudioDecoder is only accessed from the player thread. The underlying
+// ffmpeg decoder/resampler are not thread-safe but we never share across threads.
 unsafe impl Send for AudioDecoder {}
 
 /// A decoded audio buffer with timing info. Samples are per-channel planes.
@@ -57,7 +59,10 @@ impl AudioDecoder {
         let mut codec_ctx = CodecContext::from_parameters(stream.parameters())
             .context("Failed to create audio codec context")?;
 
-        // Set packet timebase so decoders can handle priming samples (opus, aac)
+        // SAFETY: as_mut_ptr() returns the underlying AVCodecContext. We set
+        // pkt_timebase before opening the decoder so it can handle priming
+        // samples (opus, aac). We also read ch_layout.nb_channels from the
+        // modern API since the legacy channel_layout bitmask is often unset.
         let avctx = unsafe { codec_ctx.as_mut_ptr() };
         unsafe {
             (*avctx).pkt_timebase = ffs::AVRational {
@@ -66,8 +71,6 @@ impl AudioDecoder {
             };
         }
 
-        // Read channel count from the modern ch_layout API — the old
-        // channel_layout bitmask is unset for opus/aac, giving 0 channels.
         let channels = unsafe { (*avctx).ch_layout.nb_channels } as u16;
 
         let decoder = codec_ctx
@@ -111,6 +114,8 @@ impl AudioDecoder {
                     let pts = self.frame.pts().unwrap_or(0);
                     let pts_us = pts_to_us(pts, self.stream_time_base);
 
+                    // SAFETY: as_ptr() returns the valid AVFrame after successful
+                    // receive_frame(). ch_layout.nb_channels is always set.
                     let channels = unsafe { (*self.frame.as_ptr()).ch_layout.nb_channels } as usize;
                     let nb_samples = self.frame.samples();
 

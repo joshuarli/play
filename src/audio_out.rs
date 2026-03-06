@@ -167,6 +167,11 @@ impl SpscRing {
         let head = self.head.load(Ordering::Relaxed);
         let start = head & self.mask;
         let first = n.min(RING_CAPACITY - start);
+        // SAFETY: `buf` points to a valid allocation of RING_CAPACITY f32s (from
+        // Box::into_raw in new()). `start` is masked to [0, RING_CAPACITY), and
+        // `first + (n - first)` ≤ available_write() ≤ RING_CAPACITY, so both
+        // copy regions are in bounds. Only one producer calls push_slice (player
+        // thread), so no concurrent writes.
         unsafe {
             std::ptr::copy_nonoverlapping(src.as_ptr(), self.buf.add(start), first);
             if first < n {
@@ -188,6 +193,9 @@ impl SpscRing {
         let tail = self.tail.load(Ordering::Relaxed);
         let start = tail & self.mask;
         let first = n.min(RING_CAPACITY - start);
+        // SAFETY: Same bounds reasoning as push_slice. `dest` is a CoreAudio-
+        // provided buffer with at least `count` f32s of space. Only one consumer
+        // calls pop_to_ptr (the render callback), so no concurrent reads.
         unsafe {
             std::ptr::copy_nonoverlapping(self.buf.add(start), dest, first);
             if first < n {
@@ -207,7 +215,9 @@ impl SpscRing {
 
 impl Drop for SpscRing {
     fn drop(&mut self) {
-        // SAFETY: buf was created via Box<[f32]>::into_raw
+        // SAFETY: `buf` was created via Box<[f32; RING_CAPACITY]>::into_raw in
+        // new(). We reconstruct the same Box<[f32]> to free the allocation.
+        // &mut self guarantees exclusive access (no concurrent reader/writer).
         unsafe {
             drop(Box::from_raw(std::ptr::slice_from_raw_parts_mut(
                 self.buf,
@@ -247,6 +257,11 @@ unsafe extern "C" fn render_callback(
     in_number_frames: u32,
     io_data: *mut AudioBufferList,
 ) -> OSStatus {
+    // SAFETY: `in_ref_con` is a `*const CallbackContext` leaked via
+    // Box::into_raw in AudioOutput::new(). It remains valid for the lifetime
+    // of the AudioUnit (recovered and freed in AudioOutput::drop). The render
+    // callback is the sole consumer of the SPSC rings, and CoreAudio
+    // guarantees it is not called concurrently with itself.
     unsafe {
         let ctx = &*(in_ref_con as *const CallbackContext);
         let count = in_number_frames as usize;
@@ -291,6 +306,10 @@ unsafe extern "C" fn render_callback(
         }
 
         let to_read = count.min(available);
+        // SAFETY: CoreAudio provides `io_data` with `ch_count` non-interleaved
+        // buffers, each with space for `in_number_frames` f32 samples. We read
+        // the buffer pointer from each AudioBuffer entry and write up to
+        // `to_read` samples via pop_to_ptr, zeroing any remainder.
         for ch in 0..ch_count {
             let ab = &(*io_data).buffers.as_ptr().add(ch).read();
             let dest = ab.data as *mut f32;
@@ -311,6 +330,8 @@ unsafe extern "C" fn render_callback(
 }
 
 fn zero_output(abl: *mut AudioBufferList, channels: usize, count: usize) {
+    // SAFETY: `abl` is the CoreAudio-provided AudioBufferList with `channels`
+    // non-interleaved buffers, each with space for at least `count` f32s.
     unsafe {
         for ch in 0..channels {
             let buf = &(*abl).buffers.as_ptr().add(ch).read();
@@ -330,6 +351,8 @@ pub struct AudioOutput {
     paused: Cell<bool>,
 }
 
+// SAFETY: AudioOutput is only accessed from the player thread. The AudioUnit
+// and CallbackContext are thread-safe by construction (atomics + SPSC contract).
 unsafe impl Send for AudioOutput {}
 
 impl AudioOutput {
@@ -342,12 +365,16 @@ impl AudioOutput {
             component_flags_mask: 0,
         };
 
+        // SAFETY: AudioComponentFindNext is a CoreAudio API that searches for
+        // a matching audio component. NULL first arg means search from start.
         let component = unsafe { AudioComponentFindNext(std::ptr::null_mut(), &desc) };
         if component.is_null() {
             bail!("No default audio output component found");
         }
 
         let mut unit: AudioUnit = std::ptr::null_mut();
+        // SAFETY: AudioComponentInstanceNew creates a new AudioUnit instance
+        // from a valid component handle. Writes to `unit` on success.
         let mut status = unsafe { AudioComponentInstanceNew(component, &mut unit) };
         if status != 0 {
             bail!("AudioComponentInstanceNew failed: {status}");
@@ -368,6 +395,8 @@ impl AudioOutput {
             reserved: 0,
         };
 
+        // SAFETY: `unit` is a valid AudioUnit from AudioComponentInstanceNew.
+        // We pass a properly initialized ASBD struct with correct size.
         status = unsafe {
             AudioUnitSetProperty(
                 unit,
@@ -379,6 +408,7 @@ impl AudioOutput {
             )
         };
         if status != 0 {
+            // SAFETY: Disposing a valid AudioUnit that failed property setup.
             unsafe { AudioComponentInstanceDispose(unit) };
             bail!("Failed to set stream format: {status}");
         }
@@ -402,6 +432,9 @@ impl AudioOutput {
             input_proc_ref_con: ctx_ptr as *mut c_void,
         };
 
+        // SAFETY: `unit` is valid; `cb` contains our render function pointer
+        // and the leaked context pointer. CoreAudio will call render_callback
+        // with ctx_ptr as in_ref_con.
         status = unsafe {
             AudioUnitSetProperty(
                 unit,
@@ -413,6 +446,7 @@ impl AudioOutput {
             )
         };
         if status != 0 {
+            // SAFETY: Recover leaked context and dispose the unit on failure.
             unsafe {
                 drop(Box::from_raw(ctx_ptr));
                 AudioComponentInstanceDispose(unit);
@@ -420,8 +454,11 @@ impl AudioOutput {
             bail!("Failed to set render callback: {status}");
         }
 
+        // SAFETY: `unit` is fully configured; AudioUnitInitialize prepares
+        // the audio processing graph for rendering.
         status = unsafe { AudioUnitInitialize(unit) };
         if status != 0 {
+            // SAFETY: Recover leaked context and dispose on init failure.
             unsafe {
                 drop(Box::from_raw(ctx_ptr));
                 AudioComponentInstanceDispose(unit);
@@ -448,6 +485,8 @@ impl AudioOutput {
         if n == 0 {
             return;
         }
+        // SAFETY: ctx_ptr is valid for the lifetime of AudioOutput (leaked in
+        // new(), recovered in drop()).
         let ctx = unsafe { &*self.ctx_ptr };
 
         // If rings are empty, set the read PTS to this buffer's PTS
@@ -471,6 +510,8 @@ impl AudioOutput {
         }
 
         if self.stopped.get() && !self.paused.get() {
+            // SAFETY: unit is a valid, initialized AudioUnit. Starting it
+            // begins invoking the render callback on the audio thread.
             unsafe { AudioOutputUnitStart(self.unit) };
             self.stopped.set(false);
         }
@@ -483,6 +524,7 @@ impl AudioOutput {
         if n == 0 {
             return true;
         }
+        // SAFETY: ctx_ptr valid for AudioOutput lifetime (see schedule_buffer).
         let ctx = unsafe { &*self.ctx_ptr };
         let avail = ctx.rings.first().map_or(0, |r| r.available_write());
         if avail < n {
@@ -498,6 +540,7 @@ impl AudioOutput {
         }
 
         if self.stopped.get() && !self.paused.get() {
+            // SAFETY: unit is valid and initialized (see schedule_buffer).
             unsafe { AudioOutputUnitStart(self.unit) };
             self.stopped.set(false);
         }
@@ -506,6 +549,8 @@ impl AudioOutput {
 
     pub fn pause(&self) {
         if !self.stopped.get() {
+            // SAFETY: unit is a valid, running AudioUnit. Stop guarantees the
+            // render callback is not executing when it returns.
             unsafe { AudioOutputUnitStop(self.unit) };
         }
         self.stopped.set(true);
@@ -515,9 +560,12 @@ impl AudioOutput {
     pub fn play(&self) {
         self.paused.set(false);
         if self.stopped.get() {
+            // SAFETY: ctx_ptr valid for AudioOutput lifetime.
             let ctx = unsafe { &*self.ctx_ptr };
             let has_audio = ctx.rings.first().is_some_and(|r| r.available_read() > 0);
             if has_audio {
+                // SAFETY: unit is valid and initialized; starting resumes the
+                // render callback.
                 unsafe { AudioOutputUnitStart(self.unit) };
                 self.stopped.set(false);
             }
@@ -526,6 +574,7 @@ impl AudioOutput {
 
     pub fn stop(&self) {
         if !self.stopped.get() {
+            // SAFETY: unit is a valid, running AudioUnit.
             unsafe { AudioOutputUnitStop(self.unit) };
             self.stopped.set(true);
         }
@@ -533,6 +582,8 @@ impl AudioOutput {
 
     pub fn set_volume(&mut self, volume: f32) {
         self.volume = volume.clamp(0.0, 1.0);
+        // SAFETY: unit is valid and initialized. HAL_OUTPUT_PARAM_VOLUME
+        // is a valid parameter for the default output AudioUnit.
         unsafe {
             AudioUnitSetParameter(
                 self.unit,
@@ -549,9 +600,12 @@ impl AudioOutput {
     pub fn flush(&self) {
         // AudioOutputUnitStop guarantees the callback is not running after it returns.
         if !self.stopped.get() {
+            // SAFETY: unit is valid and running.
             unsafe { AudioOutputUnitStop(self.unit) };
             self.stopped.set(true);
         }
+        // SAFETY: ctx_ptr valid for AudioOutput lifetime. Callback is stopped,
+        // so ring.clear() has no concurrent consumer.
         let ctx = unsafe { &*self.ctx_ptr };
         for ring in &ctx.rings {
             ring.clear();
@@ -562,6 +616,7 @@ impl AudioOutput {
     /// invocation. Returns immediately — the skip happens in the callback
     /// thread within ~2-5ms, respecting the SPSC ring contract.
     pub fn request_skip(&self, samples: usize) {
+        // SAFETY: ctx_ptr valid for AudioOutput lifetime.
         let ctx = unsafe { &*self.ctx_ptr };
         ctx.skip_samples.fetch_add(samples, Ordering::Relaxed);
     }
@@ -569,6 +624,7 @@ impl AudioOutput {
     /// How many decoded samples are buffered ahead of the playback position,
     /// minus any pending skip that hasn't been consumed by the callback yet.
     pub fn buffered_samples(&self) -> usize {
+        // SAFETY: ctx_ptr valid for AudioOutput lifetime.
         let ctx = unsafe { &*self.ctx_ptr };
         let pending = ctx.skip_samples.load(Ordering::Relaxed);
         ctx.rings
@@ -582,6 +638,7 @@ impl AudioOutput {
     /// Update the callback's PTS tracking so the clock advances from the
     /// new position immediately, even while old audio drains from the ring.
     pub fn set_clock_position(&self, pts_us: i64) {
+        // SAFETY: ctx_ptr valid for AudioOutput lifetime.
         let ctx = unsafe { &*self.ctx_ptr };
         ctx.read_pts_us.store(pts_us, Ordering::Relaxed);
         ctx.clock.store(pts_us, Ordering::Relaxed);
@@ -591,6 +648,7 @@ impl AudioOutput {
     /// happens in the next callback invocation (the callback is the sole
     /// ring consumer, so only it may safely modify tail pointers).
     pub fn flush_quick(&self) {
+        // SAFETY: ctx_ptr valid for AudioOutput lifetime.
         let ctx = unsafe { &*self.ctx_ptr };
         ctx.flush_pending.store(true, Ordering::Release);
     }
@@ -598,6 +656,10 @@ impl AudioOutput {
 
 impl Drop for AudioOutput {
     fn drop(&mut self) {
+        // SAFETY: unit is a valid AudioUnit; we stop, uninitialize, and
+        // dispose it in the correct order. ctx_ptr was leaked via
+        // Box::into_raw in new() and is recovered here. &mut self guarantees
+        // no other references exist (the render callback is stopped).
         unsafe {
             AudioOutputUnitStop(self.unit);
             AudioUnitUninitialize(self.unit);

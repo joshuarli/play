@@ -177,6 +177,23 @@ pub fn parse_args() -> anyhow::Result<Args> {
     parse_from(std::env::args().skip(1).collect())
 }
 
+/// Take the next value for a `--flag`, supporting both `--flag value` (via
+/// the iterator) and the pre-split value from `--flag=value`.
+fn take_value<'a>(
+    flag: &str,
+    inline: Option<&'a str>,
+    iter: &mut impl Iterator<Item = String>,
+    buf: &'a mut String,
+) -> anyhow::Result<&'a str> {
+    if let Some(v) = inline {
+        return Ok(v);
+    }
+    *buf = iter
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("{flag} requires a value"))?;
+    Ok(buf.as_str())
+}
+
 fn parse_from(argv: Vec<String>) -> anyhow::Result<Args> {
     let mut files = Vec::new();
     let mut volume: u32 = 100;
@@ -186,49 +203,62 @@ fn parse_from(argv: Vec<String>) -> anyhow::Result<Args> {
     let mut start: Option<String> = None;
     let mut fullscreen = true;
     let mut verbose: u8 = 0;
+    let mut positional_only = false;
 
     let mut iter = argv.into_iter();
     while let Some(arg) = iter.next() {
-        match arg.as_str() {
+        if positional_only {
+            files.push(PathBuf::from(arg));
+            continue;
+        }
+
+        // Split --flag=value into (flag, Some(value))
+        let (flag, inline_val) = if arg.starts_with("--") && arg.contains('=') {
+            let (f, v) = arg.split_once('=').unwrap();
+            (f.to_string(), Some(v.to_string()))
+        } else {
+            (arg.clone(), None)
+        };
+        let inline_ref = inline_val.as_deref();
+        // Buffer for take_value when reading from iterator
+        let mut val_buf = String::new();
+
+        match flag.as_str() {
+            "--" => {
+                positional_only = true;
+            }
             "-h" | "--help" => {
                 println!("{USAGE}");
                 std::process::exit(0);
             }
             "--volume" => {
-                let val = iter
-                    .next()
-                    .ok_or_else(|| anyhow::anyhow!("--volume requires a value"))?;
-                volume = val.parse().map_err(|_| {
-                    anyhow::anyhow!("invalid value '{val}' for --volume: expected integer")
-                })?;
+                let val = take_value("--volume", inline_ref, &mut iter, &mut val_buf)?;
+                volume = val
+                    .parse::<u32>()
+                    .map_err(|_| {
+                        anyhow::anyhow!("invalid value '{val}' for --volume: expected integer")
+                    })?
+                    .min(100);
             }
             "--audio-delay" => {
-                let val = iter
-                    .next()
-                    .ok_or_else(|| anyhow::anyhow!("--audio-delay requires a value"))?;
+                let val = take_value("--audio-delay", inline_ref, &mut iter, &mut val_buf)?;
                 audio_delay = val.parse().map_err(|_| {
                     anyhow::anyhow!("invalid value '{val}' for --audio-delay: expected number")
                 })?;
             }
             "--audio-track" => {
-                let val = iter
-                    .next()
-                    .ok_or_else(|| anyhow::anyhow!("--audio-track requires a value"))?;
+                let val = take_value("--audio-track", inline_ref, &mut iter, &mut val_buf)?;
                 audio_track = val.parse().map_err(|_| {
                     anyhow::anyhow!("invalid value '{val}' for --audio-track: expected integer")
                 })?;
             }
             "--sub-file" => {
-                let val = iter
-                    .next()
-                    .ok_or_else(|| anyhow::anyhow!("--sub-file requires a value"))?;
+                let val = take_value("--sub-file", inline_ref, &mut iter, &mut val_buf)?;
                 sub_file = Some(PathBuf::from(val));
             }
             "--start" => {
-                let val = iter
-                    .next()
-                    .ok_or_else(|| anyhow::anyhow!("--start requires a value"))?;
-                start = Some(val);
+                let val = take_value("--start", inline_ref, &mut iter, &mut val_buf)?;
+                start = Some(val.to_string());
             }
             "--fullscreen" => fullscreen = true,
             "--no-fullscreen" => fullscreen = false,
@@ -329,5 +359,24 @@ mod tests {
     fn unknown_flag_is_error() {
         let e = parse_from(args(&["--nope", "f.mp4"])).unwrap_err();
         assert!(e.to_string().contains("unknown option"));
+    }
+
+    #[test]
+    fn equals_syntax() {
+        let a = parse_from(args(&["--volume=50", "--audio-delay=-0.5", "f.mp4"])).unwrap();
+        assert_eq!(a.volume, 50);
+        assert_eq!(a.audio_delay, -0.5);
+    }
+
+    #[test]
+    fn double_dash_terminates_options() {
+        let a = parse_from(args(&["--", "--not-a-flag.mp4"])).unwrap();
+        assert_eq!(a.files, vec![PathBuf::from("--not-a-flag.mp4")]);
+    }
+
+    #[test]
+    fn volume_clamped_to_100() {
+        let a = parse_from(args(&["--volume", "200", "f.mp4"])).unwrap();
+        assert_eq!(a.volume, 100);
     }
 }

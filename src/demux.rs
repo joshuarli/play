@@ -17,6 +17,9 @@ const CACHE_MAX_BYTES: usize = 150 * 1024 * 1024;
 /// Unlike Packet::clone() which calls av_packet_make_writable (deep copy),
 /// this shares the underlying AVBufferRef.
 fn clone_packet_ref(src: &ffmpeg::Packet) -> ffmpeg::Packet {
+    // SAFETY: as_ptr()/as_mut_ptr() return valid AVPacket pointers.
+    // av_packet_ref copies metadata and increments the data buffer's refcount
+    // without memcpy. The destination packet was just created empty (zeroed).
     unsafe {
         use ffmpeg::codec::packet::traits::{Mut, Ref};
         let mut dst = ffmpeg::Packet::empty();
@@ -344,6 +347,10 @@ impl DemuxState {
         let wanted: [Option<usize>; 3] = [video_idx, audio_idx, subtitle_idx];
         for stream in ictx.streams() {
             if !wanted.iter().any(|&w| w == Some(stream.index())) {
+                // SAFETY: stream.as_ptr() returns a valid AVStream. We cast
+                // to mutable to set the discard flag, which tells the demuxer
+                // to skip packets for this stream. This is safe because we
+                // haven't started reading packets yet.
                 unsafe {
                     let s = stream.as_ptr() as *mut ffs::AVStream;
                     (*s).discard = ffs::AVDiscard::AVDISCARD_ALL;

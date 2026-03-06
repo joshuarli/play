@@ -26,6 +26,9 @@ unsafe extern "C" {
 }
 
 pub(crate) fn create_cgcolor(r: f64, g: f64, b: f64, a: f64) -> *mut CGColor {
+    // SAFETY: CGColorSpaceCreateDeviceRGB returns a valid color space with +1
+    // refcount. CGColorCreate creates a color with the 4-component RGBA array.
+    // We release the color space immediately (the color retains it internally).
     unsafe {
         let space = CGColorSpaceCreateDeviceRGB();
         let c = [r, g, b, a];
@@ -37,6 +40,7 @@ pub(crate) fn create_cgcolor(r: f64, g: f64, b: f64, a: f64) -> *mut CGColor {
 
 pub(crate) fn release_cgcolor(color: *mut CGColor) {
     if !color.is_null() {
+        // SAFETY: Caller guarantees color was created by create_cgcolor.
         unsafe { CGColorRelease(color) };
     }
 }
@@ -48,27 +52,35 @@ pub(crate) fn release_cgcolor(color: *mut CGColor) {
 // valid for the OSD lifetime (main thread, never freed until process exit).
 
 /// A `CALayer` with typed accessors for the operations we use.
+/// SAFETY invariant: the inner pointer is a valid ObjC CALayer (or subclass)
+/// created via Retained::into_raw in init_layers(). It remains valid for the
+/// process lifetime (layers are never deallocated).
 struct Layer(*mut AnyObject);
 
 impl Layer {
     fn set_opacity(&self, opacity: f32) {
+        // SAFETY: self.0 is a valid CALayer per struct invariant.
         let _: () = unsafe { msg_send![self.0, setOpacity: opacity] };
     }
 
     fn set_frame(&self, frame: CGRect) {
+        // SAFETY: self.0 is a valid CALayer per struct invariant.
         let _: () = unsafe { msg_send![self.0, setFrame: frame] };
     }
 
     fn frame(&self) -> CGRect {
+        // SAFETY: self.0 is a valid CALayer per struct invariant.
         unsafe { msg_send![self.0, frame] }
     }
 
     fn bounds(&self) -> CGRect {
+        // SAFETY: self.0 is a valid CALayer per struct invariant.
         unsafe { msg_send![self.0, bounds] }
     }
 }
 
 /// A `CATextLayer` with typed accessors.
+/// SAFETY invariant: the inner Layer wraps a valid CATextLayer.
 struct TextLayer(Layer);
 
 impl TextLayer {
@@ -81,10 +93,13 @@ impl TextLayer {
     }
 
     fn set_string(&self, s: &objc2_foundation::NSString) {
+        // SAFETY: self.0.0 is a valid CATextLayer; setString: accepts NSString.
         let _: () = unsafe { msg_send![self.0 .0, setString: s] };
     }
 
     fn set_attributed_string(&self, attr: &AnyObject) {
+        // SAFETY: self.0.0 is a valid CATextLayer; setString: also accepts
+        // NSAttributedString (CATextLayer renders either type).
         let _: () = unsafe { msg_send![self.0 .0, setString: attr] };
     }
 }
@@ -156,12 +171,15 @@ use crate::time::now_ms;
 
 fn disable_animations() {
     let cls = AnyClass::get(c"CATransaction").unwrap();
+    // SAFETY: CATransaction class methods; begin starts a transaction,
+    // setDisableActions: suppresses implicit layer animations.
     let _: () = unsafe { msg_send![cls, begin] };
     let _: () = unsafe { msg_send![cls, setDisableActions: Bool::YES] };
 }
 
 fn commit_animations() {
     let cls = AnyClass::get(c"CATransaction").unwrap();
+    // SAFETY: CATransaction commit ends the current transaction.
     let _: () = unsafe { msg_send![cls, commit] };
 }
 
@@ -188,6 +206,11 @@ fn track_width(bar_w: f64) -> f64 {
 // ── Layer creation ─────────────────────────────────────────────────────────
 
 /// Create OSD + subtitle layers on the given parent layer. Main thread only.
+///
+/// # Safety contract
+/// `parent_ptr` must be a valid CALayer. All msg_send! calls in this function
+/// target standard CALayer/CATextLayer methods. Layer pointers are leaked via
+/// Retained::into_raw and stored in OsdInner for the process lifetime.
 pub fn init_layers(parent_ptr: *mut c_void, bounds: CGRect) {
     let parent = parent_ptr as *mut AnyObject;
     let text_cls = AnyClass::get(c"CATextLayer").expect("CATextLayer");
@@ -334,6 +357,9 @@ pub fn init_layers(parent_ptr: *mut c_void, bounds: CGRect) {
     });
 }
 
+/// Configure a CATextLayer with common properties.
+/// SAFETY: `layer` must be a valid CATextLayer. All msg_send! calls target
+/// standard CATextLayer/CALayer properties.
 fn setup_text_layer(layer: &AnyObject, frame: CGRect, font_size: f64, scale: f64, centered: bool) {
     let _: () = unsafe { msg_send![layer, setFrame: frame] };
     let _: () = unsafe { msg_send![layer, setFontSize: font_size] };
@@ -363,6 +389,8 @@ fn setup_text_layer(layer: &AnyObject, frame: CGRect, font_size: f64, scale: f64
 }
 
 /// Configure a timestamp text layer inside the progress bar.
+/// SAFETY: `layer` must be a valid CATextLayer. All msg_send! calls target
+/// standard CATextLayer/CALayer properties.
 fn setup_bar_text_layer(layer: &AnyObject, frame: CGRect, scale: f64, right_align: bool) {
     let _: () = unsafe { msg_send![layer, setFrame: frame] };
     let _: () = unsafe { msg_send![layer, setContentsScale: scale] };
@@ -403,6 +431,10 @@ fn build_sub_string(
     shadow: *mut AnyObject,
     para: *mut AnyObject,
 ) -> Retained<AnyObject> {
+    // SAFETY: All msg_send! calls target standard AppKit/Foundation classes
+    // (NSFont, NSColor, NSMutableDictionary, NSAttributedString). shadow and
+    // para are valid objects created in init_layers() and kept alive for the
+    // process lifetime via Retained::into_raw.
     unsafe {
         let font_cls = AnyClass::get(c"NSFont").unwrap();
         let font: Retained<AnyObject> = msg_send![font_cls, systemFontOfSize: font_size];

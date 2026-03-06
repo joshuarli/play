@@ -60,9 +60,9 @@ File → Demuxer (PacketCache, binary search) → DemuxPacket
 | `demux.rs` | ~870 | DemuxState struct encapsulates loop state; classify_packet/handle_command/send_or_handle_command/drain_commands collapse formerly-duplicated select! arms. PacketCache (binary search), seek coalescing, ChangeAudio, stream probe. |
 | `decode_video.rs` | ~170 | VideoToolbox hwaccel setup, PixelBuffer extraction from AVFrame.data[3] |
 | `decode_audio.rs` | ~230 | ffmpeg audio decode + resample to f32 planar, per-channel planes, 8192-sample accumulation with Vec reuse, end_us() |
-| `video_out.rs` | ~340 | AVSampleBufferDisplayLayer, CMSampleBuffer from PixelBuffer, CMTimebase sync |
+| `video_out.rs` | ~340 | DisplayOutput struct (owns layer + Timebase + FormatDescription RAII wrappers), CMSampleBuffer from PixelBuffer, drift correction |
 | `audio_out.rs` | ~610 | CoreAudio AudioUnit, lock-free SPSC ring buffers (524288 samples/ch), non-interleaved f32 render callback, ring skip/flush_quick |
-| `window.rs` | ~455 | NSWindow via objc2 define_class!, key/mouse monitors, GCD timer (60Hz / 16ms), layer setup |
+| `window.rs` | ~455 | NSWindow via objc2 define_class!, key/mouse monitors, GCD timer (60Hz / 16ms), layer setup. Consolidated AppState thread-local. |
 | `osd.rs` | ~590 | Typed Layer/TextLayer/ProgressBar wrappers confine msg_send! to small surface. CATextLayer OSD, NSAttributedString subtitles (cached styles), clickable progress bar. |
 | `sync.rs` | ~100 | Audio-master clock (AtomicI64), pause/resume, seek position |
 | `subtitle.rs` | ~265 | SRT parser, binary search lookup, auto-detection of .srt files |
@@ -171,9 +171,9 @@ Steady-state playback is optimized to minimize wakeups and allocations:
 - **50ms player idle timeout** (`player.rs`): The `select!` timeout only fires when channels are
   quiet (paused, near EOF). During normal playback, select wakes instantly on packet arrival. 50ms
   cuts idle wakeups from 250/s to 20/s while keeping subtitle timing acceptable.
-- **Thread-local state** (`window.rs`, `osd.rs`): `FILE_STATE`, `END_REASON`, and `OSD` are
-  `thread_local! RefCell` instead of `Mutex` — all accesses are main-thread-only (timer, key/mouse
-  handlers, run_app). Eliminates lock/unlock overhead on every timer tick and input event.
+- **Thread-local state** (`window.rs`, `osd.rs`): `APP_STATE` (consolidated from three separate
+  thread-locals) and `OSD` are `thread_local! RefCell` instead of `Mutex` — all accesses are
+  main-thread-only (timer, key/mouse handlers, run_app). `DisplayOutput` uses its own thread-local.
 - **Monotonic clock** (`time.rs`): `now_ms()` uses `Instant` instead of `SystemTime` — immune to
   NTP adjustments and cheaper on Apple Silicon (`mach_absolute_time` vs `gettimeofday`).
 - **Stream discard** (`demux.rs`): Sets `AVDISCARD_ALL` on unused ffmpeg streams so the demuxer
@@ -188,9 +188,10 @@ Steady-state playback is optimized to minimize wakeups and allocations:
   objc2's runtime type checking for `enqueueSampleBuffer:`.
 - ffmpeg-sys-next `build-audiotoolbox` feature is broken on macOS (adds iOS flags). Omit it;
   audio output uses CoreAudio AudioUnit via C FFI instead.
-- Main-thread state (`NSWindow`, `FileState`, `EndReason`, `OsdInner`) uses `thread_local! RefCell`
-  — not `Mutex` — since all access is on the main GCD queue. Display layer pointer wrapped in
-  `SendPtr` newtype for `OnceLock`.
+- Main-thread state consolidated into `AppState` struct (single `thread_local! RefCell` instead of
+  three separate ones for FileState/Window/EndReason). `OsdInner` remains its own thread-local.
+  `DisplayOutput` in `video_out.rs` owns the layer, timebase, and format description in a single
+  thread-local — no more `OnceLock` + `SendPtr` wrappers.
 - `define_class!` in objc2 0.6 requires unit structs (no inline ivars). State goes in globals.
 - Opus/AAC `ch_layout.nb_channels` must be read from the modern API — the legacy
   `channel_layout` bitmask is often unset, giving 0 channels.

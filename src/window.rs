@@ -19,8 +19,10 @@ use crate::input::map_key;
 
 // ── Global state ───────────────────────────────────────────────────────────
 
-/// Per-file state that gets replaced between playlist entries.
-struct FileState {
+/// All main-thread state consolidated into a single struct.
+/// Replaces the three separate thread-locals (FILE_STATE, WINDOW, END_REASON).
+struct AppState {
+    // Per-file state (replaced between playlist entries)
     cmd_tx: Sender<Command>,
     video_frame_rx: crossbeam_channel::Receiver<VideoFrame>,
     ui_update_rx: crossbeam_channel::Receiver<UiUpdate>,
@@ -28,30 +30,53 @@ struct FileState {
     duration_us: i64,
     file_index: usize,
     file_count: usize,
+
+    // Per-app state
+    window: Option<Retained<NSWindow>>,
+    end_reason: Option<EndReason>,
 }
 
-// All state below is main-thread-only (timer, key handler, mouse handler,
-// run_app all execute on the main GCD queue). RefCell enforces this at the
-// type level and avoids Mutex lock/unlock overhead on every timer tick.
+// All state is main-thread-only (timer, key handler, mouse handler, run_app
+// all execute on the main GCD queue). RefCell enforces this at the type level
+// and avoids Mutex lock/unlock overhead on every timer tick.
 std::thread_local! {
-    static FILE_STATE: RefCell<Option<FileState>> = const { RefCell::new(None) };
-    static WINDOW: RefCell<Option<Retained<NSWindow>>> = const { RefCell::new(None) };
-    static END_REASON: RefCell<Option<EndReason>> = const { RefCell::new(None) };
+    static APP_STATE: RefCell<Option<AppState>> = const { RefCell::new(None) };
 }
 static INITIAL_SIZE: std::sync::OnceLock<(u32, u32)> = std::sync::OnceLock::new();
 static START_FULLSCREEN: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
 
-/// Replace all per-file state.
-fn set_file_state(state: FileState) {
-    FILE_STATE.with(|fs| *fs.borrow_mut() = Some(state));
-    END_REASON.with(|er| *er.borrow_mut() = None);
+/// Replace per-file state, preserving the window reference.
+fn set_file_state(
+    cmd_tx: Sender<Command>,
+    video_frame_rx: crossbeam_channel::Receiver<VideoFrame>,
+    ui_update_rx: crossbeam_channel::Receiver<UiUpdate>,
+    audio_clock: Arc<AtomicI64>,
+    duration_us: i64,
+    file_index: usize,
+    file_count: usize,
+) {
+    APP_STATE.with(|s| {
+        let mut s = s.borrow_mut();
+        let window = s.as_mut().and_then(|state| state.window.take());
+        *s = Some(AppState {
+            cmd_tx,
+            video_frame_rx,
+            ui_update_rx,
+            audio_clock,
+            duration_us,
+            file_index,
+            file_count,
+            window,
+            end_reason: None,
+        });
+    });
 }
 
 /// Send a command to the player thread.
 fn send_cmd(cmd: Command) {
-    FILE_STATE.with(|fs| {
-        let fs = fs.borrow();
-        let Some(ref state) = *fs else { return };
+    APP_STATE.with(|s| {
+        let s = s.borrow();
+        let Some(ref state) = *s else { return };
         // Ignore next/prev when already at playlist boundary
         if matches!(cmd, Command::NextFile) && state.file_index + 1 >= state.file_count {
             return;
@@ -117,6 +142,8 @@ define_class!(
             let (vw, vh) = INITIAL_SIZE.get().copied().unwrap_or((960, 540));
 
             // Cap window to 80% of screen
+            // SAFETY: NSScreen class and mainScreen/visibleFrame are standard
+            // AppKit APIs available on all macOS versions we target.
             let screen_cls = AnyClass::get(c"NSScreen").unwrap();
             let screen: Retained<AnyObject> = unsafe { msg_send![screen_cls, mainScreen] };
             let sf: CGRect = unsafe { msg_send![&*screen, visibleFrame] };
@@ -132,6 +159,7 @@ define_class!(
                 | NSWindowStyleMask::Miniaturizable
                 | NSWindowStyleMask::Resizable;
 
+            // SAFETY: Standard NSWindow initialization with valid parameters.
             let window = unsafe {
                 NSWindow::initWithContentRect_styleMask_backing_defer(
                     NSWindow::alloc(mtm),
@@ -141,6 +169,7 @@ define_class!(
                     false,
                 )
             };
+            // SAFETY: We manage the window lifetime ourselves via Retained.
             unsafe { window.setReleasedWhenClosed(false) };
             window.setTitle(&objc2_foundation::NSString::from_str("play"));
             window.center();
@@ -149,10 +178,12 @@ define_class!(
             if let Some(view) = window.contentView() {
                 view.setWantsLayer(true);
 
-                crate::video_out::init_display_layer(vw, vh);
+                crate::video_out::init_display(vw, vh);
 
                 if let Some(layer) = view.layer() {
-                    // Black background
+                    // SAFETY: All msg_send! calls target standard CALayer
+                    // properties/methods. display_layer is a valid
+                    // AVSampleBufferDisplayLayer from video_out::init_display_layer.
                     let black = crate::osd::create_cgcolor(0.0, 0.0, 0.0, 1.0);
                     let _: () = unsafe { msg_send![&*layer, setBackgroundColor: black] };
                     crate::osd::release_cgcolor(black);
@@ -185,7 +216,11 @@ define_class!(
                 window.toggleFullScreen(None);
             }
 
-            WINDOW.with(|w| *w.borrow_mut() = Some(window));
+            APP_STATE.with(|s| {
+                if let Some(ref mut state) = *s.borrow_mut() {
+                    state.window = Some(window);
+                }
+            });
 
             install_key_monitor();
             install_mouse_monitor();
@@ -196,7 +231,11 @@ define_class!(
     unsafe impl NSWindowDelegate for AppDelegate {
         #[unsafe(method(windowWillClose:))]
         fn window_will_close(&self, _: &NSNotification) {
-            END_REASON.with(|er| *er.borrow_mut() = Some(EndReason::Quit));
+            APP_STATE.with(|s| {
+                if let Some(ref mut state) = *s.borrow_mut() {
+                    state.end_reason = Some(EndReason::Quit);
+                }
+            });
             send_cmd(Command::Quit);
             stop_app();
         }
@@ -205,6 +244,7 @@ define_class!(
 
 impl AppDelegate {
     fn new(mtm: MainThreadMarker) -> Retained<Self> {
+        // SAFETY: Standard NSObject alloc/init pattern.
         unsafe { msg_send![Self::alloc(mtm), init] }
     }
 }
@@ -231,8 +271,10 @@ fn install_key_monitor() {
         if let Some(cmd) = map_key(key_code, shift, &chars) {
             // Handle fullscreen directly on main thread
             if matches!(cmd, Command::ToggleFullscreen) {
-                WINDOW.with(|w| {
-                    if let Some(ref win) = *w.borrow() {
+                APP_STATE.with(|s| {
+                    if let Some(ref state) = *s.borrow()
+                        && let Some(ref win) = state.window
+                    {
                         win.toggleFullScreen(None);
                     }
                 });
@@ -245,7 +287,11 @@ fn install_key_monitor() {
                 crate::osd::show_bar();
             }
             if is_quit {
-                END_REASON.with(|er| *er.borrow_mut() = Some(EndReason::Quit));
+                APP_STATE.with(|s| {
+                    if let Some(ref mut state) = *s.borrow_mut() {
+                        state.end_reason = Some(EndReason::Quit);
+                    }
+                });
                 stop_app();
             }
             return std::ptr::null_mut();
@@ -253,6 +299,9 @@ fn install_key_monitor() {
         event_ptr.as_ptr()
     });
 
+    // SAFETY: addLocalMonitorForEventsMatchingMask:handler: installs a block
+    // that intercepts key events before they reach the responder chain. The
+    // monitor is leaked (never removed) — it lives for the process lifetime.
     unsafe {
         let _monitor = NSEvent::addLocalMonitorForEventsMatchingMask_handler(mask, &handler);
     }
@@ -281,8 +330,8 @@ fn install_mouse_monitor() {
                 if location.y <= crate::osd::bar_height()
                     && let Some(fraction) = crate::osd::bar_fraction_at_x(location.x)
                 {
-                    let duration = FILE_STATE
-                        .with(|fs| fs.borrow().as_ref().map(|s| s.duration_us))
+                    let duration = APP_STATE
+                        .with(|s| s.borrow().as_ref().map(|s| s.duration_us))
                         .unwrap_or(0);
                     let target_us = (fraction * duration as f64) as i64;
                     send_cmd(Command::SeekAbsolute { target_us });
@@ -295,6 +344,7 @@ fn install_mouse_monitor() {
         event_ptr.as_ptr()
     });
 
+    // SAFETY: Same as key monitor — installs a block for mouse events.
     unsafe {
         let _monitor = NSEvent::addLocalMonitorForEventsMatchingMask_handler(mask, &handler);
     }
@@ -308,6 +358,7 @@ fn start_main_timer() {
     let queue = DispatchQueue::main();
     let timer_type: dispatch2::dispatch_source_type_t =
         &raw const dispatch2::_dispatch_source_type_timer as *mut _;
+    // SAFETY: DispatchSource::new creates a GCD timer source on the main queue.
     let source = unsafe { DispatchSource::new(timer_type, 0, 0, Some(queue)) };
 
     // 16ms interval (~60Hz), 2ms leeway — AVSampleBufferDisplayLayer's
@@ -320,11 +371,14 @@ fn start_main_timer() {
     // Counter for periodic drift correction (~1s)
     let drift_counter = std::cell::Cell::new(0u32);
     let handler = block2::RcBlock::new(move || {
-        FILE_STATE.with(|fs| {
-            let fs = fs.borrow();
-            let Some(ref state) = *fs else { return };
+        // Borrow state immutably for processing, collecting any EOF signal.
+        let (eof, progress) = APP_STATE.with(|s| {
+            let s = s.borrow();
+            let Some(ref state) = *s else {
+                return (None, (0i64, 0i64));
+            };
 
-            process_pending_ui_updates(state);
+            let eof = process_pending_ui_updates(state);
             process_pending_frames(state);
 
             let c = drift_counter.get() + 1;
@@ -336,13 +390,25 @@ fn start_main_timer() {
             }
 
             let current = state.audio_clock.load(Ordering::Relaxed);
-            let progress = (current, state.duration_us);
-
-            drop(fs);
-            crate::osd::tick(progress);
+            (eof, (current, state.duration_us))
         });
+
+        // Apply EOF (needs mutable borrow, separate from above)
+        if let Some(reason) = eof {
+            APP_STATE.with(|s| {
+                if let Some(ref mut state) = *s.borrow_mut() {
+                    state.end_reason = Some(reason);
+                }
+            });
+            stop_app();
+        }
+
+        crate::osd::tick(progress);
     });
 
+    // SAFETY: set_event_handler_with_block sets the timer's handler block.
+    // The block and source are leaked (std::mem::forget) to keep the timer
+    // alive for the process lifetime.
     unsafe {
         source.set_event_handler_with_block(
             &*handler as *const block2::DynBlock<dyn Fn()> as *mut block2::DynBlock<dyn Fn()>,
@@ -353,7 +419,7 @@ fn start_main_timer() {
     std::mem::forget(handler);
 }
 
-fn process_pending_frames(state: &FileState) {
+fn process_pending_frames(state: &AppState) {
     for _ in 0..8 {
         match state.video_frame_rx.try_recv() {
             Ok(frame) => {
@@ -364,7 +430,10 @@ fn process_pending_frames(state: &FileState) {
     }
 }
 
-fn process_pending_ui_updates(state: &FileState) {
+/// Process UI updates. Returns Some(EndReason) if EOF was received (caller
+/// must set end_reason after releasing the borrow).
+fn process_pending_ui_updates(state: &AppState) -> Option<EndReason> {
+    let mut eof = None;
     while let Ok(update) = state.ui_update_rx.try_recv() {
         match update {
             UiUpdate::Osd(text) => crate::osd::show_message(&text),
@@ -382,12 +451,12 @@ fn process_pending_ui_updates(state: &FileState) {
                 crate::video_out::flush_and_seek(pts_us);
             }
             UiUpdate::EndOfFile(reason) => {
-                END_REASON.with(|er| *er.borrow_mut() = Some(reason));
                 let _ = state.cmd_tx.send(Command::Quit);
-                stop_app();
+                eof = Some(reason);
             }
         }
     }
+    eof
 }
 
 // ── Public API ─────────────────────────────────────────────────────────────
@@ -407,7 +476,7 @@ pub fn run_app(
     file_index: usize,
     file_count: usize,
 ) -> EndReason {
-    set_file_state(FileState {
+    set_file_state(
         cmd_tx,
         video_frame_rx,
         ui_update_rx,
@@ -415,7 +484,7 @@ pub fn run_app(
         duration_us,
         file_index,
         file_count,
-    });
+    );
 
     let mtm = MainThreadMarker::new().expect("must run on main thread");
     let app = NSApplication::sharedApplication(mtm);
@@ -438,8 +507,10 @@ pub fn run_app(
     } else {
         // Subsequent files: reset display for new resolution, update title
         crate::video_out::reset_for_new_file();
-        WINDOW.with(|w| {
-            if let Some(ref win) = *w.borrow() {
+        APP_STATE.with(|s| {
+            if let Some(ref state) = *s.borrow()
+                && let Some(ref win) = state.window
+            {
                 win.setTitle(&objc2_foundation::NSString::from_str(title));
             }
         });
@@ -447,7 +518,11 @@ pub fn run_app(
 
     app.run();
 
-    END_REASON
-        .with(|er| er.borrow_mut().take())
+    APP_STATE
+        .with(|s| {
+            s.borrow_mut()
+                .as_mut()
+                .and_then(|state| state.end_reason.take())
+        })
         .unwrap_or(EndReason::Quit)
 }
