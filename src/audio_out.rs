@@ -115,6 +115,103 @@ unsafe extern "C" {
     ) -> OSStatus;
 }
 
+// ── AudioUnit RAII wrapper ─────────────────────────────────────────
+
+/// RAII wrapper for a CoreAudio AudioUnit. Handles dispose on drop.
+struct AudioUnitHandle(AudioUnit);
+
+impl AudioUnitHandle {
+    /// Create a new default-output AudioUnit.
+    fn new_default_output() -> Result<Self> {
+        let desc = AudioComponentDescription {
+            component_type: AUDIO_UNIT_TYPE_OUTPUT,
+            component_sub_type: AUDIO_UNIT_SUBTYPE_DEFAULT_OUTPUT,
+            component_manufacturer: AUDIO_UNIT_MANUFACTURER_APPLE,
+            component_flags: 0,
+            component_flags_mask: 0,
+        };
+        // SAFETY: AudioComponentFindNext searches for a matching audio component.
+        // NULL first arg means search from start.
+        let component = unsafe { AudioComponentFindNext(std::ptr::null_mut(), &desc) };
+        if component.is_null() {
+            bail!("No default audio output component found");
+        }
+        let mut unit: AudioUnit = std::ptr::null_mut();
+        // SAFETY: AudioComponentInstanceNew creates a new AudioUnit instance
+        // from a valid component handle. Writes to `unit` on success.
+        let status = unsafe { AudioComponentInstanceNew(component, &mut unit) };
+        if status != 0 {
+            bail!("AudioComponentInstanceNew failed: {status}");
+        }
+        Ok(Self(unit))
+    }
+
+    /// Set a property on the AudioUnit.
+    fn set_property<T>(
+        &self,
+        id: AudioUnitPropertyID,
+        scope: AudioUnitScope,
+        element: AudioUnitElement,
+        data: &T,
+    ) -> Result<()> {
+        // SAFETY: self.0 is a valid AudioUnit. Caller provides correctly typed data.
+        let status = unsafe {
+            AudioUnitSetProperty(
+                self.0,
+                id,
+                scope,
+                element,
+                data as *const T as *const c_void,
+                std::mem::size_of::<T>() as u32,
+            )
+        };
+        if status != 0 {
+            bail!("AudioUnitSetProperty({id}) failed: {status}");
+        }
+        Ok(())
+    }
+
+    /// Initialize the AudioUnit for rendering.
+    fn initialize(&self) -> Result<()> {
+        // SAFETY: self.0 is a valid, configured AudioUnit.
+        let status = unsafe { AudioUnitInitialize(self.0) };
+        if status != 0 {
+            bail!("AudioUnitInitialize failed: {status}");
+        }
+        Ok(())
+    }
+
+    fn start(&self) {
+        // SAFETY: self.0 is a valid, initialized AudioUnit.
+        unsafe { AudioOutputUnitStart(self.0) };
+    }
+
+    fn stop(&self) {
+        // SAFETY: self.0 is a valid AudioUnit. Stop guarantees the render
+        // callback is not executing when it returns.
+        unsafe { AudioOutputUnitStop(self.0) };
+    }
+
+    fn set_volume(&self, volume: f32) {
+        // SAFETY: self.0 is valid. HAL_OUTPUT_PARAM_VOLUME is a valid parameter.
+        unsafe {
+            AudioUnitSetParameter(self.0, HAL_OUTPUT_PARAM_VOLUME, SCOPE_GLOBAL, 0, volume, 0);
+        }
+    }
+}
+
+impl Drop for AudioUnitHandle {
+    fn drop(&mut self) {
+        // SAFETY: self.0 is a valid AudioUnit. We stop, uninitialize, and
+        // dispose in the correct order.
+        unsafe {
+            AudioOutputUnitStop(self.0);
+            AudioUnitUninitialize(self.0);
+            AudioComponentInstanceDispose(self.0);
+        }
+    }
+}
+
 // ── Lock-free SPSC ring buffer ─────────────────────────────────────
 
 /// Ring buffer capacity: 524288 samples (~10.9s at 48kHz). Must be power of 2.
@@ -343,7 +440,7 @@ fn zero_output(abl: *mut AudioBufferList, channels: usize, count: usize) {
 // ── AudioOutput ────────────────────────────────────────────────────
 
 pub struct AudioOutput {
-    unit: AudioUnit,
+    unit: AudioUnitHandle,
     /// Leaked pointer recovered in Drop.
     ctx_ptr: *const CallbackContext,
     volume: f32,
@@ -357,28 +454,7 @@ unsafe impl Send for AudioOutput {}
 
 impl AudioOutput {
     pub fn new(sample_rate: u32, channels: u16, audio_clock: Arc<AtomicI64>) -> Result<Self> {
-        let desc = AudioComponentDescription {
-            component_type: AUDIO_UNIT_TYPE_OUTPUT,
-            component_sub_type: AUDIO_UNIT_SUBTYPE_DEFAULT_OUTPUT,
-            component_manufacturer: AUDIO_UNIT_MANUFACTURER_APPLE,
-            component_flags: 0,
-            component_flags_mask: 0,
-        };
-
-        // SAFETY: AudioComponentFindNext is a CoreAudio API that searches for
-        // a matching audio component. NULL first arg means search from start.
-        let component = unsafe { AudioComponentFindNext(std::ptr::null_mut(), &desc) };
-        if component.is_null() {
-            bail!("No default audio output component found");
-        }
-
-        let mut unit: AudioUnit = std::ptr::null_mut();
-        // SAFETY: AudioComponentInstanceNew creates a new AudioUnit instance
-        // from a valid component handle. Writes to `unit` on success.
-        let mut status = unsafe { AudioComponentInstanceNew(component, &mut unit) };
-        if status != 0 {
-            bail!("AudioComponentInstanceNew failed: {status}");
-        }
+        let unit = AudioUnitHandle::new_default_output()?;
 
         // Non-interleaved float32 stream format
         let asbd = AudioStreamBasicDescription {
@@ -395,23 +471,7 @@ impl AudioOutput {
             reserved: 0,
         };
 
-        // SAFETY: `unit` is a valid AudioUnit from AudioComponentInstanceNew.
-        // We pass a properly initialized ASBD struct with correct size.
-        status = unsafe {
-            AudioUnitSetProperty(
-                unit,
-                PROP_STREAM_FORMAT,
-                SCOPE_INPUT,
-                0,
-                &asbd as *const _ as *const c_void,
-                std::mem::size_of::<AudioStreamBasicDescription>() as u32,
-            )
-        };
-        if status != 0 {
-            // SAFETY: Disposing a valid AudioUnit that failed property setup.
-            unsafe { AudioComponentInstanceDispose(unit) };
-            bail!("Failed to set stream format: {status}");
-        }
+        unit.set_property(PROP_STREAM_FORMAT, SCOPE_INPUT, 0, &asbd)?;
 
         let rings: Vec<SpscRing> = (0..channels).map(|_| SpscRing::new()).collect();
 
@@ -432,38 +492,16 @@ impl AudioOutput {
             input_proc_ref_con: ctx_ptr as *mut c_void,
         };
 
-        // SAFETY: `unit` is valid; `cb` contains our render function pointer
-        // and the leaked context pointer. CoreAudio will call render_callback
-        // with ctx_ptr as in_ref_con.
-        status = unsafe {
-            AudioUnitSetProperty(
-                unit,
-                PROP_SET_RENDER_CALLBACK,
-                SCOPE_INPUT,
-                0,
-                &cb as *const _ as *const c_void,
-                std::mem::size_of::<AURenderCallbackStruct>() as u32,
-            )
-        };
-        if status != 0 {
-            // SAFETY: Recover leaked context and dispose the unit on failure.
-            unsafe {
-                drop(Box::from_raw(ctx_ptr));
-                AudioComponentInstanceDispose(unit);
-            }
-            bail!("Failed to set render callback: {status}");
+        if let Err(e) = unit.set_property(PROP_SET_RENDER_CALLBACK, SCOPE_INPUT, 0, &cb) {
+            // SAFETY: Recover leaked context on failure (unit dropped automatically).
+            unsafe { drop(Box::from_raw(ctx_ptr)) };
+            return Err(e);
         }
 
-        // SAFETY: `unit` is fully configured; AudioUnitInitialize prepares
-        // the audio processing graph for rendering.
-        status = unsafe { AudioUnitInitialize(unit) };
-        if status != 0 {
-            // SAFETY: Recover leaked context and dispose on init failure.
-            unsafe {
-                drop(Box::from_raw(ctx_ptr));
-                AudioComponentInstanceDispose(unit);
-            }
-            bail!("AudioUnitInitialize failed: {status}");
+        if let Err(e) = unit.initialize() {
+            // SAFETY: Recover leaked context on failure (unit dropped automatically).
+            unsafe { drop(Box::from_raw(ctx_ptr)) };
+            return Err(e);
         }
 
         log::info!("Audio output: {sample_rate}Hz, {channels}ch (CoreAudio AudioUnit, lock-free)");
@@ -510,9 +548,7 @@ impl AudioOutput {
         }
 
         if self.stopped.get() && !self.paused.get() {
-            // SAFETY: unit is a valid, initialized AudioUnit. Starting it
-            // begins invoking the render callback on the audio thread.
-            unsafe { AudioOutputUnitStart(self.unit) };
+            self.unit.start();
             self.stopped.set(false);
         }
     }
@@ -540,8 +576,7 @@ impl AudioOutput {
         }
 
         if self.stopped.get() && !self.paused.get() {
-            // SAFETY: unit is valid and initialized (see schedule_buffer).
-            unsafe { AudioOutputUnitStart(self.unit) };
+            self.unit.start();
             self.stopped.set(false);
         }
         true
@@ -549,9 +584,7 @@ impl AudioOutput {
 
     pub fn pause(&self) {
         if !self.stopped.get() {
-            // SAFETY: unit is a valid, running AudioUnit. Stop guarantees the
-            // render callback is not executing when it returns.
-            unsafe { AudioOutputUnitStop(self.unit) };
+            self.unit.stop();
         }
         self.stopped.set(true);
         self.paused.set(true);
@@ -564,9 +597,7 @@ impl AudioOutput {
             let ctx = unsafe { &*self.ctx_ptr };
             let has_audio = ctx.rings.first().is_some_and(|r| r.available_read() > 0);
             if has_audio {
-                // SAFETY: unit is valid and initialized; starting resumes the
-                // render callback.
-                unsafe { AudioOutputUnitStart(self.unit) };
+                self.unit.start();
                 self.stopped.set(false);
             }
         }
@@ -574,34 +605,21 @@ impl AudioOutput {
 
     pub fn stop(&self) {
         if !self.stopped.get() {
-            // SAFETY: unit is a valid, running AudioUnit.
-            unsafe { AudioOutputUnitStop(self.unit) };
+            self.unit.stop();
             self.stopped.set(true);
         }
     }
 
     pub fn set_volume(&mut self, volume: f32) {
         self.volume = volume.clamp(0.0, 1.0);
-        // SAFETY: unit is valid and initialized. HAL_OUTPUT_PARAM_VOLUME
-        // is a valid parameter for the default output AudioUnit.
-        unsafe {
-            AudioUnitSetParameter(
-                self.unit,
-                HAL_OUTPUT_PARAM_VOLUME,
-                SCOPE_GLOBAL,
-                0,
-                self.volume,
-                0,
-            );
-        }
+        self.unit.set_volume(self.volume);
     }
 
     /// Stop the unit and clear all buffered audio.
     pub fn flush(&self) {
         // AudioOutputUnitStop guarantees the callback is not running after it returns.
         if !self.stopped.get() {
-            // SAFETY: unit is valid and running.
-            unsafe { AudioOutputUnitStop(self.unit) };
+            self.unit.stop();
             self.stopped.set(true);
         }
         // SAFETY: ctx_ptr valid for AudioOutput lifetime. Callback is stopped,
@@ -656,15 +674,11 @@ impl AudioOutput {
 
 impl Drop for AudioOutput {
     fn drop(&mut self) {
-        // SAFETY: unit is a valid AudioUnit; we stop, uninitialize, and
-        // dispose it in the correct order. ctx_ptr was leaked via
-        // Box::into_raw in new() and is recovered here. &mut self guarantees
-        // no other references exist (the render callback is stopped).
-        unsafe {
-            AudioOutputUnitStop(self.unit);
-            AudioUnitUninitialize(self.unit);
-            AudioComponentInstanceDispose(self.unit);
-            drop(Box::from_raw(self.ctx_ptr as *mut CallbackContext));
-        }
+        // Stop the unit first so the callback isn't running when we free ctx.
+        // AudioUnitHandle::drop handles uninitialize + dispose.
+        self.unit.stop();
+        // SAFETY: ctx_ptr was leaked via Box::into_raw in new(). &mut self
+        // guarantees no other references exist (the render callback is stopped).
+        unsafe { drop(Box::from_raw(self.ctx_ptr as *mut CallbackContext)) };
     }
 }

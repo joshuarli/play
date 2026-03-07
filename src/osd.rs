@@ -25,23 +25,34 @@ unsafe extern "C" {
     fn CGColorSpaceRelease(space: *mut c_void);
 }
 
-pub(crate) fn create_cgcolor(r: f64, g: f64, b: f64, a: f64) -> *mut CGColor {
-    // SAFETY: CGColorSpaceCreateDeviceRGB returns a valid color space with +1
-    // refcount. CGColorCreate creates a color with the 4-component RGBA array.
-    // We release the color space immediately (the color retains it internally).
-    unsafe {
-        let space = CGColorSpaceCreateDeviceRGB();
-        let c = [r, g, b, a];
-        let color = CGColorCreate(space, c.as_ptr());
-        CGColorSpaceRelease(space);
-        color
+/// RAII wrapper for a retained CGColorRef. Releases on drop.
+pub(crate) struct OwnedCgColor(*mut CGColor);
+
+impl OwnedCgColor {
+    pub(crate) fn rgba(r: f64, g: f64, b: f64, a: f64) -> Self {
+        // SAFETY: CGColorSpaceCreateDeviceRGB returns a valid color space with +1
+        // refcount. CGColorCreate creates a color with the 4-component RGBA array.
+        // We release the color space immediately (the color retains it internally).
+        unsafe {
+            let space = CGColorSpaceCreateDeviceRGB();
+            let c = [r, g, b, a];
+            let color = CGColorCreate(space, c.as_ptr());
+            CGColorSpaceRelease(space);
+            Self(color)
+        }
+    }
+
+    pub(crate) fn as_ptr(&self) -> *mut CGColor {
+        self.0
     }
 }
 
-pub(crate) fn release_cgcolor(color: *mut CGColor) {
-    if !color.is_null() {
-        // SAFETY: Caller guarantees color was created by create_cgcolor.
-        unsafe { CGColorRelease(color) };
+impl Drop for OwnedCgColor {
+    fn drop(&mut self) {
+        if !self.0.is_null() {
+            // SAFETY: self.0 was created by CGColorCreate in rgba().
+            unsafe { CGColorRelease(self.0) };
+        }
     }
 }
 
@@ -234,9 +245,8 @@ pub fn init_layers(parent_ptr: *mut c_void, bounds: CGRect) {
     // Subtitle layer — frame and font set dynamically in show_subtitle
     let sub: Retained<AnyObject> = unsafe { msg_send![text_cls, new] };
     let _: () = unsafe { msg_send![&*sub, setContentsScale: scale] };
-    let black = create_cgcolor(0.0, 0.0, 0.0, 1.0);
-    let _: () = unsafe { msg_send![&*sub, setShadowColor: black] };
-    release_cgcolor(black);
+    let black = OwnedCgColor::rgba(0.0, 0.0, 0.0, 1.0);
+    let _: () = unsafe { msg_send![&*sub, setShadowColor: black.as_ptr()] };
     let _: () = unsafe { msg_send![&*sub, setShadowOpacity: 1.0f32] };
     let zero = CGSize::new(0.0, 0.0);
     let _: () = unsafe { msg_send![&*sub, setShadowOffset: zero] };
@@ -254,9 +264,8 @@ pub fn init_layers(parent_ptr: *mut c_void, bounds: CGRect) {
     let bar_bg: Retained<AnyObject> = unsafe { msg_send![layer_cls, new] };
     let bar_frame = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(bar_w, BAR_HEIGHT));
     let _: () = unsafe { msg_send![&*bar_bg, setFrame: bar_frame] };
-    let bg_color = create_cgcolor(0.0, 0.0, 0.0, 0.6);
-    let _: () = unsafe { msg_send![&*bar_bg, setBackgroundColor: bg_color] };
-    release_cgcolor(bg_color);
+    let bg_color = OwnedCgColor::rgba(0.0, 0.0, 0.0, 0.6);
+    let _: () = unsafe { msg_send![&*bar_bg, setBackgroundColor: bg_color.as_ptr()] };
     let _: () = unsafe { msg_send![&*bar_bg, setAutoresizingMask: 2u32] };
     let _: () = unsafe { msg_send![&*bar_bg, setOpacity: 0.0f32] };
     let _: () = unsafe { msg_send![parent, addSublayer: &*bar_bg] };
@@ -291,9 +300,8 @@ pub fn init_layers(parent_ptr: *mut c_void, bounds: CGRect) {
         CGSize::new(tw, TRACK_HEIGHT),
     );
     let _: () = unsafe { msg_send![&*bar_track, setFrame: track_frame] };
-    let track_color = create_cgcolor(1.0, 1.0, 1.0, 0.2);
-    let _: () = unsafe { msg_send![&*bar_track, setBackgroundColor: track_color] };
-    release_cgcolor(track_color);
+    let track_color = OwnedCgColor::rgba(1.0, 1.0, 1.0, 0.2);
+    let _: () = unsafe { msg_send![&*bar_track, setBackgroundColor: track_color.as_ptr()] };
     let _: () = unsafe { msg_send![&*bar_track, setCornerRadius: TRACK_RADIUS] };
     let _: () = unsafe { msg_send![&*bar_track, setAutoresizingMask: 2u32] };
     let _: () = unsafe { msg_send![&*bar_bg, addSublayer: &*bar_track] };
@@ -305,9 +313,8 @@ pub fn init_layers(parent_ptr: *mut c_void, bounds: CGRect) {
         CGSize::new(0.0, TRACK_HEIGHT),
     );
     let _: () = unsafe { msg_send![&*bar_fill, setFrame: fill_frame] };
-    let fill_color = create_cgcolor(1.0, 1.0, 1.0, 0.85);
-    let _: () = unsafe { msg_send![&*bar_fill, setBackgroundColor: fill_color] };
-    release_cgcolor(fill_color);
+    let fill_color = OwnedCgColor::rgba(1.0, 1.0, 1.0, 0.85);
+    let _: () = unsafe { msg_send![&*bar_fill, setBackgroundColor: fill_color.as_ptr()] };
     let _: () = unsafe { msg_send![&*bar_fill, setCornerRadius: TRACK_RADIUS] };
     let _: () = unsafe { msg_send![&*bar_bg, addSublayer: &*bar_fill] };
 
@@ -365,13 +372,11 @@ fn setup_text_layer(layer: &AnyObject, frame: CGRect, font_size: f64, scale: f64
     let _: () = unsafe { msg_send![layer, setFontSize: font_size] };
     let _: () = unsafe { msg_send![layer, setContentsScale: scale] };
 
-    let white = create_cgcolor(1.0, 1.0, 1.0, 1.0);
-    let _: () = unsafe { msg_send![layer, setForegroundColor: white] };
-    release_cgcolor(white);
+    let white = OwnedCgColor::rgba(1.0, 1.0, 1.0, 1.0);
+    let _: () = unsafe { msg_send![layer, setForegroundColor: white.as_ptr()] };
 
-    let black = create_cgcolor(0.0, 0.0, 0.0, 1.0);
-    let _: () = unsafe { msg_send![layer, setShadowColor: black] };
-    release_cgcolor(black);
+    let black = OwnedCgColor::rgba(0.0, 0.0, 0.0, 1.0);
+    let _: () = unsafe { msg_send![layer, setShadowColor: black.as_ptr()] };
     let _: () = unsafe { msg_send![layer, setShadowOpacity: 1.0f32] };
     let zero = CGSize::new(0.0, 0.0);
     let _: () = unsafe { msg_send![layer, setShadowOffset: zero] };
@@ -398,9 +403,8 @@ fn setup_bar_text_layer(layer: &AnyObject, frame: CGRect, scale: f64, right_alig
     let font_name = objc2_foundation::NSString::from_str("Menlo");
     let font_ptr: *const c_void = &*font_name as *const _ as *const c_void;
     let _: () = unsafe { msg_send![layer, setFont: font_ptr] };
-    let white = create_cgcolor(1.0, 1.0, 1.0, 0.9);
-    let _: () = unsafe { msg_send![layer, setForegroundColor: white] };
-    release_cgcolor(white);
+    let white = OwnedCgColor::rgba(1.0, 1.0, 1.0, 0.9);
+    let _: () = unsafe { msg_send![layer, setForegroundColor: white.as_ptr()] };
     if right_align {
         let align = objc2_foundation::NSString::from_str("right");
         let _: () = unsafe { msg_send![layer, setAlignmentMode: &*align] };

@@ -10,10 +10,46 @@ use ffmpeg_sys_next as ffs;
 use crate::cmd::{PixelBuffer, VideoFrame};
 use crate::time::pts_to_us;
 
+/// RAII wrapper for an ffmpeg AVBufferRef holding a HW device context.
+struct HwDeviceCtx(*mut ffs::AVBufferRef);
+
+impl HwDeviceCtx {
+    /// Create a new VideoToolbox HW device context. Returns None if unavailable.
+    fn new_videotoolbox() -> Option<Self> {
+        let mut ctx: *mut ffs::AVBufferRef = ptr::null_mut();
+        // SAFETY: av_hwdevice_ctx_create allocates a new HW device context.
+        // On success (ret >= 0), ctx is a valid AVBufferRef.
+        let ret = unsafe {
+            ffs::av_hwdevice_ctx_create(
+                &mut ctx,
+                ffs::AVHWDeviceType::AV_HWDEVICE_TYPE_VIDEOTOOLBOX,
+                ptr::null(),
+                ptr::null_mut(),
+                0,
+            )
+        };
+        if ret >= 0 { Some(Self(ctx)) } else { None }
+    }
+
+    fn as_ptr(&self) -> *mut ffs::AVBufferRef {
+        self.0
+    }
+}
+
+impl Drop for HwDeviceCtx {
+    fn drop(&mut self) {
+        if !self.0.is_null() {
+            // SAFETY: self.0 was allocated by av_hwdevice_ctx_create.
+            // av_buffer_unref decrements the refcount and NULLs the pointer.
+            unsafe { ffs::av_buffer_unref(&mut self.0) };
+        }
+    }
+}
+
 /// VideoToolbox-accelerated video decoder.
 pub struct VideoDecoder {
     decoder: ffmpeg::decoder::Video,
-    hw_device_ctx: *mut ffs::AVBufferRef,
+    _hw_device_ctx: Option<HwDeviceCtx>,
     stream_time_base: ffmpeg::Rational,
     frame: Video,
     width: u32,
@@ -36,31 +72,18 @@ impl VideoDecoder {
         let avctx = unsafe { codec_ctx.as_mut_ptr() };
 
         // Try to set up VideoToolbox hardware acceleration
-        let mut hw_device_ctx: *mut ffs::AVBufferRef = ptr::null_mut();
-        // SAFETY: av_hwdevice_ctx_create allocates a new HW device context.
-        // On success, hw_device_ctx is a valid AVBufferRef we must eventually
-        // free with av_buffer_unref.
-        let ret = unsafe {
-            ffs::av_hwdevice_ctx_create(
-                &mut hw_device_ctx,
-                ffs::AVHWDeviceType::AV_HWDEVICE_TYPE_VIDEOTOOLBOX,
-                ptr::null(),
-                ptr::null_mut(),
-                0,
-            )
-        };
-
-        if ret >= 0 {
+        let hw_device_ctx = HwDeviceCtx::new_videotoolbox();
+        if let Some(ref ctx) = hw_device_ctx {
             // SAFETY: avctx is valid; av_buffer_ref increments the refcount
-            // of hw_device_ctx so the codec context shares ownership. We set
-            // get_format to prefer the VideoToolbox pixel format.
+            // so the codec context shares ownership. We set get_format to
+            // prefer the VideoToolbox pixel format.
             unsafe {
-                (*avctx).hw_device_ctx = ffs::av_buffer_ref(hw_device_ctx);
+                (*avctx).hw_device_ctx = ffs::av_buffer_ref(ctx.as_ptr());
                 (*avctx).get_format = Some(get_hw_format);
             }
             log::info!("VideoToolbox hardware acceleration enabled");
         } else {
-            log::warn!("VideoToolbox not available (err={ret}), using software decode");
+            log::warn!("VideoToolbox not available, using software decode");
         }
 
         let decoder = codec_ctx
@@ -72,7 +95,7 @@ impl VideoDecoder {
 
         Ok(Self {
             decoder,
-            hw_device_ctx,
+            _hw_device_ctx: hw_device_ctx,
             stream_time_base: stream.time_base(),
             frame: Video::empty(),
             width,
@@ -144,20 +167,6 @@ impl VideoDecoder {
 
     pub fn height(&self) -> u32 {
         self.height
-    }
-}
-
-impl Drop for VideoDecoder {
-    fn drop(&mut self) {
-        if !self.hw_device_ctx.is_null() {
-            // SAFETY: hw_device_ctx was allocated by av_hwdevice_ctx_create
-            // in new(). av_buffer_unref decrements the refcount and NULLs the
-            // pointer. The codec context's copy (set via av_buffer_ref) is
-            // freed separately when the decoder is dropped.
-            unsafe {
-                ffs::av_buffer_unref(&mut self.hw_device_ctx);
-            }
-        }
     }
 }
 

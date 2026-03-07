@@ -184,9 +184,8 @@ define_class!(
                     // SAFETY: All msg_send! calls target standard CALayer
                     // properties/methods. display_layer is a valid
                     // AVSampleBufferDisplayLayer from video_out::init_display_layer.
-                    let black = crate::osd::create_cgcolor(0.0, 0.0, 0.0, 1.0);
-                    let _: () = unsafe { msg_send![&*layer, setBackgroundColor: black] };
-                    crate::osd::release_cgcolor(black);
+                    let black = crate::osd::OwnedCgColor::rgba(0.0, 0.0, 0.0, 1.0);
+                    let _: () = unsafe { msg_send![&*layer, setBackgroundColor: black.as_ptr()] };
 
                     // Add display layer
                     if let Some(display_ptr) = crate::video_out::display_layer_ptr() {
