@@ -44,6 +44,7 @@ struct PlayerCore {
     // State
     paused: bool,
     volume: u32,
+    pre_mute_volume: Option<u32>,
     audio_delay_us: i64,
     duration_us: i64,
     pending_seeks: u32,
@@ -132,6 +133,7 @@ impl PlayerCore {
             }
             Command::VolumeUp => self.adjust_volume(5),
             Command::VolumeDown => self.adjust_volume(-5),
+            Command::ToggleMute => self.toggle_mute(),
             Command::CycleAudioTrack => self.cycle_audio_track(),
             Command::CycleSubtitle => self.cycle_subtitle(),
             Command::AudioDelayIncrease => {
@@ -174,6 +176,7 @@ impl PlayerCore {
     }
 
     fn adjust_volume(&mut self, delta: i32) {
+        self.pre_mute_volume = None; // unmute on manual volume change
         self.volume = (self.volume as i32 + delta).clamp(0, 100) as u32;
         if let Some(ao) = self.audio_output.as_mut() {
             ao.set_volume(self.volume as f32 / 100.0);
@@ -181,6 +184,26 @@ impl PlayerCore {
         let _ = self
             .ui_update_tx
             .send(UiUpdate::Osd(format!("Volume: {}%", self.volume)));
+    }
+
+    fn toggle_mute(&mut self) {
+        if let Some(prev) = self.pre_mute_volume.take() {
+            self.volume = prev;
+        } else {
+            self.pre_mute_volume = Some(self.volume);
+            self.volume = 0;
+        }
+        if let Some(ao) = self.audio_output.as_mut() {
+            ao.set_volume(self.volume as f32 / 100.0);
+        }
+        let label = if self.pre_mute_volume.is_some() {
+            "Muted"
+        } else {
+            "Volume"
+        };
+        let _ = self
+            .ui_update_tx
+            .send(UiUpdate::Osd(format!("{label}: {}%", self.volume)));
     }
 
     fn cycle_audio_track(&mut self) {
@@ -813,6 +836,7 @@ impl Player {
             audio_clock,
             paused: false,
             volume: initial_volume,
+            pre_mute_volume: None,
             audio_delay_us: (initial_audio_delay * 1_000_000.0) as i64,
             duration_us,
             pending_seeks: 0,

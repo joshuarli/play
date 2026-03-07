@@ -85,6 +85,7 @@ pub fn run_terminal(
                 }
                 Key::Up => Action::Send(Command::VolumeUp),
                 Key::Down => Action::Send(Command::VolumeDown),
+                Key::Char('m') => Action::Send(Command::ToggleMute),
                 Key::Char('a') => Action::Send(Command::CycleAudioTrack),
                 Key::Char('+') | Key::Char('=') => Action::Send(Command::AudioDelayIncrease),
                 Key::Char('-') => Action::Send(Command::AudioDelayDecrease),

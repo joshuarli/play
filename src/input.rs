@@ -52,6 +52,7 @@ fn map_char(chars: &str) -> Option<Command> {
     match chars {
         "q" => Some(Command::Quit),
         "f" => Some(Command::ToggleFullscreen),
+        "m" => Some(Command::ToggleMute),
         "a" => Some(Command::CycleAudioTrack),
         "s" => Some(Command::CycleSubtitle),
         "+" | "=" => Some(Command::AudioDelayIncrease),
@@ -162,6 +163,7 @@ mod tests {
     fn char_commands() {
         assert_eq!(map_key(0, false, "q"), Some(Command::Quit));
         assert_eq!(map_key(0, false, "f"), Some(Command::ToggleFullscreen));
+        assert_eq!(map_key(0, false, "m"), Some(Command::ToggleMute));
         assert_eq!(map_key(0, false, "a"), Some(Command::CycleAudioTrack));
         assert_eq!(map_key(0, false, "s"), Some(Command::CycleSubtitle));
         assert_eq!(map_key(0, false, "+"), Some(Command::AudioDelayIncrease));

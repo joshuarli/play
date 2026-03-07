@@ -8,6 +8,7 @@ pub enum Command {
     SeekAbsolute { target_us: i64 },
     VolumeUp,
     VolumeDown,
+    ToggleMute,
     CycleAudioTrack,
     CycleSubtitle,
     AudioDelayIncrease,
