@@ -1,3 +1,11 @@
+//! Audio-master A/V sync clock.
+//!
+//! The audio callback writes its current PTS to a shared `AtomicI64` as it
+//! consumes samples.  [`SyncClock`] wraps that atomic with pause semantics:
+//! while paused, it returns the captured pause position instead of the
+//! (stale / advancing) atomic value.  Used by the player for seek position,
+//! subtitle timing, and OSD updates.
+
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
 

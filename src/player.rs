@@ -1,3 +1,19 @@
+//! Player event loop: dispatches decoded packets to audio/video outputs.
+//!
+//! The player runs on a dedicated thread and owns both decoders and audio output.
+//! It comes in two modes:
+//!
+//! - **`VideoPlayer`** — drives A/V sync via blocking audio schedule + video frame
+//!   channel.  Implements scrubbing (suppresses audio during rapid seeks) and
+//!   display-flush bundling (seek_flush on the first post-seek video frame).
+//!
+//! - **`AudioOnlyPlayer`** — non-blocking audio scheduling with a `pending_audio`
+//!   spill queue.  Forward seeks try the ring-buffer skip path before falling
+//!   back to a full demuxer seek.
+//!
+//! Both modes share [`PlayerCore`] for seek coalescing, subtitle updates, volume,
+//! mute, audio delay, and EOF detection.
+
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -308,8 +324,8 @@ impl PlayerCore {
     }
 
     fn check_eof(&mut self) {
-        if self.eof_audio_end_us.is_some() {
-            let done = self.sync_clock.audio_pts() >= self.eof_audio_end_us.unwrap()
+        if let Some(end_us) = self.eof_audio_end_us {
+            let done = self.sync_clock.audio_pts() >= end_us
                 || self
                     .audio_output
                     .as_ref()
@@ -385,7 +401,9 @@ impl PlayerCore {
         let Some(ad) = self.audio_decoder.as_mut() else {
             return pending;
         };
-        let _ = ad.send_eof();
+        if let Err(e) = ad.send_eof() {
+            log::debug!("Audio send_eof: {e}");
+        }
         while let Some(buf) = ad.receive_buffer() {
             self.last_audio_end_us = self.last_audio_end_us.max(buf.end_us());
             if let Some(ao) = self.audio_output.as_ref()
@@ -520,7 +538,8 @@ impl VideoPlayer {
             _ if self.core.pending_seeks > 0 => {}
             DemuxPacket::Video(packet) => {
                 if let Some(decoder) = self.video_decoder.as_mut() {
-                    if decoder.send_packet(&packet).is_err() {
+                    if let Err(e) = decoder.send_packet(&packet) {
+                        log::debug!("Video send_packet: {e}");
                         return;
                     }
                     while let Some(mut frame) = decoder.receive_frame() {
@@ -537,7 +556,10 @@ impl VideoPlayer {
                             self.core.sync_clock.set_position(frame.pts_us);
                         }
                         match self.video_frame_tx.try_send(frame) {
-                            Ok(()) | Err(crossbeam_channel::TrySendError::Full(_)) => {}
+                            Ok(()) => {}
+                            Err(crossbeam_channel::TrySendError::Full(_)) => {
+                                log::trace!("Video frame channel full, dropping frame");
+                            }
                             Err(crossbeam_channel::TrySendError::Disconnected(_)) => return,
                         }
                     }
@@ -553,9 +575,14 @@ impl VideoPlayer {
             DemuxPacket::Subtitle(_) => {}
             DemuxPacket::Eof => {
                 if let Some(vd) = self.video_decoder.as_mut() {
-                    let _ = vd.send_eof();
+                    if let Err(e) = vd.send_eof() {
+                        log::debug!("Video send_eof: {e}");
+                    }
                     while let Some(frame) = vd.receive_frame() {
-                        let _ = self.video_frame_tx.send(frame);
+                        if self.video_frame_tx.send(frame).is_err() {
+                            log::debug!("Video frame channel disconnected during EOF drain");
+                            break;
+                        }
                     }
                 }
                 // Blocking drain
@@ -1163,5 +1190,310 @@ mod tests {
         ao.core.queue_seek(5.0, false);
         ao.execute_queued_seek();
         // No display flush state to check — it doesn't exist. Pass.
+    }
+
+    // --- Volume ---
+
+    #[test]
+    fn volume_up_clamps_at_100() {
+        let (mut player, _, _, ui_rx, _) = make_test_player();
+        let core = player.core_mut();
+        core.volume = 98;
+        core.adjust_volume(5);
+        assert_eq!(core.volume, 100);
+        let update = ui_rx.try_recv().unwrap();
+        assert!(matches!(update, UiUpdate::Osd(ref s) if s.contains("100%")));
+    }
+
+    #[test]
+    fn volume_down_clamps_at_0() {
+        let (mut player, _, _, ui_rx, _) = make_test_player();
+        let core = player.core_mut();
+        core.volume = 3;
+        core.adjust_volume(-5);
+        assert_eq!(core.volume, 0);
+        let update = ui_rx.try_recv().unwrap();
+        assert!(matches!(update, UiUpdate::Osd(ref s) if s.contains("0%")));
+    }
+
+    #[test]
+    fn volume_adjust_within_range() {
+        let (mut player, _, _, _, _) = make_test_player();
+        let core = player.core_mut();
+        core.volume = 50;
+        core.adjust_volume(10);
+        assert_eq!(core.volume, 60);
+        core.adjust_volume(-20);
+        assert_eq!(core.volume, 40);
+    }
+
+    // --- Mute ---
+
+    #[test]
+    fn toggle_mute_saves_and_restores_volume() {
+        let (mut player, _, _, _, _) = make_test_player();
+        let core = player.core_mut();
+        core.volume = 75;
+        core.toggle_mute();
+        assert_eq!(core.volume, 0);
+        assert_eq!(core.pre_mute_volume, Some(75));
+        core.toggle_mute();
+        assert_eq!(core.volume, 75);
+        assert!(core.pre_mute_volume.is_none());
+    }
+
+    #[test]
+    fn volume_change_clears_mute_state() {
+        let (mut player, _, _, _, _) = make_test_player();
+        let core = player.core_mut();
+        core.volume = 50;
+        core.toggle_mute();
+        assert_eq!(core.volume, 0);
+        // Manual volume change while muted should clear mute
+        core.adjust_volume(5);
+        assert!(core.pre_mute_volume.is_none());
+        assert_eq!(core.volume, 5);
+    }
+
+    #[test]
+    fn mute_at_zero_volume() {
+        let (mut player, _, _, _, _) = make_test_player();
+        let core = player.core_mut();
+        core.volume = 0;
+        core.toggle_mute();
+        assert_eq!(core.volume, 0);
+        assert_eq!(core.pre_mute_volume, Some(0));
+        // Unmute restores to 0
+        core.toggle_mute();
+        assert_eq!(core.volume, 0);
+        assert!(core.pre_mute_volume.is_none());
+    }
+
+    // --- EOF ---
+
+    #[test]
+    fn check_eof_triggers_when_past_end() {
+        let (mut player, _, _, ui_rx, _) = make_test_player();
+        let core = player.core_mut();
+        core.eof_audio_end_us = Some(5_000_000);
+        core.sync_clock.set_position(6_000_000);
+        core.check_eof();
+        assert!(core.eof_audio_end_us.is_none(), "EOF should be consumed");
+        let update = ui_rx.try_recv().unwrap();
+        assert!(matches!(update, UiUpdate::EndOfFile(EndReason::Eof)));
+    }
+
+    #[test]
+    fn check_eof_does_not_trigger_before_end() {
+        let (mut player, _, _, ui_rx, _) = make_test_player();
+        let core = player.core_mut();
+        core.eof_audio_end_us = Some(5_000_000);
+        core.sync_clock.set_position(3_000_000);
+        core.check_eof();
+        assert_eq!(core.eof_audio_end_us, Some(5_000_000));
+        assert!(ui_rx.try_recv().is_err(), "Should not send EOF yet");
+    }
+
+    #[test]
+    fn check_eof_noop_when_none() {
+        let (mut player, _, _, ui_rx, _) = make_test_player();
+        let core = player.core_mut();
+        core.eof_audio_end_us = None;
+        core.check_eof();
+        assert!(ui_rx.try_recv().is_err());
+    }
+
+    // --- Subtitle cycling ---
+
+    #[test]
+    fn subtitle_cycle_through_tracks() {
+        let (mut player, _, _, _ui_rx, _) = make_test_player();
+        let core = player.core_mut();
+        core.subtitle_tracks = vec![
+            SubtitleTrack {
+                label: "eng".into(),
+                entries: vec![],
+            },
+            SubtitleTrack {
+                label: "fra".into(),
+                entries: vec![],
+            },
+        ];
+        core.current_subtitle_idx = None;
+
+        core.cycle_subtitle();
+        assert_eq!(core.current_subtitle_idx, Some(0));
+
+        core.cycle_subtitle();
+        assert_eq!(core.current_subtitle_idx, Some(1));
+
+        core.cycle_subtitle();
+        assert_eq!(core.current_subtitle_idx, None); // wraps to off
+    }
+
+    #[test]
+    fn subtitle_cycle_empty_shows_message() {
+        let (mut player, _, _, ui_rx, _) = make_test_player();
+        let core = player.core_mut();
+        core.subtitle_tracks = vec![];
+        core.cycle_subtitle();
+        let update = ui_rx.try_recv().unwrap();
+        assert!(matches!(update, UiUpdate::Osd(ref s) if s.contains("none")));
+    }
+
+    // --- Command handling ---
+
+    #[test]
+    fn handle_quit_sends_stop_to_demuxer() {
+        let (mut player, _, _, _, demux_rx) = make_test_player();
+        let quit = player.core_mut().handle_command_shared(Command::Quit);
+        assert!(quit, "Quit should return true");
+        let cmd = demux_rx.try_recv().unwrap();
+        assert!(matches!(cmd, DemuxCommand::Stop));
+    }
+
+    #[test]
+    fn handle_play_pause_toggles() {
+        let (mut player, _, _, ui_rx, _) = make_test_player();
+        assert!(!player.core().paused);
+
+        player.core_mut().handle_command_shared(Command::PlayPause);
+        assert!(player.core().paused);
+        let update = ui_rx.try_recv().unwrap();
+        assert!(matches!(update, UiUpdate::Paused(true)));
+
+        player.core_mut().handle_command_shared(Command::PlayPause);
+        assert!(!player.core().paused);
+        let update = ui_rx.try_recv().unwrap();
+        assert!(matches!(update, UiUpdate::Paused(false)));
+    }
+
+    #[test]
+    fn audio_delay_adjusts_by_100ms() {
+        let (mut player, _, _, _, _) = make_test_player();
+        let core = player.core_mut();
+        assert_eq!(core.audio_delay_us, 0);
+        core.handle_command_shared(Command::AudioDelayIncrease);
+        assert_eq!(core.audio_delay_us, 100_000);
+        core.handle_command_shared(Command::AudioDelayDecrease);
+        assert_eq!(core.audio_delay_us, 0);
+        core.handle_command_shared(Command::AudioDelayDecrease);
+        assert_eq!(core.audio_delay_us, -100_000);
+    }
+
+    #[test]
+    fn next_file_sends_eof_update() {
+        let (mut player, _, _, ui_rx, _) = make_test_player();
+        player.core_mut().handle_command_shared(Command::NextFile);
+        let update = ui_rx.try_recv().unwrap();
+        assert!(matches!(update, UiUpdate::EndOfFile(EndReason::NextFile)));
+    }
+
+    #[test]
+    fn prev_file_sends_eof_update() {
+        let (mut player, _, _, ui_rx, _) = make_test_player();
+        player.core_mut().handle_command_shared(Command::PrevFile);
+        let update = ui_rx.try_recv().unwrap();
+        assert!(matches!(update, UiUpdate::EndOfFile(EndReason::PrevFile)));
+    }
+
+    // --- Seek coalescing via drain ---
+
+    #[test]
+    fn drain_seek_commands_coalesces() {
+        let (mut player, cmd_tx, _, _, _) = make_test_player();
+        let ao = as_audio_only(&mut player);
+        ao.core.queue_seek(5.0, false);
+
+        // Queue more seeks on the channel
+        cmd_tx
+            .send(Command::SeekRelative {
+                seconds: 3.0,
+                exact: false,
+            })
+            .unwrap();
+        cmd_tx
+            .send(Command::SeekRelative {
+                seconds: 2.0,
+                exact: false,
+            })
+            .unwrap();
+
+        let quit = ao.core.drain_seek_commands();
+        assert!(!quit);
+        let qs = ao.core.queued_seek.as_ref().unwrap();
+        assert!((qs.seconds - 10.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn drain_seek_commands_stops_on_quit() {
+        let (mut player, cmd_tx, _, _, _) = make_test_player();
+        let ao = as_audio_only(&mut player);
+        ao.core.queue_seek(5.0, false);
+
+        cmd_tx
+            .send(Command::SeekRelative {
+                seconds: 3.0,
+                exact: false,
+            })
+            .unwrap();
+        cmd_tx.send(Command::Quit).unwrap();
+
+        let quit = ao.core.drain_seek_commands();
+        assert!(quit, "Should stop on Quit");
+    }
+
+    // --- Signal EOF ---
+
+    #[test]
+    fn signal_eof_with_audio_sets_end_us() {
+        let (mut player, _, _, _, _) = make_test_player();
+        let core = player.core_mut();
+        // Simulate having audio output by setting last_audio_end_us
+        core.last_audio_end_us = 5_000_000;
+        // Need audio_output to be Some for the audio path — but we don't
+        // have real audio output in tests.  With audio_output = None, the
+        // else branch fires and sends EndOfFile directly.
+        core.signal_eof();
+        // audio_output is None, so the direct EOF path is taken
+        assert!(core.eof_audio_end_us.is_none());
+    }
+
+    // --- Seek floor ---
+
+    #[test]
+    fn exact_seek_sets_floor() {
+        let (mut player, _, _, _, _) = make_test_player();
+        let core = player.core_mut();
+        core.dispatch_seek_common(5_000_000, true, true);
+        assert_eq!(core.seek_floor_us, 5_000_000);
+    }
+
+    #[test]
+    fn inexact_seek_clears_floor() {
+        let (mut player, _, _, _, _) = make_test_player();
+        let core = player.core_mut();
+        core.seek_floor_us = 5_000_000;
+        core.dispatch_seek_common(3_000_000, true, false);
+        assert_eq!(core.seek_floor_us, 0);
+    }
+
+    #[test]
+    fn inexact_seek_clears_seek_landed() {
+        let (mut player, _, _, _, _) = make_test_player();
+        let core = player.core_mut();
+        core.seek_landed = true;
+        core.dispatch_seek_common(3_000_000, true, false);
+        assert!(!core.seek_landed);
+    }
+
+    #[test]
+    fn exact_seek_keeps_seek_landed() {
+        let (mut player, _, _, _, _) = make_test_player();
+        let core = player.core_mut();
+        core.seek_landed = true;
+        core.dispatch_seek_common(3_000_000, true, true);
+        // Exact seeks don't clear seek_landed — they use seek_floor instead
+        assert!(core.seek_landed);
     }
 }

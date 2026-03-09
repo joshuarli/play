@@ -1,3 +1,14 @@
+//! Demuxer thread: reads packets from a media file and sends them to the player.
+//!
+//! The demuxer owns the ffmpeg `Input` context and a [`PacketCache`] that stores
+//! recently-read packets (up to 150 MB).  Seeks check the cache first via binary
+//! search ([`PacketCache::seek_position`]); on a cache hit the demuxer replays
+//! packets from memory without any file I/O.
+//!
+//! Multiple rapid seeks are coalesced: the demuxer drains the command channel and
+//! keeps only the last seek target, sending one `Flush` per consumed seek so the
+//! player can decrement its pending-seek counter correctly.
+
 use std::collections::VecDeque;
 use std::path::Path;
 
@@ -64,7 +75,13 @@ impl PacketCache {
         }
         let time_bases: Vec<(usize, ffmpeg::Rational)> = indices
             .into_iter()
-            .map(|i| (i, ictx.stream(i).unwrap().time_base()))
+            .filter_map(|i| match ictx.stream(i) {
+                Some(s) => Some((i, s.time_base())),
+                None => {
+                    log::warn!("Stream index {i} not found in input context");
+                    None
+                }
+            })
             .collect();
         Self {
             packets: VecDeque::new(),

@@ -1,3 +1,10 @@
+//! Audio-only terminal UI mode.
+//!
+//! When playing files without a video stream, this module drives the player
+//! from a raw-mode terminal instead of an NSWindow.  It reads keys from
+//! `termion::AsyncReader`, batches rapid key-repeat into accumulated seek
+//! commands, and renders a single updating timestamp line to stdout.
+
 use std::io::{self, Write};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};

@@ -1,3 +1,13 @@
+//! VideoToolbox-accelerated video decoder.
+//!
+//! Wraps an ffmpeg video decoder configured for hardware-accelerated decoding
+//! via Apple's VideoToolbox framework. Decoded frames arrive as
+//! `CVPixelBufferRef` (GPU-resident surfaces) which are retained and wrapped
+//! in [`PixelBuffer`] RAII handles for zero-copy handoff to the display layer.
+//!
+//! The decoder is **not** `Send` by default (ffmpeg contexts are thread-local);
+//! we manually impl `Send` because the player thread is the sole owner.
+
 use std::ffi::c_void;
 use std::ptr;
 
@@ -152,7 +162,15 @@ impl VideoDecoder {
                     seek_flush: false,
                 })
             }
-            Err(_) => None,
+            // receive_frame returns EAGAIN (need more input) or EOF (drain
+            // complete) during normal operation.  Real decode errors are rare
+            // but worth logging when they occur.
+            Err(ref e) if matches!(e, ffmpeg::Error::Eof) => None,
+            Err(ref e) if matches!(e, ffmpeg::Error::Other { .. }) => None, // EAGAIN
+            Err(e) => {
+                log::warn!("Video receive_frame error: {e}");
+                None
+            }
         }
     }
 

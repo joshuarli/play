@@ -1,3 +1,9 @@
+//! SRT subtitle parser and binary-search lookup.
+//!
+//! Parses SubRip (.srt) files into a sorted list of [`SrtEntry`] cues.
+//! [`SubtitleTrack::text_at`] uses `partition_point` for O(log n) lookup of
+//! the active subtitle at any given PTS.
+
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
@@ -270,5 +276,106 @@ BOM test";
         };
         assert_eq!(track.text_at(1_000_000), Some("hi")); // start
         assert_eq!(track.text_at(2_000_000), Some("hi")); // end (inclusive)
+    }
+
+    #[test]
+    fn text_at_empty_track() {
+        let track = SubtitleTrack {
+            label: "empty".into(),
+            entries: vec![],
+        };
+        assert_eq!(track.text_at(0), None);
+        assert_eq!(track.text_at(1_000_000), None);
+    }
+
+    #[test]
+    fn text_at_adjacent_entries() {
+        let track = SubtitleTrack {
+            label: "test".into(),
+            entries: vec![
+                SrtEntry {
+                    start_us: 1_000_000,
+                    end_us: 2_000_000,
+                    text: "first".into(),
+                },
+                SrtEntry {
+                    start_us: 2_000_001,
+                    end_us: 3_000_000,
+                    text: "second".into(),
+                },
+            ],
+        };
+        assert_eq!(track.text_at(2_000_000), Some("first"));
+        assert_eq!(track.text_at(2_000_001), Some("second"));
+    }
+
+    #[test]
+    fn parse_srt_extra_blank_lines() {
+        let srt = "\n\n\
+1
+00:00:01,000 --> 00:00:02,000
+Hello
+
+
+2
+00:00:03,000 --> 00:00:04,000
+World
+
+";
+        let f = write_temp_srt(srt);
+        let entries = parse_srt(&f).unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].text, "Hello");
+        assert_eq!(entries[1].text, "World");
+    }
+
+    #[test]
+    fn parse_srt_time_precision() {
+        let srt = "\
+1
+01:02:03,456 --> 01:02:04,789
+precise";
+        let f = write_temp_srt(srt);
+        let entries = parse_srt(&f).unwrap();
+        assert_eq!(
+            entries[0].start_us,
+            (3600 + 2 * 60 + 3) * 1_000_000 + 456_000
+        );
+        assert_eq!(entries[0].end_us, (3600 + 2 * 60 + 4) * 1_000_000 + 789_000);
+    }
+
+    #[test]
+    fn parse_srt_malformed_timing_skipped() {
+        let srt = "\
+1
+not a timing line
+This should be skipped
+
+2
+00:00:01,000 --> 00:00:02,000
+Valid entry
+";
+        let f = write_temp_srt(srt);
+        let entries = parse_srt(&f).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].text, "Valid entry");
+    }
+
+    #[test]
+    fn find_srt_files_discovers_variants() {
+        let dir = std::env::temp_dir().join(format!("play_srt_test_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let video = dir.join("movie.mp4");
+        std::fs::write(&video, b"").unwrap();
+        std::fs::write(dir.join("movie.srt"), b"").unwrap();
+        std::fs::write(dir.join("movie.en.srt"), b"").unwrap();
+
+        let found = find_srt_files(&video);
+        assert!(found.len() >= 2);
+        assert!(found.iter().any(|p| p.ends_with("movie.srt")));
+        assert!(found.iter().any(|p| p.ends_with("movie.en.srt")));
+
+        // Cleanup
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

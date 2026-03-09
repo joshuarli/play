@@ -1,3 +1,18 @@
+//! CoreAudio output with lock-free SPSC ring buffers.
+//!
+//! Audio samples flow: decoder → [`AudioOutput::schedule_buffer`] → per-channel
+//! [`SpscRing`] → CoreAudio render callback.  The render callback is the sole
+//! consumer of the ring buffers and runs on a real-time audio thread; it must
+//! never block, allocate, or take locks.  All coordination uses atomics:
+//!
+//! - `head`/`tail` (`AtomicUsize`, Acquire/Release) — SPSC ring read/write cursors
+//! - `read_pts_us` (`AtomicI64`, Relaxed) — PTS tracking for the audio clock
+//! - `flush_pending` (`AtomicBool`) — deferred flush from player thread to callback
+//! - `skip_samples` (`AtomicUsize`) — instant-seek by advancing tail in the callback
+//!
+//! Ring capacity is 524288 samples (~10.9s at 48 kHz), sized to absorb the decode
+//! burst after a seek while the callback is just starting up.
+
 use std::cell::Cell;
 use std::ffi::c_void;
 use std::ptr;
@@ -680,5 +695,139 @@ impl Drop for AudioOutput {
         // SAFETY: ctx_ptr was leaked via Box::into_raw in new(). &mut self
         // guarantees no other references exist (the render callback is stopped).
         unsafe { drop(Box::from_raw(self.ctx_ptr as *mut CallbackContext)) };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- SpscRing ---
+
+    #[test]
+    fn ring_push_pop_basic() {
+        let ring = SpscRing::new();
+        let data = [1.0f32, 2.0, 3.0, 4.0];
+        assert_eq!(ring.push_slice(&data), 4);
+        assert_eq!(ring.available_read(), 4);
+        assert_eq!(ring.available_write(), RING_CAPACITY - 4);
+
+        let mut out = [0.0f32; 4];
+        assert_eq!(ring.pop_to_ptr(out.as_mut_ptr(), 4), 4);
+        assert_eq!(out, [1.0, 2.0, 3.0, 4.0]);
+        assert_eq!(ring.available_read(), 0);
+    }
+
+    #[test]
+    fn ring_empty_read_returns_zero() {
+        let ring = SpscRing::new();
+        let mut out = [0.0f32; 4];
+        assert_eq!(ring.pop_to_ptr(out.as_mut_ptr(), 4), 0);
+    }
+
+    #[test]
+    fn ring_full_write_returns_zero() {
+        let ring = SpscRing::new();
+        let data = vec![1.0f32; RING_CAPACITY];
+        assert_eq!(ring.push_slice(&data), RING_CAPACITY);
+        assert_eq!(ring.available_write(), 0);
+        // Ring is full — additional push writes nothing
+        assert_eq!(ring.push_slice(&[42.0]), 0);
+    }
+
+    #[test]
+    fn ring_wrap_around() {
+        let ring = SpscRing::new();
+        // Fill most of the ring
+        let fill = vec![1.0f32; RING_CAPACITY - 4];
+        ring.push_slice(&fill);
+        // Consume most, leaving 4 at the tail near the end
+        let mut sink = vec![0.0f32; RING_CAPACITY - 8];
+        ring.pop_to_ptr(sink.as_mut_ptr(), sink.len());
+        assert_eq!(ring.available_read(), 4);
+
+        // Push 16 samples — this wraps around the end of the buffer
+        let wrap = vec![2.0f32; 16];
+        assert_eq!(ring.push_slice(&wrap), 16);
+        assert_eq!(ring.available_read(), 20);
+
+        // Read remaining 4 from original fill
+        let mut out = [0.0f32; 4];
+        ring.pop_to_ptr(out.as_mut_ptr(), 4);
+        assert_eq!(out, [1.0; 4]);
+
+        // Read the 16 wrap-around samples
+        let mut out = [0.0f32; 16];
+        ring.pop_to_ptr(out.as_mut_ptr(), 16);
+        assert_eq!(out, [2.0; 16]);
+        assert_eq!(ring.available_read(), 0);
+    }
+
+    #[test]
+    fn ring_clear_resets() {
+        let ring = SpscRing::new();
+        ring.push_slice(&[1.0, 2.0, 3.0]);
+        assert_eq!(ring.available_read(), 3);
+        ring.clear();
+        assert_eq!(ring.available_read(), 0);
+        assert_eq!(ring.available_write(), RING_CAPACITY);
+    }
+
+    #[test]
+    fn ring_partial_read() {
+        let ring = SpscRing::new();
+        ring.push_slice(&[1.0, 2.0, 3.0, 4.0]);
+        let mut out = [0.0f32; 2];
+        assert_eq!(ring.pop_to_ptr(out.as_mut_ptr(), 2), 2);
+        assert_eq!(out, [1.0, 2.0]);
+        assert_eq!(ring.available_read(), 2);
+    }
+
+    #[test]
+    fn ring_partial_write() {
+        let ring = SpscRing::new();
+        // Fill to capacity - 2
+        let fill = vec![0.0f32; RING_CAPACITY - 2];
+        ring.push_slice(&fill);
+        // Try to push 4 — only 2 should fit
+        let data = [1.0f32, 2.0, 3.0, 4.0];
+        assert_eq!(ring.push_slice(&data), 2);
+    }
+
+    #[test]
+    fn ring_write_after_consume_restores_space() {
+        let ring = SpscRing::new();
+        ring.push_slice(&[1.0, 2.0, 3.0]);
+        assert_eq!(ring.available_write(), RING_CAPACITY - 3);
+        let mut out = [0.0f32; 2];
+        ring.pop_to_ptr(out.as_mut_ptr(), 2);
+        assert_eq!(ring.available_write(), RING_CAPACITY - 1);
+    }
+
+    #[test]
+    fn ring_multiple_push_pop_cycles() {
+        let ring = SpscRing::new();
+        for i in 0..1000 {
+            let val = i as f32;
+            assert_eq!(ring.push_slice(&[val]), 1);
+            let mut out = [0.0f32; 1];
+            assert_eq!(ring.pop_to_ptr(out.as_mut_ptr(), 1), 1);
+            assert_eq!(out[0], val);
+        }
+        assert_eq!(ring.available_read(), 0);
+    }
+
+    #[test]
+    fn ring_empty_push_is_noop() {
+        let ring = SpscRing::new();
+        assert_eq!(ring.push_slice(&[]), 0);
+        assert_eq!(ring.available_read(), 0);
+    }
+
+    #[test]
+    fn ring_capacity_is_power_of_two() {
+        // Required for the mask-based wrapping arithmetic to work correctly
+        assert!(RING_CAPACITY.is_power_of_two());
+        const { assert!(RING_CAPACITY > 0) };
     }
 }

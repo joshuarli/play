@@ -1,3 +1,9 @@
+//! Time utilities: PTS conversion, formatting, and parsing.
+//!
+//! All internal timestamps are in microseconds (i64). PTS values from ffmpeg
+//! are converted via [`pts_to_us`] using 128-bit intermediate arithmetic to
+//! avoid overflow on long files (8+ hours at 90 kHz timebase).
+
 use std::sync::OnceLock;
 use std::time::Instant;
 

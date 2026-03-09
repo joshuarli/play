@@ -1,3 +1,10 @@
+//! Keycode → Command mapping for keyboard input.
+//!
+//! Translates macOS virtual key codes (from `NSEvent.keyCode`) and character
+//! strings into player [`Command`]s.  Arrow keys use the virtual key code for
+//! unambiguous identification; letter keys use the character string so they
+//! work regardless of keyboard layout.
+
 use crate::cmd::Command;
 
 /// Map an NSEvent key code + modifiers to a Command.
