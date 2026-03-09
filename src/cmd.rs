@@ -1,3 +1,14 @@
+//! Shared types for inter-thread communication and CLI argument parsing.
+//!
+//! Defines the message enums that flow between threads:
+//! - [`Command`] — UI → player (key presses, seek, quit)
+//! - [`DemuxCommand`] — player → demuxer (seek, stop, audio track change)
+//! - [`DemuxPacket`] — demuxer → player (decoded packets, flush, EOF)
+//! - [`UiUpdate`] — player → UI (OSD text, pause state, seek flush)
+//!
+//! Also contains [`PixelBuffer`] (RAII CVPixelBufferRef), [`VideoFrame`]
+//! (pixel buffer + timing), and CLI argument parsing.
+
 use std::path::PathBuf;
 
 /// Commands sent from the UI/input layer to the player thread.
@@ -158,7 +169,13 @@ pub fn expand_files(paths: &[PathBuf]) -> Vec<PathBuf> {
     out
 }
 
-const USAGE: &str = "\
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+fn usage() -> String {
+    format!(
+        "\
+play {VERSION} — macOS media player
+
 Usage: play [OPTIONS] <FILE|DIR>...
 
 Arguments:
@@ -172,7 +189,10 @@ Options:
       --start <TIME>        Start position (HH:MM:SS, MM:SS, or seconds)
       --no-fullscreen       Start windowed instead of fullscreen
   -v                        Verbose logging (-v info, -vv debug)
-  -h, --help                Print help";
+  -V, --version             Print version
+  -h, --help                Print help"
+    )
+}
 
 pub fn parse_args() -> anyhow::Result<Args> {
     parse_from(std::env::args().skip(1).collect())
@@ -229,7 +249,11 @@ fn parse_from(argv: Vec<String>) -> anyhow::Result<Args> {
                 positional_only = true;
             }
             "-h" | "--help" => {
-                println!("{USAGE}");
+                println!("{}", usage());
+                std::process::exit(0);
+            }
+            "-V" | "--version" => {
+                println!("play {VERSION}");
                 std::process::exit(0);
             }
             "--volume" => {
@@ -267,14 +291,14 @@ fn parse_from(argv: Vec<String>) -> anyhow::Result<Args> {
                 verbose = (s.len() - 1).min(255) as u8;
             }
             s if s.starts_with('-') => {
-                anyhow::bail!("unknown option '{s}'\n\n{USAGE}");
+                anyhow::bail!("unknown option '{s}'\n\n{}", usage());
             }
             _ => files.push(PathBuf::from(arg)),
         }
     }
 
     if files.is_empty() {
-        anyhow::bail!("required arguments not provided: <FILE>...\n\n{USAGE}");
+        anyhow::bail!("required arguments not provided: <FILE>...\n\n{}", usage());
     }
 
     Ok(Args {
