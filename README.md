@@ -55,3 +55,16 @@ mismatch. One binary, done.
 | f | Fullscreen |
 | n / p | Next / previous file |
 | q / Esc | Quit |
+
+## On ffmpeg
+
+~98% of the binary is statically linked ffmpeg (libavcodec, libavformat, libavutil,
+libswresample). Video playback requires it — ffmpeg feeds packets to VideoToolbox for
+hardware decode, and libavformat handles container demuxing for every format we support.
+
+For a future audio-only player, [Symphonia](https://github.com/pdeljanov/Symphonia)
+could replace ffmpeg entirely — it's a pure Rust audio framework with excellent MP3,
+FLAC, Vorbis, AAC, and ALAC decoders, plus demuxers for MP4, MKV, Ogg, and WAV. The
+one gap is Opus (not yet implemented). That would mean zero C dependencies and a
+sub-1 MB binary. But for now, one program that plays both music and video is worth the
+15 MB.
