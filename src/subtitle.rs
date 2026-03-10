@@ -40,6 +40,11 @@ impl SubtitleTrack {
 /// Parse an SRT file.
 pub fn parse_srt(path: &Path) -> Result<Vec<SrtEntry>> {
     let content = std::fs::read_to_string(path)?;
+    Ok(parse_srt_content(&content))
+}
+
+/// Parse SRT subtitle content from a string.
+pub fn parse_srt_content(content: &str) -> Vec<SrtEntry> {
     let mut entries = Vec::new();
     let mut lines = content.lines().peekable();
 
@@ -82,7 +87,7 @@ pub fn parse_srt(path: &Path) -> Result<Vec<SrtEntry>> {
         }
     }
 
-    Ok(entries)
+    entries
 }
 
 fn parse_timing_line(line: &str) -> Option<(i64, i64)> {

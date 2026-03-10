@@ -1,0 +1,35 @@
+[package]
+name = "play-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.play]
+path = ".."
+
+[[bin]]
+name = "fuzz_srt"
+path = "fuzz_targets/fuzz_srt.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_parse_time"
+path = "fuzz_targets/fuzz_parse_time.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_probe"
+path = "fuzz_targets/fuzz_probe.rs"
+test = false
+doc = false
+bench = false
