@@ -141,8 +141,8 @@ impl PacketCache {
         if self.packets.is_empty() {
             return None;
         }
-        let first_pts = self.packets.front().unwrap().pts_us;
-        let last_pts = self.packets.back().unwrap().pts_us;
+        let first_pts = self.packets.front()?.pts_us;
+        let last_pts = self.packets.back()?.pts_us;
         if target_us < first_pts || target_us > last_pts {
             return None;
         }

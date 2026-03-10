@@ -131,20 +131,16 @@ define_class!(
 
     unsafe impl NSApplicationDelegate for AppDelegate {
         #[unsafe(method(applicationDidFinishLaunching:))]
-        fn did_finish_launching(&self, notification: &NSNotification) {
+        fn did_finish_launching(&self, _notification: &NSNotification) {
             let mtm = self.mtm();
-            let app = notification
-                .object()
-                .unwrap()
-                .downcast::<NSApplication>()
-                .unwrap();
+            let app = NSApplication::sharedApplication(mtm);
 
             let (vw, vh) = INITIAL_SIZE.get().copied().unwrap_or((960, 540));
 
             // Cap window to 80% of screen
             // SAFETY: NSScreen class and mainScreen/visibleFrame are standard
             // AppKit APIs available on all macOS versions we target.
-            let screen_cls = AnyClass::get(c"NSScreen").unwrap();
+            let screen_cls = AnyClass::get(c"NSScreen").expect("NSScreen");
             let screen: Retained<AnyObject> = unsafe { msg_send![screen_cls, mainScreen] };
             let sf: CGRect = unsafe { msg_send![&*screen, visibleFrame] };
             let max_w = sf.size.width * 0.8;
@@ -258,6 +254,8 @@ fn install_key_monitor() {
     let mask = NSEventMask::KeyDown;
 
     let handler = RcBlock::new(|event_ptr: NonNull<NSEvent>| -> *mut NSEvent {
+        // SAFETY: NonNull<NSEvent> from addLocalMonitorForEventsMatchingMask is
+        // always a valid, autoreleased NSEvent for the duration of this block.
         let event = unsafe { event_ptr.as_ref() };
         let key_code = event.keyCode();
         let mods = event.modifierFlags();
@@ -316,6 +314,8 @@ fn install_mouse_monitor() {
     let mask = NSEventMask::MouseMoved | NSEventMask::LeftMouseDown | NSEventMask::LeftMouseDragged;
 
     let handler = RcBlock::new(|event_ptr: NonNull<NSEvent>| -> *mut NSEvent {
+        // SAFETY: NonNull<NSEvent> from addLocalMonitorForEventsMatchingMask is
+        // always a valid, autoreleased NSEvent for the duration of this block.
         let event = unsafe { event_ptr.as_ref() };
         let event_type = event.r#type();
 

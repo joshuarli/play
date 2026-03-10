@@ -214,7 +214,8 @@ pub unsafe fn release_pixel_buffer(buf: *mut c_void) {
     }
 }
 
-// CoreVideo FFI
+// SAFETY: CoreVideo framework functions linked via the system SDK.
+// CVPixelBufferRetain/Release manage refcounts — paired in receive_frame()/Drop.
 unsafe extern "C" {
     fn CVPixelBufferRetain(pixelBuffer: *mut c_void) -> *mut c_void;
     fn CVPixelBufferRelease(pixelBuffer: *mut c_void);

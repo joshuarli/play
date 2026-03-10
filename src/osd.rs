@@ -13,11 +13,14 @@ pub(crate) struct CGColor {
     _private: [u8; 0],
 }
 
+// SAFETY: CGColor is an opaque struct; the encoding matches CoreGraphics' pointer
+// representation (^{CGColor=}) so msg_send! validates parameter types correctly.
 unsafe impl RefEncode for CGColor {
     const ENCODING_REF: Encoding = Encoding::Pointer(&Encoding::Struct("CGColor", &[]));
 }
 
-// CoreGraphics color FFI
+// SAFETY: CoreGraphics color/colorspace functions. All pointers passed to these
+// functions are created and released in matching pairs within this module.
 unsafe extern "C" {
     fn CGColorSpaceCreateDeviceRGB() -> *mut c_void;
     fn CGColorCreate(space: *mut c_void, components: *const f64) -> *mut CGColor;
@@ -181,7 +184,7 @@ std::thread_local! {
 use crate::time::now_ms;
 
 fn disable_animations() {
-    let cls = AnyClass::get(c"CATransaction").unwrap();
+    let cls = AnyClass::get(c"CATransaction").expect("CATransaction");
     // SAFETY: CATransaction class methods; begin starts a transaction,
     // setDisableActions: suppresses implicit layer animations.
     let _: () = unsafe { msg_send![cls, begin] };
@@ -189,7 +192,7 @@ fn disable_animations() {
 }
 
 fn commit_animations() {
-    let cls = AnyClass::get(c"CATransaction").unwrap();
+    let cls = AnyClass::get(c"CATransaction").expect("CATransaction");
     // SAFETY: CATransaction commit ends the current transaction.
     let _: () = unsafe { msg_send![cls, commit] };
 }
@@ -319,10 +322,12 @@ pub fn init_layers(parent_ptr: *mut c_void, bounds: CGRect) {
     let _: () = unsafe { msg_send![&*bar_bg, addSublayer: &*bar_fill] };
 
     // Create cached subtitle style objects (shadow + paragraph style)
+    // SAFETY: Standard AppKit classes; objects are leaked via into_raw for
+    // the process lifetime. All msg_send! calls target documented methods.
     let cached_sub_shadow: *mut AnyObject = unsafe {
-        let shadow_cls = AnyClass::get(c"NSShadow").unwrap();
+        let shadow_cls = AnyClass::get(c"NSShadow").expect("NSShadow");
         let shadow: Retained<AnyObject> = msg_send![shadow_cls, new];
-        let color_cls = AnyClass::get(c"NSColor").unwrap();
+        let color_cls = AnyClass::get(c"NSColor").expect("NSColor");
         let black_ns: Retained<AnyObject> = msg_send![color_cls, blackColor];
         let _: () = msg_send![&*shadow, setShadowColor: &*black_ns];
         let zero = CGSize::new(0.0, 0.0);
@@ -331,7 +336,7 @@ pub fn init_layers(parent_ptr: *mut c_void, bounds: CGRect) {
         Retained::into_raw(shadow)
     };
     let cached_sub_para: *mut AnyObject = unsafe {
-        let para_cls = AnyClass::get(c"NSMutableParagraphStyle").unwrap();
+        let para_cls = AnyClass::get(c"NSMutableParagraphStyle").expect("NSMutableParagraphStyle");
         let para: Retained<AnyObject> = msg_send![para_cls, new];
         let _: () = msg_send![&*para, setAlignment: 2i64]; // NSTextAlignmentCenter
         Retained::into_raw(para)
@@ -440,13 +445,13 @@ fn build_sub_string(
     // para are valid objects created in init_layers() and kept alive for the
     // process lifetime via Retained::into_raw.
     unsafe {
-        let font_cls = AnyClass::get(c"NSFont").unwrap();
+        let font_cls = AnyClass::get(c"NSFont").expect("NSFont");
         let font: Retained<AnyObject> = msg_send![font_cls, systemFontOfSize: font_size];
 
-        let color_cls = AnyClass::get(c"NSColor").unwrap();
+        let color_cls = AnyClass::get(c"NSColor").expect("NSColor");
         let white: Retained<AnyObject> = msg_send![color_cls, whiteColor];
 
-        let dict_cls = AnyClass::get(c"NSMutableDictionary").unwrap();
+        let dict_cls = AnyClass::get(c"NSMutableDictionary").expect("NSMutableDictionary");
         let dict: Retained<AnyObject> = msg_send![dict_cls, new];
 
         let k = objc2_foundation::NSString::from_str("NSFont");
@@ -459,9 +464,12 @@ fn build_sub_string(
         let _: () = msg_send![&*dict, setObject: para, forKey: &*k];
 
         let ns_text = objc2_foundation::NSString::from_str(text);
-        let raw: *mut AnyObject = msg_send![AnyClass::get(c"NSAttributedString").unwrap(), alloc];
+        let raw: *mut AnyObject = msg_send![
+            AnyClass::get(c"NSAttributedString").expect("NSAttributedString"),
+            alloc
+        ];
         let raw: *mut AnyObject = msg_send![raw, initWithString: &*ns_text, attributes: &*dict];
-        Retained::from_raw(raw).unwrap()
+        Retained::from_raw(raw).expect("NSAttributedString initWithString:attributes: returned nil")
     }
 }
 

@@ -80,6 +80,9 @@ impl PixelBuffer {
     }
 }
 
+// SAFETY: PixelBuffer wraps a CVPixelBufferRef which is refcounted and safe to
+// send between threads. We only move it from the decoder (player thread) to the
+// display (main thread), never shared concurrently.
 unsafe impl Send for PixelBuffer {}
 
 impl Drop for PixelBuffer {
@@ -235,7 +238,9 @@ fn parse_from(argv: Vec<String>) -> anyhow::Result<Args> {
 
         // Split --flag=value into (flag, Some(value))
         let (flag, inline_val) = if arg.starts_with("--") && arg.contains('=') {
-            let (f, v) = arg.split_once('=').unwrap();
+            let (f, v) = arg
+                .split_once('=')
+                .expect("contains('=') guarantees split_once succeeds");
             (f.to_string(), Some(v.to_string()))
         } else {
             (arg.clone(), None)

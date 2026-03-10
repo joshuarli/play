@@ -162,7 +162,10 @@ impl AudioDecoder {
                                 }
                             }
                         }
-                        let resampler = self.resampler.as_mut().unwrap();
+                        let resampler = self
+                            .resampler
+                            .as_mut()
+                            .expect("set above; error branch continues the loop");
 
                         let mut delay = match resampler.run(&self.frame, &mut self.resampled) {
                             Ok(d) => d,

@@ -91,6 +91,8 @@ const K_CM_TIME_INVALID: CMTime = CMTime {
 
 // ── CoreMedia FFI ──────────────────────────────────────────────────
 
+// SAFETY: CoreMedia/CoreVideo framework functions linked via the system SDK.
+// All pointer parameters are validated at each call site before use.
 unsafe extern "C" {
     fn CMVideoFormatDescriptionCreateForImageBuffer(
         allocator: CFAllocatorRef,

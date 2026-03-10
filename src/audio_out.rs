@@ -101,6 +101,8 @@ const SCOPE_INPUT: AudioUnitScope = 1;
 const SCOPE_GLOBAL: AudioUnitScope = 0;
 const HAL_OUTPUT_PARAM_VOLUME: AudioUnitParameterID = 14;
 
+// SAFETY: CoreAudio framework functions linked via the system SDK.
+// All pointer parameters are validated at each call site before use.
 unsafe extern "C" {
     fn AudioComponentFindNext(
         component: AudioComponent,
