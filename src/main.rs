@@ -27,8 +27,8 @@ use player::Player;
 fn main() -> Result<()> {
     let args = cmd::parse_args()?;
 
-    // Set up logging
     let log_level = match args.verbose {
+        0 if args.files.is_empty() => log::LevelFilter::Info,
         0 => log::LevelFilter::Warn,
         1 => log::LevelFilter::Info,
         _ => log::LevelFilter::Debug,
@@ -51,11 +51,28 @@ fn main() -> Result<()> {
         ffmpeg_sys_next::av_log_set_level(ff_log);
     }
 
-    // Expand directories into sorted media files
-    let files = cmd::expand_files(&args.files);
-    if files.is_empty() {
-        bail!("No media files found in the given paths");
+    // Finder mode: no CLI files, wait for Finder to deliver file-open events
+    if args.files.is_empty() {
+        log::info!("No CLI files, entering Finder mode...");
+        let finder_args = args.clone();
+        window::run_finder_mode(move |files| {
+            if files.is_empty() {
+                return;
+            }
+            if let Err(e) = start_finder_playback(&files[0], &finder_args) {
+                log::error!("Finder playback error: {e}");
+            }
+        });
+        return Ok(());
     }
+
+    let files = {
+        let expanded = cmd::expand_files(&args.files);
+        if expanded.is_empty() {
+            bail!("No media files found in the given paths");
+        }
+        expanded
+    };
 
     // Validate files exist
     for file in &files {
@@ -105,7 +122,6 @@ fn play_file(
     file_count: usize,
     term_keys: &mut termion::input::Keys<termion::AsyncReader>,
 ) -> Result<EndReason> {
-    // Probe the file
     let info = demux::probe(path)?;
 
     let has_video = info.video_stream.is_some();
@@ -294,6 +310,131 @@ fn play_file(
     demux_thread.join().ok();
 
     Ok(reason)
+}
+
+/// Set up playback for a file opened via Finder. Called on the main thread
+/// during `app.run()` from the `openURLs:` callback.
+fn start_finder_playback(path: &Path, args: &cmd::Args) -> Result<()> {
+    if !path.exists() {
+        bail!("File not found: {}", path.display());
+    }
+
+    let info = demux::probe(path)?;
+    let has_video = info.video_stream.is_some();
+    let has_audio = !info.audio_streams.is_empty();
+
+    if !has_video && !has_audio {
+        bail!("No playable streams found in {}", path.display());
+    }
+    if !has_video {
+        bail!("Audio-only playback from Finder not yet supported");
+    }
+
+    let video_idx = info.video_stream.as_ref().map(|s| s.index);
+    let audio_idx = info
+        .audio_streams
+        .get(args.audio_track.saturating_sub(1))
+        .or(info.audio_streams.first())
+        .map(|s| s.index);
+    let subtitle_idx = info.subtitle_streams.first().map(|s| s.index);
+
+    let mut subtitle_tracks = Vec::new();
+    for srt_path in subtitle::find_srt_files(path) {
+        if let Ok(entries) = subtitle::parse_srt(&srt_path) {
+            let label = srt_path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("external")
+                .to_string();
+            subtitle_tracks.push(subtitle::SubtitleTrack { label, entries });
+        }
+    }
+
+    let (cmd_tx, cmd_rx) = crossbeam_channel::bounded::<Command>(32);
+    let (demux_packet_tx, demux_packet_rx) = crossbeam_channel::bounded::<DemuxPacket>(64);
+    let (demux_cmd_tx, demux_cmd_rx) = crossbeam_channel::bounded::<DemuxCommand>(4);
+    let (video_frame_tx, video_frame_rx) = crossbeam_channel::bounded::<VideoFrame>(8);
+    let (ui_update_tx, ui_update_rx) = crossbeam_channel::unbounded::<UiUpdate>();
+
+    let audio_clock = Arc::new(AtomicI64::new(0));
+    let video_width = info.video_stream.as_ref().map(|s| s.width).unwrap_or(640);
+    let video_height = info.video_stream.as_ref().map(|s| s.height).unwrap_or(480);
+
+    let filename = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("unknown");
+    let title = format!("play - {filename}");
+
+    // Spawn demuxer thread
+    let demux_path = path.to_path_buf();
+    thread::Builder::new()
+        .name("demuxer".into())
+        .spawn(move || {
+            if let Err(e) = demux::run_demuxer(
+                &demux_path,
+                video_idx,
+                audio_idx,
+                subtitle_idx,
+                demux_cmd_rx,
+                demux_packet_tx,
+            ) {
+                log::error!("Demuxer error: {e}");
+            }
+        })
+        .context("Failed to spawn demuxer thread")?;
+
+    // Spawn player thread
+    let player_path = path.to_path_buf();
+    let player_info = info.clone();
+    let initial_volume = args.volume;
+    let initial_audio_delay = args.audio_delay;
+    let player_clock = audio_clock.clone();
+    thread::Builder::new()
+        .name("player".into())
+        .spawn(move || {
+            let mut player = match Player::new(
+                cmd_rx,
+                demux_packet_rx,
+                demux_cmd_tx,
+                video_frame_tx,
+                ui_update_tx,
+                player_path,
+                player_info,
+                initial_volume,
+                initial_audio_delay,
+                subtitle_tracks,
+                player_clock,
+            ) {
+                Ok(p) => p,
+                Err(e) => {
+                    log::error!("Failed to create player: {e}");
+                    return;
+                }
+            };
+            if let Err(e) = player.init_decoders() {
+                log::error!("Failed to init decoders: {e}");
+                return;
+            }
+            player.run();
+        })
+        .context("Failed to spawn player thread")?;
+
+    // Install file state and create window
+    let mtm = objc2_foundation::MainThreadMarker::new().expect("must be on main thread");
+    window::set_file_state(
+        cmd_tx,
+        video_frame_rx,
+        ui_update_rx,
+        audio_clock,
+        info.duration_us,
+        0,
+        1,
+    );
+    window::create_window(mtm, video_width, video_height, args.fullscreen, &title);
+
+    log_stream_info(&info);
+    Ok(())
 }
 
 fn log_stream_info(info: &demux::StreamInfo) {

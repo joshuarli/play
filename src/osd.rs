@@ -154,6 +154,7 @@ impl ProgressBar {
 
 struct OsdInner {
     parent: Layer,
+    title: TextLayer,
     message: TextLayer,
     subtitle: TextLayer,
     bar: ProgressBar,
@@ -260,6 +261,17 @@ pub fn init_layers(parent_ptr: *mut c_void, bounds: CGRect) {
     let _: () = unsafe { msg_send![&*sub, setOpacity: 0.0f32] };
     let _: () = unsafe { msg_send![parent, addSublayer: &*sub] };
 
+    // Filename title (top-left, shows/hides with progress bar)
+    let title: Retained<AnyObject> = unsafe { msg_send![text_cls, new] };
+    let title_frame = CGRect::new(
+        CGPoint::new(12.0, bounds.size.height - 36.0),
+        CGSize::new(bounds.size.width - 24.0, 20.0),
+    );
+    setup_text_layer(&title, title_frame, 13.0, scale, false);
+    // Pin to top (kCALayerWidthSizable | kCALayerMinYMargin)
+    let _: () = unsafe { msg_send![&*title, setAutoresizingMask: 10u32] };
+    let _: () = unsafe { msg_send![parent, addSublayer: &*title] };
+
     // ── Progress bar ───────────────────────────────────────────────────────
     let bar_w = bounds.size.width;
 
@@ -345,6 +357,7 @@ pub fn init_layers(parent_ptr: *mut c_void, bounds: CGRect) {
     OSD.with(|osd| {
         *osd.borrow_mut() = Some(OsdInner {
             parent: Layer(parent),
+            title: TextLayer(Layer(Retained::into_raw(title))),
             message: TextLayer(Layer(Retained::into_raw(msg))),
             subtitle: TextLayer(Layer(Retained::into_raw(sub))),
             bar: ProgressBar {
@@ -414,6 +427,18 @@ fn setup_bar_text_layer(layer: &AnyObject, frame: CGRect, scale: f64, right_alig
         let align = objc2_foundation::NSString::from_str("right");
         let _: () = unsafe { msg_send![layer, setAlignmentMode: &*align] };
     }
+}
+
+/// Set the filename shown at the top of the window when the progress bar is visible.
+pub fn set_title(text: &str) {
+    OSD.with(|osd| {
+        let osd = osd.borrow();
+        let Some(ref inner) = *osd else { return };
+        let ns = objc2_foundation::NSString::from_str(text);
+        disable_animations();
+        inner.title.set_string(&ns);
+        commit_animations();
+    });
 }
 
 /// Show a transient OSD message (bottom-left, fades after 2s). Main thread only.
@@ -533,6 +558,7 @@ pub fn tick(progress: (i64, i64)) {
         if inner.bar_visible && now >= inner.bar_hide_deadline_ms {
             disable_animations();
             inner.bar.set_visible(false);
+            inner.title.set_opacity(0.0);
             commit_animations();
             inner.bar_visible = false;
         }
@@ -571,6 +597,7 @@ fn set_bar_visible(inner: &mut OsdInner) {
     if !inner.bar_visible {
         disable_animations();
         inner.bar.set_visible(true);
+        inner.title.set_opacity(0.7);
         commit_animations();
         inner.bar_visible = true;
     }

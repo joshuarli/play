@@ -302,10 +302,6 @@ fn parse_from(argv: Vec<String>) -> anyhow::Result<Args> {
         }
     }
 
-    if files.is_empty() {
-        anyhow::bail!("required arguments not provided: <FILE>...\n\n{}", usage());
-    }
-
     Ok(Args {
         files,
         volume,
@@ -380,9 +376,9 @@ mod tests {
     }
 
     #[test]
-    fn missing_files_is_error() {
-        let e = parse_from(args(&[])).unwrap_err();
-        assert!(e.to_string().contains("required arguments"));
+    fn missing_files_returns_empty() {
+        let a = parse_from(args(&[])).unwrap();
+        assert!(a.files.is_empty());
     }
 
     #[test]

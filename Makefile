@@ -2,7 +2,9 @@ NAME   := play
 ARCH   := $(shell uname -m | sed 's/arm64/aarch64/')
 TARGET := $(ARCH)-apple-darwin
 
-.PHONY: setup build release install test test-ci pc bump-version
+APP_BUNDLE := Play.app
+
+.PHONY: setup build release install app install-app test test-ci pc bump-version
 
 setup:
 	rustup show active-toolchain
@@ -19,8 +21,15 @@ release:
 	  -Z build-std-features= \
 	  --target $(TARGET)
 
-install: release
-	sudo cp target/$(TARGET)/release/$(NAME) /usr/local/bin/$(NAME)
+app: release
+	mkdir -p $(APP_BUNDLE)/Contents/MacOS
+	cp target/$(TARGET)/release/$(NAME) $(APP_BUNDLE)/Contents/MacOS/
+	cp Info.plist $(APP_BUNDLE)/Contents/
+
+install: app
+	ln -sf /Applications/$(APP_BUNDLE)/Contents/MacOS/$(NAME) ~/usr/bin/$(NAME)
+	cp -r $(APP_BUNDLE) /Applications/
+	/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f /Applications/$(APP_BUNDLE)
 
 test:
 	cargo test -- --test-threads=4

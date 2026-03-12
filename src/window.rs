@@ -1,7 +1,8 @@
 use std::cell::RefCell;
 use std::ffi::c_void;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+use std::sync::{Arc, OnceLock};
 
 use crossbeam_channel::Sender;
 use objc2::rc::Retained;
@@ -20,7 +21,6 @@ use crate::input::map_key;
 // ── Global state ───────────────────────────────────────────────────────────
 
 /// All main-thread state consolidated into a single struct.
-/// Replaces the three separate thread-locals (FILE_STATE, WINDOW, END_REASON).
 struct AppState {
     // Per-file state (replaced between playlist entries)
     cmd_tx: Sender<Command>,
@@ -36,17 +36,18 @@ struct AppState {
     end_reason: Option<EndReason>,
 }
 
-// All state is main-thread-only (timer, key handler, mouse handler, run_app
-// all execute on the main GCD queue). RefCell enforces this at the type level
-// and avoids Mutex lock/unlock overhead on every timer tick.
 std::thread_local! {
     static APP_STATE: RefCell<Option<AppState>> = const { RefCell::new(None) };
 }
-static INITIAL_SIZE: std::sync::OnceLock<(u32, u32)> = std::sync::OnceLock::new();
-static START_FULLSCREEN: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+/// Handler for Finder file-open events, set by `run_finder_mode`.
+static FINDER_HANDLER: OnceLock<Box<dyn Fn(Vec<PathBuf>) + Send + Sync>> = OnceLock::new();
+
+/// Guard to ensure the Finder handler is only invoked once.
+static FINDER_HANDLED: AtomicBool = AtomicBool::new(false);
 
 /// Replace per-file state, preserving the window reference.
-fn set_file_state(
+pub fn set_file_state(
     cmd_tx: Sender<Command>,
     video_frame_rx: crossbeam_channel::Receiver<VideoFrame>,
     ui_update_rx: crossbeam_channel::Receiver<UiUpdate>,
@@ -130,96 +131,39 @@ define_class!(
     unsafe impl NSObjectProtocol for AppDelegate {}
 
     unsafe impl NSApplicationDelegate for AppDelegate {
-        #[unsafe(method(applicationDidFinishLaunching:))]
-        fn did_finish_launching(&self, _notification: &NSNotification) {
-            let mtm = self.mtm();
-            let app = NSApplication::sharedApplication(mtm);
-
-            let (vw, vh) = INITIAL_SIZE.get().copied().unwrap_or((960, 540));
-
-            // Cap window to 80% of screen
-            // SAFETY: NSScreen class and mainScreen/visibleFrame are standard
-            // AppKit APIs available on all macOS versions we target.
-            let screen_cls = AnyClass::get(c"NSScreen").expect("NSScreen");
-            let screen: Retained<AnyObject> = unsafe { msg_send![screen_cls, mainScreen] };
-            let sf: CGRect = unsafe { msg_send![&*screen, visibleFrame] };
-            let max_w = sf.size.width * 0.8;
-            let max_h = sf.size.height * 0.8;
-            let scale = (max_w / vw as f64).min(max_h / vh as f64).min(1.0);
-            let w = (vw as f64 * scale).round();
-            let h = (vh as f64 * scale).round();
-
-            let rect = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(w, h));
-            let style = NSWindowStyleMask::Titled
-                | NSWindowStyleMask::Closable
-                | NSWindowStyleMask::Miniaturizable
-                | NSWindowStyleMask::Resizable;
-
-            // SAFETY: Standard NSWindow initialization with valid parameters.
-            let window = unsafe {
-                NSWindow::initWithContentRect_styleMask_backing_defer(
-                    NSWindow::alloc(mtm),
-                    rect,
-                    style,
-                    NSBackingStoreType::Buffered,
-                    false,
-                )
-            };
-            // SAFETY: We manage the window lifetime ourselves via Retained.
-            unsafe { window.setReleasedWhenClosed(false) };
-            window.setTitle(&objc2_foundation::NSString::from_str("play"));
-            window.center();
-            window.setDelegate(Some(ProtocolObject::from_ref(self)));
-
-            if let Some(view) = window.contentView() {
-                view.setWantsLayer(true);
-
-                crate::video_out::init_display(vw, vh);
-
-                if let Some(layer) = view.layer() {
-                    // SAFETY: All msg_send! calls target standard CALayer
-                    // properties/methods. display_layer is a valid
-                    // AVSampleBufferDisplayLayer from video_out::init_display_layer.
-                    let black = crate::osd::OwnedCgColor::rgba(0.0, 0.0, 0.0, 1.0);
-                    let _: () = unsafe { msg_send![&*layer, setBackgroundColor: black.as_ptr()] };
-
-                    // Add display layer
-                    if let Some(display_ptr) = crate::video_out::display_layer_ptr() {
-                        let display_layer = display_ptr as *mut AnyObject;
-                        let _: () = unsafe { msg_send![&*layer, addSublayer: display_layer] };
-                        let bounds: CGRect = unsafe { msg_send![&*layer, bounds] };
-                        let _: () = unsafe { msg_send![display_layer, setFrame: bounds] };
-                        let mask: u32 = 18; // kCALayerWidthSizable | kCALayerHeightSizable
-                        let _: () = unsafe { msg_send![display_layer, setAutoresizingMask: mask] };
-                    }
-
-                    // Init OSD + subtitle layers
-                    let bounds: CGRect = unsafe { msg_send![&*layer, bounds] };
-                    let layer_ptr = &*layer as *const _ as *mut c_void;
-                    crate::osd::init_layers(layer_ptr, bounds);
+        #[unsafe(method(application:openURLs:))]
+        fn application_open_urls(
+            &self,
+            _app: &NSApplication,
+            urls: &objc2_foundation::NSArray<objc2_foundation::NSURL>,
+        ) {
+            if FINDER_HANDLED.swap(true, Ordering::SeqCst) {
+                return;
+            }
+            let mut paths = Vec::new();
+            for i in 0..urls.count() {
+                let url = urls.objectAtIndex(i);
+                if let Some(path) = url.path() {
+                    paths.push(PathBuf::from(path.to_string()));
                 }
             }
-
-            // Become a regular app and grab focus before showing the window
-            app.setActivationPolicy(NSApplicationActivationPolicy::Regular);
-            #[allow(deprecated)]
-            app.activateIgnoringOtherApps(true);
-
-            window.makeKeyAndOrderFront(None);
-
-            if START_FULLSCREEN.get().copied().unwrap_or(false) {
-                window.toggleFullScreen(None);
+            if let Some(handler) = FINDER_HANDLER.get() {
+                handler(paths);
             }
+        }
 
-            APP_STATE.with(|s| {
-                if let Some(ref mut state) = *s.borrow_mut() {
-                    state.window = Some(window);
-                }
-            });
-
-            install_key_monitor();
-            install_mouse_monitor();
-            start_main_timer();
+        #[unsafe(method(application:openFile:))]
+        fn application_open_file(
+            &self,
+            _app: &NSApplication,
+            filename: &objc2_foundation::NSString,
+        ) -> bool {
+            if !FINDER_HANDLED.swap(true, Ordering::SeqCst)
+                && let Some(handler) = FINDER_HANDLER.get()
+            {
+                handler(vec![PathBuf::from(filename.to_string())]);
+            }
+            true
         }
     }
 
@@ -242,6 +186,105 @@ impl AppDelegate {
         // SAFETY: Standard NSObject alloc/init pattern.
         unsafe { msg_send![Self::alloc(mtm), init] }
     }
+}
+
+// ── Window creation ───────────────────────────────────────────────────────
+
+/// Create the player window, display layers, event monitors, and timer.
+/// Called once from `run_app()` on first file.
+pub fn create_window(mtm: MainThreadMarker, vw: u32, vh: u32, fullscreen: bool, title: &str) {
+    let app = NSApplication::sharedApplication(mtm);
+
+    // Cap window to 80% of screen
+    // SAFETY: NSScreen class and mainScreen/visibleFrame are standard
+    // AppKit APIs available on all macOS versions we target.
+    let screen_cls = AnyClass::get(c"NSScreen").expect("NSScreen");
+    let screen: Retained<AnyObject> = unsafe { msg_send![screen_cls, mainScreen] };
+    let sf: CGRect = unsafe { msg_send![&*screen, visibleFrame] };
+    let max_w = sf.size.width * 0.8;
+    let max_h = sf.size.height * 0.8;
+    let scale = (max_w / vw as f64).min(max_h / vh as f64).min(1.0);
+    let w = (vw as f64 * scale).round();
+    let h = (vh as f64 * scale).round();
+
+    let rect = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(w, h));
+    let style = NSWindowStyleMask::Titled
+        | NSWindowStyleMask::Closable
+        | NSWindowStyleMask::Miniaturizable
+        | NSWindowStyleMask::Resizable;
+
+    // SAFETY: Standard NSWindow initialization with valid parameters.
+    let window = unsafe {
+        NSWindow::initWithContentRect_styleMask_backing_defer(
+            NSWindow::alloc(mtm),
+            rect,
+            style,
+            NSBackingStoreType::Buffered,
+            false,
+        )
+    };
+    // SAFETY: We manage the window lifetime ourselves via Retained.
+    unsafe { window.setReleasedWhenClosed(false) };
+    window.setTitle(&objc2_foundation::NSString::from_str(title));
+    window.center();
+
+    // Set up delegate for window close → quit.
+    let delegate = AppDelegate::new(mtm);
+    window.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
+    app.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
+    // Keep delegate alive for the app lifetime.
+    std::mem::forget(delegate);
+
+    if let Some(view) = window.contentView() {
+        view.setWantsLayer(true);
+
+        crate::video_out::init_display(vw, vh);
+
+        if let Some(layer) = view.layer() {
+            // SAFETY: All msg_send! calls target standard CALayer
+            // properties/methods. display_layer is a valid
+            // AVSampleBufferDisplayLayer from video_out::init_display_layer.
+            let black = crate::osd::OwnedCgColor::rgba(0.0, 0.0, 0.0, 1.0);
+            let _: () = unsafe { msg_send![&*layer, setBackgroundColor: black.as_ptr()] };
+
+            // Add display layer
+            if let Some(display_ptr) = crate::video_out::display_layer_ptr() {
+                let display_layer = display_ptr as *mut AnyObject;
+                let _: () = unsafe { msg_send![&*layer, addSublayer: display_layer] };
+                let bounds: CGRect = unsafe { msg_send![&*layer, bounds] };
+                let _: () = unsafe { msg_send![display_layer, setFrame: bounds] };
+                let mask: u32 = 18; // kCALayerWidthSizable | kCALayerHeightSizable
+                let _: () = unsafe { msg_send![display_layer, setAutoresizingMask: mask] };
+            }
+
+            // Init OSD + subtitle layers
+            let bounds: CGRect = unsafe { msg_send![&*layer, bounds] };
+            let layer_ptr = &*layer as *const _ as *mut c_void;
+            crate::osd::init_layers(layer_ptr, bounds);
+            crate::osd::set_title(title.strip_prefix("play - ").unwrap_or(title));
+        }
+    }
+
+    // Become a regular app and grab focus before showing the window
+    app.setActivationPolicy(NSApplicationActivationPolicy::Regular);
+    #[allow(deprecated)]
+    app.activateIgnoringOtherApps(true);
+
+    window.makeKeyAndOrderFront(None);
+
+    if fullscreen {
+        window.toggleFullScreen(None);
+    }
+
+    APP_STATE.with(|s| {
+        if let Some(ref mut state) = *s.borrow_mut() {
+            state.window = Some(window);
+        }
+    });
+
+    install_key_monitor();
+    install_mouse_monitor();
+    start_main_timer();
 }
 
 // ── Key event handling ─────────────────────────────────────────────────────
@@ -458,6 +501,42 @@ fn process_pending_ui_updates(state: &AppState) -> Option<EndReason> {
     eof
 }
 
+// ── Finder file-open support ──────────────────────────────────────────────
+
+/// Enter the NSApp run loop, waiting for Finder to deliver file-open events.
+/// When files arrive, `handler` is called on the main thread — it should set up
+/// playback (probe, spawn threads, create window) so the window appears before
+/// RunningBoard's TTL expires.
+pub fn run_finder_mode(handler: impl Fn(Vec<PathBuf>) + Send + Sync + 'static) -> EndReason {
+    FINDER_HANDLER.set(Box::new(handler)).ok();
+
+    let mtm = MainThreadMarker::new().expect("must run on main thread");
+    let app = NSApplication::sharedApplication(mtm);
+
+    let delegate = AppDelegate::new(mtm);
+    app.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
+    std::mem::forget(delegate);
+
+    // Minimal menu
+    {
+        use objc2_app_kit::{NSMenu, NSMenuItem};
+        let menu_bar = NSMenu::new(mtm);
+        let app_menu_item = NSMenuItem::new(mtm);
+        menu_bar.addItem(&app_menu_item);
+        app.setMainMenu(Some(&menu_bar));
+    }
+
+    app.run();
+
+    APP_STATE
+        .with(|s| {
+            s.borrow_mut()
+                .as_mut()
+                .and_then(|state| state.end_reason.take())
+        })
+        .unwrap_or(EndReason::Quit)
+}
+
 // ── Public API ─────────────────────────────────────────────────────────────
 
 #[allow(clippy::too_many_arguments)]
@@ -489,9 +568,6 @@ pub fn run_app(
     let app = NSApplication::sharedApplication(mtm);
 
     if first_run {
-        INITIAL_SIZE.set((video_width, video_height)).ok();
-        START_FULLSCREEN.set(fullscreen).ok();
-
         // Minimal menu
         {
             use objc2_app_kit::{NSMenu, NSMenuItem};
@@ -501,8 +577,7 @@ pub fn run_app(
             app.setMainMenu(Some(&menu_bar));
         }
 
-        let delegate = AppDelegate::new(mtm);
-        app.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
+        create_window(mtm, video_width, video_height, fullscreen, title);
     } else {
         // Subsequent files: reset display for new resolution, update title
         crate::video_out::reset_for_new_file();
@@ -513,6 +588,7 @@ pub fn run_app(
                 win.setTitle(&objc2_foundation::NSString::from_str(title));
             }
         });
+        crate::osd::set_title(title.strip_prefix("play - ").unwrap_or(title));
     }
 
     app.run();
