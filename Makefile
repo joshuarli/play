@@ -1,10 +1,9 @@
 NAME   := play
+APP    := Play.app
 ARCH   := $(shell uname -m | sed 's/arm64/aarch64/')
 TARGET := $(ARCH)-apple-darwin
 
-APP_BUNDLE := Play.app
-
-.PHONY: setup build release install app install-app test test-ci pc bump-version
+.PHONY: setup build release-bin release install test test-ci pc bump-version
 
 setup:
 	rustup show active-toolchain
@@ -13,7 +12,7 @@ setup:
 build:
 	cargo build
 
-release:
+release-bin:
 	cargo clean -p $(NAME) --release --target $(TARGET)
 	RUSTFLAGS="-Zlocation-detail=none -Zunstable-options -Cpanic=immediate-abort" \
 	cargo build --release \
@@ -21,15 +20,16 @@ release:
 	  -Z build-std-features= \
 	  --target $(TARGET)
 
-app: release
-	mkdir -p $(APP_BUNDLE)/Contents/MacOS
-	cp target/$(TARGET)/release/$(NAME) $(APP_BUNDLE)/Contents/MacOS/
-	cp Info.plist $(APP_BUNDLE)/Contents/
+release: release-bin
+	mkdir -p $(APP)/Contents/MacOS
+	cp Info.plist $(APP)/Contents/
+	cp target/$(TARGET)/release/$(NAME) $(APP)/Contents/MacOS/
+	zip -r $(APP).zip $(APP)
 
-install: app
-	ln -sf /Applications/$(APP_BUNDLE)/Contents/MacOS/$(NAME) ~/usr/bin/$(NAME)
-	cp -r $(APP_BUNDLE) /Applications/
-	/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f /Applications/$(APP_BUNDLE)
+install: release
+	unzip -o $(APP).zip -d /Applications
+	/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f /Applications/$(APP)
+	ln -sf /Applications/$(APP)/Contents/MacOS/$(NAME) ~/usr/bin/$(NAME)
 
 test:
 	cargo test -- --test-threads=4
