@@ -8,6 +8,7 @@ ffmpeg-next = { version = "7", default-features = false, features = [
     "codec",
     "format",
     "software-resampling",
+    "software-scaling",
 ] }
 ffmpeg-sys-next = { version = "7", default-features = false, features = [
     "build",
@@ -15,6 +16,7 @@ ffmpeg-sys-next = { version = "7", default-features = false, features = [
     "avcodec",
     "avformat",
     "swresample",
+    "swscale",
 ] }
 
 objc2 = { version = "0.6", features = ["exception"] }

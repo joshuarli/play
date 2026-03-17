@@ -10,10 +10,13 @@
 
 use std::ffi::c_void;
 use std::ptr;
+use std::sync::OnceLock;
 
 use anyhow::{Context, Result};
 use ffmpeg_next as ffmpeg;
 use ffmpeg_next::codec::context::Context as CodecContext;
+use ffmpeg_next::format::Pixel;
+use ffmpeg_next::software::scaling;
 use ffmpeg_next::util::frame::video::Video;
 use ffmpeg_sys_next as ffs;
 
@@ -64,6 +67,10 @@ pub struct VideoDecoder {
     frame: Video,
     width: u32,
     height: u32,
+    /// Lazy-init pixel-format scaler for software decode fallback.
+    sws_ctx: Option<scaling::Context>,
+    /// Reusable NV12 frame buffer for software decode output.
+    nv12_frame: Video,
 }
 
 // SAFETY: VideoDecoder is only accessed from the player thread. The hw_device_ctx
@@ -110,6 +117,8 @@ impl VideoDecoder {
             frame: Video::empty(),
             width,
             height,
+            sws_ctx: None,
+            nv12_frame: Video::new(Pixel::NV12, width, height),
         })
     }
 
@@ -138,25 +147,27 @@ impl VideoDecoder {
                 let duration = unsafe { (*raw).duration };
                 let duration_us = pts_to_us(duration, self.stream_time_base);
 
-                if unsafe { (*raw).format } != ffs::AVPixelFormat::AV_PIX_FMT_VIDEOTOOLBOX as i32 {
-                    log::error!("Software decoded frame has no CVPixelBuffer — skipping");
-                    return None;
-                }
-
-                // SAFETY: For VideoToolbox frames, data[3] is the
-                // CVPixelBufferRef per ffmpeg convention. We retain it so it
-                // outlives the AVFrame (which may reuse its internal buffer).
-                let cvbuf = unsafe { (*raw).data[3] as *mut c_void };
-                if cvbuf.is_null() {
-                    return None;
-                }
-                // SAFETY: CVPixelBufferRetain increments the refcount of a
-                // valid CVPixelBuffer. PixelBuffer::new takes ownership of
-                // the retained reference and releases it on drop.
-                unsafe { CVPixelBufferRetain(cvbuf) };
+                let pixel_buffer = if unsafe { (*raw).format }
+                    == ffs::AVPixelFormat::AV_PIX_FMT_VIDEOTOOLBOX as i32
+                {
+                    // SAFETY: For VideoToolbox frames, data[3] is the
+                    // CVPixelBufferRef per ffmpeg convention. We retain it so
+                    // it outlives the AVFrame (which may reuse its buffer).
+                    let cvbuf = unsafe { (*raw).data[3] as *mut c_void };
+                    if cvbuf.is_null() {
+                        return None;
+                    }
+                    // SAFETY: CVPixelBufferRetain increments the refcount.
+                    // PixelBuffer::new takes ownership of the retained ref.
+                    unsafe { CVPixelBufferRetain(cvbuf) };
+                    cvbuf
+                } else {
+                    // Software decoded: convert to NV12 and wrap in CVPixelBuffer.
+                    self.sw_frame_to_pixelbuffer()?
+                };
 
                 Some(VideoFrame {
-                    pixel_buffer: Some(PixelBuffer::new(cvbuf)),
+                    pixel_buffer: Some(PixelBuffer::new(pixel_buffer)),
                     pts_us,
                     duration_us,
                     seek_flush: false,
@@ -172,6 +183,84 @@ impl VideoDecoder {
                 None
             }
         }
+    }
+
+    /// Convert the current software-decoded frame to an NV12 CVPixelBuffer.
+    fn sw_frame_to_pixelbuffer(&mut self) -> Option<*mut c_void> {
+        // Lazy-init the pixel format scaler
+        if self.sws_ctx.is_none() {
+            let src_fmt = self.frame.format();
+            self.sws_ctx = Some(
+                scaling::Context::get(
+                    src_fmt,
+                    self.width,
+                    self.height,
+                    Pixel::NV12,
+                    self.width,
+                    self.height,
+                    scaling::Flags::BILINEAR,
+                )
+                .ok()?,
+            );
+            eprintln!(
+                "VideoToolbox unavailable for this codec, using software decode ({src_fmt:?} → NV12)"
+            );
+        }
+
+        self.sws_ctx
+            .as_mut()
+            .unwrap()
+            .run(&self.frame, &mut self.nv12_frame)
+            .ok()?;
+
+        // Create IOSurface-backed CVPixelBuffer
+        let mut cvbuf: *mut c_void = ptr::null_mut();
+        // SAFETY: CVPixelBufferCreate with valid dimensions and NV12 format.
+        // io_surface_properties() returns a cached CFDictionary.
+        let status = unsafe {
+            CVPixelBufferCreate(
+                ptr::null(),
+                self.width as usize,
+                self.height as usize,
+                K_CV_PIXEL_FORMAT_NV12,
+                io_surface_properties(),
+                &mut cvbuf,
+            )
+        };
+        if status != 0 || cvbuf.is_null() {
+            log::error!("CVPixelBufferCreate failed: {status}");
+            return None;
+        }
+
+        // SAFETY: cvbuf is a valid CVPixelBuffer from Create above.
+        // Lock, copy NV12 planes, unlock.
+        unsafe { CVPixelBufferLockBaseAddress(cvbuf, 0) };
+
+        let nv12_raw = unsafe { self.nv12_frame.as_mut_ptr() };
+
+        // Y plane (plane 0)
+        copy_plane(
+            unsafe { (*nv12_raw).data[0] },
+            unsafe { (*nv12_raw).linesize[0] as usize },
+            unsafe { CVPixelBufferGetBaseAddressOfPlane(cvbuf, 0) },
+            unsafe { CVPixelBufferGetBytesPerRowOfPlane(cvbuf, 0) },
+            self.width as usize,
+            self.height as usize,
+        );
+
+        // UV interleaved plane (plane 1, half height)
+        copy_plane(
+            unsafe { (*nv12_raw).data[1] },
+            unsafe { (*nv12_raw).linesize[1] as usize },
+            unsafe { CVPixelBufferGetBaseAddressOfPlane(cvbuf, 1) },
+            unsafe { CVPixelBufferGetBytesPerRowOfPlane(cvbuf, 1) },
+            self.width as usize,
+            self.height as usize / 2,
+        );
+
+        unsafe { CVPixelBufferUnlockBaseAddress(cvbuf, 0) };
+
+        Some(cvbuf)
     }
 
     /// Flush the decoder (after seek).
@@ -206,6 +295,56 @@ unsafe extern "C" fn get_hw_format(
     unsafe { *pix_fmts }
 }
 
+/// Copy `height` rows from `src` to `dst`, respecting independent strides.
+fn copy_plane(
+    src: *const u8,
+    src_stride: usize,
+    dst: *mut u8,
+    dst_stride: usize,
+    width: usize,
+    height: usize,
+) {
+    for row in 0..height {
+        // SAFETY: src/dst are valid plane pointers from ffmpeg and CoreVideo
+        // with at least `height` rows of the given strides.
+        unsafe {
+            ptr::copy_nonoverlapping(src.add(row * src_stride), dst.add(row * dst_stride), width);
+        }
+    }
+}
+
+/// kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange ('420v')
+const K_CV_PIXEL_FORMAT_NV12: u32 = 0x3432_3076;
+
+/// Lazily create a CFDictionary with kCVPixelBufferIOSurfacePropertiesKey
+/// so that CVPixelBufferCreate returns IOSurface-backed buffers (required by
+/// AVSampleBufferDisplayLayer).
+fn io_surface_properties() -> *const c_void {
+    static PROPS: OnceLock<usize> = OnceLock::new();
+    *PROPS.get_or_init(|| unsafe {
+        let empty = CFDictionaryCreate(
+            ptr::null(),
+            ptr::null(),
+            ptr::null(),
+            0,
+            &kCFTypeDictionaryKeyCallBacks as *const _ as *const c_void,
+            &kCFTypeDictionaryValueCallBacks as *const _ as *const c_void,
+        );
+        let keys: [*const c_void; 1] = [kCVPixelBufferIOSurfacePropertiesKey];
+        let vals: [*const c_void; 1] = [empty];
+        let attrs = CFDictionaryCreate(
+            ptr::null(),
+            keys.as_ptr(),
+            vals.as_ptr(),
+            1,
+            &kCFTypeDictionaryKeyCallBacks as *const _ as *const c_void,
+            &kCFTypeDictionaryValueCallBacks as *const _ as *const c_void,
+        );
+        CFRelease(empty);
+        attrs as usize
+    }) as *const c_void
+}
+
 /// Release a CVPixelBuffer that was retained by the decoder.
 pub unsafe fn release_pixel_buffer(buf: *mut c_void) {
     if !buf.is_null() {
@@ -214,9 +353,37 @@ pub unsafe fn release_pixel_buffer(buf: *mut c_void) {
     }
 }
 
-// SAFETY: CoreVideo framework functions linked via the system SDK.
-// CVPixelBufferRetain/Release manage refcounts — paired in receive_frame()/Drop.
+// SAFETY: CoreVideo/CoreFoundation framework functions linked via the system SDK.
 unsafe extern "C" {
     fn CVPixelBufferRetain(pixelBuffer: *mut c_void) -> *mut c_void;
     fn CVPixelBufferRelease(pixelBuffer: *mut c_void);
+
+    fn CVPixelBufferCreate(
+        allocator: *const c_void,
+        width: usize,
+        height: usize,
+        pixel_format_type: u32,
+        pixel_buffer_attributes: *const c_void,
+        pixel_buffer_out: *mut *mut c_void,
+    ) -> i32;
+
+    fn CVPixelBufferLockBaseAddress(pixel_buffer: *mut c_void, flags: u64) -> i32;
+    fn CVPixelBufferUnlockBaseAddress(pixel_buffer: *mut c_void, flags: u64) -> i32;
+    fn CVPixelBufferGetBaseAddressOfPlane(pixel_buffer: *mut c_void, plane: usize) -> *mut u8;
+    fn CVPixelBufferGetBytesPerRowOfPlane(pixel_buffer: *mut c_void, plane: usize) -> usize;
+
+    fn CFDictionaryCreate(
+        allocator: *const c_void,
+        keys: *const *const c_void,
+        values: *const *const c_void,
+        num_values: isize,
+        key_callbacks: *const c_void,
+        value_callbacks: *const c_void,
+    ) -> *const c_void;
+
+    fn CFRelease(cf: *const c_void);
+
+    static kCFTypeDictionaryKeyCallBacks: u8;
+    static kCFTypeDictionaryValueCallBacks: u8;
+    static kCVPixelBufferIOSurfacePropertiesKey: *const c_void;
 }
