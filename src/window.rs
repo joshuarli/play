@@ -365,9 +365,11 @@ fn install_mouse_monitor() {
         use objc2_app_kit::NSEventType;
         match event_type {
             NSEventType::MouseMoved => {
+                crate::osd::show_cursor();
                 crate::osd::show_bar();
             }
             NSEventType::LeftMouseDown | NSEventType::LeftMouseDragged => {
+                crate::osd::show_cursor();
                 let location = event.locationInWindow();
                 if location.y <= crate::osd::bar_height()
                     && let Some(fraction) = crate::osd::bar_fraction_at_x(location.x)

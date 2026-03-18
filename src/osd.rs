@@ -173,6 +173,10 @@ struct OsdInner {
     cached_sub_shadow: *mut AnyObject,
     /// Cached NSMutableParagraphStyle for subtitle attributed strings.
     cached_sub_para: *mut AnyObject,
+    /// Whether the system cursor is currently hidden.
+    cursor_hidden: bool,
+    /// Deadline (ms) after which the cursor should be hidden.
+    cursor_hide_deadline_ms: u64,
 }
 
 // OSD state is main-thread-only (timer, key handler, mouse handler all run on
@@ -378,6 +382,8 @@ pub fn init_layers(parent_ptr: *mut c_void, bounds: CGRect) {
             seek_hold_until_ms: 0,
             cached_sub_shadow,
             cached_sub_para,
+            cursor_hidden: false,
+            cursor_hide_deadline_ms: now_ms() + 2000,
         });
     });
 }
@@ -542,11 +548,16 @@ pub fn tick(progress: (i64, i64)) {
         let mut osd = osd.borrow_mut();
         let Some(ref mut inner) = *osd else { return };
 
+        let now = now_ms();
+
+        if !inner.cursor_hidden && now >= inner.cursor_hide_deadline_ms {
+            hide_cursor();
+            inner.cursor_hidden = true;
+        }
+
         if !inner.message_visible && !inner.bar_visible {
             return;
         }
-
-        let now = now_ms();
 
         if inner.message_visible && now >= inner.message_deadline_ms {
             disable_animations();
@@ -581,6 +592,29 @@ pub fn seek_bar(target_us: i64, duration_us: i64) {
         inner.duration_us = duration_us;
         inner.seek_hold_until_ms = now_ms() + 500;
         set_bar_visible(inner);
+    });
+}
+
+fn hide_cursor() {
+    let cls = AnyClass::get(c"NSCursor").expect("NSCursor");
+    let _: () = unsafe { msg_send![cls, hide] };
+}
+
+fn unhide_cursor() {
+    let cls = AnyClass::get(c"NSCursor").expect("NSCursor");
+    let _: () = unsafe { msg_send![cls, unhide] };
+}
+
+/// Reset the cursor-hide timer and unhide if hidden. Called on mouse movement.
+pub fn show_cursor() {
+    OSD.with(|osd| {
+        let mut osd = osd.borrow_mut();
+        let Some(ref mut inner) = *osd else { return };
+        if inner.cursor_hidden {
+            unhide_cursor();
+            inner.cursor_hidden = false;
+        }
+        inner.cursor_hide_deadline_ms = now_ms() + 2000;
     });
 }
 
