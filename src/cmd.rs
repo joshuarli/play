@@ -43,6 +43,7 @@ pub enum EndReason {
 pub enum DemuxPacket {
     Video(ffmpeg_next::Packet),
     Audio(ffmpeg_next::Packet),
+    Subtitle(ffmpeg_next::Packet),
     /// Seek completed — all subsequent packets are from the new position.
     Flush,
     Eof,
@@ -68,6 +69,11 @@ impl PixelBuffer {
     /// Wrap a retained CVPixelBufferRef. Caller must have already called CVPixelBufferRetain.
     pub fn new(ptr: *mut std::ffi::c_void) -> Self {
         Self(ptr)
+    }
+
+    /// Get the raw CVPixelBufferRef without taking ownership.
+    pub fn as_raw(&self) -> *mut std::ffi::c_void {
+        self.0
     }
 
     /// Take the raw pointer, defusing the Drop. Caller assumes ownership.

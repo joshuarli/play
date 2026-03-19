@@ -396,6 +396,8 @@ impl DemuxState {
             Some(DemuxPacket::Video(packet))
         } else if Some(stream_idx) == self.audio_idx {
             Some(DemuxPacket::Audio(packet))
+        } else if Some(stream_idx) == self.subtitle_idx {
+            Some(DemuxPacket::Subtitle(packet))
         } else {
             None
         }

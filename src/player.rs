@@ -476,6 +476,10 @@ struct VideoPlayer {
     /// Suppresses audio during video scrubbing.
     scrubbing: bool,
     last_seek_time: Option<Instant>,
+    /// Bitmap subtitle decoder (dvd_subtitle, PGS).
+    bitmap_sub_decoder: Option<crate::subtitle::BitmapSubtitleDecoder>,
+    /// Currently-visible bitmap subtitle images.
+    active_bitmap_subs: Vec<crate::subtitle::BitmapSubtitle>,
 }
 
 impl VideoPlayer {
@@ -486,6 +490,10 @@ impl VideoPlayer {
         if let Some(vd) = self.video_decoder.as_mut() {
             vd.flush();
         }
+        if let Some(ref mut dec) = self.bitmap_sub_decoder {
+            dec.flush();
+        }
+        self.active_bitmap_subs.clear();
         self.core.flush_audio_pipeline();
         self.needs_display_flush = true;
     }
@@ -536,6 +544,14 @@ impl VideoPlayer {
                 self.core.pending_seeks = self.core.pending_seeks.saturating_sub(1);
             }
             _ if self.core.pending_seeks > 0 => {}
+            DemuxPacket::Subtitle(packet) => {
+                if let Some(ref mut dec) = self.bitmap_sub_decoder {
+                    let subs = dec.decode(&packet);
+                    if !subs.is_empty() {
+                        self.active_bitmap_subs = subs;
+                    }
+                }
+            }
             DemuxPacket::Video(packet) => {
                 if let Some(decoder) = self.video_decoder.as_mut() {
                     if let Err(e) = decoder.send_packet(&packet) {
@@ -555,6 +571,8 @@ impl VideoPlayer {
                             self.core.seek_landed = true;
                             self.core.sync_clock.set_position(frame.pts_us);
                         }
+                        // Composite bitmap subtitles if active
+                        composite_bitmap_subs(&mut frame, &mut self.active_bitmap_subs);
                         match self.video_frame_tx.try_send(frame) {
                             Ok(()) => {}
                             Err(crossbeam_channel::TrySendError::Full(_)) => {
@@ -647,6 +665,30 @@ impl VideoPlayer {
                 default(timeout) => {}
             }
         }
+    }
+}
+
+/// Composite active bitmap subtitles onto a video frame. Free function to
+/// avoid borrow conflicts with the video decoder's `&mut self` scope.
+fn composite_bitmap_subs(
+    frame: &mut VideoFrame,
+    active_subs: &mut Vec<crate::subtitle::BitmapSubtitle>,
+) {
+    if active_subs.is_empty() {
+        return;
+    }
+    let pts = frame.pts_us;
+    // Expire subtitles that have ended (end <= start means "until replaced")
+    active_subs.retain(|s| s.end_us <= s.start_us || pts < s.end_us);
+    let visible: Vec<&crate::subtitle::BitmapSubtitle> =
+        active_subs.iter().filter(|s| pts >= s.start_us).collect();
+    if visible.is_empty() {
+        return;
+    }
+    if let Some(ref pb) = frame.pixel_buffer
+        && let Some(composited) = crate::composite::composite_subtitles(pb.as_raw(), &visible)
+    {
+        frame.pixel_buffer = Some(crate::cmd::PixelBuffer::new(composited));
     }
 }
 
@@ -749,7 +791,7 @@ impl AudioOnlyPlayer {
                 self.pending_audio.extend(leftover);
                 self.core.signal_eof();
             }
-            DemuxPacket::Video(_) => {} // shouldn't happen, but harmless
+            DemuxPacket::Video(_) | DemuxPacket::Subtitle(_) => {} // no video/subs in audio-only
         }
     }
 
@@ -841,6 +883,7 @@ pub struct Player {
     mode: PlayerMode,
 }
 
+#[allow(clippy::large_enum_variant)] // constructed once, never copied
 enum PlayerMode {
     Video(VideoPlayer),
     AudioOnly(AudioOnlyPlayer),
@@ -901,6 +944,8 @@ impl Player {
                 needs_display_flush: false,
                 scrubbing: false,
                 last_seek_time: None,
+                bitmap_sub_decoder: None,
+                active_bitmap_subs: Vec::new(),
             })
         } else {
             PlayerMode::AudioOnly(AudioOnlyPlayer {
@@ -941,6 +986,21 @@ impl Player {
                 height: vd.height(),
             });
             v.video_decoder = Some(vd);
+
+            // Create bitmap subtitle decoder if a bitmap subtitle stream exists
+            if let Some(sub_info) = v
+                .core
+                .stream_info
+                .subtitle_streams
+                .iter()
+                .find(|s| crate::subtitle::BITMAP_CODECS.contains(&s.codec_name.as_str()))
+            {
+                match crate::subtitle::BitmapSubtitleDecoder::new(&v.core.file_path, sub_info.index)
+                {
+                    Ok(dec) => v.bitmap_sub_decoder = Some(dec),
+                    Err(e) => log::warn!("Failed to create bitmap subtitle decoder: {e}"),
+                }
+            }
         }
 
         let core = self.core_mut();

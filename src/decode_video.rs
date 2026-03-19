@@ -314,12 +314,12 @@ fn copy_plane(
 }
 
 /// kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange ('420v')
-const K_CV_PIXEL_FORMAT_NV12: u32 = 0x3432_3076;
+pub(crate) const K_CV_PIXEL_FORMAT_NV12: u32 = 0x3432_3076;
 
 /// Lazily create a CFDictionary with kCVPixelBufferIOSurfacePropertiesKey
 /// so that CVPixelBufferCreate returns IOSurface-backed buffers (required by
 /// AVSampleBufferDisplayLayer).
-fn io_surface_properties() -> *const c_void {
+pub(crate) fn io_surface_properties() -> *const c_void {
     static PROPS: OnceLock<usize> = OnceLock::new();
     *PROPS.get_or_init(|| unsafe {
         let empty = CFDictionaryCreate(

@@ -1,5 +1,6 @@
 mod audio_out;
 mod cmd;
+mod composite;
 mod decode_audio;
 mod decode_video;
 mod demux;
@@ -147,8 +148,13 @@ fn start_playback(path: &Path, args: &Args, start_pos: i64) -> Result<PlaybackHa
         .get(args.audio_track.saturating_sub(1))
         .or(info.audio_streams.first())
         .map(|s| s.index);
-    // Subtitles are pre-decoded at startup, not streamed through the demuxer.
-    let subtitle_idx = None;
+    // Text subtitles are pre-decoded at startup. Bitmap subtitles (dvd_subtitle,
+    // PGS) are streamed through the demuxer for real-time compositing.
+    let subtitle_idx = info
+        .subtitle_streams
+        .iter()
+        .find(|s| subtitle::BITMAP_CODECS.contains(&s.codec_name.as_str()))
+        .map(|s| s.index);
 
     // Load external subtitles
     let mut subtitle_tracks = Vec::new();

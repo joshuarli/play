@@ -213,7 +213,6 @@ pub struct DisplayOutput {
     layer: *mut AnyObject,
     timebase: Option<Timebase>,
     timebase_started: bool,
-    cached_format_desc: Option<FormatDescription>,
 }
 
 impl DisplayOutput {
@@ -243,7 +242,6 @@ impl DisplayOutput {
             layer: layer_ptr,
             timebase,
             timebase_started: false,
-            cached_format_desc: None,
         }
     }
 
@@ -279,23 +277,17 @@ impl DisplayOutput {
         // Take ownership of the pixel buffer
         let pixel_buffer = pb.take();
 
-        // Reuse cached format description (same resolution/format per file)
-        let format_desc_raw = if let Some(ref fd) = self.cached_format_desc {
-            fd.raw()
-        } else {
-            match FormatDescription::from_pixel_buffer(pixel_buffer) {
-                Some(fd) => {
-                    let raw = fd.raw();
-                    self.cached_format_desc = Some(fd);
-                    raw
-                }
-                None => {
-                    // SAFETY: pixel_buffer is valid.
-                    unsafe { CVPixelBufferRelease(pixel_buffer) };
-                    return;
-                }
+        // Create format description from this pixel buffer. We can't cache
+        // across frames because composited subtitle frames use different
+        // CVPixelBuffers than VideoToolbox-decoded frames.
+        let format_desc = match FormatDescription::from_pixel_buffer(pixel_buffer) {
+            Some(fd) => fd,
+            None => {
+                unsafe { CVPixelBufferRelease(pixel_buffer) };
+                return;
             }
         };
+        let format_desc_raw = format_desc.raw();
 
         // Create CMSampleBuffer
         let timing = CMSampleTimingInfo {
@@ -368,7 +360,6 @@ impl DisplayOutput {
 
     /// Reset state between files (new resolution, new format description).
     pub fn reset_for_new_file(&mut self) {
-        self.cached_format_desc = None;
         self.timebase_started = false;
         // SAFETY: self.layer is a valid AVSampleBufferDisplayLayer.
         let _: () = unsafe { msg_send![self.layer, flush] };

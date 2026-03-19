@@ -148,7 +148,7 @@ pub fn find_srt_files(video_path: &Path) -> Vec<PathBuf> {
 }
 
 /// Bitmap subtitle codecs that cannot be decoded to text.
-const BITMAP_CODECS: &[&str] = &["dvd_subtitle", "hdmv_pgs_subtitle", "dvb_subtitle", "xsub"];
+pub const BITMAP_CODECS: &[&str] = &["dvd_subtitle", "hdmv_pgs_subtitle", "dvb_subtitle", "xsub"];
 
 /// Decode all text subtitles from an embedded stream. Returns an empty Vec
 /// for bitmap formats or streams that produce no text output.
@@ -282,6 +282,133 @@ fn skip_ass_prefix(s: &str) -> &str {
         }
     }
     s
+}
+
+// ── Bitmap subtitle decoding ──────────────────────────────────────
+
+/// A decoded bitmap subtitle image, pre-converted from PAL8 to RGBA.
+pub struct BitmapSubtitle {
+    pub rgba: Vec<u8>,
+    pub x: u32,
+    pub y: u32,
+    pub w: u32,
+    pub h: u32,
+    pub start_us: i64,
+    pub end_us: i64,
+}
+
+/// Decodes bitmap subtitle packets (dvd_subtitle, PGS) on the fly.
+pub struct BitmapSubtitleDecoder {
+    decoder: ffmpeg::decoder::Subtitle,
+    stream_time_base: ffmpeg::Rational,
+    sub: ffmpeg::Subtitle,
+}
+
+// SAFETY: BitmapSubtitleDecoder is only accessed from the player thread.
+unsafe impl Send for BitmapSubtitleDecoder {}
+
+impl BitmapSubtitleDecoder {
+    pub fn new(path: &Path, stream_index: usize) -> Result<Self> {
+        let ictx = ffmpeg::format::input(path)
+            .with_context(|| format!("Failed to open for bitmap subtitle: {}", path.display()))?;
+        let stream = ictx
+            .stream(stream_index)
+            .ok_or_else(|| anyhow::anyhow!("Subtitle stream {stream_index} not found"))?;
+        let stream_time_base = stream.time_base();
+        let codec_ctx = ffmpeg::codec::context::Context::from_parameters(stream.parameters())
+            .context("Failed to create bitmap subtitle codec context")?;
+        let decoder = codec_ctx
+            .decoder()
+            .subtitle()
+            .context("Failed to open bitmap subtitle decoder")?;
+        Ok(Self {
+            decoder,
+            stream_time_base,
+            sub: ffmpeg::Subtitle::new(),
+        })
+    }
+
+    /// Decode a subtitle packet. Returns decoded bitmap rects (usually 0 or 1).
+    pub fn decode(&mut self, packet: &ffmpeg::Packet) -> Vec<BitmapSubtitle> {
+        let mut results = Vec::new();
+        match self.decoder.decode(packet, &mut self.sub) {
+            Ok(true) => {
+                // Use packet PTS (converted via stream timebase) as the base,
+                // since AVSubtitle.pts is often unset for DVD/PGS subtitles.
+                let pkt_pts = packet.pts().or(packet.dts()).unwrap_or(0);
+                let pts_us = crate::time::pts_to_us(pkt_pts, self.stream_time_base);
+                let start_us = pts_us + self.sub.start() as i64 * 1000;
+                let end_us = pts_us + self.sub.end() as i64 * 1000;
+
+                for rect in self.sub.rects() {
+                    if let Rect::Bitmap(bmp) = rect
+                        && let Some(decoded) = extract_bitmap(&bmp, start_us, end_us)
+                    {
+                        results.push(decoded);
+                    }
+                }
+                // SAFETY: avsubtitle_free releases internally-allocated rects.
+                // Must be called after each successful decode since ffmpeg_next's
+                // Subtitle type has no Drop impl for the rect array.
+                unsafe { ffs::avsubtitle_free(self.sub.as_mut_ptr()) };
+            }
+            Ok(false) => {}
+            Err(e) => log::debug!("Bitmap subtitle decode error: {e}"),
+        }
+        results
+    }
+
+    pub fn flush(&mut self) {
+        self.decoder.flush();
+    }
+}
+
+/// Extract a PAL8 bitmap rect into owned RGBA data.
+fn extract_bitmap(
+    bmp: &ffmpeg::codec::subtitle::Bitmap,
+    start_us: i64,
+    end_us: i64,
+) -> Option<BitmapSubtitle> {
+    let w = bmp.width();
+    let h = bmp.height();
+    if w == 0 || h == 0 {
+        return None;
+    }
+
+    // SAFETY: bmp.as_ptr() returns a valid AVSubtitleRect from a successful decode.
+    // data[0] is palette indices, data[1] is a 256-entry RGBA palette.
+    let rect_ptr = unsafe { bmp.as_ptr() };
+    let indices = unsafe { (*rect_ptr).data[0] };
+    let palette = unsafe { (*rect_ptr).data[1] as *const u8 };
+    let linesize = unsafe { (*rect_ptr).linesize[0] as usize };
+
+    if indices.is_null() || palette.is_null() {
+        return None;
+    }
+
+    let mut rgba = vec![0u8; (w * h) as usize * 4];
+    for row in 0..h as usize {
+        for col in 0..w as usize {
+            let idx = unsafe { *indices.add(row * linesize + col) } as usize;
+            let dst = (row * w as usize + col) * 4;
+            // Palette entries are 4 bytes each: R, G, B, A in memory order
+            let pal_offset = idx * 4;
+            rgba[dst] = unsafe { *palette.add(pal_offset) };
+            rgba[dst + 1] = unsafe { *palette.add(pal_offset + 1) };
+            rgba[dst + 2] = unsafe { *palette.add(pal_offset + 2) };
+            rgba[dst + 3] = unsafe { *palette.add(pal_offset + 3) };
+        }
+    }
+
+    Some(BitmapSubtitle {
+        rgba,
+        x: bmp.x() as u32,
+        y: bmp.y() as u32,
+        w,
+        h,
+        start_us,
+        end_us,
+    })
 }
 
 #[cfg(test)]

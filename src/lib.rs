@@ -11,6 +11,7 @@ pub mod time;
 
 // Private modules required by the public ones (transitive dependencies).
 mod audio_out;
+mod composite;
 mod decode_audio;
 mod decode_video;
 mod input;

@@ -13,6 +13,7 @@ ffmpeg-next = { version = "7", default-features = false, features = [
 ffmpeg-sys-next = { version = "7", default-features = false, features = [
     "build",
     "build-videotoolbox",
+    "build-zlib",
     "avcodec",
     "avformat",
     "swresample",
@@ -42,6 +43,9 @@ anyhow = "1"
 termion = "4"
 log = { version = "0.4", features = ["release_max_level_warn"] }
 env_logger = { version = "0.11", default-features = false, features = ["humantime"] }
+
+[patch.crates-io]
+ffmpeg-sys-next = { path = "ffmpeg-sys-next-patch" }
 
 [profile.dev]
 debug = "line-tables-only"
