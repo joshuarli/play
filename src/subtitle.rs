@@ -37,9 +37,13 @@ impl SubtitleTrack {
     }
 }
 
-/// Parse an SRT file.
+/// Parse an SRT file. Tries UTF-8 first, falls back to Latin-1 (ISO-8859-1).
 pub fn parse_srt(path: &Path) -> Result<Vec<SrtEntry>> {
-    let content = std::fs::read_to_string(path)?;
+    let bytes = std::fs::read(path)?;
+    let content = match std::str::from_utf8(&bytes) {
+        Ok(s) => s.to_string(),
+        Err(_) => bytes.iter().map(|&b| b as char).collect(),
+    };
     Ok(parse_srt_content(&content))
 }
 
@@ -147,6 +151,10 @@ mod tests {
     static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
     fn write_temp_srt(content: &str) -> PathBuf {
+        write_temp_srt_bytes(content.as_bytes())
+    }
+
+    fn write_temp_srt_bytes(content: &[u8]) -> PathBuf {
         let n = COUNTER.fetch_add(1, Ordering::Relaxed);
         let id = std::process::id();
         let path = std::env::temp_dir().join(format!("play_test_{id}_{n}.srt"));
@@ -364,6 +372,60 @@ Valid entry
         let entries = parse_srt(&f).unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].text, "Valid entry");
+    }
+
+    #[test]
+    fn parse_srt_latin1_fallback() {
+        // ISO-8859-1 encoded: "Héllo wörld" with bytes that are invalid UTF-8
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"1\r\n");
+        bytes.extend_from_slice(b"00:00:01,000 --> 00:00:03,000\r\n");
+        // "Héllo wörld" in Latin-1: é=0xE9, ö=0xF6
+        bytes.extend_from_slice(&[
+            b'H', 0xE9, b'l', b'l', b'o', b' ', b'w', 0xF6, b'r', b'l', b'd',
+        ]);
+        bytes.extend_from_slice(b"\r\n");
+
+        let f = write_temp_srt_bytes(&bytes);
+        let entries = parse_srt(&f).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].text, "H\u{e9}llo w\u{f6}rld");
+    }
+
+    #[test]
+    fn parse_srt_latin1_with_crlf() {
+        // Real-world pattern: Latin-1 SRT with CRLF line endings
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"1\r\n");
+        bytes.extend_from_slice(b"00:00:01,000 --> 00:00:02,000\r\n");
+        // "ça va" in Latin-1: ç=0xE7
+        bytes.extend_from_slice(&[0xE7, b'a', b' ', b'v', b'a']);
+        bytes.extend_from_slice(b"\r\n\r\n");
+        bytes.extend_from_slice(b"2\r\n");
+        bytes.extend_from_slice(b"00:00:03,000 --> 00:00:04,000\r\n");
+        // "über" in Latin-1: ü=0xFC
+        bytes.extend_from_slice(&[0xFC, b'b', b'e', b'r']);
+        bytes.extend_from_slice(b"\r\n");
+
+        let f = write_temp_srt_bytes(&bytes);
+        let entries = parse_srt(&f).unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].text, "\u{e7}a va");
+        assert_eq!(entries[1].text, "\u{fc}ber");
+    }
+
+    #[test]
+    fn parse_srt_utf8_still_works() {
+        // UTF-8 with multi-byte characters should still parse correctly
+        let srt = "\
+1
+00:00:01,000 --> 00:00:02,000
+日本語テスト
+";
+        let f = write_temp_srt(srt);
+        let entries = parse_srt(&f).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].text, "日本語テスト");
     }
 
     #[test]
