@@ -114,24 +114,33 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn play_file(
-    path: &Path,
-    args: &Args,
-    first_run: bool,
-    file_index: usize,
-    file_count: usize,
-    term_keys: &mut termion::input::Keys<termion::AsyncReader>,
-) -> Result<EndReason> {
+// ── Shared playback setup ──────────────────────────────────────────
+
+/// State returned by `start_playback` for the UI layer.
+struct PlaybackHandle {
+    info: demux::StreamInfo,
+    cmd_tx: crossbeam_channel::Sender<Command>,
+    video_frame_rx: crossbeam_channel::Receiver<VideoFrame>,
+    ui_update_rx: crossbeam_channel::Receiver<UiUpdate>,
+    ui_update_tx: crossbeam_channel::Sender<UiUpdate>,
+    audio_clock: Arc<AtomicI64>,
+    video_width: u32,
+    video_height: u32,
+    filename: String,
+    demux_thread: thread::JoinHandle<()>,
+    player_thread: thread::JoinHandle<()>,
+}
+
+/// Probe a file, load subtitles, create channels, and spawn demuxer + player
+/// threads. Shared between CLI playlist mode and Finder file-open mode.
+fn start_playback(path: &Path, args: &Args, start_pos: i64) -> Result<PlaybackHandle> {
     let info = demux::probe(path)?;
 
-    let has_video = info.video_stream.is_some();
-    let has_audio = !info.audio_streams.is_empty();
-
-    if !has_video && !has_audio {
+    if info.video_stream.is_none() && info.audio_streams.is_empty() {
         bail!("No playable streams found in {}", path.display());
     }
 
-    // Determine stream indices
+    // Stream indices
     let video_idx = info.video_stream.as_ref().map(|s| s.index);
     let audio_idx = info
         .audio_streams
@@ -142,8 +151,6 @@ fn play_file(
 
     // Load external subtitles
     let mut subtitle_tracks = Vec::new();
-
-    // Auto-detect SRT files
     for srt_path in subtitle::find_srt_files(path) {
         match subtitle::parse_srt(&srt_path) {
             Ok(entries) => {
@@ -157,8 +164,6 @@ fn play_file(
             Err(e) => log::warn!("Failed to parse {}: {e}", srt_path.display()),
         }
     }
-
-    // --sub-file flag
     if let Some(sub_path) = &args.sub_file {
         match subtitle::parse_srt(sub_path) {
             Ok(entries) => {
@@ -178,31 +183,22 @@ fn play_file(
         }
     }
 
-    // Create channels
+    // Channels
     let (cmd_tx, cmd_rx) = crossbeam_channel::bounded::<Command>(32);
     let (demux_packet_tx, demux_packet_rx) = crossbeam_channel::bounded::<DemuxPacket>(64);
     let (demux_cmd_tx, demux_cmd_rx) = crossbeam_channel::bounded::<DemuxCommand>(4);
     let (video_frame_tx, video_frame_rx) = crossbeam_channel::bounded::<VideoFrame>(8);
     let (ui_update_tx, ui_update_rx) = crossbeam_channel::unbounded::<UiUpdate>();
+    let ui_update_tx_clone = ui_update_tx.clone();
 
-    // Audio clock shared between player (writer) and main thread (reader for timebase sync)
     let audio_clock = Arc::new(AtomicI64::new(0));
-
     let video_width = info.video_stream.as_ref().map(|s| s.width).unwrap_or(640);
     let video_height = info.video_stream.as_ref().map(|s| s.height).unwrap_or(480);
-
     let filename = path
         .file_name()
         .and_then(|s| s.to_str())
-        .unwrap_or("unknown");
-    // Show OSD for playlist position (video mode only; terminal prints its own header)
-    if file_count > 1 && has_video {
-        let _ = ui_update_tx.send(UiUpdate::Osd(format!(
-            "({}/{}) {filename}",
-            file_index + 1,
-            file_count
-        )));
-    }
+        .unwrap_or("unknown")
+        .to_string();
 
     // Spawn demuxer thread
     let demux_path = path.to_path_buf();
@@ -225,34 +221,25 @@ fn play_file(
     // Spawn player thread
     let player_path = path.to_path_buf();
     let player_info = info.clone();
+    let player_clock = audio_clock.clone();
     let initial_volume = args.volume;
     let initial_audio_delay = args.audio_delay;
-    let start_pos = if first_run {
-        args.start
-            .as_ref()
-            .and_then(|s| time::parse_time(s).ok())
-            .unwrap_or(0)
-    } else {
-        0
-    };
-
-    let player_clock = audio_clock.clone();
     let player_thread = thread::Builder::new()
         .name("player".into())
         .spawn(move || {
-            let mut player = match Player::new(
+            let mut player = match Player::new(player::PlayerConfig {
                 cmd_rx,
                 demux_packet_rx,
                 demux_cmd_tx,
                 video_frame_tx,
                 ui_update_tx,
-                player_path,
-                player_info,
+                file_path: player_path,
+                stream_info: player_info,
                 initial_volume,
                 initial_audio_delay,
                 subtitle_tracks,
-                player_clock,
-            ) {
+                audio_clock: player_clock,
+            }) {
                 Ok(p) => p,
                 Err(e) => {
                     log::error!("Failed to create player: {e}");
@@ -265,7 +252,6 @@ fn play_file(
                 return;
             }
 
-            // Seek to start position if specified
             if start_pos > 0 {
                 player.seek_to(start_pos);
             }
@@ -274,20 +260,68 @@ fn play_file(
         })
         .context("Failed to spawn player thread")?;
 
-    let title = format!("play - {filename}");
-    if has_video {
-        log_stream_info(&info);
+    Ok(PlaybackHandle {
+        info,
+        cmd_tx,
+        video_frame_rx,
+        ui_update_rx,
+        ui_update_tx: ui_update_tx_clone,
+        audio_clock,
+        video_width,
+        video_height,
+        filename,
+        demux_thread,
+        player_thread,
+    })
+}
+
+// ── Playback entry points ──────────────────────────────────────────
+
+fn play_file(
+    path: &Path,
+    args: &Args,
+    first_run: bool,
+    file_index: usize,
+    file_count: usize,
+    term_keys: &mut termion::input::Keys<termion::AsyncReader>,
+) -> Result<EndReason> {
+    let start_pos = if first_run {
+        args.start
+            .as_ref()
+            .and_then(|s| time::parse_time(s).ok())
+            .unwrap_or(0)
+    } else {
+        0
+    };
+
+    let handle = start_playback(path, args, start_pos)?;
+    let has_video = handle.info.video_stream.is_some();
+
+    // Playlist OSD (video mode only; terminal prints its own header)
+    if file_count > 1 && has_video {
+        let _ = handle.ui_update_tx.send(UiUpdate::Osd(format!(
+            "({}/{}) {}",
+            file_index + 1,
+            file_count,
+            handle.filename
+        )));
     }
+
+    let title = format!("play - {}", handle.filename);
+    if has_video {
+        log_stream_info(&handle.info);
+    }
+
     let reason = if has_video {
         window::run_app(
-            cmd_tx,
-            video_frame_rx,
-            ui_update_rx,
-            video_width,
-            video_height,
+            handle.cmd_tx,
+            handle.video_frame_rx,
+            handle.ui_update_rx,
+            handle.video_width,
+            handle.video_height,
             args.fullscreen,
-            audio_clock,
-            info.duration_us,
+            handle.audio_clock,
+            handle.info.duration_us,
             &title,
             first_run,
             file_index,
@@ -295,19 +329,19 @@ fn play_file(
         )
     } else {
         terminal::run_terminal(
-            cmd_tx,
-            ui_update_rx,
-            audio_clock,
+            handle.cmd_tx,
+            handle.ui_update_rx,
+            handle.audio_clock,
             term_keys,
-            filename,
-            &info,
+            &handle.filename,
+            &handle.info,
             file_index,
             file_count,
         )
     };
 
-    player_thread.join().ok();
-    demux_thread.join().ok();
+    handle.player_thread.join().ok();
+    handle.demux_thread.join().ok();
 
     Ok(reason)
 }
@@ -319,121 +353,33 @@ fn start_finder_playback(path: &Path, args: &cmd::Args) -> Result<()> {
         bail!("File not found: {}", path.display());
     }
 
-    let info = demux::probe(path)?;
-    let has_video = info.video_stream.is_some();
-    let has_audio = !info.audio_streams.is_empty();
+    let handle = start_playback(path, args, 0)?;
 
-    if !has_video && !has_audio {
-        bail!("No playable streams found in {}", path.display());
-    }
-    if !has_video {
+    if handle.info.video_stream.is_none() {
         bail!("Audio-only playback from Finder not yet supported");
     }
 
-    let video_idx = info.video_stream.as_ref().map(|s| s.index);
-    let audio_idx = info
-        .audio_streams
-        .get(args.audio_track.saturating_sub(1))
-        .or(info.audio_streams.first())
-        .map(|s| s.index);
-    let subtitle_idx = info.subtitle_streams.first().map(|s| s.index);
+    let title = format!("play - {}", handle.filename);
 
-    let mut subtitle_tracks = Vec::new();
-    for srt_path in subtitle::find_srt_files(path) {
-        if let Ok(entries) = subtitle::parse_srt(&srt_path) {
-            let label = srt_path
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("external")
-                .to_string();
-            subtitle_tracks.push(subtitle::SubtitleTrack { label, entries });
-        }
-    }
-
-    let (cmd_tx, cmd_rx) = crossbeam_channel::bounded::<Command>(32);
-    let (demux_packet_tx, demux_packet_rx) = crossbeam_channel::bounded::<DemuxPacket>(64);
-    let (demux_cmd_tx, demux_cmd_rx) = crossbeam_channel::bounded::<DemuxCommand>(4);
-    let (video_frame_tx, video_frame_rx) = crossbeam_channel::bounded::<VideoFrame>(8);
-    let (ui_update_tx, ui_update_rx) = crossbeam_channel::unbounded::<UiUpdate>();
-
-    let audio_clock = Arc::new(AtomicI64::new(0));
-    let video_width = info.video_stream.as_ref().map(|s| s.width).unwrap_or(640);
-    let video_height = info.video_stream.as_ref().map(|s| s.height).unwrap_or(480);
-
-    let filename = path
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("unknown");
-    let title = format!("play - {filename}");
-
-    // Spawn demuxer thread
-    let demux_path = path.to_path_buf();
-    thread::Builder::new()
-        .name("demuxer".into())
-        .spawn(move || {
-            if let Err(e) = demux::run_demuxer(
-                &demux_path,
-                video_idx,
-                audio_idx,
-                subtitle_idx,
-                demux_cmd_rx,
-                demux_packet_tx,
-            ) {
-                log::error!("Demuxer error: {e}");
-            }
-        })
-        .context("Failed to spawn demuxer thread")?;
-
-    // Spawn player thread
-    let player_path = path.to_path_buf();
-    let player_info = info.clone();
-    let initial_volume = args.volume;
-    let initial_audio_delay = args.audio_delay;
-    let player_clock = audio_clock.clone();
-    thread::Builder::new()
-        .name("player".into())
-        .spawn(move || {
-            let mut player = match Player::new(
-                cmd_rx,
-                demux_packet_rx,
-                demux_cmd_tx,
-                video_frame_tx,
-                ui_update_tx,
-                player_path,
-                player_info,
-                initial_volume,
-                initial_audio_delay,
-                subtitle_tracks,
-                player_clock,
-            ) {
-                Ok(p) => p,
-                Err(e) => {
-                    log::error!("Failed to create player: {e}");
-                    return;
-                }
-            };
-            if let Err(e) = player.init_decoders() {
-                log::error!("Failed to init decoders: {e}");
-                return;
-            }
-            player.run();
-        })
-        .context("Failed to spawn player thread")?;
-
-    // Install file state and create window
     let mtm = objc2_foundation::MainThreadMarker::new().expect("must be on main thread");
     window::set_file_state(
-        cmd_tx,
-        video_frame_rx,
-        ui_update_rx,
-        audio_clock,
-        info.duration_us,
+        handle.cmd_tx,
+        handle.video_frame_rx,
+        handle.ui_update_rx,
+        handle.audio_clock,
+        handle.info.duration_us,
         0,
         1,
     );
-    window::create_window(mtm, video_width, video_height, args.fullscreen, &title);
+    window::create_window(
+        mtm,
+        handle.video_width,
+        handle.video_height,
+        args.fullscreen,
+        &title,
+    );
 
-    log_stream_info(&info);
+    log_stream_info(&handle.info);
     Ok(())
 }
 

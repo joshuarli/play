@@ -823,6 +823,21 @@ impl AudioOnlyPlayer {
 
 // ── Public API ─────────────────────────────────────────────────────
 
+/// Configuration for constructing a [`Player`].
+pub struct PlayerConfig {
+    pub cmd_rx: Receiver<Command>,
+    pub demux_packet_rx: Receiver<DemuxPacket>,
+    pub demux_cmd_tx: Sender<DemuxCommand>,
+    pub video_frame_tx: Sender<VideoFrame>,
+    pub ui_update_tx: Sender<UiUpdate>,
+    pub file_path: PathBuf,
+    pub stream_info: StreamInfo,
+    pub initial_volume: u32,
+    pub initial_audio_delay: f64,
+    pub subtitle_tracks: Vec<SubtitleTrack>,
+    pub audio_clock: Arc<AtomicI64>,
+}
+
 /// Player dispatches to the appropriate mode at construction time.
 pub struct Player {
     mode: PlayerMode,
@@ -834,20 +849,20 @@ enum PlayerMode {
 }
 
 impl Player {
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        cmd_rx: Receiver<Command>,
-        demux_packet_rx: Receiver<DemuxPacket>,
-        demux_cmd_tx: Sender<DemuxCommand>,
-        video_frame_tx: Sender<VideoFrame>,
-        ui_update_tx: Sender<UiUpdate>,
-        file_path: PathBuf,
-        stream_info: StreamInfo,
-        initial_volume: u32,
-        initial_audio_delay: f64,
-        subtitle_tracks: Vec<SubtitleTrack>,
-        audio_clock: Arc<AtomicI64>,
-    ) -> Result<Self> {
+    pub fn new(config: PlayerConfig) -> Result<Self> {
+        let PlayerConfig {
+            cmd_rx,
+            demux_packet_rx,
+            demux_cmd_tx,
+            video_frame_tx,
+            ui_update_tx,
+            file_path,
+            stream_info,
+            initial_volume,
+            initial_audio_delay,
+            subtitle_tracks,
+            audio_clock,
+        } = config;
         let sync_clock = SyncClock::new(audio_clock.clone());
         let has_video = stream_info.video_stream.is_some();
         let duration_us = stream_info.duration_us;
@@ -1031,19 +1046,19 @@ mod tests {
             metadata: vec![],
         };
 
-        let player = Player::new(
+        let player = Player::new(PlayerConfig {
             cmd_rx,
-            demux_pkt_rx,
+            demux_packet_rx: demux_pkt_rx,
             demux_cmd_tx,
             video_frame_tx,
             ui_update_tx,
-            PathBuf::from("/dev/null"),
+            file_path: PathBuf::from("/dev/null"),
             stream_info,
-            100,
-            0.0,
-            vec![],
+            initial_volume: 100,
+            initial_audio_delay: 0.0,
+            subtitle_tracks: vec![],
             audio_clock,
-        )
+        })
         .unwrap();
 
         // SAFETY: keeps demux_pkt_tx alive so player channels don't disconnect
