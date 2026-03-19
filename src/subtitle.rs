@@ -1,12 +1,16 @@
-//! SRT subtitle parser and binary-search lookup.
+//! Subtitle parser: external SRT files and embedded stream decoding.
 //!
-//! Parses SubRip (.srt) files into a sorted list of [`SrtEntry`] cues.
-//! [`SubtitleTrack::text_at`] uses `partition_point` for O(log n) lookup of
-//! the active subtitle at any given PTS.
+//! Parses SubRip (.srt) files and decodes embedded text subtitle streams
+//! (SRT-in-MKV, ASS/SSA, WebVTT, MOV text) into a sorted list of
+//! [`SrtEntry`] cues.  [`SubtitleTrack::text_at`] uses `partition_point`
+//! for O(log n) lookup of the active subtitle at any given PTS.
 
 use std::path::{Path, PathBuf};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
+use ffmpeg_next as ffmpeg;
+use ffmpeg_next::codec::subtitle::Rect;
+use ffmpeg_sys_next as ffs;
 
 /// A single SRT subtitle entry.
 #[derive(Debug, Clone)]
@@ -141,6 +145,143 @@ pub fn find_srt_files(video_path: &Path) -> Vec<PathBuf> {
     }
 
     results
+}
+
+/// Bitmap subtitle codecs that cannot be decoded to text.
+const BITMAP_CODECS: &[&str] = &["dvd_subtitle", "hdmv_pgs_subtitle", "dvb_subtitle", "xsub"];
+
+/// Decode all text subtitles from an embedded stream. Returns an empty Vec
+/// for bitmap formats or streams that produce no text output.
+pub fn decode_embedded_subtitles(
+    path: &Path,
+    stream_index: usize,
+    codec_name: &str,
+) -> Result<Vec<SrtEntry>> {
+    if BITMAP_CODECS.contains(&codec_name) {
+        return Ok(Vec::new());
+    }
+
+    let mut ictx = ffmpeg::format::input(path)
+        .with_context(|| format!("Failed to open for subtitle decode: {}", path.display()))?;
+    let stream = ictx
+        .stream(stream_index)
+        .ok_or_else(|| anyhow::anyhow!("Subtitle stream {stream_index} not found"))?;
+
+    let codec_ctx = ffmpeg::codec::context::Context::from_parameters(stream.parameters())
+        .context("Failed to create subtitle codec context")?;
+    let mut decoder = codec_ctx
+        .decoder()
+        .subtitle()
+        .context("Failed to open subtitle decoder")?;
+
+    let mut entries = Vec::new();
+    let mut sub = ffmpeg::Subtitle::new();
+
+    for (s, packet) in ictx.packets() {
+        if s.index() != stream_index {
+            continue;
+        }
+        match decoder.decode(&packet, &mut sub) {
+            Ok(true) => {
+                let pts_us = sub.pts().unwrap_or(0);
+                let start_us = pts_us + sub.start() as i64 * 1000;
+                let end_us = pts_us + sub.end() as i64 * 1000;
+
+                let text = extract_subtitle_text(&sub);
+                // SAFETY: avsubtitle_free releases internally-allocated rects.
+                // Must be called after each successful decode since ffmpeg_next's
+                // Subtitle type has no Drop impl for the rect array.
+                unsafe { ffs::avsubtitle_free(sub.as_mut_ptr()) };
+
+                if !text.is_empty() && end_us > start_us {
+                    entries.push(SrtEntry {
+                        start_us,
+                        end_us,
+                        text,
+                    });
+                }
+            }
+            Ok(false) => {}
+            Err(e) => log::debug!("Subtitle decode error: {e}"),
+        }
+    }
+
+    entries.sort_by_key(|e| e.start_us);
+    Ok(entries)
+}
+
+/// Extract plain text from decoded subtitle rects.
+fn extract_subtitle_text(sub: &ffmpeg::Subtitle) -> String {
+    let mut parts = Vec::new();
+    for rect in sub.rects() {
+        match rect {
+            Rect::Text(t) => {
+                let s = t.get().trim();
+                if !s.is_empty() {
+                    parts.push(s.to_string());
+                }
+            }
+            Rect::Ass(a) => {
+                let s = strip_ass_tags(a.get());
+                if !s.is_empty() {
+                    parts.push(s);
+                }
+            }
+            _ => {}
+        }
+    }
+    parts.join("\n")
+}
+
+/// Strip ASS/SSA formatting from decoded subtitle text.
+///
+/// Handles two forms:
+/// - Full dialogue lines: `ReadOrder,Layer,Style,Name,ML,MR,MV,Effect,Text`
+///   (9 comma-separated fields; text is everything after the 8th comma)
+/// - Inline override tags: `{\b1}`, `{\i0}`, `{\an8}`, `{\pos(320,50)}`, etc.
+/// - ASS line breaks: `\N` and `\n` → real newlines
+pub fn strip_ass_tags(s: &str) -> String {
+    // Skip the 9-field ASS dialogue prefix if present
+    let text = skip_ass_prefix(s);
+
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '{' {
+            // Skip until closing brace
+            for c2 in chars.by_ref() {
+                if c2 == '}' {
+                    break;
+                }
+            }
+        } else if c == '\\' {
+            match chars.peek() {
+                Some('N' | 'n') => {
+                    chars.next();
+                    out.push('\n');
+                }
+                _ => out.push(c),
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out.trim().to_string()
+}
+
+/// If `s` looks like a full ASS dialogue event (9+ comma-delimited fields),
+/// return the text after the 8th comma. Otherwise return `s` unchanged.
+fn skip_ass_prefix(s: &str) -> &str {
+    let mut commas = 0;
+    for (i, c) in s.char_indices() {
+        if c == ',' {
+            commas += 1;
+            if commas == 8 {
+                return &s[i + 1..];
+            }
+        }
+    }
+    s
 }
 
 #[cfg(test)]
@@ -426,6 +567,63 @@ Valid entry
         let entries = parse_srt(&f).unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].text, "日本語テスト");
+    }
+
+    // --- strip_ass_tags ---
+
+    #[test]
+    fn strip_ass_plain_text() {
+        assert_eq!(strip_ass_tags("Hello world"), "Hello world");
+    }
+
+    #[test]
+    fn strip_ass_override_tags() {
+        assert_eq!(strip_ass_tags(r"{\b1}bold{\b0} text"), "bold text");
+        assert_eq!(strip_ass_tags(r"{\i1}italic{\i0}"), "italic");
+        assert_eq!(strip_ass_tags(r"{\an8}top text"), "top text");
+        assert_eq!(strip_ass_tags(r"{\pos(320,50)}positioned"), "positioned");
+    }
+
+    #[test]
+    fn strip_ass_line_breaks() {
+        assert_eq!(strip_ass_tags(r"line one\Nline two"), "line one\nline two");
+        assert_eq!(strip_ass_tags(r"line one\nline two"), "line one\nline two");
+    }
+
+    #[test]
+    fn strip_ass_dialogue_prefix() {
+        // Full ASS dialogue line: 9 fields separated by commas, text after 8th comma
+        let ass = "0,0,Default,,0,0,0,,The actual subtitle text";
+        assert_eq!(strip_ass_tags(ass), "The actual subtitle text");
+    }
+
+    #[test]
+    fn strip_ass_dialogue_with_tags() {
+        let ass = r"0,0,Default,,0,0,0,,{\b1}Bold{\b0} and {\i1}italic{\i0}";
+        assert_eq!(strip_ass_tags(ass), "Bold and italic");
+    }
+
+    #[test]
+    fn strip_ass_dialogue_with_line_break() {
+        let ass = r"0,0,Default,,0,0,0,,First line\NSecond line";
+        assert_eq!(strip_ass_tags(ass), "First line\nSecond line");
+    }
+
+    #[test]
+    fn strip_ass_empty_input() {
+        assert_eq!(strip_ass_tags(""), "");
+    }
+
+    #[test]
+    fn strip_ass_only_tags() {
+        assert_eq!(strip_ass_tags(r"{\an8}{\pos(320,50)}"), "");
+    }
+
+    #[test]
+    fn strip_ass_commas_in_text() {
+        // Text field itself may contain commas
+        let ass = "0,0,Default,,0,0,0,,Hello, world, how are you?";
+        assert_eq!(strip_ass_tags(ass), "Hello, world, how are you?");
     }
 
     #[test]

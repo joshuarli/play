@@ -29,7 +29,6 @@ release: release-bin
 install: release
 	unzip -o $(APP).zip -d /Applications
 	/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f /Applications/$(APP)
-	ln -sf /Applications/$(APP)/Contents/MacOS/$(NAME) ~/usr/bin/$(NAME)
 
 test:
 	@OUT=$$(cargo test --quiet -- --test-threads=32 2>&1) || { echo "$$OUT"; exit 1; }

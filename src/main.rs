@@ -147,7 +147,8 @@ fn start_playback(path: &Path, args: &Args, start_pos: i64) -> Result<PlaybackHa
         .get(args.audio_track.saturating_sub(1))
         .or(info.audio_streams.first())
         .map(|s| s.index);
-    let subtitle_idx = info.subtitle_streams.first().map(|s| s.index);
+    // Subtitles are pre-decoded at startup, not streamed through the demuxer.
+    let subtitle_idx = None;
 
     // Load external subtitles
     let mut subtitle_tracks = Vec::new();
@@ -180,6 +181,25 @@ fn start_playback(path: &Path, args: &Args, start_pos: i64) -> Result<PlaybackHa
                 );
             }
             Err(e) => log::warn!("Failed to parse subtitle file: {e}"),
+        }
+    }
+
+    // Decode embedded text subtitles
+    for sub_info in &info.subtitle_streams {
+        match subtitle::decode_embedded_subtitles(path, sub_info.index, &sub_info.codec_name) {
+            Ok(entries) if !entries.is_empty() => {
+                let label = sub_info
+                    .language
+                    .as_deref()
+                    .unwrap_or(&sub_info.codec_name)
+                    .to_string();
+                subtitle_tracks.push(subtitle::SubtitleTrack { label, entries });
+            }
+            Ok(_) => {}
+            Err(e) => log::warn!(
+                "Failed to decode embedded subtitle stream {}: {e}",
+                sub_info.index
+            ),
         }
     }
 

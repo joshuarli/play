@@ -572,7 +572,6 @@ impl VideoPlayer {
                 // Video mode: blocking schedule
                 self.core.decode_audio_packet(&packet, true);
             }
-            DemuxPacket::Subtitle(_) => {}
             DemuxPacket::Eof => {
                 if let Some(vd) = self.video_decoder.as_mut() {
                     if let Err(e) = vd.send_eof() {
@@ -745,7 +744,6 @@ impl AudioOnlyPlayer {
                 let leftover = self.core.decode_audio_packet(&packet, false);
                 self.pending_audio.extend(leftover);
             }
-            DemuxPacket::Subtitle(_) => {}
             DemuxPacket::Eof => {
                 let leftover = self.core.drain_audio_at_eof(false);
                 self.pending_audio.extend(leftover);
