@@ -3,13 +3,13 @@
 ## Status
 
 - **Goal:** A compact, dependable, local-only macOS ARM64 media player: mpv's proven playback pipeline, a minimal pinned FFmpeg, no network backend, and a Rust-owned control plane with the OSC running on `mlua`.
-- **Last accepted revision:** `c2005eb` (P5.3). P0.1–P1.4 and P2.1–P5.3 have run.
-- **Accepted:** P0.1–P1.4, P2.1–P5.3. **Red:** none. **Parked:** none.
-- **Next slice:** P5.4 — load the upstream OSC through the Rust host.
-- **Resume prompt:** `Read PLAN.md and execute P5.4. Continue in item order; stop only at a hard stop or when P8 is complete.`
-- **First command:** `rg -n '^mp\.|^local .*require' player/lua/osc.lua`.
+- **Last accepted revision:** `301179b` (P5.5). P0.1–P1.4 and P2.1–P5.5 have run.
+- **Accepted:** P0.1–P1.4, P2.1–P5.5. **Red:** none. **Parked:** none.
+- **Next slice:** P6.1 — simplify `osc.lua` to the required controls.
+- **Resume prompt:** `Read PLAN.md and execute P6.1. Continue in item order; stop only at a hard stop or when P8 is complete.`
+- **First command:** `rg -n 'user_opts|^local function|^function' player/lua/osc.lua | head -80`.
 - **Test mode:** headless (`--vo=null --ao=null`); GUI and renderer checks are owner-run.
-- **Scope:** P5.3 added the Rust script host core; the C host remains linked until P5.5.
+- **Scope:** P5.5 removed the C Lua host and external Lua; one vendored Lua 5.2.4 runs the OSC through `player-lua`.
 
 This file is the campaign log as well as the plan. Update **Status** after every accepted slice. Git history holds the past; do not append dated checkpoints, handoffs, or a second status register.
 
