@@ -56,7 +56,7 @@ The final measurement is at `7a8958b`: cold 162.11 ms, warm 115.73 ms, idle RSS 
 - Encoding, recording, and the lavfi filter graph are compiled but unreachable: the release FFmpeg has no encoders or muxers, and the CLI has no entry point.
 - Clipboard commands are compiled and reachable. The default `Ctrl+v` binding uses them.
 - The `subprocess` command and the `.run` script backend are compiled and reachable from explicit scripts and IPC. No built-in module uses them.
-- Follow-on: A/V scheduler, general demux and decode orchestration, renderer integration, and Linux.
+- Follow-on: A/V scheduler, general demux and decode orchestration, renderer integration. Linux has its own section below.
 
 ## Reproduction
 
@@ -69,3 +69,53 @@ scripts/measure.sh final
 ```
 
 The development loop is `scripts/build.sh` plus `tests/run.sh suite`. Scratch artifacts live under `.work/`; `dist/` is disposable and rebuilt by `scripts/release.sh`.
+
+## Linux x86-64 musl
+
+### Outcome
+
+The Linux build is a mostly static `x86_64-unknown-linux-musl` executable: the mpv pipeline, the pinned minimal FFmpeg n9.0.2, the Rust control plane as one staticlib, one Lua 5.2 interpreter, `vo=gpu-next` over Vulkan and Wayland, and ALSA. The release is `dist/player-x86_64-linux-musl.tar.gz` (player and README) with a SHA-256 file. The stripped executable is 26,355,208 B and needs exactly six shared libraries: musl, `libvulkan.so.1`, `libwayland-client.so.0`, `libwayland-cursor.so.0`, `libxkbcommon.so.0`, and `libasound.so.2`.
+
+### Verification
+
+| Command | Result |
+|---|---|
+| `scripts/linux-container.sh tests/run.sh suite` | 286 passed, 0 failed (includes `linux-gpu-next`, `linux-audio`, `linux-local-only`, `linux-osc`, `linux-audit`) |
+| `scripts/linux-container.sh scripts/audit-linux.sh` | ok; the extra-`NEEDED` negative case failed as expected |
+| `scripts/linux-container.sh tests/run.sh ffmpeg-audit` | 19 passed |
+| `cargo test --target x86_64-unknown-linux-musl` | 60 passed |
+| `make linux`, `make install` | tarball extracts, checksum matches, installed player runs |
+
+| Budget | Limit | Actual |
+|---|---:|---:|
+| Stripped binary | 50,000,000 B | 26,355,208 B |
+| Direct dynamic libraries | 6 | 6 |
+| 1080p RSS | 300 MB | 128.94 MB |
+| Network schemes | 0 | 0 |
+| Duplicate Lua interpreters | 0 | 0 |
+
+Cold start, warm start, first frame, and seek are **perf gate deferred: host busy**. The host load was 25 on 32 cores from unrelated work for the final run, so the row in `docs/metrics.md` is labelled as not a gate. The numbers it recorded (cold 5.14 ms, warm 4.3 ms, first frame 105 ms, seek 1.07 ms) are far inside the budgets but are not evidence for them.
+
+### Provenance
+
+- The Linux source set (`wayland_common.c/.h`, `vulkan/context_wayland.c`, `ao_alsa.c`, `als-linux.c`, `language-posix.c`, `timer-linux.c`) comes from mpv v0.41.0 at the pin above.
+- `docker/linux/Dockerfile` pins `alpine:edge` by digest. `scripts/build-deps-linux.sh` builds zlib 1.3.2, expat 2.9.0, dav1d 1.5.4, FreeType 2.15.0, FriBiDi 1.0.17, HarfBuzz 15.0.0, fontconfig 2.18.1, shaderc 2026.4, libplacebo 7.387.0, and libass 0.17.5 from SHA-256-pinned sources; FFmpeg n9.0.2 comes from `scripts/build-ffmpeg.sh` with the shared allowlist.
+
+### Known limits
+
+- musl systems only. A glibc system cannot load the Vulkan, Wayland, xkbcommon, and ALSA libraries; a glibc build is a separate artifact.
+- No hardware video decode, X11, OpenGL, or DRM.
+- The headless gate uses lavapipe with `--gpu-sw=yes` and `--vulkan-swap-mode=mailbox`. FIFO pacing, fractional scale, real pointer and keyboard input, GPU output, and ALSA hardware are owner-run (`docs/manual-checklist.md`).
+- Linux fixtures differ byte-for-byte from the macOS ones (`tests/fixtures/hashes-linux.json`); their structure is identical.
+- `.github/workflows/linux.yml` has not run: nothing was pushed. The unprivileged user namespace the local-only gate needs may be blocked on a CI runner.
+- The macOS suite was not re-run from the Linux host after the shared harness changed; the macOS paths are unchanged branches of `sys.platform` checks, the `macos/` allowlist prefix, and the platform split in `build-ffmpeg.sh`.
+- Follow-on: a glibc build, aarch64 Linux, VA-API decode, and HDR output.
+
+### Reproduction
+
+```sh
+make linux
+scripts/linux-container.sh tests/run.sh suite
+scripts/linux-container.sh scripts/audit-linux.sh
+scripts/measure-linux.sh final
+```

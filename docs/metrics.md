@@ -89,3 +89,4 @@ Medians of 7 runs with the spread (max − min). `scripts/measure-linux.sh`; col
 | Label | Date | Revision | Stripped B | NEEDED | Cold ms | Warm ms | First frame ms | Idle MB | 1080p MB | 1080p CPU s | Seek ms | Exit ms | Protocols |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | baseline | 2026-11-01 | 2681555-dirty | 6,643,680 | 18 | 62.3 ± 60.95 | 62.5 ± 6.16 | 187.43 ± 45.29 | 39.6 | 156.33 | 0.57 | 1.65 ± 35.14 | 11.42 ± 1.37 | 1 |
+| final (host busy: timings are not a gate) | 2026-11-01 | 646198c | 26,355,208 | 6 | 5.14 ± 1.53 | 4.3 ± 1.53 | 105.41 ± 48.74 | 15.7 | 128.94 | 0.36 | 1.07 ± 30.4 | 2.6 ± 1.67 | 1 |

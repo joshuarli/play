@@ -44,3 +44,16 @@ Recorded 2026-11-01 at `7a8958b`.
 ## Known limits
 
 This audit does not replace the owner's manual checklist for visual quality, audio audibility, real input devices, other hardware, or signing and notarization. Those remain scheduled, not silently passed. `TODO.md` records the defects found after this audit.
+
+## Linux
+
+Recorded 2026-11-01 for the musl build.
+
+- **Layout:** `docker/linux/Dockerfile` (pinned image), `scripts/{linux-container,linux-check,build-deps-linux,build-linux,audit-linux,release-linux,measure-linux}.sh`, `tests/wayland.py`, `tests/fixtures/hashes-linux.json`, and `.github/workflows/linux.yml`. The restored mpv Linux files are byte-identical to the v0.41.0 pin.
+- **Network:** `audit-linux.sh` finds no `getaddrinfo`, `connect`, TLS, or curl import or library string, exactly one `file` protocol, and no network scheme. Rust `std` brought `getaddrinfo` and `connect` in until the link used `--gc-sections`.
+- **Dynamic set:** six `NEEDED` entries, no RPATH or RUNPATH, every entry resolves, and no `/work/` or checkout path appears in the binary. The audit found and the build now fixes leaked paths in mpv's configuration banner, FFmpeg's configuration string, fontconfig's template directory, a libplacebo `__FILE__`, and Rust panic locations.
+- **Unsafe:** unchanged and still confined to `rust/player-ffi` and `rust/player-audio`. The Linux build adds no `unsafe`.
+- **Scripts:** the container wrapper runs with `seccomp=unconfined` and `apparmor=unconfined` so the local-only gate can create a user and network namespace. That widens the build container, which handles only repository code and pinned sources.
+- **Rust runtime:** one `rust_begin_unwind` and one `rust_eh_personality` in the link. 25 repeated local inline symbols remain inside that single `std`.
+- **Fixed on the way:** `player-audio`'s tests did not compile on any platform after `err_code` was added; `gen.sh` died of SIGPIPE under `pipefail`; the fixtures gate wiped the measurement fixture.
+- **Advisories:** `cargo audit` was not run on Linux; it is not installed in the image.
