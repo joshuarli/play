@@ -2,7 +2,7 @@
 
 ## Outcome
 
-This fork is a local-only macOS media player built on mpv v0.41.0, a minimal FFmpeg n9.0.2, and a Rust-owned control plane. The release artifact is `dist/Player.app`: a self-contained 26.8 MB app with a 9.64 MB executable, a 17,166,736 B framework closure, an arm64-thinned MoltenVK, and no Homebrew runtime dependency.
+This fork is a local-only macOS media player built on mpv v0.41.0, a minimal FFmpeg n9.0.2, and a Rust-owned control plane. The release artifact is `dist/Player.app`: a self-contained 28.2 MB app with a 9.64 MB executable, a 17,150,320 B framework closure, a bundled icon, an arm64-thinned MoltenVK, and no Homebrew runtime dependency.
 
 ## Rust ownership
 
@@ -23,18 +23,20 @@ The release app links the Rust plane as `libplayer_release.dylib`. The developme
 | `scripts/audit.sh` | ok |
 | `scripts/measure.sh final` | final: ok |
 | `scripts/measure.sh compare` | compare: ok |
-| `tests/run.sh release` | 7 passed, 0 failed |
+| `tests/run.sh release` | 9 passed, 0 failed |
 
 | Budget | Limit | Actual |
 |---|---:|---:|
-| Distributable | 29,542,136 B | 26,807,168 B |
-| Executable | 10,000,000 B | 9,640,432 B |
+| Distributable | 29,542,136 B | 28,186,443 B |
+| Executable | 10,000,000 B | 9,640,096 B |
 | First frame | 1 s | 220.07 ms |
 | 1080p CPU | 0.231 s | 0.23 s, inside run noise |
 | 1080p RSS | 300 MB | 216.88 MB |
 | Seek | 250 ms | 3.21 ms |
 | Network schemes | 0 | 0 |
 | Duplicate Lua interpreters | 0 | 0 |
+
+Sizes are from the backlog build; the timing rows are the `7a8958b` measurement.
 
 The final measurement is at `7a8958b`: cold 162.11 ms, warm 115.73 ms, idle RSS 84.78 MB, 1080p RSS 216.88 MB, 1080p CPU 0.23 s, 4K CPU 0.55 s, seek 3.21 ms, exit 4.24 ms, no audio underruns. These are headless timings. The host was loaded during the run, so the absolute values are evidence, not a product promise.
 

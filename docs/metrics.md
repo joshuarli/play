@@ -52,6 +52,8 @@ Measured at `7a8958b` on 2026-11-01 with `scripts/measure.sh final`. The host wa
 
 The 1080p CPU result is inside the run-to-run spread. The 3-run median cannot distinguish it from the 0.231 s limit, and the same metric ranged from 0.16 s to 0.23 s across the runs above. `scripts/measure.sh compare` checks the fixed budgets, not a regression between two labels. The frame-drop count is read under `--vo=null`, where there is no renderer clock, so it is zero by construction and is not a renderer claim.
 
+The backlog build adds the 1,387,652 B bundle icon. Its app is 28,186,443 B with a 9,640,096 B executable and a 17,150,320 B closure, still under the 29,542,136 B distributable budget. The timing table above remains the `7a8958b` measurement.
+
 ## Optimization history
 
 The reduction came from stripping, thinning MoltenVK to arm64, linking shaderc as MinSizeRel, and moving the Rust plane to `libplayer_release.dylib`.

@@ -4,11 +4,11 @@ Player is a local-only macOS media player. The release artifact is `dist/Player.
 
 ## Current state
 
-- The last full release measurement is at `7a8958b`.
+- The last full release measurement is at `7a8958b`. The app was rebuilt after the backlog; its sizes are below.
 - `tests/run.sh suite`: the full suite passes. The run includes the release gate.
 - `scripts/audit.sh`: ok.
-- `scripts/measure.sh final`: all published budgets pass.
-- App: 26,807,168 B; executable 9,640,432 B; framework closure 17,166,736 B in 13 files.
+- `scripts/measure.sh final`: the published timing budgets pass at `7a8958b`.
+- App: 28,186,443 B; executable 9,640,096 B; framework closure 17,150,320 B in 13 files; bundled icon 1,387,652 B.
 - One `file` protocol and one Lua interpreter.
 
 ## Limits

@@ -39,7 +39,7 @@ Recorded 2026-11-01 at `7a8958b`.
 - Rust: 6,685 lines in 22 files under `rust/`. By crate: core 1,648, FFI 2,309, Lua 2,401, audio 318, release 2.
 - FFI: 49 exported `player_ffi_*` and `player_audio_*` symbols; 49 `#[unsafe(no_mangle)]` declarations.
 - Tests: 23 gates in `tests/harness.py`; the suite passes on the recorded host.
-- Distributable: 26.8 MB, with a 9.64 MB executable and a 16.37 MiB closure in 13 files.
+- Distributable: 28.2 MB; the executable is 9.64 MB, the framework closure is 16.36 MiB in 13 files, and the bundled icon is 1.39 MB.
 
 ## Known limits
 
