@@ -80,4 +80,4 @@ Current result: 19 passed, 0 failed. A temporary manifest with `http` added to t
 
 ## Next
 
-P7.5 moved local file open/read/write/seek/size/EOF into `player-core::local_file`; `stream_file` is a compact backend over the FFI handle. P8 builds and audits the release closure.
+P8.1 builds the pinned release closure and Player.app from source; the only runtime dylibs are the pinned prefix's. P8.2 measures and optimizes the release.

@@ -121,6 +121,13 @@ D4 remains: the simplified Lua OSC on `mlua` is the permanent default. Rust owns
 - `player-ffi` exposes an opaque local-file handle. `stream/stream_file.c` is now a compact stream backend over that handle; it preserves directory detection, write support for screenshots, the `file://` conversion, and the stdin/stdout `-` fallback. The generic stream list remains `file` plus `stream_cb`; there is no network stream backend.
 - `stream/stream.c` still owns the read buffer and stream-callback registration; the filesystem work is Rust-owned.
 
+## Release closure (P8.1)
+
+- `scripts/build-deps.sh` builds the release closure from pinned sources into `.work/deps/release`: Vulkan-Headers/Loader 1.4.363.0, dav1d 1.5.4, FreeType 2.15.0, FriBiDi 1.0.17, HarfBuzz 15.0.0, shaderc 2026.4 (glslang, SPIRV-Headers, SPIRV-Tools pinned), libplacebo 7.387.0, libass 0.17.5, FFmpeg 9.0.2, and the checksum-pinned MoltenVK 1.4.2 binary. Homebrew supplies build tools only; no Homebrew dylib is linked.
+- `scripts/release.sh` builds the Rust release libraries, configures mpv with `PKG_CONFIG_LIBDIR` restricted to the release prefix, and calls `scripts/bundle.py`. The bundler copies the recursive non-system closure into `Player.app/Contents/Frameworks`, rewrites every install name to `@rpath`, adds the executable rpath, bundles MoltenVK and its ICD manifest, writes `Info.plist`, and ad-hoc signs the app.
+- `player/main.c` sets `VK_DRIVER_FILES` and `VK_ICD_FILENAMES` to the bundled MoltenVK manifest before renderer initialization, unless either is already set.
+- `tests/run.sh release` checks the app, the closure (no Homebrew or build paths), the expected dylibs, the ICD, the rpath, playback of the h264 fixture, and the ad-hoc signature.
+
 ## Open work
 
 - P1.4 added the FFmpeg manifest gate over the frozen allowlist.
@@ -134,5 +141,5 @@ D4 remains: the simplified Lua OSC on `mlua` is the permanent default. Rust owns
 - P4.1 added `player-core`/`player-ffi`, built both static libraries, and linked/called `player_ffi_abi_version` from the player.
 - P4.2 moved the input classifier to `player-core::input`; the C boundary delegates through `player_ffi_classify_input` with typed results.
 - P4.3 documented the FFI invariants and added the C bridge test.
-- P7.5 moved the local file stream abstraction into Rust; P8 builds the release closure, optimizes it, audits it, and writes the final report.
+- P8.1 built the pinned release closure and app bundle; P8.2 measures and optimizes it.
 - P7 moves config, playlist, input, state, and local file handling into Rust; the audio bridge stays at the decode boundary.

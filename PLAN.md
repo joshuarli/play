@@ -3,13 +3,13 @@
 ## Status
 
 - **Goal:** A compact, dependable, local-only macOS ARM64 media player: mpv's proven playback pipeline, a minimal pinned FFmpeg, no network backend, and a Rust-owned control plane with the OSC running on `mlua`.
-- **Last accepted revision:** `a8df081` (P7.5). P0.1–P1.4 and P2.1–P7.5 have run.
-- **Accepted:** P0.1–P1.4, P2.1–P7.5. **Red:** none. **Parked:** none.
-- **Next slice:** P8.1 — build the release dependency closure and app bundle.
-- **Resume prompt:** `Read PLAN.md and execute P8.1. Continue in item order; stop only at a hard stop or when P8 is complete.`
-- **First command:** `rg -n 'URL|SHA|version' scripts/build-ffmpeg.sh; brew info --json=v2 ffmpeg libplacebo libass shaderc dav1d molten-vk vulkan-loader vulkan-headers`.
+- **Last accepted revision:** *(record after the P8.1 commit)*. P0.1–P1.4 and P2.1–P8.1 have run.
+- **Accepted:** P0.1–P1.4, P2.1–P8.1. **Red:** none. **Parked:** none.
+- **Next slice:** P8.2 — measure and optimize the release.
+- **Resume prompt:** `Read PLAN.md and execute P8.2. Continue in item order; stop only at a hard stop or when P8 is complete.`
+- **First command:** `scripts/measure.sh release; scripts/measure.sh`.
 - **Test mode:** headless (`--vo=null --ao=null`); GUI and renderer checks are owner-run.
-- **Scope:** P7.5 moved local file I/O into Rust; P8 builds the pinned release closure and app.
+- **Scope:** P8.1 built the pinned release closure and app; P8.2 measures and optimizes it.
 
 This file is the campaign log as well as the plan. Update **Status** after every accepted slice. Git history holds the past; do not append dated checkpoints, handoffs, or a second status register.
 

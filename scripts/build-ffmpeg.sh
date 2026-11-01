@@ -8,13 +8,16 @@ URL="https://github.com/FFmpeg/FFmpeg/archive/refs/tags/$TAG.tar.gz"
 SHA256=6e374ed621e48faa40639307dff48ba6fe574a509977956d2cce9669b7cc27e9
 TARBALL="$ROOT/.work/tmp/ffmpeg-$VERSION.tar.gz"
 SRC="$ROOT/.work/tmp/FFmpeg-$TAG"
-PREFIX="$ROOT/.work/deps/ffmpeg-full"
+PREFIX=${PREFIX:-"$ROOT/.work/deps/ffmpeg-full"}
 BUILD="$PREFIX/build"
 ALLOWLIST="$ROOT/scripts/ffmpeg-components.txt"
 CONFIG_HASH=$(shasum -a 256 "$ALLOWLIST" | awk '{ print $1 }')
 
 mkdir -p "$ROOT/.work/tmp" "$ROOT/.work/deps"
 export TMPDIR="$ROOT/.work/tmp"
+if [ -n "${DAV1D_PREFIX:-}" ]; then
+    export PKG_CONFIG_PATH="$DAV1D_PREFIX/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+fi
 
 if [ -f "$PREFIX/lib/pkgconfig/libavcodec.pc" ] &&
     [ -f "$PREFIX/lib/libavcodec.a" ] &&

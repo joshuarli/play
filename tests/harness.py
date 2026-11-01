@@ -1353,6 +1353,61 @@ def gate_lua_api_audit(results, args):
                   tail((proc.stdout + proc.stderr).splitlines(), 20))
 
 
+
+def gate_release(results, args):
+    app = ROOT / "dist/Player.app"
+    binary = app / "Contents/MacOS/player"
+    frameworks = app / "Contents/Frameworks"
+    results.check("release: app", app.is_dir() and binary.is_file())
+    if not binary.is_file():
+        return
+
+    bad = []
+    targets = [binary] + sorted(frameworks.glob("*.dylib"))
+    for target in targets:
+        linked = subprocess.check_output(["otool", "-L", str(target)], text=True)
+        if "/opt/homebrew" in linked or ".work/deps" in linked:
+            bad.append(str(target))
+    results.check("release: no Homebrew or build paths", not bad, ", ".join(bad))
+
+    expected = {
+        "libass.9.dylib", "libplacebo.387.dylib", "libvulkan.1.dylib",
+        "libMoltenVK.dylib", "libshaderc_shared.1.dylib",
+        "libdav1d.7.dylib", "libfreetype.6.dylib", "libfribidi.0.dylib",
+        "libharfbuzz.0.dylib",
+    }
+    present = {path.name for path in frameworks.glob("*.dylib")}
+    results.check("release: bundled closure", expected <= present,
+                  ",".join(sorted(expected - present)))
+
+    icd_path = app / "Contents/Resources/vulkan/icd.d/MoltenVK_icd.json"
+    try:
+        icd = json.loads(icd_path.read_text())
+        library = Path(icd["ICD"]["library_path"])
+        library = (icd_path.parent / library).resolve()
+        results.check("release: ICD", library.is_file(), str(library))
+    except Exception as exc:
+        results.check("release: ICD", False, f"{type(exc).__name__}: {exc}")
+
+    linked = subprocess.check_output(["otool", "-l", str(binary)], text=True)
+    results.check("release: rpath", "@executable_path/../Frameworks" in linked)
+
+    proc = subprocess.run(
+        [str(binary), "--no-config", "--vo=null", "--ao=null", "--frames=1",
+         str(fixture_path(fixture_entry("h264")))],
+        capture_output=True, text=True, timeout=60,
+    )
+    results.check("release: playback", proc.returncode == 0,
+                  tail((proc.stdout + proc.stderr).splitlines(), 20))
+
+    proc = subprocess.run(
+        ["codesign", "--verify", "--deep", "--strict", str(app)],
+        capture_output=True, text=True, timeout=60,
+    )
+    results.check("release: signature", proc.returncode == 0,
+                  tail((proc.stdout + proc.stderr).splitlines(), 20))
+
+
 GATES = {
     "fixtures": gate_fixtures,
     "play": gate_play,
@@ -1375,6 +1430,7 @@ GATES = {
     "lua-api-audit": gate_lua_api_audit,
     "baseline-docs": gate_baseline_docs,
     "meta": gate_meta,
+    "release": gate_release,
     "failures": gate_failures,
 }
 
@@ -1383,7 +1439,7 @@ SUITE = [
     "local-only", "osc", "osc-input", "input", "playlist", "cli", "state", "failures",
     "rust-link", "ffi",
     "lua-host",
-    "lua-api-audit",
+    "lua-api-audit", "release",
 ]
 
 

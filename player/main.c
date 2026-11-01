@@ -85,6 +85,8 @@ static const char def_config[] =
 #endif
 
 #if HAVE_COCOA
+#include <mach-o/dyld.h>
+#include <unistd.h>
 #include "osdep/mac/app_bridge.h"
 #endif
 
@@ -558,8 +560,48 @@ int mp_initialize(struct MPContext *mpctx, char **options)
     return 0;
 }
 
+#if HAVE_COCOA
+static void set_bundled_vulkan_icd(void)
+{
+    if (getenv("VK_DRIVER_FILES") || getenv("VK_ICD_FILENAMES"))
+        return;
+    uint32_t size = 0;
+    _NSGetExecutablePath(NULL, &size);
+    if (!size)
+        return;
+    char *path = malloc(size);
+    if (!path)
+        return;
+    if (_NSGetExecutablePath(path, &size) != 0) {
+        free(path);
+        return;
+    }
+    char *resolved = realpath(path, NULL);
+    free(path);
+    if (!resolved)
+        return;
+    char *slash = strrchr(resolved, '/');
+    if (!slash) {
+        free(resolved);
+        return;
+    }
+    *slash = '\0';
+    char icd[4096];
+    snprintf(icd, sizeof(icd),
+             "%s/../Resources/vulkan/icd.d/MoltenVK_icd.json", resolved);
+    free(resolved);
+    if (access(icd, R_OK) == 0) {
+        setenv("VK_DRIVER_FILES", icd, 0);
+        setenv("VK_ICD_FILENAMES", icd, 0);
+    }
+}
+#endif
+
 int mpv_main(int argc, char *argv[])
 {
+#if HAVE_COCOA
+    set_bundled_vulkan_icd();
+#endif
     struct MPContext *mpctx = mp_create();
     if (!mpctx)
         return 1;
