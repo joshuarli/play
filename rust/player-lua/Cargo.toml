@@ -1,0 +1,14 @@
+[package]
+name = "player-lua"
+version = "0.1.0"
+edition = "2024"
+license = "MPL-2.0"
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+mlua = { version = "=0.12.2", default-features = false, features = [
+    "lua52",
+    "vendored",
+] }

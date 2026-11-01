@@ -80,4 +80,4 @@ Current result: 19 passed, 0 failed. A temporary manifest with `http` added to t
 
 ## Next
 
-P4.3 documented and tested the FFI invariants. P5.1 moves the Lua API surface to `mlua`.
+P5.1 added `player-lua` on `mlua` 0.12.2 with the vendored Lua 5.2.4 sources and only the `lua52` and `vendored` features. P5.2 audits the Lua API closure.

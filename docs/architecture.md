@@ -42,6 +42,12 @@ When `libmpv` is disabled, the sources compile directly into the `mpv` executabl
 - Threading: `player-audio` decoder handles are not thread-safe; the caller serializes access. There are no shared mutable globals in the FFI.
 - Callbacks: none are exposed yet. Future registration must be paired with explicit unregister/cleanup and must not run after the owning handle is destroyed.
 
+## Script host (P5.1)
+
+- **Interpreter:** `rust/player-lua` owns the Lua state through `mlua` 0.12.2, pinned with only `lua52` and `vendored`; the vendored source is Lua 5.2.4, the same version as the C host. No async, serde, or Tokio features are enabled.
+- **Libraries:** the interpreter opens mlua's safe standard-library set. That includes `io`, `os`, and `package`, which `select.lua`, `options.lua`, and `defaults.lua` use. The `debug` library and C-module loading are not enabled.
+- **Link state:** `new_interpreter()` and `run_script()` are the only entry points in this slice. `player/lua.c` remains the host linked into the player until P5.5, so the executable still contains exactly one Lua implementation; `player-lua` is tested standalone and is not linked into `mpv` yet.
+
 ## Open work
 
 - P1.4 added the FFmpeg manifest gate over the frozen allowlist.
@@ -55,5 +61,5 @@ When `libmpv` is disabled, the sources compile directly into the `mpv` executabl
 - P4.1 added `player-core`/`player-ffi`, built both static libraries, and linked/called `player_ffi_abi_version` from the player.
 - P4.2 moved the input classifier to `player-core::input`; the C boundary delegates through `player_ffi_classify_input` with typed results.
 - P4.3 documented the FFI invariants and added the C bridge test.
-- P5.1 audits and ports the Lua API surface to `mlua`.
+- P5.1 added `player-lua` on `mlua` 0.12.2; P5.2 audits the Lua API closure before the host port.
 - P7 moves config, playlist, input, state, and local file handling into Rust; the audio bridge stays at the decode boundary.
