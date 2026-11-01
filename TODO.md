@@ -5,16 +5,6 @@ Next: 20
 
 ## P2
 
-### PLAY-3 · P2 · The command checker rejects valid mpv command forms
-
-- **Area:** Types
-- **Where:** `rust/player-core/src/command.rs:211-229`, `:149-155`, `input/cmd.c:455-461`, `player/client.c:1149-1156`, `options/m_option.h:697-699`, `player/command.c:7140-7150`
-- **Problem:** `set aid auto`, `set sid auto`, and `set vid auto` are valid `OPT_TRACKCHOICE` values, and `seek 1:30` and `seek +0:10` are valid `OPT_TIME` values. The Rust checker accepts only `no` or an integer track id and only an `f64` seek target. `input/cmd.c` drops a rejected command before the C parser sees it. `mpv_command_node` bypasses the checker, so the same command works through `command_native` and fails through `commandv`, IPC, and bindings. Direct runs show `[input] Command rejected: invalid track id 'auto'` and `[input] Command rejected: invalid seek amount '1:30'`.
-- **Recommendation:** make the checker a superset of the C parser's accepted forms, or pass through any form it cannot validate rather than rejecting it. Add `auto`/`yes` track values and the `mm:ss` seek grammar, and decide whether node commands also pass through the checker.
-- **Fix with:** make-invalid-states-unrepresentable
-- **Effort:** S
-- **Design:** none
-
 ### PLAY-4 · P2 · A cyclic or deeply nested Lua table aborts the process
 
 - **Area:** Errors

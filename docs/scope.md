@@ -53,7 +53,6 @@ Removed: `--ytdl*`, `--hls-bitrate`, `--lavfi-complex`, `--stream-dump`, `--stre
 ## Remaining debt
 
 - The UTF-8-only path API and the classifier bypass in `--playlist` and `loadlist`.
-- The command checker rejects some valid mpv forms (`aid auto`, `seek 1:30`) that the C parser still accepts.
 - The Rust fullscreen mirror is not updated when the window changes fullscreen.
 - The Lua event queue is unbounded and script completion has no timeout.
 - Clipboard support is live although the release report previously described the player as having none. Decide whether to keep it or remove it.

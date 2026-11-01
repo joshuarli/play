@@ -150,12 +150,8 @@ fn parse_seek(args: &[String]) -> Result<Option<Command>, CommandError> {
     let Some(amount) = args.first() else {
         return Err(CommandError::new("seek requires an amount"));
     };
-    let amount = amount
-        .parse::<f64>()
-        .map_err(|_| CommandError::new(format!("invalid seek amount '{amount}'")))?;
-    if !amount.is_finite() {
-        return Err(CommandError::new("invalid seek amount"));
-    }
+    let amount = parse_time(amount)
+        .ok_or_else(|| CommandError::new(format!("invalid seek amount '{amount}'")))?;
     let mut mode = SeekMode::Relative;
     let mut exact = false;
     if let Some(value) = args.get(1) {
@@ -217,6 +213,8 @@ fn parse_track(
     };
     let id = if value == "no" {
         None
+    } else if value == "auto" {
+        return Ok(None);
     } else {
         Some(
             value
@@ -225,6 +223,35 @@ fn parse_track(
         )
     };
     Ok(Some(Command::SelectTrack { kind, id }))
+}
+
+fn parse_time(value: &str) -> Option<f64> {
+    let (sign, rest) = match value.as_bytes().first() {
+        Some(b'-') => (-1.0, &value[1..]),
+        Some(b'+') => (1.0, &value[1..]),
+        _ => (1.0, value),
+    };
+    if rest.is_empty() {
+        return None;
+    }
+    let parts: Vec<&str> = rest.split(':').collect();
+    if parts.len() > 3 || parts.iter().any(|part| part.is_empty()) {
+        return None;
+    }
+    let mut total = 0.0;
+    for (index, part) in parts.iter().enumerate() {
+        let number = part.parse::<f64>().ok()?;
+        if !number.is_finite() || number < 0.0 {
+            return None;
+        }
+        let scale = match parts.len() - index {
+            3 => 3600.0,
+            2 => 60.0,
+            _ => 1.0,
+        };
+        total += number * scale;
+    }
+    Some(sign * total)
 }
 
 fn parse_bool(value: Option<&str>) -> Result<bool, CommandError> {
@@ -444,5 +471,44 @@ mod tests {
         assert_eq!(command(&["cycle", "chapter"]), None);
         assert_eq!(command(&["set", "chapter", "2"]), None);
         assert_eq!(command(&["add", "chapter", "1"]), None);
+    }
+
+    #[test]
+    fn command_accepts_time_seeks_and_auto_tracks() {
+        assert_eq!(
+            command(&["seek", "1:30"]),
+            Some(Command::Seek {
+                amount: 90.0,
+                mode: SeekMode::Relative,
+                exact: false
+            })
+        );
+        assert_eq!(
+            command(&["seek", "+0:10"]),
+            Some(Command::Seek {
+                amount: 10.0,
+                mode: SeekMode::Relative,
+                exact: false
+            })
+        );
+        assert_eq!(
+            command(&["seek", "1:02:03.5"]),
+            Some(Command::Seek {
+                amount: 3723.5,
+                mode: SeekMode::Relative,
+                exact: false
+            })
+        );
+        assert_eq!(
+            command(&["seek", "-0:05", "absolute"]),
+            Some(Command::Seek {
+                amount: -5.0,
+                mode: SeekMode::Absolute,
+                exact: false
+            })
+        );
+        assert_eq!(command(&["set", "aid", "auto"]), None);
+        assert_eq!(command(&["set", "sid", "auto"]), None);
+        assert!(parse_string("seek 1:2:3:4").is_err());
     }
 }

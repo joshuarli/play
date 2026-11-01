@@ -31,7 +31,7 @@ FFmpeg demuxes every container and decodes video. VideoToolbox is the hardware p
 
 - **Startup:** `player-core::config` parses the supported command line into a typed `StartupConfig`. `player/main.c` applies the fields and sends only the remaining engine options to the C parser. `--version`, `--help`, and unknown-option failures stay in C.
 - **Playlist:** `player-core::playlist` owns order, IDs, the current entry, insertion, removal, and next and previous. `player-ffi` maps C `playlist_entry` pointers to Rust IDs. C owns the entry payloads and their talloc lifetime.
-- **Commands:** `player-core::command` validates the supported vocabulary before the C parser builds an `mp_cmd`. The checker is narrower than the C option grammar: it rejects `set aid auto` and `seek 1:30`, and node commands do not pass through it.
+- **Commands:** `player-core::command` validates the supported vocabulary before the C parser builds an `mp_cmd`. The checker accepts `auto` track selection and `mm:ss` seek targets. Node commands do not pass through it; they use the C parser directly.
 - **State:** `player-core::state::PlaybackState` owns pause, fullscreen, mute, volume, speed, time-pos, duration, and EOF, with a change sequence. C property getters read the Rust store and C reports facts through the FFI. The fullscreen value written by the macOS window path through `m_config_cache_write_opt` does not reach the Rust store.
 - **Local file:** `player-core::local_file::LocalFile` owns open, read, write, seek, size, and EOF with typed errors. `stream/stream_file.c` is the stream backend over that handle.
 
