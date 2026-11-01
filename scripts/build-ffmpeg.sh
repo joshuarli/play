@@ -11,7 +11,14 @@ SRC="$ROOT/.work/tmp/FFmpeg-$TAG"
 PREFIX=${PREFIX:-"$ROOT/.work/deps/ffmpeg-full"}
 BUILD="$PREFIX/build"
 ALLOWLIST="$ROOT/scripts/ffmpeg-components.txt"
-CONFIG_HASH=$(shasum -a 256 "$ALLOWLIST" | awk '{ print $1 }')
+case "$(uname -s)" in
+    Darwin) PLATFORM=macos; sha256() { shasum -a 256 "$1" | awk '{ print $1 }'; }
+            JOBS=$(sysctl -n hw.ncpu) ;;
+    Linux) PLATFORM=linux; sha256() { sha256sum "$1" | awk '{ print $1 }'; }
+           JOBS=$(nproc) ;;
+    *) printf 'error: unsupported platform %s\n' "$(uname -s)" >&2; exit 1 ;;
+esac
+CONFIG_HASH=$(sha256 "$ALLOWLIST")
 
 mkdir -p "$ROOT/.work/tmp" "$ROOT/.work/deps"
 export TMPDIR="$ROOT/.work/tmp"
@@ -29,12 +36,12 @@ if [ -f "$PREFIX/lib/pkgconfig/libavcodec.pc" ] &&
 fi
 
 if [ ! -f "$TARBALL" ] ||
-    [ "$(shasum -a 256 "$TARBALL" | awk '{ print $1 }')" != "$SHA256" ]; then
+    [ "$(sha256 "$TARBALL")" != "$SHA256" ]; then
     printf 'download %s\n' "$URL"
     curl -fsSL "$URL" -o "$TARBALL"
 fi
 
-if [ "$(shasum -a 256 "$TARBALL" | awk '{ print $1 }')" != "$SHA256" ]; then
+if [ "$(sha256 "$TARBALL")" != "$SHA256" ]; then
     printf 'error: checksum mismatch for %s\n' "$TARBALL" >&2
     exit 1
 fi
@@ -51,14 +58,23 @@ configure_args=(
     --disable-network --disable-avdevice --disable-autodetect
     --disable-everything
     --enable-libdav1d
-    --enable-videotoolbox
 )
+case "$PLATFORM" in
+    macos) configure_args+=(--enable-videotoolbox) ;;
+    linux) configure_args+=(--enable-pic --arch=x86_64) ;;
+esac
 
 while IFS= read -r line; do
     line=${line%%#*}
     [ -n "$line" ] || continue
     category=${line%%:*}
     names=${line#*:}
+    case "$category" in
+        */*)
+            [ "${category%%/*}" = "$PLATFORM" ] || continue
+            category=${category#*/}
+            ;;
+    esac
     [ "$category" != "$line" ] || {
         printf 'error: malformed allowlist line: %s\n' "$line" >&2
         exit 1
@@ -86,7 +102,7 @@ cd "$BUILD"
 "$SRC/configure" "${configure_args[@]}"
 
 printf 'build FFmpeg %s\n' "$VERSION"
-make -j"$(sysctl -n hw.ncpu)"
+make -j"$JOBS"
 make install
 
 printf '%s\n' "$CONFIG_HASH" >"$PREFIX/ffmpeg-components.sha256"

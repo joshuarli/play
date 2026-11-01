@@ -262,4 +262,10 @@ if ! have libass; then
     stamp libass
 fi
 
+PREFIX="$PREFIX/ffmpeg" DAV1D_PREFIX="$PREFIX" "$ROOT/scripts/build-ffmpeg.sh" \
+    >"$LOGS/ffmpeg.log" 2>&1 || {
+    tail -60 "$LOGS/ffmpeg.log" >&2
+    exit 1
+}
+
 printf 'linux dependencies ready in %s\n' "$PREFIX"

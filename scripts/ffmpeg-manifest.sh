@@ -17,7 +17,9 @@ MODE = sys.argv[2]
 MANIFEST_ARG = sys.argv[3]
 MANIFEST = pathlib.Path(MANIFEST_ARG) if MANIFEST_ARG else (
     ROOT / ".work" / "deps" / "ffmpeg-manifest.json")
-RELEASE_BUILD = ROOT / ".work" / "deps" / "release" / "ffmpeg" / "build"
+PLATFORM = "linux" if sys.platform.startswith("linux") else "macos"
+RELEASE_BUILD = ROOT / ".work" / "deps" / (
+    "linux" if PLATFORM == "linux" else "release") / "ffmpeg" / "build"
 DEV_BUILD = ROOT / ".work" / "deps" / "ffmpeg-full" / "build"
 BUILD = pathlib.Path(os.environ["FFMPEG_BUILD"]) if os.environ.get("FFMPEG_BUILD") else (
     RELEASE_BUILD if RELEASE_BUILD.exists() else DEV_BUILD)
@@ -52,7 +54,12 @@ def parse_allowlist():
         if not line:
             continue
         category, names = line.split(":", 1)
-        allowed[category.strip()] = set(names.split())
+        category = category.strip()
+        if "/" in category:
+            platform, category = category.split("/", 1)
+            if platform != PLATFORM:
+                continue
+        allowed[category] = set(names.split())
     return allowed
 
 
