@@ -39,6 +39,7 @@ extern const struct ao_driver audio_out_coreaudio;
 extern const struct ao_driver audio_out_coreaudio_exclusive;
 extern const struct ao_driver audio_out_null;
 extern const struct ao_driver audio_out_lavc;
+extern const struct ao_driver audio_out_alsa;
 
 static const struct ao_driver * const audio_out_drivers[] = {
 #if HAVE_COREAUDIO
@@ -47,6 +48,9 @@ static const struct ao_driver * const audio_out_drivers[] = {
     &audio_out_null,
 #if HAVE_COREAUDIO
     &audio_out_coreaudio_exclusive,
+#endif
+#if HAVE_ALSA
+    &audio_out_alsa,
 #endif
     &audio_out_lavc,
 };

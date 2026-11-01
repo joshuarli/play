@@ -19,6 +19,7 @@ Player is a local-only media player. The macOS release artifact is `dist/Player.
 - The `subprocess` command and the `.run` script backend are reachable from explicit scripts and IPC. No built-in module uses them.
 - Follow-on: A/V scheduler, general demux and decode orchestration, and renderer integration. Linux x86-64 musl gpu-next is the active campaign (`PLAN.md`).
 - Linux L0.1: `scripts/linux-check.sh` exits 1 on Alpine x86_64; `meson setup build-linux` stops at the missing Linux source set (`osdep/language-posix.c` first).
+- Linux L0.3: `scripts/build-linux.sh` builds `build-linux/mpv` on Alpine x86_64 against system libraries; `--vo=help` lists `gpu-next`, `--gpu-context=help` lists `waylandvk`, `--ao=help` lists `alsa`. Dynamic link to system FFmpeg and libplacebo is interim until L1.
 
 ## Evidence
 

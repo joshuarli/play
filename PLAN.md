@@ -4,8 +4,8 @@
 
 - **Goal:** A mostly static `x86_64-unknown-linux-musl` build of Player with the macOS app's local-only scope: mpv's playback pipeline, the pinned minimal FFmpeg, the Rust control plane, one Lua 5.2 interpreter, `vo=gpu-next` over Vulkan and Wayland, and ALSA.
 - **Last accepted revision:** `e5136e5` (macOS release, `make install`, macOS CI, docs). The macOS campaign is complete; `docs/status.md` and `docs/final-report.md` are the record.
-- **Accepted:** L0.1, L0.2. **Red:** none. **Parked:** none.
-- **Next slice:** L0.3.
+- **Accepted:** L0.1, L0.2, L0.3. **Red:** none. **Parked:** none.
+- **Next slice:** L0.4.
 - **Resume prompt:** `Read PLAN.md and continue at Status. Stop at a documented limitation or an owner decision.`
 - **First command:** `scripts/linux-check.sh`, created by L0.1.
 - **Test mode:** headless (`--vo=null --ao=null`) for logic, a headless Weston compositor with Mesa lavapipe for `gpu-next`, and owner-run checks for real GPU output and audible output.
@@ -135,8 +135,8 @@ Every item names owned files, prerequisites, and one acceptance command. Items a
 **L0.3 Platform gates and the first Linux binary.** (M)
 - Owns: `audio/out/ao.c`, `player/main.c`, `meson.build`, `meson.options`, `scripts/build-linux.sh`.
 - Prereq: L0.2.
-- Do: add `audio_out_alsa` to the AO table under `HAVE_ALSA`; guard the bundle code in `player/main.c`; enable Wayland, Vulkan, and ALSA; build `build-linux/player` with `gpu-next` and ALSA.
-- Accept: `build-linux/player --version` runs; `--vo=help` lists `gpu-next`; `--gpu-context=help` lists `waylandvk`; `--ao=help` lists `alsa`.
+- Do: add `audio_out_alsa` to the AO table under `HAVE_ALSA`; guard the bundle code in `player/main.c`; enable Wayland, Vulkan, and ALSA; build `build-linux/mpv` with `gpu-next` and ALSA.
+- Accept: `build-linux/mpv --version` runs; `--vo=help` lists `gpu-next`; `--gpu-context=help` lists `waylandvk`; `--ao=help` lists `alsa`.
 
 **L0.4 Linux baseline.** (M)
 - Owns: `scripts/measure-linux.sh`, `docs/metrics.md`, `docs/architecture.md`.

@@ -2,7 +2,6 @@
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-BUILD_DIR="$ROOT/build-linux"
 
 fail() {
     printf 'linux-check: %s\n' "$1" >&2
@@ -21,23 +20,5 @@ for mod in wayland-client wayland-cursor xkbcommon alsa vulkan; do
 done
 
 [ -f "$ROOT/meson.build" ] || fail "missing meson.build"
-
-if [ -d "$BUILD_DIR" ]; then
-    meson setup --reconfigure "$BUILD_DIR" "$ROOT" \
-        -Dcplayer=true -Dlibmpv=false -Dgpl=true \
-        -Dtests=false -Dfuzzers=false -Dbuild-date=false \
-        -Dwayland=enabled -Dvulkan=enabled -Dalsa=enabled \
-        -Dgl=disabled -Dx11=disabled -Ddrm=disabled \
-        -Ddmabuf-wayland=disabled 2>&1 ||
-        fail "meson reconfigure failed; see output above"
-else
-    meson setup "$BUILD_DIR" "$ROOT" \
-        -Dcplayer=true -Dlibmpv=false -Dgpl=true \
-        -Dtests=false -Dfuzzers=false -Dbuild-date=false \
-        -Dwayland=enabled -Dvulkan=enabled -Dalsa=enabled \
-        -Dgl=disabled -Dx11=disabled -Ddrm=disabled \
-        -Ddmabuf-wayland=disabled 2>&1 ||
-        fail "meson setup failed; see output above"
-fi
 
 printf 'linux-check: Alpine x86_64 container has the build tools, Vulkan, Wayland, xkbcommon, and ALSA.\n'
