@@ -4,6 +4,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use player_core::input::{classify_input, InputError, InputPath};
 
 mod lua;
+mod startup;
 
 pub const PLAYER_FFI_INPUT_LOCAL: i32 = 0;
 pub const PLAYER_FFI_INPUT_REJECTED: i32 = 1;

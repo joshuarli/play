@@ -87,6 +87,13 @@ D4 remains: the simplified Lua OSC on `mlua` is the permanent default. Rust owns
 - **Startup:** nine interleaved first-frame runs gave medians of 169.23 ms default, 164.91 ms with the OSC disabled, and 169.60 ms with both built-in scripts disabled. The differences are within the observed spread.
 - **Follow-on threshold:** Lua + mlua + OSC above 10% of the final distributable footprint (2.01 MiB at the current 20.06 MiB closure) or above 50 ms of cold startup. P8 evaluates this on the final closure; a breach opens a follow-on, not an in-campaign rewrite.
 
+## Typed startup configuration (P7.1)
+
+- `player-core::config` parses the supported startup surface into `StartupConfig`: positional files, `--fullscreen`/`--fs`, `--start` (absolute, relative, percent, chapter, or none), and `--audio-file(s)`/`--sub-file(s)` path operations. Unknown options pass through.
+- `player-ffi::startup` exposes `player_ffi_startup_parse` with a callback sink. `player/main.c` applies the typed fields directly to `MPOpts`/`MPContext` (fullscreen, `play_start`, path lists, playlist entries) and sends only the remaining engine/test flags to `m_config_parse_mp_command_line`.
+- `--version`, `--help`, engine options, and removed-option failures stay in the C option frontend; there is no second dynamic-option framework. The option table remains for help and runtime properties.
+- The local-only boundary still classifies paths at load; the startup parser only classifies argv shape.
+
 ## Open work
 
 - P1.4 added the FFmpeg manifest gate over the frozen allowlist.
@@ -100,5 +107,5 @@ D4 remains: the simplified Lua OSC on `mlua` is the permanent default. Rust owns
 - P4.1 added `player-core`/`player-ffi`, built both static libraries, and linked/called `player_ffi_abi_version` from the player.
 - P4.2 moved the input classifier to `player-core::input`; the C boundary delegates through `player_ffi_classify_input` with typed results.
 - P4.3 documented the FFI invariants and added the C bridge test.
-- P6.2 recorded D4 and the OSC attribution; P7 moves config, playlist, input, state, and local file handling into Rust.
+- P7.1 moved the supported startup options into `player-core::config`; P7.2 moves local playlist ownership into Rust.
 - P7 moves config, playlist, input, state, and local file handling into Rust; the audio bridge stays at the decode boundary.

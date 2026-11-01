@@ -67,6 +67,7 @@
 #include "core.h"
 #include "client.h"
 #include "player_ffi.h"
+#include "player_startup.h"
 #include "command.h"
 #include "screenshot.h"
 
@@ -328,6 +329,113 @@ struct MPContext *mp_create(void)
     return mpctx;
 }
 
+struct startup_ctx {
+    struct MPContext *mpctx;
+    void *tmp;
+    char **remaining;
+    int num_remaining;
+};
+
+static void startup_add_file(void *p, const char *path)
+{
+    struct startup_ctx *ctx = p;
+    playlist_append_file(ctx->mpctx->playlist, path);
+}
+
+static void startup_set_fullscreen(void *p, int value)
+{
+    struct startup_ctx *ctx = p;
+    ctx->mpctx->opts->vo->fullscreen = value != 0;
+}
+
+static void startup_set_start(void *p, int type, double pos)
+{
+    struct startup_ctx *ctx = p;
+    ctx->mpctx->opts->play_start = (struct m_rel_time){
+        .pos = pos,
+        .type = (enum m_rel_time_type)type,
+    };
+}
+
+static void startup_pathlist_append(struct MPOpts *opts, char ***list,
+                                    const char *path)
+{
+    int count = 0;
+    while (*list && (*list)[count])
+        count++;
+    *list = talloc_realloc(opts, *list, char *, count + 2);
+    (*list)[count] = talloc_strdup(*list, path);
+    (*list)[count + 1] = NULL;
+}
+
+static void startup_append_path(void *p, int is_sub, const char *path)
+{
+    struct startup_ctx *ctx = p;
+    struct MPOpts *opts = ctx->mpctx->opts;
+    startup_pathlist_append(opts,
+        is_sub ? &opts->sub_name : &opts->audio_files, path);
+}
+
+static void startup_set_paths(void *p, int is_sub, const char *const *paths,
+                              size_t count)
+{
+    struct startup_ctx *ctx = p;
+    struct MPOpts *opts = ctx->mpctx->opts;
+    char ***list = is_sub ? &opts->sub_name : &opts->audio_files;
+    talloc_free(*list);
+    *list = NULL;
+    for (size_t i = 0; i < count; i++)
+        startup_pathlist_append(opts, list, paths[i]);
+}
+
+static void startup_add_remaining(void *p, const char *arg)
+{
+    struct startup_ctx *ctx = p;
+    ctx->remaining = talloc_realloc(ctx->tmp, ctx->remaining, char *,
+                                    ctx->num_remaining + 2);
+    ctx->remaining[ctx->num_remaining++] = talloc_strdup(ctx->tmp, arg);
+    ctx->remaining[ctx->num_remaining] = NULL;
+}
+
+static int mp_parse_startup(struct MPContext *mpctx, char **options)
+{
+    void *tmp = talloc_new(NULL);
+    struct startup_ctx ctx = {
+        .mpctx = mpctx,
+        .tmp = tmp,
+    };
+    const struct player_startup_sink sink = {
+        .ctx = &ctx,
+        .add_file = startup_add_file,
+        .set_fullscreen = startup_set_fullscreen,
+        .set_start = startup_set_start,
+        .append_path = startup_append_path,
+        .set_paths = startup_set_paths,
+        .add_remaining = startup_add_remaining,
+    };
+    int argc = 0;
+    while (options[argc])
+        argc++;
+    char err[256] = {0};
+    int result = player_ffi_startup_parse(argc, options, &sink, err, sizeof(err));
+    if (result < 0) {
+        MP_FATAL(mpctx, "Error parsing command line: %s\n",
+                 err[0] ? err : "unknown error");
+        talloc_free(tmp);
+        return -1;
+    }
+    if (ctx.num_remaining) {
+        int r = m_config_parse_mp_command_line(mpctx->mconfig, mpctx->playlist,
+                                               mpctx->global, ctx.remaining);
+        if (r < 0) {
+            talloc_free(tmp);
+            return r == M_OPT_EXIT ? 1 : -1;
+        }
+    }
+    talloc_free(tmp);
+    return 0;
+}
+
 // Finish mpctx initialization. This must be done after setting up all options.
 // Some of the initializations depend on the options, and can't be changed or
 // undone later.
@@ -362,10 +470,9 @@ int mp_initialize(struct MPContext *mpctx, char **options)
     mp_parse_cfgfiles(mpctx);
 
     if (options) {
-        int r = m_config_parse_mp_command_line(mpctx->mconfig, mpctx->playlist,
-                                               mpctx->global, options);
-        if (r < 0)
-            return r == M_OPT_EXIT ? 1 : -1;
+        int r = mp_parse_startup(mpctx, options);
+        if (r)
+            return r;
     }
 
     if (opts->operation_mode == 1) {

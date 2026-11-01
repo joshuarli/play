@@ -80,4 +80,4 @@ Current result: 19 passed, 0 failed. A temporary manifest with `http` added to t
 
 ## Next
 
-P6.2 recorded D4 and the OSC attribution: the compact Lua OSC stays the permanent default, and the P8 measurement owns the follow-on threshold. P7.1 adds typed startup configuration.
+P7.1 moved positional files, fullscreen, start time, and audio/subtitle path operations into `player-core::config`, applied through the FFI startup sink. P7.2 moves local playlist ownership into Rust.
