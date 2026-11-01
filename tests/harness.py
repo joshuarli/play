@@ -5,6 +5,7 @@ import os
 import plistlib
 import re
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -351,16 +352,36 @@ def check_no_errors(results, name, mpv):
                   f"first: {errors[0]}" if errors else "")
 
 
-def gate_fixtures(results, args):
-    generator = ROOT / "tests" / "fixtures" / "gen.sh"
+FIXTURE_ATTEMPTS = 2
+FIXTURE_TIMEOUT = 120
+
+
+def run_fixture_generator(timeout):
+    proc = subprocess.Popen(
+        [str(ROOT / "tests" / "fixtures" / "gen.sh")], cwd=str(ROOT),
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        start_new_session=True,
+    )
     try:
-        proc = subprocess.run(
-            [str(generator)], cwd=str(ROOT), capture_output=True,
-            text=True, timeout=180,
-        )
+        stdout, stderr = proc.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
-        results.check("fixtures: generation", False, "timed out")
-        return
+        os.killpg(proc.pid, signal.SIGKILL)
+        proc.communicate()
+        raise
+    return subprocess.CompletedProcess(proc.args, proc.returncode, stdout, stderr)
+
+
+def gate_fixtures(results, args):
+    for attempt in range(1, FIXTURE_ATTEMPTS + 1):
+        try:
+            proc = run_fixture_generator(FIXTURE_TIMEOUT)
+            break
+        except subprocess.TimeoutExpired:
+            if attempt == FIXTURE_ATTEMPTS:
+                results.check("fixtures: generation", False,
+                              f"timed out after {FIXTURE_ATTEMPTS} attempts")
+                return
+            print("RETRY fixtures: generator timed out; retrying", flush=True)
     results.check("fixtures: generation", proc.returncode == 0,
                   tail((proc.stdout + proc.stderr).splitlines()))
 
