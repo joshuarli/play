@@ -80,4 +80,4 @@ Current result: 19 passed, 0 failed. A temporary manifest with `http` added to t
 
 ## Next
 
-P5.4 made the Rust host the production Lua backend: the unmodified OSC loads through `player_ffi_lua_run`, a per-script pump forwards ordered events, and the external Lua library is no longer linked. P5.5 deletes the C host and completes the utility surface.
+P5.5 removed the C Lua host, the external Lua dependency, and the Meson Lua option. The Rust host, its `mp.utils` surface, and vendored Lua 5.2.4 are the only implementation. P6.1 simplifies the OSC.

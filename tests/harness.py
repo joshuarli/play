@@ -1029,7 +1029,7 @@ def gate_build(results, args):
         capture_output=True, text=True, timeout=60,
     ).stdout
     basic = {
-        "cplayer": "true", "libmpv": "false", "gpl": "true", "lua": "lua52",
+        "cplayer": "true", "libmpv": "false", "gpl": "true",
         "tests": "false", "build-date": "false",
     }
     missing = []
@@ -1068,11 +1068,19 @@ def gate_build(results, args):
     ).stdout
     bad_needles = ("curl", "bluray", "dvdnav", "cdio", "pipewire",
                    "libpulse", "libjack", "avfoundation", "libx11",
-                   "libwayland", "libsdl", "libssl", "libcrypto", "libmpv")
+                   "libwayland", "libsdl", "libssl", "libcrypto", "libmpv",
+                   "liblua", "mlua")
     bad_libraries = [line.strip() for line in otool.splitlines()
                      if any(needle in line.lower() for needle in bad_needles)]
     results.check("build: no unsupported libraries", not bad_libraries,
                   "; ".join(bad_libraries[:3]))
+
+    nm = subprocess.run(
+        ["nm", str(MPV)], capture_output=True, text=True, timeout=60,
+    ).stdout
+    interpreters = [line for line in nm.splitlines() if "_luaL_newstate" in line]
+    results.check("build: single Lua interpreter", len(interpreters) == 1,
+                  f"count {len(interpreters)}")
 
     targets_proc = subprocess.run(
         ["meson", "introspect", "build", "--targets"], cwd=str(ROOT),

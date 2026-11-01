@@ -581,7 +581,6 @@ sources += [ebml_defs, ebml_types]
 
 subdir('common')
 subdir('etc')
-subdir('player/lua')
 subdir('sub')
 
 if darwin
@@ -638,40 +637,9 @@ if librt.found()
     dependencies += librt
 endif
 
-lua = dependency('', required: false)
-lua_opt = get_option('lua')
-if lua_opt != 'disabled'
-    lua_version = [['lua', ['>=5.1.0', '<5.3.0']], # generic lua.pc
-                   ['lua52', '>= 5.2.0'],
-                   ['lua5.2', '>= 5.2.0'],
-                   ['lua-5.2', '>= 5.2.0'],
-                   ['luajit', '>= 2.0.0'],
-                   ['lua51', '>= 5.1.0'],
-                   ['lua5.1', '>= 5.1.0'],
-                   ['lua-5.1', '>= 5.1.0']]
-    foreach version : lua_version
-        if lua_opt == 'auto' or lua_opt == 'enabled'
-            lua = dependency(version[0], version: version[1], required: false)
-            if lua.found()
-                break
-            endif
-        elif lua_opt == version[0]
-            lua = dependency(version[0], version: version[1])
-            if lua.found()
-                break
-            endif
-        endif
-    endforeach
-endif
-
-features += {'lua': lua.found()}
-lua_version = lua.name()
-if features['lua']
-    sources += files('player/lua_host.c')
-endif
-if not features['lua'] and lua_opt == 'enabled'
-     error('Lua enabled but no suitable Lua version could be found!')
-endif
+features += {'lua': true}
+lua_version = ['lua52']
+sources += files('player/lua_host.c')
 
 rubberband = dependency('rubberband', version: '>= 1.8.0', required: get_option('rubberband'))
 features += {'rubberband': rubberband.found()}

@@ -101,7 +101,7 @@ Closure attribution (unique files, symlinks resolved):
 | Vulkan loader | 0.65 MiB | 1 |
 | libass | 0.22 MiB | 1 |
 
-Lua 5.2.4 is statically linked into the executable and is not a dylib in the closure. Rust is not linked yet. The build still emits `build/libmpv.2.dylib` even with `-Dlibmpv=false`; the `mpv` executable does not link it. P2.5 excludes it from the release closure.
+The P0 baseline linked Lua 5.2.4 from the source build and no Rust code. P5.5 replaced that with the vendored Lua 5.2.4 inside `mlua` and the Rust host; the version is unchanged. The build still emits `build/libmpv.2.dylib` even with `-Dlibmpv=false`; the `mpv` executable does not link it. P2.5 excludes it from the release closure.
 
 ## Features
 

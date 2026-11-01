@@ -312,6 +312,7 @@ fn register_mp<B: PlayerBackend>(
     let loaded: Table = package
         .get("loaded")
         .map_err(|error| HostError::Lua(error.to_string()))?;
+    register_utils(lua, &utils, &sentinels)?;
     loaded
         .set("mp.utils", utils)
         .map_err(|error| HostError::Lua(error.to_string()))?;
@@ -321,6 +322,138 @@ fn register_mp<B: PlayerBackend>(
     register_commands(lua, &mp, state, &sentinels)?;
     register_events(lua, &mp, state, &sentinels)?;
     Ok(())
+}
+
+fn register_utils(
+    lua: &Lua,
+    utils: &Table,
+    sentinels: &Sentinels,
+) -> Result<(), HostError> {
+    let sentinels_clone = sentinels.clone();
+    register_fn(
+        lua,
+        utils,
+        "readdir",
+        move |lua, values: Variadic<Value>| {
+            guard(|| {
+                let Some(path) = values.first().and_then(value_to_string) else {
+                    return Err(Error::RuntimeError("path is required".into()));
+                };
+                let filter = match values.get(1) {
+                    None | Some(Value::Nil) => "normal".to_owned(),
+                    Some(value) => value_to_string(value).ok_or_else(|| {
+                        Error::RuntimeError("filter must be a string".into())
+                    })?,
+                };
+                let mut result = MultiValue::new();
+                match crate::utils::readdir(&path, &filter) {
+                    Ok(value) => result.push_back(value.to_lua(lua, &sentinels_clone)?),
+                    Err(()) => {
+                        result.push_back(Value::Nil);
+                        result.push_back(Value::String(lua.create_string("error")?));
+                    }
+                }
+                Ok(result)
+            })
+        },
+    )?;
+
+    let sentinels_clone = sentinels.clone();
+    register_fn(
+        lua,
+        utils,
+        "file_info",
+        move |lua, values: Variadic<Value>| {
+            guard(|| {
+                let Some(path) = values.first().and_then(value_to_string) else {
+                    return Err(Error::RuntimeError("path is required".into()));
+                };
+                let mut result = MultiValue::new();
+                match crate::utils::file_info(&path) {
+                    Ok(value) => result.push_back(value.to_lua(lua, &sentinels_clone)?),
+                    Err(()) => {
+                        result.push_back(Value::Nil);
+                        result.push_back(Value::String(lua.create_string("error")?));
+                    }
+                }
+                Ok(result)
+            })
+        },
+    )?;
+
+    register_fn(
+        lua,
+        utils,
+        "split_path",
+        move |lua, values: Variadic<Value>| {
+            guard(|| {
+                let Some(path) = values.first().and_then(value_to_string) else {
+                    return Err(Error::RuntimeError("path is required".into()));
+                };
+                let (directory, filename) = crate::utils::split_path(&path);
+                let mut result = MultiValue::new();
+                result.push_back(Value::String(lua.create_string(&directory)?));
+                result.push_back(Value::String(lua.create_string(&filename)?));
+                Ok(result)
+            })
+        },
+    )?;
+
+    let sentinels_clone = sentinels.clone();
+    register_fn(
+        lua,
+        utils,
+        "parse_json",
+        move |lua, values: Variadic<Value>| {
+            guard(|| {
+                let Some(text) = values.first().and_then(value_to_string) else {
+                    return Err(Error::RuntimeError("text is required".into()));
+                };
+                let trailing = values
+                    .get(1)
+                    .map(|value| !matches!(value, Value::Nil | Value::Boolean(false)))
+                    .unwrap_or(false);
+                let mut result = MultiValue::new();
+                match crate::utils::parse_json(&text, trailing) {
+                    Ok((value, remainder)) => {
+                        result.push_back(value.to_lua(lua, &sentinels_clone)?);
+                        result.push_back(Value::Nil);
+                        result.push_back(Value::String(lua.create_string(remainder)?));
+                    }
+                    Err(()) => {
+                        result.push_back(Value::Nil);
+                        result.push_back(Value::String(lua.create_string("error")?));
+                        result.push_back(Value::String(lua.create_string(&text)?));
+                    }
+                }
+                Ok(result)
+            })
+        },
+    )?;
+
+    let sentinels_clone = sentinels.clone();
+    register_fn(
+        lua,
+        utils,
+        "format_json",
+        move |lua, values: Variadic<Value>| {
+            guard(|| {
+                let value = match values.first() {
+                    Some(value) => NativeValue::from_lua(lua, value.clone(), &sentinels_clone)?,
+                    None => NativeValue::None,
+                };
+                let mut result = MultiValue::new();
+                match crate::utils::format_json(&value) {
+                    Ok(text) => result.push_back(Value::String(lua.create_string(&text)?)),
+                    Err(()) => {
+                        result.push_back(Value::Nil);
+                        result.push_back(Value::String(lua.create_string("error")?));
+                    }
+                }
+                Ok(result)
+            })
+        },
+    )
 }
 
 fn register_fn(
@@ -1119,6 +1252,11 @@ mp.register_script_message("fixture-message", function(value)
     mp.command("fixture-string-command")
     local width, height = mp.get_osd_size()
     assert(width == 1920 and height == 1080)
+    local directory, filename = mp.utils.split_path("/fixture/file.mkv")
+    assert(directory == "/fixture" and filename == "file.mkv")
+    local encoded = mp.utils.format_json({answer = 42})
+    local decoded = mp.utils.parse_json(encoded)
+    assert(decoded.answer == 42)
     mp.commandv("record", "complete")
     exit()
 end)

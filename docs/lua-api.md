@@ -20,7 +20,7 @@ regenerates **Call sites**, and fails when:
 - Only the six files above are in scope. Other retained C bindings and Lua
   modules are not part of this closure.
 - **Provider** names where the symbol comes from: `host` is the native Rust C
-  ABI that replaces the bindings in `player/lua.c`; `defaults.lua`,
+  ABI that replaced the bindings in the removed `player/lua.c`; `defaults.lua`,
   `assdraw.lua`, `options.lua`, and `input.lua` are the unchanged built-in
   module files; `data` marks conversion sentinels and internal state.
 - **Scope** is the port target: `required` is needed by the OSC closure

@@ -23,7 +23,7 @@ Symphonia is MPL-2.0. mpv remains GPL-2.0-or-later. Symphonia's source and licen
 
 `tests/run.sh build` parses `meson.options` and `meson configure build` and fails if any feature outside that enabled set is not `disabled`, or if an expected feature is not `enabled`. It also rejects unsupported linked libraries.
 
-The embedded Lua modules are reduced to `defaults.lua`, `assdraw.lua`, `options.lua`, `input.lua`, `select.lua`, and `osc.lua`. The `.inc` build targets and the `player/lua.c` / `player/scripting.c` loading tables match that set; `ytdl_hook`, `stats`, `console`, `auto_profiles`, `positioning`, `commands`, `context_menu`, and `fzy` are no longer embedded or loaded.
+The embedded Lua modules are `defaults.lua`, `assdraw.lua`, `options.lua`, `input.lua`, `select.lua`, and `osc.lua`. P2.1 reduced the set; P5.5 removed the `.inc` generation and the C `player/lua.c` host, so the Rust host embeds these six files and `scripting.c` only routes the backend. `ytdl_hook`, `stats`, `console`, `auto_profiles`, `positioning`, `commands`, `context_menu`, and `fzy` are not embedded or loaded.
 
 ## Input surface (P2.2)
 
@@ -46,7 +46,7 @@ When `libmpv` is disabled, the sources compile directly into the `mpv` executabl
 
 - **Interpreter:** `rust/player-lua` owns the Lua state through `mlua` 0.12.2, pinned with only `lua52` and `vendored`; the vendored source is Lua 5.2.4, the same version as the C host. No async, serde, or Tokio features are enabled.
 - **Libraries:** the interpreter opens mlua's safe standard-library set. That includes `io`, `os`, and `package`, which `select.lua`, `options.lua`, and `defaults.lua` use. The `debug` library and C-module loading are not enabled.
-- **Link state:** `player/lua.c` remains in the tree until P5.5. P5.4 made `player-lua` the production Lua backend, and the vendored interpreter is the only Lua implementation linked into `build/mpv`.
+- **Link state:** P5.5 deleted `player/lua.c`; the vendored interpreter in `player-lua` is the only Lua implementation linked into `build/mpv`.
 
 ## Script host core (P5.3)
 
@@ -55,15 +55,22 @@ When `libmpv` is disabled, the sources compile directly into the `mpv` executabl
 - **Values:** `NativeValue` mirrors the native node formats. Arrays and maps keep the `mp.ARRAY`/`mp.MAP` sentinels, and map entries are sorted so command nodes are deterministic.
 - **Errors:** every callback catches Rust panics and turns them into Lua errors; a script error ends the thread with a typed `HostError`. `player-lua` contains no `unsafe`.
 - **Trust:** the built-in OSC is trusted application code. Explicitly loaded scripts are trusted code: the host adds no network or subprocess capability and is not a sandbox. The player command set remains the capability boundary.
-- **Integration:** the safe `PlayerBackend` trait is the C-boundary seam; P5.4 adapts it to the player and loads the OSC, and P5.5 removes the C host.
+- **Integration:** the safe `PlayerBackend` trait is the C-boundary seam; P5.4 adapted it to the player and P5.5 removed the C host.
 
 ## Lua host integration (P5.4)
 
 - **Backend:** `player/lua_host.c` defines the `mp_scripting_lua` backend. It passes the script's `mpv_handle`, name, filename, path, and C helpers (log, `find_config_file`/free, input mouse area) to `player_ffi_lua_run`.
 - **Client bridge:** `player-ffi` implements `PlayerBackend` over the public client API for commands, properties, observation, event requests, time formatting, and native node conversion. A per-script pump thread is the only caller of `mpv_wait_event`; commands and properties run on the Lua thread. The pump forwards ordered `ScriptEvent`s to the host queue.
 - **Module order:** the host loads `defaults.lua`, then `mp.assdraw`, `mp.input`, and `mp.options`, then the script source. `@osc.lua` and `@select.lua` resolve to the embedded sources; the upstream OSC is unchanged.
-- **Link:** the external Lua library is no longer linked. The vendored Lua 5.2.4 in `mlua` is the only interpreter in `build/mpv`, and `nm` shows one `luaL_newstate`. `player/lua.c` stays in the tree but is not compiled until P5.5 deletes it.
-- **Remaining:** the `mp.utils` host functions used only by `select.lua` are still pending; the module loads and registers its bindings, and the OSC and option paths work. P5.5 completes that surface before removing the C host.
+- **Link:** the external Lua library is no longer linked. The vendored Lua 5.2.4 in `mlua` is the only interpreter in `build/mpv`, and `nm` shows one `luaL_newstate`.
+
+## Single Lua host (P5.5)
+
+- `player/lua.c`, `player/lua/meson.build`, the external Lua dependency, and the Meson `lua` option are gone. `player/lua_host.c`, `player-ffi`, and `player-lua` are the only Lua path.
+- The six `.lua` files remain as the embedded source of the built-in modules; there is no `.inc` generation and no second interpreter.
+- `mp.utils` host functions are implemented in `player-lua` (`split_path`, `readdir`, `file_info`, `parse_json`, `format_json`), closing the audit's host and built-in scopes. The Lua-level `mp.utils` helpers in `defaults.lua` are unchanged.
+- The interpreter is vendored Lua 5.2.4 through `mlua`; no external `liblua` is linked. `nm` reports one `luaL_newstate`, and `otool -L` has no Lua dylib.
+- `tests/run.sh build` checks for one interpreter; `scripts/audit.sh` checks for C host source remnants, no linked Lua dylib, and one interpreter symbol.
 
 ## Open work
 
@@ -78,5 +85,5 @@ When `libmpv` is disabled, the sources compile directly into the `mpv` executabl
 - P4.1 added `player-core`/`player-ffi`, built both static libraries, and linked/called `player_ffi_abi_version` from the player.
 - P4.2 moved the input classifier to `player-core::input`; the C boundary delegates through `player_ffi_classify_input` with typed results.
 - P4.3 documented the FFI invariants and added the C bridge test.
-- P5.4 made the Rust host the production Lua backend and loaded the unmodified OSC through it; P5.5 deletes the C host and completes the utility surface.
+- P5.5 removed the C host, the external Lua dependency, and the Meson Lua option; the Rust host and vendored Lua are the only implementation.
 - P7 moves config, playlist, input, state, and local file handling into Rust; the audio bridge stays at the decode boundary.

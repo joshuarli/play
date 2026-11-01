@@ -2,6 +2,7 @@ use mlua::{Lua, LuaOptions, Result, StdLib};
 
 pub mod backend;
 pub mod host;
+pub mod utils;
 pub mod value;
 
 pub use backend::{CommandRequest, PlayerBackend, PropertyFormat, ScriptEvent};

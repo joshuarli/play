@@ -4,16 +4,9 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT"
 
-LUA_PC="$ROOT/.work/deps/lua52/lib/pkgconfig/lua52.pc"
-if [ ! -f "$LUA_PC" ]; then
-    printf 'error: Lua 5.2.4 is not installed; run scripts/dev-deps.sh\n' >&2
-    exit 1
-fi
-PKG_CONFIG_PATH="$ROOT/.work/deps/lua52/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
 if [ -d "$ROOT/.work/deps/ffmpeg-full/lib/pkgconfig" ]; then
-    PKG_CONFIG_PATH="$ROOT/.work/deps/ffmpeg-full/lib/pkgconfig:$PKG_CONFIG_PATH"
+    export PKG_CONFIG_PATH="$ROOT/.work/deps/ffmpeg-full/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
 fi
-export PKG_CONFIG_PATH
 
 RUST_TARGET="$ROOT/.work/deps/player-audio/target"
 mkdir -p "$RUST_TARGET"
@@ -23,7 +16,7 @@ PLAYER_AUDIO_LIB="$RUST_TARGET/release/libplayer_audio.a"
 PLAYER_FFI_LIB="$RUST_TARGET/release/libplayer_ffi.a"
 
 options=(
-    -Dcplayer=true -Dlibmpv=false -Dgpl=true -Dlua=lua52
+    -Dcplayer=true -Dlibmpv=false -Dgpl=true
     -Dtests=false -Dfuzzers=false -Dbuild-date=false
     -Ddisable-packet-pool=false
     -Dmacos-bundle-category=video -Dswift-flags= -Dwin32-subsystem=windows

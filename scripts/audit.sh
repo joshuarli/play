@@ -17,8 +17,24 @@ if printf '%s\n' "$protocols" | rg -qi 'http|https|ftp|rtsp|rtmp|smb'; then
     exit 1
 fi
 
-if otool -L "$ROOT/build/mpv" | rg -qi 'libmpv|curl|libssl|libcrypto'; then
+if otool -L "$ROOT/build/mpv" | rg -qi 'libmpv|curl|libssl|libcrypto|liblua|mlua'; then
     echo "audit: unsupported linked library present" >&2
+    exit 1
+fi
+
+if rg -n 'lua_State|luaL_newstate' \
+    "$ROOT/player" "$ROOT/include" "$ROOT/common" "$ROOT/input" \
+    "$ROOT/options" "$ROOT/stream" "$ROOT/demux" "$ROOT/sub" \
+    "$ROOT/video" "$ROOT/audio" "$ROOT/filters" "$ROOT/osdep" \
+    "$ROOT/misc" "$ROOT/ta" "$ROOT/rust/player-ffi" \
+    "$ROOT/rust/player-core" "$ROOT/rust/player-audio" >/dev/null; then
+    echo "audit: Lua API remnants outside player-lua" >&2
+    exit 1
+fi
+
+interpreters=$(nm "$ROOT/build/mpv" | rg -c 'luaL_newstate' || true)
+if [ "$interpreters" != "1" ]; then
+    echo "audit: expected one Lua interpreter, found ${interpreters:-0}" >&2
     exit 1
 fi
 
