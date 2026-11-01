@@ -1306,6 +1306,15 @@ def gate_failures(results, args):
         results.check("failures unsupported", False, str(exc))
 
 
+def gate_lua_api_audit(results, args):
+    proc = subprocess.run(
+        [str(ROOT / "tests" / "lua-api-audit.sh")], cwd=str(ROOT),
+        capture_output=True, text=True, timeout=60,
+    )
+    results.check("lua-api-audit", proc.returncode == 0,
+                  tail((proc.stdout + proc.stderr).splitlines(), 20))
+
+
 GATES = {
     "fixtures": gate_fixtures,
     "play": gate_play,
@@ -1323,6 +1332,7 @@ GATES = {
     "build": gate_build,
     "rust-link": gate_rust_link,
     "ffi": gate_ffi,
+    "lua-api-audit": gate_lua_api_audit,
     "baseline-docs": gate_baseline_docs,
     "meta": gate_meta,
     "failures": gate_failures,
@@ -1332,6 +1342,7 @@ SUITE = [
     "fixtures", "corpus", "audio", "hwdec", "seek", "local-paths",
     "local-only", "osc", "input", "playlist", "cli", "state", "failures",
     "rust-link", "ffi",
+    "lua-api-audit",
 ]
 
 

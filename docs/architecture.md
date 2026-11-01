@@ -61,5 +61,5 @@ When `libmpv` is disabled, the sources compile directly into the `mpv` executabl
 - P4.1 added `player-core`/`player-ffi`, built both static libraries, and linked/called `player_ffi_abi_version` from the player.
 - P4.2 moved the input classifier to `player-core::input`; the C boundary delegates through `player_ffi_classify_input` with typed results.
 - P4.3 documented the FFI invariants and added the C bridge test.
-- P5.1 added `player-lua` on `mlua` 0.12.2; P5.2 audits the Lua API closure before the host port.
+- P5.1 added `player-lua` on `mlua` 0.12.2; P5.2 fixed the Lua API closure in `docs/lua-api.md`; P5.3 implements the host core.
 - P7 moves config, playlist, input, state, and local file handling into Rust; the audio bridge stays at the decode boundary.
