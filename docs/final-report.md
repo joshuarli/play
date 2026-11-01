@@ -28,16 +28,16 @@ The release app links the Rust plane as `libplayer_release.dylib`. The developme
 |---|---:|---:|
 | Distributable | 29,542,136 B | 26,790,480 B |
 | Executable | 10,000,000 B | 9,640,096 B |
-| First frame | 1 s | 141.05 ms |
-| 1080p CPU | 0.231 s | 0.18 s |
-| 1080p RSS | 300 MB | 215.55 MB |
-| Seek | 250 ms | 24.41 ms |
+| First frame | 1 s | 154.3 ms |
+| 1080p CPU | 0.231 s | 0.16 s |
+| 1080p RSS | 300 MB | 216.09 MB |
+| Seek | 250 ms | 23.99 ms |
 | Network schemes | 0 | 0 |
 | Duplicate Lua interpreters | 0 | 0 |
 
-Sizes and timings are from the `12b060d` rebuild.
+Sizes and timings are from the `cbb4ec2` rebuild.
 
-The final measurement is at `12b060d`: cold 70.89 ms, warm 67.77 ms, idle RSS 84.17 MB, 1080p RSS 215.55 MB, 1080p CPU 0.18 s, 4K CPU 0.48 s, seek 24.41 ms, exit 2.87 ms, no audio underruns. These are headless timings. The host was quiet before and after the run (`perf-gate-ready` exited 0).
+The final measurement is at `cbb4ec2`: cold 72.01 ms, warm 72.78 ms, idle RSS 84.33 MB, 1080p RSS 216.09 MB, 1080p CPU 0.16 s, 4K CPU 0.43 s, seek 23.99 ms, exit 3.08 ms, no audio underruns. These are headless timings. The host was quiet before and after the run (`perf-gate-ready` exited 0).
 
 ## Build and provenance
 

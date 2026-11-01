@@ -15,28 +15,29 @@ Automated playback is headless (`--vo=null --ao=null`), so GUI and renderer beha
 | 2026-11-01 | 8e393464c387 | final | 13998112 | 13998112 | 16998336 | 12 | 62.94 | 63.02 | 148.39 | 85.38 | 217.41 | 0.17 | 0.43 | 1.85 | 3.00 | 1 | before the cdylib link |
 | 2026-11-01 | 7a8958b9757a | final | 9640432 | 9640432 | 17166736 | 13 | 162.11 | 115.73 | 220.07 | 84.78 | 216.88 | 0.23 | 0.55 | 3.21 | 4.24 | 1 | host loaded |
 | 2026-11-01 | 12b060d0108c | final | 9640096 | 9640096 | 17150384 | 13 | 70.89 | 67.77 | 141.05 | 84.17 | 215.55 | 0.18 | 0.48 | 24.41 | 2.87 | 1 | headless, 3 s clips |
+| 2026-11-01 | cbb4ec27c8ea | final | 9640096 | 9640096 | 17150384 | 13 | 72.01 | 72.78 | 154.3 | 84.33 | 216.09 | 0.16 | 0.43 | 23.99 | 3.08 | 1 | headless, 3 s clips |
 <!-- measure:end -->
 
 The `baseline` row is the P0 comparison point. The P8 budget is half of its unique closure size, 29,542,136 B.
 
 ## Final release
 
-Measured at `12b060d` on 2026-11-01 with `scripts/measure.sh final`. The host was quiet before and after the run (`perf-gate-ready` exited 0).
+Measured at `cbb4ec2` on 2026-11-01 with `scripts/measure.sh final`. The host was quiet before and after the run (`perf-gate-ready` exited 0).
 
 | Metric | Value |
 |---|---:|
 | `Player.app` total | 26,790,480 B |
 | executable | 9,640,096 B |
 | framework closure | 17,150,384 B in 13 files |
-| cold startup | 70.89 ms |
-| warm startup | 67.77 ms |
-| first frame, 1080p | 141.05 ms |
-| idle RSS | 84.17 MB |
-| 1080p RSS | 215.55 MB |
-| 1080p CPU | 0.18 s |
-| 4K CPU | 0.48 s |
-| seek | 24.41 ms |
-| exit | 2.87 ms |
+| cold startup | 72.01 ms |
+| warm startup | 72.78 ms |
+| first frame, 1080p | 154.3 ms |
+| idle RSS | 84.33 MB |
+| 1080p RSS | 216.09 MB |
+| 1080p CPU | 0.16 s |
+| 4K CPU | 0.43 s |
+| seek | 23.99 ms |
+| exit | 3.08 ms |
 | audio underruns | 0 |
 | protocols | 1 (`file`) |
 | Lua interpreters | 1 |
@@ -45,15 +46,15 @@ Measured at `12b060d` on 2026-11-01 with `scripts/measure.sh final`. The host wa
 |---|---:|---:|---|
 | Distributable | 29,542,136 B | 26,790,480 B | pass |
 | Executable | 10,000,000 B | 9,640,096 B | pass |
-| First frame | 1 s | 141.05 ms | pass |
-| 1080p RSS | 300 MB | 215.55 MB | pass |
-| Seek | 250 ms | 24.41 ms | pass |
+| First frame | 1 s | 154.3 ms | pass |
+| 1080p RSS | 300 MB | 216.09 MB | pass |
+| Seek | 250 ms | 23.99 ms | pass |
 | Network schemes | 0 | 0 | pass |
 | Duplicate Lua interpreters | 0 | 0 | pass |
 
 The 1080p CPU result is not a fixed budget. A hardcoded copy of the baseline could not be told apart from run noise: the metric ranged from 0.16 s to 0.23 s across the runs above. `scripts/measure.sh cpu BASELINE_PLAYER` now runs seven interleaved baseline and candidate pairs, reports both medians and spreads, and fails only when the candidate exceeds the baseline by more than 10% and by more than the larger spread. `scripts/measure.sh compare BEFORE AFTER` applies the same rule to startup, first frame, seek, exit, and CPU between two labels. Both print `perf gate deferred: host busy` and exit 75 when `perf-gate-ready` reports load, which is never a pass. Frame drops are no longer measured: under `--vo=null` there is no renderer clock, so the count is zero by construction. The renderer check is in `docs/manual-checklist.md`.
 
-The `12b060d` build adds the 1,387,652 B bundle icon. Its app is 28,186,511 B with a 9,640,096 B executable and a 17,150,384 B closure, still under the 29,542,136 B distributable budget.
+The `cbb4ec2` build adds the 1,387,652 B bundle icon. Its app is 28,186,511 B with a 9,640,096 B executable and a 17,150,384 B closure, still under the 29,542,136 B distributable budget.
 
 ## Optimization history
 
