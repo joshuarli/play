@@ -3,13 +3,13 @@
 ## Status
 
 - **Goal:** A compact, dependable, local-only macOS ARM64 media player: mpv's proven playback pipeline, a minimal pinned FFmpeg, no network backend, and a Rust-owned control plane with the OSC running on `mlua`.
-- **Last accepted revision:** `b8588ea` (P2.1). P0.1–P1.4 and P2.1 have run.
-- **Accepted:** P0.1–P1.4, P2.1. **Red:** none. **Parked:** none.
-- **Next slice:** P2.2 — remove unsupported stream/network/disc/capture modules.
-- **Resume prompt:** `Read PLAN.md and execute P2.2. Continue in item order; stop only at a hard stop or when P8 is complete.`
-- **First command:** `build/mpv --list-protocols`.
+- **Last accepted revision:** `b758f71` (P2.2). P0.1–P1.4, P2.1, and P2.2 have run.
+- **Accepted:** P0.1–P1.4, P2.1–P2.2. **Red:** none. **Parked:** none.
+- **Next slice:** P2.3 — remove encoding, recording, JavaScript, plugins, and unused UI/platform integrations.
+- **Resume prompt:** `Read PLAN.md and execute P2.3. Continue in item order; stop only at a hard stop or when P8 is complete.`
+- **First command:** `rg -n 'vo_lavc|ao_lavc|encode_lavc|recorder|javascript|vapoursynth|cplugins' meson.build video/ audio/ common/ player/ filters/`.
 - **Test mode:** headless (`--vo=null --ao=null`); GUI and renderer checks are owner-run.
-- **Scope:** P2.1 locked the feature surface and embedded Lua modules; P2.2 reduces the stream/demux surface to local playback.
+- **Scope:** P2.2 restricted the stream/demux surface to local files; `--list-protocols` is `file://` only.
 
 This file is the campaign log as well as the plan. Update **Status** after every accepted slice. Git history holds the past; do not append dated checkpoints, handoffs, or a second status register.
 
