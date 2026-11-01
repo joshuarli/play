@@ -79,7 +79,6 @@ struct demux_opts {
     double mf_fps;
     char *mf_type;
     bool create_ccs;
-    char *record_file;
     int video_back_preroll;
     int audio_back_preroll;
     int back_batch[STREAM_TYPE_COUNT];
@@ -210,7 +209,6 @@ struct demuxer_params {
     struct timeline *timeline;
     bool disable_timeline;
     bool skip_lavf_probing;
-    bool stream_record; // if true, enable stream recording if option is set
     int stream_flags;
     struct stream *external_stream; // if set, use this, don't open or close streams
     bool allow_playlist_create;
@@ -345,13 +343,6 @@ void demux_close_stream(struct demuxer *demuxer);
 
 void demux_metadata_changed(demuxer_t *demuxer);
 void demux_update(demuxer_t *demuxer, double playback_pts);
-
-bool demux_cache_dump_set(struct demuxer *demuxer, double start, double end,
-                          char *file);
-int demux_cache_dump_get_status(struct demuxer *demuxer);
-
-double demux_probe_cache_dump_target(struct demuxer *demuxer, double pts,
-                                     bool for_end);
 
 bool demux_is_network_cached(demuxer_t *demuxer);
 

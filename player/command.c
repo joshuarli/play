@@ -113,8 +113,6 @@ struct command_ctx {
 
     struct ao_hotplug *hotplug;
 
-    struct mp_cmd_ctx *cache_dump_cmd; // in progress cache dumping
-
     char **script_props;
     mpv_node udata;
     mpv_node mdata;
@@ -6666,26 +6664,6 @@ static void cmd_ab_loop(void *p)
     }
 }
 
-static void cmd_align_cache_ab(void *p)
-{
-    struct mp_cmd_ctx *cmd = p;
-    struct MPContext *mpctx = cmd->mpctx;
-
-    if (!mpctx->demuxer)
-        return;
-
-    double a = demux_probe_cache_dump_target(mpctx->demuxer,
-                                             mpctx->opts->ab_loop[0], false);
-    double b = demux_probe_cache_dump_target(mpctx->demuxer,
-                                             mpctx->opts->ab_loop[1], true);
-
-    mp_property_do("ab-loop-a", M_PROPERTY_SET, &a, mpctx);
-    mp_property_do("ab-loop-b", M_PROPERTY_SET, &b, mpctx);
-
-    // Happens to cover both properties.
-    show_property_osd(mpctx, "ab-loop-b", cmd->on_osd);
-}
-
 static void cmd_drop_buffers(void *p)
 {
     struct mp_cmd_ctx *cmd = p;
@@ -6984,94 +6962,6 @@ static void cmd_load_script(void *p)
     } else {
         cmd->success = false;
     }
-}
-
-static void cache_dump_poll(struct MPContext *mpctx)
-{
-    struct command_ctx *ctx = mpctx->command_ctx;
-    struct mp_cmd_ctx *cmd = ctx->cache_dump_cmd;
-
-    if (!cmd)
-        return;
-
-    // Can't close demuxer without stopping dumping.
-    mp_assert(mpctx->demuxer);
-
-    if (mp_cancel_test(cmd->abort->cancel)) {
-        // Synchronous abort. In particular, the dump command shall not report
-        // completion to the user before the dump target file was closed.
-        demux_cache_dump_set(mpctx->demuxer, 0, 0, NULL);
-        mp_assert(demux_cache_dump_get_status(mpctx->demuxer) <= 0);
-    }
-
-    int status = demux_cache_dump_get_status(mpctx->demuxer);
-    if (status <= 0) {
-        if (status < 0) {
-            mp_cmd_msg(cmd, MSGL_ERR, "Cache dumping stopped due to error.");
-            cmd->success = false;
-        } else {
-            mp_cmd_msg(cmd, MSGL_INFO, "Cache dumping successfully ended.");
-            cmd->success = true;
-        }
-        ctx->cache_dump_cmd = NULL;
-        mp_cmd_ctx_complete(cmd);
-    }
-}
-
-void mp_abort_cache_dumping(struct MPContext *mpctx)
-{
-    struct command_ctx *ctx = mpctx->command_ctx;
-
-    if (ctx->cache_dump_cmd)
-        mp_cancel_trigger(ctx->cache_dump_cmd->abort->cancel);
-    cache_dump_poll(mpctx);
-    mp_assert(!ctx->cache_dump_cmd); // synchronous abort, must have worked
-}
-
-static void run_dump_cmd(struct mp_cmd_ctx *cmd, double start, double end,
-                         char *filename)
-{
-    struct MPContext *mpctx = cmd->mpctx;
-    struct command_ctx *ctx = mpctx->command_ctx;
-
-    mp_abort_cache_dumping(mpctx);
-
-    if (!mpctx->demuxer) {
-        mp_cmd_msg(cmd, MSGL_ERR, "No demuxer open.");
-        cmd->success = false;
-        mp_cmd_ctx_complete(cmd);
-        return;
-    }
-
-    char *path = mp_get_user_path(NULL, mpctx->global, filename);
-    mp_cmd_msg(cmd, MSGL_INFO, "Cache dumping started.");
-
-    if (!demux_cache_dump_set(mpctx->demuxer, start, end, path)) {
-        mp_cmd_msg(cmd, MSGL_INFO, "Cache dumping stopped.");
-        mp_cmd_ctx_complete(cmd);
-        talloc_free(path);
-        return;
-    }
-
-    ctx->cache_dump_cmd = cmd;
-    cache_dump_poll(mpctx);
-    talloc_free(path);
-}
-
-static void cmd_dump_cache(void *p)
-{
-    struct mp_cmd_ctx *cmd = p;
-
-    run_dump_cmd(cmd, cmd->args[0].v.d, cmd->args[1].v.d, cmd->args[2].v.s);
-}
-
-static void cmd_dump_cache_ab(void *p)
-{
-    struct mp_cmd_ctx *cmd = p;
-    struct MPContext *mpctx = cmd->mpctx;
-
-    run_dump_cmd(cmd, mpctx->opts->ab_loop[0], mpctx->opts->ab_loop[1],
-                 cmd->args[0].v.s);
 }
 
 static void cmd_begin_vo_dragging(void *p)
@@ -7615,22 +7505,6 @@ const struct mp_cmd_def mp_cmds[] = {
 
     { "load-script", cmd_load_script, {{"filename", OPT_STRING(v.s)}} },
 
-    { "dump-cache", cmd_dump_cache, { {"start", OPT_TIME(v.d),
-                                        .flags = M_OPT_ALLOW_NO},
-                                      {"end", OPT_TIME(v.d),
-                                        .flags = M_OPT_ALLOW_NO},
-                                      {"filename", OPT_STRING(v.s)} },
-        .exec_async = true,
-        .can_abort = true,
-    },
-
-    { "ab-loop-dump-cache", cmd_dump_cache_ab, { {"filename", OPT_STRING(v.s)} },
-        .exec_async = true,
-        .can_abort = true,
-    },
-
-    { "ab-loop-align-cache", cmd_align_cache_ab },
-
     { "begin-vo-dragging", cmd_begin_vo_dragging },
 
     { "context-menu", cmd_context_menu },
@@ -7648,8 +7522,6 @@ const struct mp_cmd_def mp_cmds[] = {
 void command_uninit(struct MPContext *mpctx)
 {
     struct command_ctx *ctx = mpctx->command_ctx;
-
-    mp_assert(!ctx->cache_dump_cmd); // closing the demuxer must have aborted it
 
     overlay_uninit(mpctx);
     ao_hotplug_destroy(ctx->hotplug);
@@ -7788,9 +7660,6 @@ void handle_command_updates(struct MPContext *mpctx)
     // to recheck the state. Then the client(s) will read the property.
     if (ctx->hotplug && ao_hotplug_check_update(ctx->hotplug))
         mp_notify_property(mpctx, "audio-device-list");
-
-    // Depends on polling demuxer wakeup callback notifications.
-    cache_dump_poll(mpctx);
 }
 
 void run_command_opts(struct MPContext *mpctx)

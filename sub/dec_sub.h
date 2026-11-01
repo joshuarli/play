@@ -10,7 +10,6 @@
 struct sh_stream;
 struct mpv_global;
 struct demux_packet;
-struct mp_recorder_sink;
 struct dec_sub;
 struct sd;
 
@@ -54,7 +53,6 @@ char *sub_ass_get_extradata(struct dec_sub *sub);
 struct sd_times sub_get_times(struct dec_sub *sub, double pts);
 void sub_reset(struct dec_sub *sub);
 void sub_select(struct dec_sub *sub, bool selected);
-void sub_set_recorder_sink(struct dec_sub *sub, struct mp_recorder_sink *sink);
 void sub_set_play_dir(struct dec_sub *sub, int dir);
 bool sub_is_primary_visible(struct dec_sub *sub);
 bool sub_is_secondary_visible(struct dec_sub *sub);

@@ -35,80 +35,19 @@
 #include "common/common.h"
 #include "common/global.h"
 
-extern const struct ao_driver audio_out_oss;
-extern const struct ao_driver audio_out_audiotrack;
-extern const struct ao_driver audio_out_audiounit;
 extern const struct ao_driver audio_out_coreaudio;
 extern const struct ao_driver audio_out_coreaudio_exclusive;
-extern const struct ao_driver audio_out_avfoundation;
-extern const struct ao_driver audio_out_rsound;
-extern const struct ao_driver audio_out_pipewire;
-extern const struct ao_driver audio_out_sndio;
-extern const struct ao_driver audio_out_pulse;
-extern const struct ao_driver audio_out_jack;
-extern const struct ao_driver audio_out_openal;
-extern const struct ao_driver audio_out_opensles;
 extern const struct ao_driver audio_out_null;
-extern const struct ao_driver audio_out_alsa;
-extern const struct ao_driver audio_out_wasapi;
-extern const struct ao_driver audio_out_pcm;
 extern const struct ao_driver audio_out_lavc;
-extern const struct ao_driver audio_out_sdl;
-extern const struct ao_driver audio_out_aaudio;
 
 static const struct ao_driver * const audio_out_drivers[] = {
-// native:
-#if HAVE_AUDIOTRACK
-    &audio_out_audiotrack,
-#endif
-#if HAVE_AAUDIO
-    &audio_out_aaudio,
-#endif
-#if HAVE_AUDIOUNIT
-    &audio_out_audiounit,
-#endif
 #if HAVE_COREAUDIO
     &audio_out_coreaudio,
-#endif
-#if HAVE_AVFOUNDATION
-    &audio_out_avfoundation,
-#endif
-#if HAVE_PIPEWIRE
-    &audio_out_pipewire,
-#endif
-#if HAVE_PULSE
-    &audio_out_pulse,
-#endif
-#if HAVE_ALSA
-    &audio_out_alsa,
-#endif
-#if HAVE_WASAPI
-    &audio_out_wasapi,
-#endif
-#if HAVE_OSS_AUDIO
-    &audio_out_oss,
-#endif
-    // wrappers:
-#if HAVE_JACK
-    &audio_out_jack,
-#endif
-#if HAVE_OPENAL
-    &audio_out_openal,
-#endif
-#if HAVE_OPENSLES
-    &audio_out_opensles,
-#endif
-#if HAVE_SDL2_AUDIO
-    &audio_out_sdl,
-#endif
-#if HAVE_SNDIO
-    &audio_out_sndio,
 #endif
     &audio_out_null,
 #if HAVE_COREAUDIO
     &audio_out_coreaudio_exclusive,
 #endif
-    &audio_out_pcm,
     &audio_out_lavc,
 };
 

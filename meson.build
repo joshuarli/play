@@ -69,7 +69,6 @@ sources = files(
     'audio/decode/ad_spdif.c',
     'audio/filter/af_drop.c',
     'audio/filter/af_format.c',
-    'audio/filter/af_lavcac3enc.c',
     'audio/filter/af_scaletempo.c',
     'audio/filter/af_scaletempo2.c',
     'audio/filter/af_scaletempo2_internals.c',
@@ -78,7 +77,6 @@ sources = files(
     'audio/out/ao.c',
     'audio/out/ao_lavc.c',
     'audio/out/ao_null.c',
-    'audio/out/ao_pcm.c',
     'audio/out/buffer.c',
 
     ## Core
@@ -229,13 +227,9 @@ sources = files(
     'video/out/gpu/video_shaders.c',
     'video/out/libmpv_sw.c',
     'video/out/vo.c',
-    'video/out/vo_gpu.c',
-    'video/out/vo_image.c',
     'video/out/vo_lavc.c',
     'video/out/vo_libmpv.c',
     'video/out/vo_null.c',
-    'video/out/vo_tct.c',
-    'video/out/vo_kitty.c',
     'video/out/win_state.c',
     'video/repack.c',
     'video/sws_utils.c',
@@ -347,15 +341,6 @@ endif
 
 # C11 atomics are mandatory but linking to the library is not always required.
 dependencies += cc.find_library('atomic', required: false)
-
-cplugins = get_option('cplugins').require(
-    win32 or (features['libdl'] and cc.has_link_argument('-rdynamic')),
-    error_message: 'cplugins not supported by the os or compiler!',
-)
-features += {'cplugins': cplugins.allowed()}
-if features['cplugins'] and not win32
-    link_flags += '-rdynamic'
-endif
 
 win32_threads = get_option('win32-threads').require(win32)
 
@@ -591,7 +576,6 @@ sources += [ebml_defs, ebml_types]
 
 subdir('common')
 subdir('etc')
-subdir('player/javascript')
 subdir('player/lua')
 subdir('sub')
 
@@ -622,14 +606,6 @@ features += {'iconv': iconv.found()}
 if features['iconv']
     dependencies += iconv
     add_project_arguments('-DWINICONV_CONST=', language: ['c', 'objc'])
-endif
-
-javascript = dependency('mujs', version: '>= 1.0.0', required: get_option('javascript'))
-features += {'javascript': javascript.found()}
-if features['javascript']
-    dependencies += javascript
-    sources += files('player/javascript.c',
-                     'sub/filter_jsre.c')
 endif
 
 lcms2 = dependency('lcms2', version: '>= 2.6', required: get_option('lcms2'))
@@ -727,18 +703,6 @@ vapoursynth = dependency('vapoursynth', version: '>= 56', required: get_option('
 vapoursynth_script = dependency('vapoursynth-script', version: '>= 56',
                                 required: get_option('vapoursynth'))
 features += {'vapoursynth': vapoursynth.found() and vapoursynth_script.found()}
-if features['vapoursynth']
-    dependencies += [vapoursynth, vapoursynth_script]
-    sources += files('video/filter/vf_vapoursynth.c')
-endif
-
-xfixes = dependency('xfixes', version: '>= 1.0.0', required: get_option('x11-clipboard'))
-libx11 = dependency('x11', version: '>= 1.0.0', required: get_option('x11-clipboard'))
-features += {'x11-clipboard': xfixes.found() and libx11.found()}
-if features['x11-clipboard']
-    dependencies += [xfixes, libx11]
-    sources += files('player/clipboard/clipboard-x11.c')
-endif
 
 zimg = dependency('zimg', version: '>= 2.9', required: get_option('zimg'))
 features += {'zimg': zimg.found()}
@@ -1292,12 +1256,7 @@ if features['vulkan'] and features['x11']
      sources += files('video/out/vulkan/context_xlib.c')
 endif
 
-features += {'vk-khr-display': vulkan.type_name() == 'internal' or
-                               cc.has_function('vkCreateDisplayPlaneSurfaceKHR', prefix: '#include <vulkan/vulkan_core.h>',
-                                               dependencies: [vulkan])}
-if features['vk-khr-display']
-    sources += files('video/out/vulkan/context_display.c')
-endif
+features += {'vk-khr-display': false}
 
 if features['vulkan'] or (features['gl'] and features['egl'])
     sources += files('video/filter/vf_gpu.c')
@@ -1593,33 +1552,10 @@ macos_cocoa_cb = get_option('macos-cocoa-cb').require(
     error_message: 'Either cocoa, gl-cocoa or swift could not be found!',
 )
 features += {'macos-cocoa-cb': macos_cocoa_cb.allowed()}
-if features['macos-cocoa-cb']
-    swift_sources += files('osdep/mac/libmpv_helper.swift',
-                           'video/out/cocoa_cb_common.swift',
-                           'video/out/mac/gl_layer.swift')
-endif
 if features['cocoa'] and features['vulkan'] and features['swift']
     swift_sources += files('video/out/mac_common.swift',
                            'video/out/mac/metal_layer.swift')
     sources += files('video/out/vulkan/context_mac.m')
-endif
-
-macos_media_player = get_option('macos-media-player').require(
-    features['swift'],
-    error_message: 'Swift was not found!',
-)
-features += {'macos-media-player': macos_media_player.allowed()}
-if features['macos-media-player']
-    swift_sources += files('osdep/mac/remote_command_center.swift')
-endif
-
-macos_touchbar = get_option('macos-touchbar').require(
-    features['cocoa'] and cc.has_header('AppKit/NSTouchBar.h'),
-    error_message: 'Either cocoa could not be found or AppKit/NSTouchBar.h could not be found!',
-)
-features += {'macos-touchbar': macos_touchbar.allowed()}
-if features['macos-touchbar']
-    swift_sources += files('osdep/mac/touch_bar.swift')
 endif
 
 if features['swift'] and swift_sources.length() > 0
@@ -1856,7 +1792,6 @@ endif
 summary({'cocoa': features['cocoa'] and features['swift'],
          'd3d11': features['d3d11'],
          'drm': features['drm'],
-         'javascript': features['javascript'],
          'libmpv': get_option('libmpv'),
          'lua': features['lua'],
          'opengl': features['gl'],

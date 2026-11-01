@@ -200,8 +200,6 @@ static void uninit_demuxer(struct MPContext *mpctx)
     mpctx->chapters = NULL;
     mpctx->num_chapters = 0;
 
-    mp_abort_cache_dumping(mpctx);
-
     struct demuxer **demuxers = NULL;
     int num_demuxers = 0;
 
@@ -1124,7 +1122,6 @@ static MP_THREAD_VOID open_demux_thread(void *ctx)
     struct demuxer_params p = {
         .force_format = mpctx->open_format,
         .stream_flags = mpctx->open_url_flags,
-        .stream_record = true,
         .is_top_level = true,
         .allow_playlist_create = mpctx->playlist->num_entries <= 1 &&
                                  !mpctx->playlist->playlist_dir,

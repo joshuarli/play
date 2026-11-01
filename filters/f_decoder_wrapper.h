@@ -32,9 +32,6 @@ struct demux_packet;
 struct mp_decoder_wrapper {
     // Filter with no input and 1 output, which returns the decoded data.
     struct mp_filter *f;
-
-    // Can be set by user.
-    struct mp_recorder_sink *recorder_sink;
 };
 
 // Create the decoder wrapper for the given stream, plus underlying decoder.

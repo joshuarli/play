@@ -9,7 +9,6 @@
 
 #include "f_autoconvert.h"
 #include "f_auto_filters.h"
-#include "f_lavfi.h"
 #include "f_output_chain.h"
 #include "f_utils.h"
 #include "user_filters.h"

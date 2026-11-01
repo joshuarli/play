@@ -46,76 +46,16 @@
 #include "osdep/io.h"
 #include "osdep/threads.h"
 
-extern const struct vo_driver video_out_mediacodec_embed;
-extern const struct vo_driver video_out_x11;
-extern const struct vo_driver video_out_vdpau;
-extern const struct vo_driver video_out_xv;
-extern const struct vo_driver video_out_gpu;
 extern const struct vo_driver video_out_gpu_next;
 extern const struct vo_driver video_out_libmpv;
 extern const struct vo_driver video_out_null;
-extern const struct vo_driver video_out_image;
 extern const struct vo_driver video_out_lavc;
-extern const struct vo_driver video_out_caca;
-extern const struct vo_driver video_out_drm;
-extern const struct vo_driver video_out_direct3d;
-extern const struct vo_driver video_out_sdl;
-extern const struct vo_driver video_out_vaapi;
-extern const struct vo_driver video_out_dmabuf_wayland;
-extern const struct vo_driver video_out_wlshm;
-extern const struct vo_driver video_out_tct;
-extern const struct vo_driver video_out_sixel;
-extern const struct vo_driver video_out_kitty;
 
 static const struct vo_driver *const video_out_drivers[] =
 {
-    // high-quality and well-supported VOs first:
     &video_out_gpu_next,
-    &video_out_gpu,
-
-#if HAVE_VDPAU
-    &video_out_vdpau,
-#endif
-#if HAVE_DIRECT3D
-    &video_out_direct3d,
-#endif
-#if HAVE_WAYLAND && HAVE_MEMFD_CREATE
-    &video_out_wlshm,
-#endif
-#if HAVE_XV
-    &video_out_xv,
-#endif
-#if HAVE_ANDROID
-    &video_out_mediacodec_embed,
-#endif
-#if HAVE_SDL2_VIDEO
-    &video_out_sdl,
-#endif
-#if HAVE_DMABUF_WAYLAND
-    &video_out_dmabuf_wayland,
-#endif
-#if HAVE_VAAPI_X11 && HAVE_GPL
-    &video_out_vaapi,
-#endif
-#if HAVE_X11
-    &video_out_x11,
-#endif
     &video_out_libmpv,
     &video_out_null,
-
-    // should not be auto-selected
-    &video_out_image,
-    &video_out_tct,
-#if HAVE_CACA
-    &video_out_caca,
-#endif
-#if HAVE_DRM
-    &video_out_drm,
-#endif
-#if HAVE_SIXEL
-    &video_out_sixel,
-#endif
-    &video_out_kitty,
     &video_out_lavc,
 };
 

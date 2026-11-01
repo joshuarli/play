@@ -30,7 +30,6 @@
 #include "options/options.h"
 #include "common/global.h"
 #include "common/msg.h"
-#include "common/recorder.h"
 #include "misc/dispatch.h"
 #include "osdep/threads.h"
 
@@ -53,8 +52,6 @@ struct dec_sub {
     struct mp_subtitle_shared_opts *shared_opts;
     struct m_config_cache *opts_cache;
     struct m_config_cache *shared_opts_cache;
-
-    struct mp_recorder_sink *recorder_sink;
 
     struct attachment_list *attachments;
 
@@ -372,9 +369,6 @@ void sub_read_packets(struct dec_sub *sub, double video_pts, bool force,
             break;
         }
 
-        if (sub->recorder_sink)
-            mp_recorder_feed_packet(sub->recorder_sink, pkt);
-
         sub->last_pkt_pts = pkt->pts;
         MP_TARRAY_APPEND(sub, sub->cached_pkts, sub->num_cached_pkts, pkt);
 
@@ -540,13 +534,6 @@ int sub_control(struct dec_sub *sub, enum sd_ctrl cmd, void *arg)
         r = sub->sd->driver->control(sub->sd, cmd, arg);
     mp_mutex_unlock(&sub->lock);
     return r;
-}
-
-void sub_set_recorder_sink(struct dec_sub *sub, struct mp_recorder_sink *sink)
-{
-    mp_mutex_lock(&sub->lock);
-    sub->recorder_sink = sink;
-    mp_mutex_unlock(&sub->lock);
 }
 
 void sub_set_play_dir(struct dec_sub *sub, int dir)

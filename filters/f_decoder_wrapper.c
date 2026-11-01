@@ -38,7 +38,6 @@
 
 #include "common/codecs.h"
 #include "common/global.h"
-#include "common/recorder.h"
 #include "misc/dispatch.h"
 
 #include "audio/aframe.h"
@@ -943,9 +942,6 @@ static void feed_packet(struct priv *p)
 
         p->decoder->control(p->decoder->f, VDCTRL_SET_FRAMEDROP, &framedrop_type);
     }
-
-    if (!p->dec_dispatch && p->public.recorder_sink)
-        mp_recorder_feed_packet(p->public.recorder_sink, packet);
 
     double pkt_pts = packet ? packet->pts : MP_NOPTS_VALUE;
     double pkt_dts = packet ? packet->dts : MP_NOPTS_VALUE;

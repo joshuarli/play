@@ -80,4 +80,4 @@ Current result: 19 passed, 0 failed. A temporary manifest with `http` added to t
 
 ## Next
 
-P2.2 removed the remote/disc/capture stream and demux modules; `--list-protocols` is `file://` only. P2.3 removes encoding, recording, JavaScript, plugins, and unused UI/platform integrations.
+P2.3 removed the unsupported platform/UI/scripting/plugin sources; encoding, recording, and lavfi remain compiled as debt, but the minimal FFmpeg has no encoders or muxers. P2.4 reduces the user-visible CLI and config surface.
