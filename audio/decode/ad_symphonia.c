@@ -157,9 +157,14 @@ static bool init(struct mp_filter *da, struct mp_codec_params *codec,
         params.bits_per_sample = default_bits(codec_id);
 
     char error[256] = {0};
-    ctx->decoder = player_audio_create(&params, error, sizeof(error));
+    int error_code = 0;
+    ctx->decoder = player_audio_create(&params, error, sizeof(error), &error_code);
     if (!ctx->decoder) {
-        MP_ERR(da, "Symphonia init failed: %s\n", error);
+        if (error_code == PLAYER_AUDIO_ERR_UNSUPPORTED)
+            MP_VERBOSE(da, "Symphonia does not support %s: %s\n",
+                       codec->codec, error);
+        else
+            MP_ERR(da, "Symphonia init failed: %s\n", error);
         return false;
     }
 
@@ -227,6 +232,10 @@ static void process(struct mp_filter *da)
 
     if (status != 0) {
         MP_ERR(da, "Symphonia decode failed: %s\n", error);
+        if (status == PLAYER_AUDIO_ERR_DECODE) {
+            mp_filter_internal_mark_progress(da);
+            return;
+        }
         mp_filter_internal_mark_failed(da);
         return;
     }
@@ -241,8 +250,13 @@ static void process(struct mp_filter *da)
 
     struct mp_aframe *out = mp_aframe_create();
     mp_aframe_set_format(out, AF_FORMAT_FLOAT);
-    mp_aframe_set_rate(out, rate);
-    mp_aframe_set_chmap(out, &chmap);
+    if (rate < 1 || !mp_aframe_set_rate(out, rate) ||
+        !mp_aframe_set_chmap(out, &chmap)) {
+        talloc_free(out);
+        MP_ERR(da, "invalid output frame parameters\n");
+        mp_filter_internal_mark_failed(da);
+        return;
+    }
     if (!mp_aframe_alloc_data(out, frames)) {
         talloc_free(out);
         MP_ERR(da, "could not allocate output frame\n");
@@ -250,6 +264,12 @@ static void process(struct mp_filter *da)
         return;
     }
     uint8_t **data = mp_aframe_get_data_rw(out);
+    if (!data || !data[0]) {
+        talloc_free(out);
+        MP_ERR(da, "could not access output frame data\n");
+        mp_filter_internal_mark_failed(da);
+        return;
+    }
     memcpy(data[0], samples, frames * channels * sizeof(float));
     mp_aframe_set_pts(out, pts);
     ctx->next_pts = rate ? pts + (double)frames / rate : pts;

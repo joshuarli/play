@@ -23,7 +23,7 @@ The stream layer registers `file` and the internal client callback only. FFmpeg 
 
 ## Playback pipeline
 
-FFmpeg demuxes every container and decodes video. VideoToolbox is the hardware path for H.264 and HEVC. Symphonia decodes AAC, ALAC, FLAC, MP3, Opus, PCM, and Vorbis from packets supplied by the FFmpeg demuxer. `libswresample` converts and resamples audio. The renderer is `vo=gpu-next` over libplacebo and Vulkan through MoltenVK; there is no usable macOS OpenGL context in mpv v0.41.0.
+FFmpeg demuxes every container and decodes video. VideoToolbox is the hardware path for H.264 and HEVC. Symphonia decodes AAC, ALAC, FLAC, MP3, Opus, PCM, and Vorbis from packets supplied by the FFmpeg demuxer. `libswresample` converts and resamples audio. A Symphonia decode error logs and skips the packet; argument, unsupported, and panic statuses fail the audio filter. The renderer is `vo=gpu-next` over libplacebo and Vulkan through MoltenVK; there is no usable macOS OpenGL context in mpv v0.41.0.
 
 `audio/out/ao_coreaudio.c` skips the `kAudioOutputUnitProperty_ChannelMap` call. macOS 27 rejects the upstream channel-layout value with error -50; the audio unit's default mapping plays mono, stereo, and 5.1. Revisit this when upstream fixes the property, and keep the regression check.
 
@@ -39,8 +39,8 @@ FFmpeg demuxes every container and decodes video. VideoToolbox is the hardware p
 
 - Handles are opaque. The C caller owns each handle and must not use it after destruction.
 - Strings and errors use caller-provided buffers. `BUFFER_TOO_SMALL` is a distinct result.
-- Errors are typed where the ABI defines an enum. The command check returns an error string and `-1`; the audio create call returns `NULL` and loses its error category.
-- No Rust unwind may cross the ABI. `player-ffi` wraps the boundary entry points in `catch_unwind`; the state, playlist, and local-file entry points currently rely on their code not panicking. `player-audio` wraps create and decode but not reset and destroy.
+- Errors are typed where the ABI defines an enum. The command check returns an error string and `-1`; audio create and decode return a `player_audio_status` value.
+- No Rust unwind may cross the ABI. `player-ffi` wraps the boundary entry points in `catch_unwind`; the state, playlist, and local-file entry points currently rely on their code not panicking. `player-audio` wraps every entry point.
 - The audio decoder handle is not thread-safe. The caller serializes access. There are no shared mutable globals.
 - The Lua backend and the audio bridge are the only Rust code with `unsafe`; every block states its safety argument.
 

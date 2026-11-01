@@ -33,8 +33,17 @@ struct player_audio_params {
 
 struct player_audio_decoder;
 
+enum player_audio_status {
+    PLAYER_AUDIO_OK = 0,
+    PLAYER_AUDIO_ERR_ARG = 1,
+    PLAYER_AUDIO_ERR_UNSUPPORTED = 2,
+    PLAYER_AUDIO_ERR_DECODE = 3,
+    PLAYER_AUDIO_ERR_PANIC = 4,
+};
+
 struct player_audio_decoder *player_audio_create(
-    const struct player_audio_params *params, char *err, size_t err_cap);
+    const struct player_audio_params *params, char *err, size_t err_cap,
+    int *err_code);
 
 int player_audio_decode(struct player_audio_decoder *dec,
                         const uint8_t *data, size_t len, int64_t pts, int64_t dur,

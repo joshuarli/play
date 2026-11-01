@@ -124,11 +124,19 @@ unsafe fn write_error(err: *mut std::os::raw::c_char, cap: usize, message: &str)
     }
 }
 
+unsafe fn write_code(err_code: *mut i32, code: i32) {
+    if !err_code.is_null() {
+        // SAFETY: The caller provides a writable int.
+        unsafe { *err_code = code };
+    }
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn player_audio_create(
     params: *const PlayerAudioParams,
     err: *mut std::os::raw::c_char,
     err_cap: usize,
+    err_code: *mut i32,
 ) -> *mut PlayerAudioDecoder {
     let result = catch_unwind(AssertUnwindSafe(|| -> Result<*mut PlayerAudioDecoder, (i32, String)> {
         if params.is_null() {
@@ -148,16 +156,25 @@ pub unsafe extern "C" fn player_audio_create(
         })))
     }));
     match result {
-        Ok(Ok(decoder)) => decoder,
+        Ok(Ok(decoder)) => {
+            // SAFETY: err_code is either null or points to a writable int for this call.
+            unsafe { write_code(err_code, 0) };
+            decoder
+        }
         Ok(Err((code, message))) => {
-            // SAFETY: err and err_cap came from the caller.
-            unsafe { write_error(err, err_cap, &message) };
-            let _ = code;
+            // SAFETY: err, err_cap, and err_code came from the caller.
+            unsafe {
+                write_error(err, err_cap, &message);
+                write_code(err_code, code);
+            }
             ptr::null_mut()
         }
         Err(_) => {
-            // SAFETY: err and err_cap came from the caller.
-            unsafe { write_error(err, err_cap, "panic in player_audio_create") };
+            // SAFETY: err, err_cap, and err_code came from the caller.
+            unsafe {
+                write_error(err, err_cap, "panic in player_audio_create");
+                write_code(err_code, ERR_PANIC);
+            }
             ptr::null_mut()
         }
     }
@@ -229,8 +246,10 @@ pub unsafe extern "C" fn player_audio_reset(decoder: *mut PlayerAudioDecoder) {
     }
     // SAFETY: decoder is non-null and was created by player_audio_create.
     let decoder = unsafe { &mut *decoder };
-    decoder.decoder.reset();
-    decoder.pcm.clear();
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        decoder.decoder.reset();
+        decoder.pcm.clear();
+    }));
 }
 
 #[unsafe(no_mangle)]
@@ -238,8 +257,10 @@ pub unsafe extern "C" fn player_audio_destroy(decoder: *mut PlayerAudioDecoder) 
     if decoder.is_null() {
         return;
     }
-    // SAFETY: decoder was created by player_audio_create and is not used afterwards.
-    drop(unsafe { Box::from_raw(decoder) });
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: decoder was created by player_audio_create and is not used afterwards.
+        drop(unsafe { Box::from_raw(decoder) });
+    }));
 }
 
 #[cfg(test)]

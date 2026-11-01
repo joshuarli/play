@@ -77,16 +77,6 @@ Next: 20
 - **Effort:** S
 - **Design:** none
 
-### PLAY-17 · P3 · The audio bridge does not contain panics on reset/destroy and loses error categories
-
-- **Area:** Errors
-- **Where:** `rust/player-audio/src/lib.rs:154-160`, `:226-243`, `audio/decode/ad_symphonia.c:228-232`, `:242-253`, `audio/decode/ad_lavc.c:188-209`
-- **Problem:** `player_audio_create` and `player_audio_decode` catch panics; `player_audio_reset` and `player_audio_destroy` do not, so a panic there aborts at the ABI. `player_audio_create` discards its `ERR_ARG`/`ERR_UNSUPPORTED` category and returns only `NULL`. `ad_symphonia.c` fails the whole audio chain on any decode error, while `ad_lavc.c` logs and continues. The output frame setup ignores `mp_aframe_set_rate` and a null `mp_aframe_get_data_rw`, then copies into `data[0]`.
-- **Recommendation:** wrap reset and destroy in `catch_unwind`; return the create error category through the ABI; treat a decode error as a skipped frame with a log unless the state is corrupt; check the frame rate and data pointer before the copy.
-- **Fix with:** error-model
-- **Effort:** S
-- **Design:** none
-
 ### PLAY-18 · P3 · Generated docs and fixtures heal their own oracles instead of failing on drift
 
 - **Area:** Tests
