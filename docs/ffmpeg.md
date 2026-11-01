@@ -80,4 +80,4 @@ Current result: 19 passed, 0 failed. A temporary manifest with `http` added to t
 
 ## Next
 
-P5.2 fixed the authoritative Lua API closure in `docs/lua-api.md`: 97 references across the six retained modules, classified into host primitives, unchanged Lua helpers, and unused definitions. P5.3 implements the Rust host core.
+P5.3 added the Rust Lua host core: one script thread, an ordered event queue, the native `mp` primitives over the approved Lua helpers, bounded shutdown, and panic containment. P5.4 loads the upstream OSC through it.

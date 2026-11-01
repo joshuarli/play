@@ -48,6 +48,15 @@ When `libmpv` is disabled, the sources compile directly into the `mpv` executabl
 - **Libraries:** the interpreter opens mlua's safe standard-library set. That includes `io`, `os`, and `package`, which `select.lua`, `options.lua`, and `defaults.lua` use. The `debug` library and C-module loading are not enabled.
 - **Link state:** `new_interpreter()` and `run_script()` are the only entry points in this slice. `player/lua.c` remains the host linked into the player until P5.5, so the executable still contains exactly one Lua implementation; `player-lua` is tested standalone and is not linked into `mpv` yet.
 
+## Script host core (P5.3)
+
+- **Thread and events:** `rust/player-lua` runs one interpreter per script on a dedicated thread. `ScriptHost::spawn` owns the thread and one ordered event queue. `raw_wait_event` blocks on that queue with the next timer deadline, so timers do not busy-wait. `stop` posts a shutdown event and waits at most 2 s.
+- **`mp` table:** the host registers the native primitives: `log`, property get/set/del/observe, `command`/`commandv`/`command_native`, `request_event`/`raw_wait_event`, `get_time`, `format_time`, `find_config_file`, and `input_set_section_mouse_area`. It also creates the `mp.utils` module table. The unchanged `defaults.lua` supplies the Lua-level helpers, timers, bindings, and OSD overlay objects; `docs/lua-api.md` is the authoritative closure.
+- **Values:** `NativeValue` mirrors the native node formats. Arrays and maps keep the `mp.ARRAY`/`mp.MAP` sentinels, and map entries are sorted so command nodes are deterministic.
+- **Errors:** every callback catches Rust panics and turns them into Lua errors; a script error ends the thread with a typed `HostError`. `player-lua` contains no `unsafe`.
+- **Trust:** the built-in OSC is trusted application code. Explicitly loaded scripts are trusted code: the host adds no network or subprocess capability and is not a sandbox. The player command set remains the capability boundary.
+- **Integration:** the safe `PlayerBackend` trait is the C-boundary seam. P5.4 adapts it to the player and loads the OSC; P5.5 removes the C host. `player-lua` is not linked into `mpv` yet.
+
 ## Open work
 
 - P1.4 added the FFmpeg manifest gate over the frozen allowlist.
@@ -61,5 +70,5 @@ When `libmpv` is disabled, the sources compile directly into the `mpv` executabl
 - P4.1 added `player-core`/`player-ffi`, built both static libraries, and linked/called `player_ffi_abi_version` from the player.
 - P4.2 moved the input classifier to `player-core::input`; the C boundary delegates through `player_ffi_classify_input` with typed results.
 - P4.3 documented the FFI invariants and added the C bridge test.
-- P5.1 added `player-lua` on `mlua` 0.12.2; P5.2 fixed the Lua API closure in `docs/lua-api.md`; P5.3 implements the host core.
+- P5.3 added the Rust script host core; P5.4 loads the upstream OSC through it.
 - P7 moves config, playlist, input, state, and local file handling into Rust; the audio bridge stays at the decode boundary.

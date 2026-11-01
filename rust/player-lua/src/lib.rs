@@ -1,5 +1,13 @@
 use mlua::{Lua, LuaOptions, Result, StdLib};
 
+pub mod backend;
+pub mod host;
+pub mod value;
+
+pub use backend::{CommandRequest, PlayerBackend, PropertyFormat, ScriptEvent};
+pub use host::{HostError, ScriptHost};
+pub use value::{NativeValue, Sentinels};
+
 pub fn new_interpreter() -> Result<Lua> {
     Lua::new_with(StdLib::ALL_SAFE, LuaOptions::default())
 }
