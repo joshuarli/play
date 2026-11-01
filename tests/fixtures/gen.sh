@@ -4,7 +4,8 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 FIXTURES="$ROOT/.work/fixtures"
 TMP="$ROOT/.work/tmp"
-MANIFEST="$ROOT/tests/fixtures/manifest.json"
+TRACKED_MANIFEST="$ROOT/tests/fixtures/manifest.json"
+MANIFEST="$FIXTURES/manifest.json"
 FFMPEG=${FFMPEG:-ffmpeg}
 FFPROBE=${FFPROBE:-ffprobe}
 
@@ -297,5 +298,10 @@ manifest = {
 manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
 print(f"wrote {len(entries)} fixtures to {manifest_path}")
 PY
+
+if [ "${1:-}" = "--write-manifest" ]; then
+    cp "$MANIFEST" "$TRACKED_MANIFEST"
+    printf 'wrote %s\n' "$TRACKED_MANIFEST"
+fi
 
 printf 'fixtures generated in %s\n' "$FIXTURES"

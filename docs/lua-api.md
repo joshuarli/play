@@ -7,12 +7,14 @@ guessed list; extend the sources and rerun the audit instead.
 
 `tests/lua-api-audit.sh` scans the five files, resolves `require "mp.*"` and
 `package.loaded["mp.*"]` aliases, ignores comments and string literals,
-regenerates **Call sites**, and fails when:
+checks **Call sites** against the sources, and fails when:
 
 - a referenced symbol has no row in **Classification**;
 - a classification row is duplicated or uses an unknown provider or scope;
 - a classification row no longer has a reference or an implied field in the
-  sources.
+  sources;
+- the **Call sites** table differs from the sources. `tests/lua-api-audit.sh
+  --write` regenerates it.
 
 ## Method
 

@@ -359,6 +359,15 @@ def gate_fixtures(results, args):
         return
     results.check("fixtures: manifest generator", manifest.get("generator") == "ffmpeg 9.0.2",
                   str(manifest.get("generator")))
+    generated = json.loads((FIXTURES / "manifest.json").read_text())
+    drift = sorted(
+        name for name in set(generated.get("fixtures", {})) | set(manifest.get("fixtures", {}))
+        if generated.get("fixtures", {}).get(name) != manifest.get("fixtures", {}).get(name)
+    )
+    results.check("fixtures: generated manifest matches the tracked manifest",
+                  generated == manifest and not drift,
+                  f"drift in: {', '.join(drift[:8])}; "
+                  "review, then run tests/fixtures/gen.sh --write-manifest")
     entries = manifest.get("fixtures", {})
     missing = []
     hash_errors = []
@@ -692,8 +701,13 @@ def gate_local_paths(results, args):
         ("symlink", FIXTURES / "link.mp4", ROOT),
     ]
     mounted = Path("/System/Volumes/Data") / str(FIXTURES).lstrip("/") / "h264.mp4"
-    if mounted.exists():
-        cases.append(("mounted", mounted, ROOT))
+    if not mounted.exists():
+        TMP.mkdir(parents=True, exist_ok=True)
+        alias = TMP / "mounted-fixtures"
+        alias.unlink(missing_ok=True)
+        alias.symlink_to(FIXTURES)
+        mounted = alias / "h264.mp4"
+    cases.append(("mounted", mounted, ROOT))
     for label, path, cwd in cases:
         try:
             with Mpv(["--vo=null", "--ao=null"], cwd=cwd) as mpv:
@@ -742,8 +756,13 @@ def gate_local_only(results, args):
     shutil.copyfile(h264, colon)
     cases.append(("colon", colon, ROOT))
     mounted = Path("/System/Volumes/Data") / str(FIXTURES).lstrip("/") / "h264.mp4"
-    if mounted.exists():
-        cases.append(("mounted", mounted, ROOT))
+    if not mounted.exists():
+        TMP.mkdir(parents=True, exist_ok=True)
+        alias = TMP / "mounted-fixtures"
+        alias.unlink(missing_ok=True)
+        alias.symlink_to(FIXTURES)
+        mounted = alias / "h264.mp4"
+    cases.append(("mounted", mounted, ROOT))
 
     for label, path, cwd in cases:
         with Mpv(["--vo=null", "--ao=null"], cwd=cwd) as mpv:

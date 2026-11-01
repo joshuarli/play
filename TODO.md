@@ -7,16 +7,6 @@ Next: 20
 
 ## P3
 
-### PLAY-18 · P3 · Generated docs and fixtures heal their own oracles instead of failing on drift
-
-- **Area:** Tests
-- **Where:** `tests/lua-api-audit.sh:233-242`, `tests/harness.py:334-377`, `:1272`, `tests/fixtures/gen.sh:21`, `:297`, `scripts/measure.sh:639-670`
-- **Problem:** `lua-api-audit` regenerates `docs/lua-api.md`, writes it, and then records the check as passed unconditionally. The fixture gate runs `gen.sh`, which rewrites the tracked `tests/fixtures/manifest.json`, and then hashes the files against that fresh manifest, so the integrity check cannot fail. `measure.sh update_metrics` extracts every table line from `docs/metrics.md` and appends it after the preamble, which is how the published table lost its column boundaries. The suite also silently skips the `mounted` path cases when the path is absent, so the recorded 292 count is host-dependent.
-- **Recommendation:** make regeneration an explicit `--write` action and diff in check mode; generate fixtures into `.work` or compare a separately generated manifest with the tracked one; give `measure.sh` a marked block and leave the rest of the file alone; make the mounted case unconditional with a symlink fallback.
-- **Fix with:** durable-state
-- **Effort:** M
-- **Design:** none
-
 ## P4
 
 ### PLAY-19 · P4 · Release bookkeeping has unchecked copies and a test-only exported panic hook

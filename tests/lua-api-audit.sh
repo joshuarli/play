@@ -3,12 +3,15 @@ set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 
-exec python3 - "$ROOT" <<'PY'
+exec python3 - "$ROOT" "$@" <<'PY'
 import re
 import sys
 from pathlib import Path
 
 ROOT = Path(sys.argv[1])
+WRITE = sys.argv[2:] == ["--write"]
+if sys.argv[2:] not in ([], ["--write"]):
+    raise SystemExit("usage: tests/lua-api-audit.sh [--write]")
 LUA = ROOT / "player" / "lua"
 DOC = ROOT / "docs" / "lua-api.md"
 FILES = ["defaults.lua", "assdraw.lua", "options.lua", "input.lua", "osc.lua"]
@@ -237,9 +240,13 @@ def main():
             check("lua-api: call table", False, "call table markers are missing")
         else:
             updated = pattern.sub(replacement, text, count=1)
-            if updated != text:
+            if WRITE and updated != text:
                 DOC.write_text(updated)
-            check("lua-api: call table", True)
+                check("lua-api: call table", True)
+            else:
+                check("lua-api: call table", updated == text,
+                      "docs/lua-api.md call table is stale; run "
+                      "tests/lua-api-audit.sh --write")
     else:
         check("lua-api: call table", False, "sources are unavailable")
 
