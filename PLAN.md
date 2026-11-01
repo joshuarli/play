@@ -3,13 +3,13 @@
 ## Status
 
 - **Goal:** A compact, dependable, local-only macOS ARM64 media player: mpv's proven playback pipeline, a minimal pinned FFmpeg, no network backend, and a Rust-owned control plane with the OSC running on `mlua`.
-- **Last accepted revision:** `10a94a8` (P2.5). P0.1–P1.4 and P2.1–P2.5 have run.
-- **Accepted:** P0.1–P1.4, P2.1–P2.5. **Red:** none. **Parked:** none.
-- **Next slice:** P3.1 — enforce the local-only input boundary.
-- **Resume prompt:** `Read PLAN.md and execute P3.1. Continue in item order; stop only at a hard stop or when P8 is complete.`
-- **First command:** `rg -n 'mp_is_url|loadfile|playlist' player/loadfile.c player/configfiles.c demux/demux_playlist.c`.
+- **Last accepted revision:** `fd115ba` (P4.2). P0.1–P1.4 and P2.1–P4.2 have run.
+- **Accepted:** P0.1–P1.4, P2.1–P4.2. **Red:** none. **Parked:** none.
+- **Next slice:** P4.3 — document and test the FFI invariants.
+- **Resume prompt:** `Read PLAN.md and execute P4.3. Continue in item order; stop only at a hard stop or when P8 is complete.`
+- **First command:** `tests/run.sh ffi`.
 - **Test mode:** headless (`--vo=null --ao=null`); GUI and renderer checks are owner-run.
-- **Scope:** P2.5 made the locked build produce only the `mpv` executable, directly linked with no shared `libmpv` target.
+- **Scope:** P4.2 moved the local-input classifier into `player-core::input` with a typed FFI boundary.
 
 This file is the campaign log as well as the plan. Update **Status** after every accepted slice. Git history holds the past; do not append dated checkpoints, handoffs, or a second status register.
 
