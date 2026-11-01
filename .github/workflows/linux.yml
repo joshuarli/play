@@ -1,0 +1,63 @@
+name: Linux
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref_name != 'main' && github.ref || github.run_id }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash -euo pipefail {0}
+
+env:
+  ARTIFACT: player-x86_64-linux-musl.tar.gz
+
+jobs:
+  linux:
+    name: Linux x86-64 musl
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Cache dependencies
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            .work/deps/linux
+            .work/deps/player-linux/target
+            .work/home/cargo
+          key: player-linux-deps-${{ hashFiles('scripts/build-deps-linux.sh', 'scripts/build-ffmpeg.sh', 'scripts/ffmpeg-components.txt', 'docker/linux/Dockerfile', 'rust/Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: |
+            player-linux-deps-
+
+      - name: Build release tarball
+        run: make linux
+
+      - name: Test
+        run: scripts/linux-container.sh tests/run.sh suite
+
+      - name: Verify tarball
+        run: |
+          cd dist
+          sha256sum -c "$ARTIFACT.sha256"
+          tar -tzf "$ARTIFACT" | sort | tr '\n' ' ' | grep -qx 'README player '
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: player-x86_64-linux-musl
+          path: |
+            dist/${{ env.ARTIFACT }}
+            dist/${{ env.ARTIFACT }}.sha256
+          if-no-files-found: error
