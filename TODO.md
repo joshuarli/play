@@ -27,16 +27,6 @@ Next: 20
 
 ## P3
 
-### PLAY-13 · P3 · Network scheme lists diverge across scripts, tests, and docs
-
-- **Area:** Security
-- **Where:** `scripts/ffmpeg-manifest.sh:149-153`, `scripts/measure.sh:418-422`, `tests/harness.py:801-802`, `scripts/audit.sh:15`, `tests/local_only.py:1-18`, `docs/baseline.md:116`
-- **Problem:** The local-only boundary has six lists. The manifest and measure sets have 24 schemes, the harness and audit check 6, the URL matrix tests 16 inputs, and the baseline row records 21. `sftp`, `hls`, `dash`, `ipfs`, and `ipns` are gated in one place and not another; `smb` is missing from the manifest set. A scheme added to one list is silently ungated elsewhere.
-- **Recommendation:** put one declarative list in `scripts/network-schemes.txt`, consume it from the manifest gate, measure, audit, harness, and URL matrix, and fail a test when a consumer's set differs.
-- **Fix with:** single-source-of-truth
-- **Effort:** M
-- **Design:** none
-
 ### PLAY-14 · P3 · Startup playlist handling bypasses the classifier and reverses option order
 
 - **Area:** Types

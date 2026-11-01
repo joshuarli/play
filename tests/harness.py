@@ -804,8 +804,15 @@ def gate_local_only(results, args):
         cwd=str(ROOT), capture_output=True, text=True, timeout=20,
     )
     protocols = proc.stdout + proc.stderr
-    network = [word for word in ("http", "https", "ftp", "rtsp", "rtmp", "smb")
-               if word in protocols.lower()]
+    network_schemes = {
+        line.strip()
+        for line in (ROOT / "scripts/network-schemes.txt").read_text().splitlines()
+        if line.strip() and not line.startswith("#")
+    }
+    network = sorted(
+        scheme for scheme in network_schemes
+        if f"{scheme}://" in protocols.lower()
+    )
     results.check("local-only protocol list",
                   proc.returncode == 0 and "file://" in protocols and not network,
                   protocols.strip())

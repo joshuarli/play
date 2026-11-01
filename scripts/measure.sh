@@ -414,11 +414,13 @@ def protocols():
     proc = run([str(MPV), "--list-protocols"], timeout=30)
     listed = re.findall(r"^\s*([A-Za-z][A-Za-z0-9+.-]*)://", proc.stdout, re.MULTILINE)
     unique = sorted(set(listed))
-    network = sorted(scheme for scheme in unique if scheme in {
-        "http", "https", "ftp", "sftp", "rtsp", "rtmp", "hls", "dash",
-        "gopher", "gophers", "dav", "davs", "webdav", "webdavs", "mms",
-        "mmsh", "mmst", "rtp", "srtp", "udp", "tcp", "tls", "ipfs", "ipns",
-    })
+    network_file = ROOT / "scripts" / "network-schemes.txt"
+    network_set = {
+        line.strip()
+        for line in network_file.read_text().splitlines()
+        if line.strip() and not line.startswith("#")
+    }
+    network = sorted(scheme for scheme in unique if scheme in network_set)
     return {
         "listed": len(listed),
         "unique": len(unique),

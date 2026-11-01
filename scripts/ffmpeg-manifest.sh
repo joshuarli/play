@@ -22,6 +22,7 @@ DEV_BUILD = ROOT / ".work" / "deps" / "ffmpeg-full" / "build"
 BUILD = pathlib.Path(os.environ["FFMPEG_BUILD"]) if os.environ.get("FFMPEG_BUILD") else (
     RELEASE_BUILD if RELEASE_BUILD.exists() else DEV_BUILD)
 ALLOWLIST = ROOT / "scripts" / "ffmpeg-components.txt"
+NETWORK_SCHEMES = ROOT / "scripts" / "network-schemes.txt"
 COMPONENTS = BUILD / "config_components.h"
 CONFIG_MAK = BUILD / "ffbuild" / "config.mak"
 
@@ -53,6 +54,14 @@ def parse_allowlist():
         category, names = line.split(":", 1)
         allowed[category.strip()] = set(names.split())
     return allowed
+
+
+def parse_network_schemes():
+    return {
+        line.strip()
+        for line in NETWORK_SCHEMES.read_text().splitlines()
+        if line.strip() and not line.startswith("#")
+    }
 
 
 def parse_components():
@@ -156,9 +165,7 @@ def check():
          f"devices: {sorted(enabled.get('devices', set()))}")
 
     protocols = enabled.get("protocols", set())
-    network = {"http", "https", "ftp", "sftp", "rtsp", "rtmp", "hls", "dash",
-               "gopher", "gophers", "dav", "davs", "webdav", "webdavs", "mms",
-               "mmsh", "mmst", "rtp", "srtp", "udp", "tcp", "tls", "ipfs", "ipns"}
+    network = parse_network_schemes()
     case("protocols allowed", protocols <= allowed.get("protocols", set()),
          f"protocols: {sorted(protocols - allowed.get('protocols', set()))}")
     case("no network protocols", not (protocols & network),

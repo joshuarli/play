@@ -13,10 +13,14 @@ if ! printf '%s\n' "$protocols" | rg -q 'file://'; then
     echo "audit: file:// protocol missing" >&2
     exit 1
 fi
-if printf '%s\n' "$protocols" | rg -qi 'http|https|ftp|rtsp|rtmp|smb'; then
-    echo "audit: network protocol present" >&2
-    exit 1
-fi
+while IFS= read -r scheme; do
+    [ -z "$scheme" ] && continue
+    case "$scheme" in \#*) continue ;; esac
+    if printf '%s\n' "$protocols" | rg -qi "${scheme}://"; then
+        echo "audit: network protocol present: $scheme" >&2
+        exit 1
+    fi
+done < "$ROOT/scripts/network-schemes.txt"
 
 if otool -L "$ROOT/build/mpv" | rg -qi 'libmpv|curl|libssl|libcrypto|liblua|mlua'; then
     echo "audit: unsupported linked library present" >&2
