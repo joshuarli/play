@@ -5,16 +5,6 @@ Next: 20
 
 ## P2
 
-### PLAY-4 · P2 · A cyclic or deeply nested Lua table aborts the process
-
-- **Area:** Errors
-- **Where:** `rust/player-lua/src/value.rs:23`, `:79`, `:113`, `:127`, `rust/player-lua/src/utils.rs:8`, `rust/player-ffi/src/lua.rs:30`, `:578`
-- **Problem:** `NativeValue::from_lua` and `table_from_lua` recurse with no depth limit. `MAX_JSON_DEPTH` and `MAX_NODE_DEPTH` already bound the JSON and node directions at 64. A script that passes a cyclic table to `mp.utils.format_json`, `mp.command_native`, or `mp.set_property_native` overflows the stack. A Rust stack overflow is not a panic, so the `catch_unwind` guard cannot contain it. A direct run with a self-referential table exited with signal 10.
-- **Recommendation:** thread a depth counter through `from_lua` and `table_from_lua` and return a runtime error past 64, matching the other two converters. Add a unit test with a cyclic table.
-- **Fix with:** error-model
-- **Effort:** S
-- **Design:** none
-
 ### PLAY-5 · P2 · The Lua host has no bounded lifecycle for its event queue or shutdown
 
 - **Area:** Concurrency

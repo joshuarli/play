@@ -49,6 +49,7 @@ FFmpeg demuxes every container and decodes video. VideoToolbox is the hardware p
 - **Interpreter:** `rust/player-lua` owns one Lua state per script through `mlua` 0.12.2 with `lua52` and `vendored`. The only interpreter in the process is the vendored Lua 5.2.4.
 - **Libraries:** the interpreter opens `io`, `os`, and `package`, which the built-in modules use. It does not open `debug`. The host is not a sandbox: scripts can open files, run processes with `os.execute`, and send the full mpv command table, including `subprocess` and `run`. Explicitly loaded scripts are trusted code.
 - **Built-in modules:** `defaults.lua`, `assdraw.lua`, `options.lua`, `input.lua`, and `osc.lua`.
+- **Values:** Lua-to-native table conversion is bounded at 64 levels. Arrays and maps keep the `mp.ARRAY`/`mp.MAP` sentinels, and map entries are sorted so command nodes are deterministic.
 - **Threading:** each script gets a thread and an event pump. `raw_wait_event` blocks on an ordered queue until the next timer deadline. The queue is unbounded, and the production wait on script completion has no timeout; both are open defects.
 - **OSC:** one bottom bar with play and pause, seek, elapsed and duration, volume and mute, fullscreen, and optional track selectors. It publishes `user-data/osc/areas`, `user-data/osc/margins`, and `user-data/osc/visibility`, and registers the `osc-message`, `osc-visibility`, `osc-show`, and `osc-hide` messages.
 

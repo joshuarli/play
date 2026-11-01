@@ -1,5 +1,7 @@
 use mlua::{Error, Lua, Result, Table, Value};
 
+const MAX_VALUE_DEPTH: usize = 64;
+
 #[derive(Clone)]
 pub struct Sentinels {
     pub unknown: Table,
@@ -21,6 +23,15 @@ pub enum NativeValue {
 
 impl NativeValue {
     pub fn from_lua(lua: &Lua, value: Value, sentinels: &Sentinels) -> Result<Self> {
+        Self::from_lua_at(lua, value, sentinels, 0)
+    }
+
+    fn from_lua_at(
+        lua: &Lua,
+        value: Value,
+        sentinels: &Sentinels,
+        depth: usize,
+    ) -> Result<Self> {
         match value {
             Value::Nil => Ok(NativeValue::None),
             Value::Boolean(value) => Ok(NativeValue::Bool(value)),
@@ -36,7 +47,14 @@ impl NativeValue {
                 }
             }
             Value::String(value) => Ok(NativeValue::String(value.to_str()?.to_owned())),
-            Value::Table(table) => table_from_lua(lua, table, sentinels),
+            Value::Table(table) => {
+                if depth >= MAX_VALUE_DEPTH {
+                    return Err(Error::RuntimeError(format!(
+                        "table nesting is too deep (limit {MAX_VALUE_DEPTH})"
+                    )));
+                }
+                table_from_lua(lua, table, sentinels, depth + 1)
+            }
             other => Err(Error::RuntimeError(format!(
                 "disallowed Lua type found: {}",
                 other.type_name()
@@ -76,7 +94,7 @@ impl NativeValue {
     }
 }
 
-fn table_from_lua(_lua: &Lua, table: Table, sentinels: &Sentinels) -> Result<NativeValue> {
+fn table_from_lua(lua: &Lua, table: Table, sentinels: &Sentinels, depth: usize) -> Result<NativeValue> {
     let tag = table
         .metatable()
         .and_then(|meta| meta.raw_get::<Option<String>>("type").ok().flatten());
@@ -110,7 +128,7 @@ fn table_from_lua(_lua: &Lua, table: Table, sentinels: &Sentinels) -> Result<Nat
         let mut values = Vec::with_capacity(length);
         for index in 1..=length {
             let value = table.raw_get::<Value>(index)?;
-            values.push(NativeValue::from_lua(_lua, value, sentinels)?);
+            values.push(NativeValue::from_lua_at(lua, value, sentinels, depth)?);
         }
         Ok(NativeValue::Array(values))
     } else {
@@ -124,7 +142,7 @@ fn table_from_lua(_lua: &Lua, table: Table, sentinels: &Sentinels) -> Result<Nat
             };
             values.push((
                 key.to_str()?.to_owned(),
-                NativeValue::from_lua(_lua, value, sentinels)?,
+                NativeValue::from_lua_at(lua, value, sentinels, depth)?,
             ));
         }
         values.sort_by(|left, right| left.0.cmp(&right.0));
@@ -206,5 +224,24 @@ mod tests {
         table.set(true, 3).unwrap();
         let error = NativeValue::from_lua(&lua, Value::Table(table), &sentinels).unwrap_err();
         assert!(error.to_string().contains("key must be a string"));
+    }
+
+    #[test]
+    fn rejects_cyclic_and_deep_tables() {
+        let lua = Lua::new();
+        let sentinels = sentinels(&lua);
+        let cyclic = lua.create_table().unwrap();
+        cyclic.set("self", cyclic.clone()).unwrap();
+        let error = NativeValue::from_lua(&lua, Value::Table(cyclic), &sentinels).unwrap_err();
+        assert!(error.to_string().contains("table nesting is too deep"));
+
+        let mut deep = lua.create_table().unwrap();
+        for _ in 0..MAX_VALUE_DEPTH + 1 {
+            let parent = lua.create_table().unwrap();
+            parent.set("child", deep).unwrap();
+            deep = parent;
+        }
+        let error = NativeValue::from_lua(&lua, Value::Table(deep), &sentinels).unwrap_err();
+        assert!(error.to_string().contains("table nesting is too deep"));
     }
 }
