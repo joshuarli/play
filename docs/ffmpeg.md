@@ -80,4 +80,4 @@ Current result: 19 passed, 0 failed. A temporary manifest with `http` added to t
 
 ## Next
 
-P4.1 added the `player-core`/`player-ffi` Rust static libraries and linked the first FFI symbol. P4.2 moves the input predicate into Rust.
+P4.2 moved the input classifier into `player-core::input`; the C boundary now delegates through a typed FFI call. P4.3 documents and tests the FFI invariants.

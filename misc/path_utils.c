@@ -33,7 +33,7 @@
 #include "osdep/io.h"
 #include "misc/ctype.h"
 #include "misc/path_utils.h"
-#include "stream/stream.h"
+#include "player_ffi.h"
 
 #if HAVE_DOS_PATHS
 #include <windows.h>
@@ -281,39 +281,16 @@ bool mp_input_is_local_path(const char *path, bool allow_file_uri, char **out_pa
 {
     if (out_path)
         *out_path = NULL;
-    if (!path || !path[0])
-        return false;
 
-    bstr url = bstr0(path);
-    bstr proto = mp_split_proto(url, &url);
-    if (proto.len) {
-        if (allow_file_uri && bstrcasecmp0(proto, "file") == 0) {
-            char *filename = mp_file_url_to_filename(NULL, bstr0(path));
-            if (!filename)
-                return false;
-            if (out_path)
-                *out_path = filename;
-            else
-                talloc_free(filename);
-            return true;
-        }
+    char resolved[4096];
+    char error[256];
+    int rc = player_ffi_classify_input(path, allow_file_uri, resolved,
+                                       sizeof(resolved), error, sizeof(error));
+    if (rc != PLAYER_FFI_INPUT_LOCAL)
         return false;
-    }
-
-    static const char *const wrappers[] = {
-        "data:", "lavfi:", "edl:", "memory:", "fd:", "fdclose:",
-        "av:", "avdevice:", "mf:", "null:", "slice:", "appending:",
-        "mpv:", "ffmpeg:", "lavf:", "http:", "https:", "ftp:",
-        "sftp:", "ssh:", "rtsp:", "rtmp:", "hls:", "dash:", "smb:",
-        NULL
-    };
-    for (int n = 0; wrappers[n]; n++) {
-        if (bstr_case_startswith(url, bstr0(wrappers[n])))
-            return false;
-    }
 
     if (out_path)
-        *out_path = bstrto0(NULL, url);
+        *out_path = talloc_strdup(NULL, resolved);
     return true;
 }
 

@@ -1,3 +1,5 @@
+pub mod input;
+
 pub fn abi_version() -> u32 {
     1
 }
