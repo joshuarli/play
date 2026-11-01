@@ -176,7 +176,6 @@ typedef struct MPOpts {
     char **script_files;
     char **script_opts;
     bool lua_load_osc;
-    bool lua_load_select;
 
     bool auto_load_scripts;
 

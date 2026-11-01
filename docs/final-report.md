@@ -53,7 +53,7 @@ The final measurement is at `7a8958b`: cold 162.11 ms, warm 115.73 ms, idle RSS 
 - GUI, HDR and 10-bit color, subtitle shaping, Retina scaling, audio audibility, real mouse and drag, and signing or notarization are owner-run. See `docs/manual-checklist.md`.
 - Encoding, recording, and the lavfi filter graph are compiled but unreachable: the release FFmpeg has no encoders or muxers, and the CLI has no entry point.
 - Clipboard commands are compiled and reachable. The default `Ctrl+v` binding uses them.
-- The `subprocess` command and the `.run` script backend are compiled and reachable from explicit scripts and IPC. `select.lua`, loaded by default, uses both; the built-in OSC does not.
+- The `subprocess` command and the `.run` script backend are compiled and reachable from explicit scripts and IPC. No built-in module uses them.
 - Follow-on: A/V scheduler, general demux and decode orchestration, renderer integration, and Linux.
 
 ## Reproduction

@@ -78,4 +78,4 @@ Measured with `scripts/measure.sh size` and nine interleaved first-frame runs.
 | `build/mpv` stripped | 13,990,240 B |
 | closure | 20.06 MiB in 17 files |
 
-First-frame medians: default 169.23 ms; `--osc=no` 164.91 ms; `--osc=no --load-select=no` 169.60 ms. The spread across nine runs was 158.74 to 215.92 ms, so no isolated script-host cost above noise was measurable. Symbol-level attribution is not available: macOS `nm -S` reports zero sizes, and archive sizes include Rust `std` rather than the linked contribution.
+First-frame medians: default 169.23 ms; `--osc=no` 164.91 ms; a third run with the then-current `--load-select=no` 169.60 ms, an option removed with `select.lua`. The spread across nine runs was 158.74 to 215.92 ms, so no isolated script-host cost above noise was measurable. Symbol-level attribution is not available: macOS `nm -S` reports zero sizes, and archive sizes include Rust `std` rather than the linked contribution.

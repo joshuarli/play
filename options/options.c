@@ -524,7 +524,6 @@ static const m_option_t mp_opts[] = {
 #endif
 #if HAVE_LUA
     {"osc", OPT_BOOL(lua_load_osc), .flags = UPDATE_BUILTIN_SCRIPTS},
-    {"load-select", OPT_BOOL(lua_load_select), .flags = UPDATE_BUILTIN_SCRIPTS},
 #endif
 
 // ------------------------- stream options --------------------
@@ -912,7 +911,6 @@ static const struct MPOpts mp_default_opts = {
     .osd_duration = 1000,
 #if HAVE_LUA
     .lua_load_osc = true,
-    .lua_load_select = true,
 #endif
     .auto_load_scripts = false,
     .ordered_chapters = true,

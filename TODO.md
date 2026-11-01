@@ -5,16 +5,6 @@ Next: 20
 
 ## P2
 
-### PLAY-2 · P2 · The default built-in `select.lua` exposes process execution and URL opening
-
-- **Area:** Security
-- **Where:** `player/lua/select.lua:270-279`, `:636-648`, `:681-683`, `:709-729`, `options/options.c:915`, `player/scripting.c:265`, `rust/player-ffi/src/lua.rs:36`, `:844`
-- **Problem:** `load-select` defaults to true and `mp_load_builtin_scripts` loads `@select.lua`. That module calls the `subprocess` command with `ffmpeg`, calls the `run` command with `open` and an `https://mpv.io/manual/` URL, and lists those actions in its own menu. The built-in OSC does not use `select.lua`, and its default keys in `etc/input.conf:184-199` are commented out. The release report previously claimed `subprocess` was not reachable from built-in code; the docs now describe the real path.
-- **Recommendation:** remove `select.lua` from the built-in load, the embedded sources, and the `--load-select` option, or prune every OS-reaching binding from it. Keep only the selectors the shipped OSC uses. Regenerate `docs/lua-api.md` and extend the audit to flag command names, not only `mp.*` symbols.
-- **Fix with:** delete
-- **Effort:** S
-- **Design:** none
-
 ### PLAY-3 · P2 · The command checker rejects valid mpv command forms
 
 - **Area:** Types

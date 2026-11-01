@@ -11,7 +11,7 @@ from pathlib import Path
 ROOT = Path(sys.argv[1])
 LUA = ROOT / "player" / "lua"
 DOC = ROOT / "docs" / "lua-api.md"
-FILES = ["defaults.lua", "assdraw.lua", "options.lua", "input.lua", "select.lua", "osc.lua"]
+FILES = ["defaults.lua", "assdraw.lua", "options.lua", "input.lua", "osc.lua"]
 PROVIDERS = {"host", "defaults.lua", "assdraw.lua", "options.lua", "input.lua", "data"}
 SCOPES = {"required", "built-in", "none", "data"}
 CLASS_BEGIN = "<!-- lua-api:classify-begin -->"

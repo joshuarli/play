@@ -46,7 +46,7 @@ Removed: `--ytdl*`, `--hls-bitrate`, `--lavfi-complex`, `--stream-dump`, `--stre
 ## Compiled but not reachable
 
 - Encoding, stream recording, and the `f_lavfi` filter graph remain compiled. The release FFmpeg has no encoders or muxers, and the CLI has no entry point for them.
-- The C `subprocess` command and the `.run` script backend remain compiled and reachable from an explicit script or an IPC client. They are not reachable from the built-in OSC. `select.lua`, which loads by default, uses both.
+- The C `subprocess` command and the `.run` script backend remain compiled and reachable from an explicit script or an IPC client. They are not reachable from a built-in module.
 - The clipboard property, the clipboard command, and the macOS clipboard bridge remain compiled and reachable. The default `Ctrl+v` binding pastes clipboard text as a local file operand.
 - The cplugin loader is compiled out; `HAVE_CPLUGINS` is not defined in the release configuration.
 

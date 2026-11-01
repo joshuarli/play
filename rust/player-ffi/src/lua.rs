@@ -33,7 +33,6 @@ const ASSDRAW: &str = include_str!("../../../player/lua/assdraw.lua");
 const OPTIONS: &str = include_str!("../../../player/lua/options.lua");
 const INPUT: &str = include_str!("../../../player/lua/input.lua");
 const OSC: &str = include_str!("../../../player/lua/osc.lua");
-const SELECT: &str = include_str!("../../../player/lua/select.lua");
 
 #[repr(C)]
 pub struct MpvHandle {
@@ -841,7 +840,6 @@ pub unsafe extern "C" fn player_ffi_lua_run(
 fn builtin_source(filename: &str) -> Option<&'static str> {
     match filename {
         "@osc.lua" => Some(OSC),
-        "@select.lua" => Some(SELECT),
         _ => None,
     }
 }
