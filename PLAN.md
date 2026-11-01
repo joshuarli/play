@@ -4,8 +4,8 @@
 
 - **Goal:** A mostly static `x86_64-unknown-linux-musl` build of Player with the macOS app's local-only scope: mpv's playback pipeline, the pinned minimal FFmpeg, the Rust control plane, one Lua 5.2 interpreter, `vo=gpu-next` over Vulkan and Wayland, and ALSA.
 - **Last accepted revision:** `e5136e5` (macOS release, `make install`, macOS CI, docs). The macOS campaign is complete; `docs/status.md` and `docs/final-report.md` are the record.
-- **Accepted:** L0.1, L0.2, L0.3, L0.4. **Red:** none. **Parked:** none.
-- **Next slice:** L1.1.
+- **Accepted:** L0.1, L0.2, L0.3, L0.4, L1.1 (FFmpeg lands with L1.2). **Red:** none. **Parked:** none.
+- **Next slice:** L1.2.
 - **Resume prompt:** `Read PLAN.md and continue at Status. Stop at a documented limitation or an owner decision.`
 - **First command:** `scripts/linux-check.sh`, created by L0.1.
 - **Test mode:** headless (`--vo=null --ao=null`) for logic, a headless Weston compositor with Mesa lavapipe for `gpu-next`, and owner-run checks for real GPU output and audible output.
