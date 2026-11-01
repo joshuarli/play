@@ -5,16 +5,6 @@ Next: 20
 
 ## P2
 
-### PLAY-12 · P2 · The 1080p CPU budget passes inside run noise and compare cannot fail a regression
-
-- **Area:** Performance
-- **Where:** `scripts/measure.sh:59`, `:482-486`, `:639-652`, `docs/metrics.md`, `PLAN.md:466`
-- **Problem:** The 1080p limit is a hardcoded copy of the baseline (`0.21`), so the limit is `0.231 s`, and the final measurement is `0.23 s`. The same metric ranged from `0.16 s` to `0.23 s` across recorded runs; a three-run median cannot resolve a 1 ms difference. `scripts/measure.sh compare` checks only the fixed budgets, so a final label that is worse than the previous label on cold startup, warm startup, first frame, seek, and exit still prints `compare: ok`. The frame-drop budget is read under `--vo=null`, where it is zero by construction.
-- **Recommendation:** use at least five interleaved runs per side, report the spread, and fail `compare` on a stated regression between labels. Re-measure the baseline instead of hardcoding it. Move frame drops to the owner-run renderer checklist.
-- **Fix with:** benchmark-checklist
-- **Effort:** M
-- **Design:** none
-
 ## P3
 
 ### PLAY-18 · P3 · Generated docs and fixtures heal their own oracles instead of failing on drift

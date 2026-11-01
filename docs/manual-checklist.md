@@ -9,6 +9,7 @@ Owner-run checks at each milestone and before release. Automated gates are headl
 | Visual | VFR and non-ASCII paths play | not run |
 | Visual | Fullscreen, resize, letterboxing, Retina 2x | not run |
 | Visual | HDR/10-bit color and motion smoothness | not run |
+| Visual | No dropped frames at 1080p (`frame-drop-count` stays 0 with the window renderer) | not run |
 | Audio | Mono, stereo, and 5.1 are audible | not run |
 | Audio | Multi-audio language switching | not run |
 | Audio | No clicks, dropouts, or persistent underruns | not run |

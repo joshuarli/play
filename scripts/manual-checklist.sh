@@ -45,6 +45,7 @@ Visual:
   [ ] VFR and non-ASCII-path files play without stutter or path errors.
   [ ] Fullscreen, window resize, letterboxing, and Retina 2x scaling look right.
   [ ] HDR/10-bit color and motion smoothness are acceptable.
+  [ ] No dropped frames at 1080p (frame-drop-count stays 0 with the window renderer).
 
 Audio:
   [ ] Mono, stereo, and 5.1 initialize CoreAudio and are audible.
