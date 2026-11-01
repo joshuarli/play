@@ -8,8 +8,8 @@ LOGS="$SRC/logs"
 JOBS=${JOBS:-$(nproc)}
 export TMPDIR="$ROOT/.work/tmp"
 export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig:$PREFIX/lib64/pkgconfig:$PREFIX/share/pkgconfig"
-export CFLAGS="-O2 -fPIC"
-export CXXFLAGS="-O2 -fPIC"
+export CFLAGS="-O2 -fPIC -ffile-prefix-map=$ROOT=."
+export CXXFLAGS="-O2 -fPIC -ffile-prefix-map=$ROOT=."
 
 mkdir -p "$PREFIX" "$SRC" "$LOGS"
 
@@ -175,7 +175,8 @@ if ! have fontconfig; then
     run_log fontconfig meson setup "$fc/build" "$fc" --prefix="$PREFIX" --libdir=lib \
         --buildtype=release --default-library=static -Dtests=disabled -Dtools=disabled \
         -Dnls=disabled -Ddoc=disabled -Dcache-build=disabled -Dxml-backend=expat \
-        -Dsysconfdir=/etc -Dlocalstatedir=/var
+        -Dsysconfdir=/etc -Dlocalstatedir=/var \
+        -Dtemplate-dir=/usr/share/fontconfig/conf.avail
     run_log fontconfig-build ninja -C "$fc/build"
     rm -rf "$SRC/fontconfig-dest"
     run_log fontconfig-install env DESTDIR="$SRC/fontconfig-dest" meson install -C "$fc/build" --no-rebuild

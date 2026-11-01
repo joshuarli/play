@@ -51,8 +51,14 @@ tar -xzf "$TARBALL" -C "$ROOT/.work/tmp"
 printf '%s\n' "$VERSION" >"$SRC/VERSION"
 mkdir -p "$BUILD"
 
+if [ "$PLATFORM" = linux ]; then
+    CONFIGURE_PREFIX=/ffmpeg
+else
+    CONFIGURE_PREFIX=$PREFIX
+fi
+
 configure_args=(
-    --prefix="$PREFIX"
+    --prefix="$CONFIGURE_PREFIX"
     --disable-shared --enable-static
     --disable-programs --disable-doc
     --disable-network --disable-avdevice --disable-autodetect
@@ -103,7 +109,14 @@ cd "$BUILD"
 
 printf 'build FFmpeg %s\n' "$VERSION"
 make -j"$JOBS"
-make install
+if [ "$PLATFORM" = linux ]; then
+    make install DESTDIR="$BUILD/stage"
+    cp -R "$BUILD/stage$CONFIGURE_PREFIX/." "$PREFIX/"
+    rm -rf "$BUILD/stage"
+    sed -i "s|=$CONFIGURE_PREFIX|=$PREFIX|" "$PREFIX"/lib/pkgconfig/*.pc
+else
+    make install
+fi
 
 printf '%s\n' "$CONFIG_HASH" >"$PREFIX/ffmpeg-components.sha256"
 

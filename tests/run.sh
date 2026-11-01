@@ -8,6 +8,9 @@ case "${1:-}" in
         shift
         exec "$ROOT/scripts/ffmpeg-manifest.sh" --check "$@"
         ;;
+    linux-audit|linux-mostly-static)
+        exec "$ROOT/scripts/audit-linux.sh"
+        ;;
     *)
         exec python3 "$ROOT/tests/harness.py" "$@"
         ;;

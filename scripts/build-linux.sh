@@ -16,17 +16,17 @@ DIST="$ROOT/dist"
 }
 
 mkdir -p "$RUST_TARGET_DIR" "$ROOT/.work/tmp" "$DIST"
-CARGO_TARGET_DIR="$RUST_TARGET_DIR" cargo build --release --target "$RUST_TRIPLE" \
+RUSTFLAGS="--remap-path-prefix=$ROOT=." CARGO_TARGET_DIR="$RUST_TARGET_DIR" cargo build --release --target "$RUST_TRIPLE" \
     --manifest-path "$ROOT/rust/Cargo.toml" -p player-audio -p player-ffi
-RUST_LIB_DIR="$RUST_TARGET_DIR/$RUST_TRIPLE/release"
+RUST_LIB_DIR="../.work/deps/player-linux/target/$RUST_TRIPLE/release"
 
 PKG_CONFIG_STATIC="$ROOT/.work/tmp/pkg-config-static"
 printf '#!/bin/sh\nexec pkg-config --static "$@"\n' >"$PKG_CONFIG_STATIC"
 chmod +x "$PKG_CONFIG_STATIC"
 export PKG_CONFIG="$PKG_CONFIG_STATIC"
 export PKG_CONFIG_PATH="$DEPS/lib/pkgconfig:$DEPS/ffmpeg/lib/pkgconfig"
-export CFLAGS="-I$DEPS/include -I$DEPS/ffmpeg/include"
-export LDFLAGS="-static-libgcc"
+export CFLAGS="-ffile-prefix-map=$ROOT=. -I$DEPS/include -I$DEPS/ffmpeg/include"
+export LDFLAGS="-static-libgcc -Wl,--gc-sections"
 
 options=(
     -Dcplayer=true -Dlibmpv=false -Dgpl=true
@@ -61,11 +61,8 @@ for feature in "${enabled_features[@]}"; do
     options+=("-D$feature=enabled")
 done
 
-if [ -d "$BUILD_DIR" ]; then
-    meson setup --reconfigure "$BUILD_DIR" "$ROOT" --buildtype=release "${options[@]}"
-else
-    meson setup "$BUILD_DIR" "$ROOT" --buildtype=release "${options[@]}"
-fi
+rm -rf "$BUILD_DIR"
+meson setup "$BUILD_DIR" "$ROOT" --buildtype=release "${options[@]}"
 
 meson compile -C "$BUILD_DIR"
 strip -o "$DIST/player" "$BUILD_DIR/mpv"
