@@ -1,28 +1,28 @@
-# Campaign: Linux x86-64 musl static player
+# Campaign: Linux x86-64 musl gpu-next player
 
 ## Status
 
-- **Goal:** A fully static `x86_64-unknown-linux-musl` build of Player with the macOS app's local-only scope: mpv's playback pipeline, the pinned minimal FFmpeg, the Rust control plane, one Lua 5.2 interpreter, Wayland software output, and ALSA.
-- **Last accepted revision:** `787caec` (macOS release, `make install`, macOS CI). The macOS campaign is complete; `docs/status.md` and `docs/final-report.md` are the record.
+- **Goal:** A mostly static `x86_64-unknown-linux-musl` build of Player with the macOS app's local-only scope: mpv's playback pipeline, the pinned minimal FFmpeg, the Rust control plane, one Lua 5.2 interpreter, `vo=gpu-next` over Vulkan and Wayland, and ALSA.
+- **Last accepted revision:** `e5136e5` (macOS release, `make install`, macOS CI, docs). The macOS campaign is complete; `docs/status.md` and `docs/final-report.md` are the record.
 - **Accepted:** none. **Red:** none. **Parked:** none.
 - **Next slice:** L0.1.
 - **Resume prompt:** `Read PLAN.md and continue at Status. Stop at a documented limitation or an owner decision.`
 - **First command:** `scripts/linux-check.sh`, created by L0.1.
-- **Test mode:** headless (`--vo=null --ao=null`) for logic, a headless Weston compositor for `wlshm`, and owner-run checks for visible and audible output.
-- **Scope:** Linux x86-64 only. aarch64, X11, GL, Vulkan, DRM, PulseAudio, PipeWire, systemd integration, and distribution packages are out.
+- **Test mode:** headless (`--vo=null --ao=null`) for logic, a headless Weston compositor with Mesa lavapipe for `gpu-next`, and owner-run checks for real GPU output and audible output.
+- **Scope:** Linux x86-64 musl only. glibc, aarch64, X11, OpenGL, EGL, DRM, PulseAudio, PipeWire, systemd integration, and distribution packages are out.
 
 ## Charter
 
 1. **Decide and keep going.** Every decision needed to run is below. Make ordinary judgment calls inside the stated bounds and record one only when a later slice depends on it. Do not ask the owner at runtime.
 2. **The code is the truth.** If a path, option, or component name here disagrees with the pinned source, the source wins: fix the item, keep the intent, and record the correction in the commit body and `docs/architecture.md` when a boundary changes.
-3. **Static first.** A slice that adds a dynamic dependency, a runtime loader, or a second renderer path is red. Build the smallest static closure that plays the corpus; do not carry macOS-only libraries into the Linux build.
+3. **Mostly static first.** The binary may link only the dynamic set in LD1. A slice that adds another dynamic library, a runtime plugin loader, or a second renderer path is red. Static-link the rest.
 4. **One writer.** No parallel lanes. Every item is serial and lands on `main`. Scratch goes in `.work/tmp`; worktrees go in `.work/wt/<name>`. Never use `/tmp` or `$TMPDIR`.
 5. **Delete before rewriting.** Restore only the source files the Linux build needs, then delete the macOS-only conditionals that stop compiling. No persistent parallel C or Rust implementations.
 6. **Fix only what blocks.** In their own commit, fix a crash, a hang over 5 s, a network or secret leak, or a correctness regression in an accepted behavior. Record everything else and leave it.
 7. **Red never lands.** An item ends on its acceptance command plus the narrowest affected suite on the integrated tree; every accepted slice leaves a usable Linux binary. The full suite runs at L4.4 and the close; the macOS suite stays green at every accepted slice.
 8. **Failures get a cause before a retry.** Reproduce, isolate, fix the cause, keep the failing test. Time-box an item at three attempts, then park it on `park/<item>` with the exact cause and a retry condition.
 9. **Commits.** Conventional Commit, workstream as scope, item ID in the body. One coherent change per commit; stage only your work. No formatters. No CI changes outside `.github/workflows/macos.yml` and `.github/workflows/linux.yml`. Never publish a release.
-10. **Contract changes are surfaced.** A new platform, a second VO/AO, a fully static binary, and the loss of GPU rendering on Linux are contract changes. Update code, tests, and docs together and call them out in the reply.
+10. **Contract changes are surfaced.** A new platform, a second VO/AO, a mostly static binary, the loss of a fully static artifact, and the musl runtime requirement are contract changes. Update code, tests, and docs together and call them out in the reply.
 11. **Docs are deliverables.** `docs/linux.md`, `docs/architecture.md`, `docs/ffmpeg.md`, `docs/licenses.md`, `docs/metrics.md`, `docs/status.md`, and `docs/install.md` are maintained with the code.
 12. **Steering checkpoint.** After each accepted slice, name what landed, the single limit on delivery, and a ruling only when it changes: continue, narrow the slice, serialize, fix one prerequisite, or park. Rewrite **Status** in place; never append a checkpoint section.
 
@@ -30,43 +30,44 @@
 
 - **Restore from the pin.** The Linux source set comes from mpv v0.41.0 at `41f6a645068483470267271e1d09966ca3b9f413`. Do not merge upstream history. Copy the smallest file set, keep the license headers, and record each restored file in `docs/architecture.md`.
 - **Keep macOS unchanged.** Every platform choice is explicit in Meson and `#if`. No runtime `uname` dispatch for a compile-time decision.
-- **No runtime loader.** A fully static musl process cannot `dlopen`. A library that discovers plugins or drivers at runtime does not ship. This is why the Linux build uses `wlshm` and ALSA hardware PCMs.
-- **One implementation.** One VO (`wlshm`), one AO (`alsa`), one Lua interpreter, one input classifier. Do not add a second path behind a flag.
+- **Bound the dynamic set.** The executable may depend on musl libc, the Vulkan loader, the Wayland client libraries, xkbcommon, and ALSA. Everything else is static. Do not add a loader for ALSA plugins or a second graphics API.
+- **One implementation.** One VO (`gpu-next`), one AO (`alsa`), one Lua interpreter, one input classifier. Do not add a software Wayland path behind a flag.
 - **No speculative abstraction.** Do not build a cross-platform VO/AO interface for a platform that does not exist. Use the existing mpv interfaces and macOS-style `#if` branches.
 
 ## Decisions
 
 ### Owner-decided
 
-- **LD1 — Target.** Linux x86-64, `x86_64-unknown-linux-musl`, fully static. The release artifact is `player-x86_64-linux-musl.tar.gz` containing one stripped `player` binary.
-- **LD2 — Renderer.** `vo=wlshm`: Wayland shared-memory software output, restored from mpv v0.41.0. A fully static musl binary cannot load a Vulkan ICD, so Vulkan, OpenGL, EGL, DRM, and libplacebo are not in this build. A GPU build would be a separate mostly-static artifact and is not scheduled.
-- **LD3 — Audio.** ALSA only, statically linked. No PulseAudio, PipeWire, JACK, SDL, or OSS. ALSA plugins that need `dlopen` are unavailable; the default device must be a built-in or hardware PCM.
-- **LD4 — Output.** `wlshm` uses `libswscale` for scaling and the existing OSD/subtitle path. The binary has no runtime data directory, no service unit, and no desktop-file loader.
-- **LD5 — Release.** The macOS release stays `dist/Player.app` with `gpu-next`, CoreAudio, and `make install`. The Linux release is a tarball plus a SHA-256 file. CI builds both; neither publishes or notarizes.
-- **LD6 — Build host.** Build natively inside an Alpine edge x86-64 container, not by cross-compiling from macOS. The same container runs locally through Docker and in the Linux CI job.
+- **LD1 — Target.** Linux x86-64, `x86_64-unknown-linux-musl`, mostly static. Static-link FFmpeg, libplacebo, shaderc, glslang, SPIRV, libass, fontconfig, FreeType, FriBiDi, HarfBuzz, Rust, and Lua. The only dynamic libraries are musl libc, `libvulkan.so.1`, `libwayland-client.so.0`, `libwayland-cursor.so.0`, `libxkbcommon.so.0`, and `libasound.so.2`.
+- **LD2 — Renderer.** `vo=gpu-next` with `--gpu-context=waylandvk` and Vulkan. The system Vulkan loader discovers the ICD at runtime. No OpenGL, EGL, DRM, X11, or software `wlshm` path.
+- **LD3 — Audio.** ALSA only, dynamically linked against the musl `libasound`. No PulseAudio, PipeWire, JACK, SDL, or OSS. ALSA plugins that need `dlopen` are unavailable; use a built-in or hardware PCM.
+- **LD4 — Release.** The release artifact is `player-x86_64-linux-musl.tar.gz` containing one stripped `player` binary and a `README` that lists the musl runtime packages. A SHA-256 file sits beside it.
+- **LD5 — Runtime.** The artifact targets Alpine and other musl systems with a Vulkan loader, a Mesa Vulkan driver, Wayland, xkbcommon, and ALSA. A glibc system's Vulkan, Wayland, xkbcommon, and ALSA libraries cannot be loaded by a musl binary; a glibc build is a separate artifact and is not in this campaign.
+- **LD6 — Build host.** Build natively inside an Alpine edge x86-64 container, not by cross-compiling from macOS. Pin the image by digest. The same container runs locally through Docker and in the Linux CI job.
+- **LD7 — macOS.** The macOS release stays `dist/Player.app` with `gpu-next`, CoreAudio, and `make install`. Its dependencies and behavior do not change.
 
 ### Renderer shape
 
 Three whole designs were considered before the sequence was written:
 
-- **A — fully static `wlshm` plus ALSA (chosen).** It meets LD1, uses the software output that already exists in the pin, and needs no runtime loader. It gives up GPU rendering, HDR, and hardware decode on Linux.
-- **B — mostly-static `gpu-next` plus Vulkan and ALSA.** It keeps the macOS renderer, but the Vulkan loader must `dlopen` a system ICD, so the binary is not static; the release would depend on the host's graphics stack. It fails LD1 and is the documented follow-on, not this campaign.
-- **C — a new fully static software VO.** It duplicates `vo_wlshm` and adds a second rendering path to maintain. The pin already has the software Wayland output, so this design loses on cost.
+- **A — mostly static musl `gpu-next` (chosen).** It keeps the macOS renderer, static-links every non-graphics library, and takes the Vulkan loader, Wayland, xkbcommon, and ALSA from the musl host. It runs on musl systems with the listed packages and gives up the fully static artifact.
+- **B — fully static musl `wlshm`.** It runs on any Linux with a Wayland compositor, but it cannot load a GPU driver and has no GPU, HDR, or hardware decode. The owner prefers `gpu-next`, so this loses.
+- **C — mostly static glibc `gpu-next`.** It runs on mainstream glibc distributions, but it changes the libc and the build host. It is a separate artifact and is not this campaign.
 
 ### Prescribed
 
-- **LD7 — Source set.** Restore `video/out/wayland_common.c`, `video/out/wayland_common.h`, `video/out/vo_wlshm.c`, `audio/out/ao_alsa.c`, and `osdep/als-linux.c` from the pin. Do not restore dmabuf, X11, GL, Vulkan, or PipeWire sources.
-- **LD8 — Dependency set.** Build Wayland, wayland-protocols, libxkbcommon, ALSA, fontconfig, expat, FreeType, FriBiDi, HarfBuzz, libass, dav1d, and FFmpeg from pinned sources for musl. Reuse the macOS pins where the component is shared. No libplacebo, shaderc, glslang, SPIRV, Vulkan, or MoltenVK.
-- **LD9 — Verification.** `file`, `readelf`, and `ldd` prove the static shape. `tests/run.sh` gates behavior. A headless Weston compositor proves `wlshm`; an ALSA null PCM proves the audio path without a sound card.
-- **LD10 — Packaging.** `scripts/release-linux.sh` builds, strips, verifies, and tars the binary. The tarball contains `player` and `README` only. A SHA-256 file sits beside it.
+- **LD8 — Source set.** Restore `video/out/wayland_common.c`, `video/out/wayland_common.h`, `video/out/vulkan/context_wayland.c`, `audio/out/ao_alsa.c`, and `osdep/als-linux.c` from the pin. Add `alsa` to `audio/out/ao.c` under `HAVE_ALSA`. Guard the bundle-only code in `player/main.c`.
+- **LD9 — Dependency set.** Build libplacebo, shaderc, glslang, SPIRV-Headers, SPIRV-Tools, libass, fontconfig, expat, FreeType, FriBiDi, HarfBuzz, dav1d, and FFmpeg from pinned sources for musl. Take the Vulkan loader, Wayland, xkbcommon, and ALSA from a pinned Alpine image. Link the C++ runtime used by shaderc, glslang, and SPIRV-Tools statically. No MoltenVK.
+- **LD10 — Verification.** `readelf -d` proves the `NEEDED` set stays inside LD1. `ldd` proves every dynamic library resolves. A headless Weston compositor with Mesa lavapipe proves `gpu-next`; a real GPU is owner-run. An ALSA null PCM proves the audio path without a sound card.
+- **LD11 — Packaging.** `scripts/release-linux.sh` builds, strips, verifies, and tars the binary. It records the exact Alpine package versions for Vulkan, Wayland, xkbcommon, and ALSA in `docs/linux.md`.
 
 ### Delegated
 
-- **DL1 — Pins.** Resolve the exact Wayland, xkbcommon, ALSA, fontconfig, and expat versions at L1.1, record them in `docs/licenses.md` and the build script, and do not use unpinned `apk` packages for shipped libraries.
+- **DL1 — Pins.** Resolve the exact Alpine package versions and the libplacebo, shaderc, glslang, SPIRV, Wayland, xkbcommon, ALSA, fontconfig, and expat versions at L1.1. Record them in `docs/licenses.md`, `docs/linux.md`, and the build scripts.
 - **DL2 — Source list.** L0.2 decides the exact file set by compiling the Linux target; restore a file only when the compiler or link step needs it.
-- **DL3 — Scaler defaults.** Choose the `wlshm` scaler, color conversion, and scaling filter from the existing `sws_utils` options. Keep the default that plays the corpus without artifacts; record the choice in `docs/architecture.md`.
-- **DL4 — Fonts.** Use static fontconfig for system fonts and embedded fonts. If fontconfig cannot be made static cleanly, fall back to a deterministic font provider and record the loss of system-font discovery in `docs/linux.md`.
-- **DL5 — Linker flags.** Choose `-static` or `-static-pie`, LTO, and strip flags by measurement. Keep a change only if it wins on size or startup without a regression beyond the release budgets.
+- **DL3 — Scaler and color.** Keep the libplacebo defaults that play the corpus without artifacts. Record any non-default scaling, color, or HDR choice in `docs/architecture.md`.
+- **DL4 — Fonts.** Use static fontconfig for system fonts and embedded fonts. If that fails, fall back to a deterministic font provider and record the loss of system-font discovery in `docs/linux.md`.
+- **DL5 — Linker flags.** Choose `-static` for the bundled libraries, LTO, and strip flags by measurement. Keep a change only if it wins on size or startup without a regression beyond the release budgets.
 
 ## Baseline
 
@@ -74,12 +75,12 @@ Three whole designs were considered before the sequence was written:
 
 The macOS release is complete and documented. Linux is not buildable today:
 
-- `meson.build` still contains `wayland` and `alsa` option branches, but the files they name are gone: `video/out/wayland_common.c`, `video/out/vo_wlshm.c`, `audio/out/ao_alsa.c`, and `osdep/als-linux.c`.
-- `video/out/vo.c` registers only `gpu_next`, `libmpv`, `null`, and `lavc`. `audio/out/ao.c` registers only CoreAudio, `null`, and `lavc`.
-- `meson.build` requires libplacebo and compiles `vo_gpu_next` and the placebo sources unconditionally.
+- `meson.build` contains `wayland`, `vulkan`, and `alsa` option branches, but the files they name are gone: `video/out/wayland_common.c`, `video/out/vulkan/context_wayland.c`, `audio/out/ao_alsa.c`, and `osdep/als-linux.c`.
+- `video/out/gpu/context.c` already registers `ra_ctx_vulkan_wayland` under `HAVE_WAYLAND`. `video/out/vo.c` already registers `gpu_next`. `meson.build` requires libplacebo, so the GPU sources are already compiled on macOS.
+- `audio/out/ao.c` registers CoreAudio, `null`, and `lavc` only; it has no `#if HAVE_ALSA` entry.
 - `player/main.c` contains bundle-specific `MPVBUNDLE` and `VK_DRIVER_FILES` code.
-- `scripts/build-deps.sh`, `scripts/release.sh`, `scripts/bundle.py`, `scripts/audit.sh`, and `scripts/measure.sh` use macOS tools (`sysctl`, `shasum`, `otool`, `codesign`, `ditto`, `MACOSX_DEPLOYMENT_TARGET`).
-- `tests/harness.py` assumes `dist/Player.app` for the release gate and uses `sandbox-exec` for the network-denied playback check.
+- `scripts/build-deps.sh` builds the macOS closure and uses macOS tools (`sysctl`, `shasum`, `xcrun`, `MACOSX_DEPLOYMENT_TARGET`). `scripts/build-ffmpeg.sh` enables VideoToolbox. `scripts/release.sh` and `scripts/bundle.py` produce the app bundle.
+- `scripts/audit.sh` and `scripts/measure.sh` use `otool`, `codesign`, and the app path. `tests/harness.py` assumes `dist/Player.app` for the release gate and uses `sandbox-exec` for the network-denied playback check.
 
 The Rust plane is portable. `player-core`, `player-ffi`, `player-lua`, and `player-audio` have no macOS-only source; `rust/player-release` is a macOS cdylib and `build.rs` only adds macOS linker arguments. Linux links the existing staticlibs.
 
@@ -94,20 +95,24 @@ The Rust plane is portable. `player-core`, `player-ffi`, `player-lua`, and `play
 | FFmpeg | n9.0.2, `ce8f11b9fac4cd7ccfb41ca7c01bc17f5cda8cc3` |
 | Symphonia | `b6336209bb40d57e4ed71079cf7f7fc6c4626aae` |
 | Lua | 5.2.4 vendored by `mlua` |
-| Shared deps | libass 0.17.5, FreeType 2.15.0, FriBiDi 1.0.17, HarfBuzz 15.0.0, dav1d 1.5.4 |
+| Static deps | libplacebo 7.387.0, shaderc 2026.4, libass 0.17.5, FreeType 2.15.0, FriBiDi 1.0.17, HarfBuzz 15.0.0, dav1d 1.5.4 |
+| Dynamic deps | musl libc, Vulkan loader, Wayland client and cursor, xkbcommon, ALSA from the Alpine image |
 
 ### Constraints
 
-- A static musl executable has no dynamic linker, so `dlopen` fails. Vulkan ICD discovery, ALSA plugin loading, and any library that loads a `.so` at runtime cannot be used.
-- `vo=wlshm` is the only software Wayland output in the pin. It scales with `libswscale`, draws OSD through the software path, and needs `wayland-client`, `wayland-cursor`, `xkbcommon`, and generated protocol code at build time.
-- ALSA's `default` PCM may route through a shared plugin. The static build must use a built-in or hardware PCM; the owner check records which device works on the test machine.
-- FFmpeg's VideoToolbox decoders and hwaccels are macOS-only. The Linux manifest needs a platform section; the existing allowlist enables `h264_videotoolbox` and `hevc_videotoolbox` unconditionally.
+- A musl binary cannot load the glibc `libvulkan`, Wayland, xkbcommon, or ALSA libraries on Ubuntu or Fedora. The artifact targets musl systems; a glibc build is a separate follow-on.
+- The Vulkan loader loads the ICD with `dlopen`. The ICD is a musl Mesa driver, such as lavapipe in CI or the host GPU driver on an Alpine desktop.
+- `gpu-next` needs a Vulkan context and libplacebo. `--gpu-context=waylandvk` requires `wayland_common.c` and `vulkan/context_wayland.c`; both are missing from the tree.
+- The C++ runtime used by shaderc, glslang, and SPIRV-Tools is not in LD1. Link it statically or the `NEEDED` check fails.
+- ALSA's `default` PCM may route through a shared plugin. The release must use a built-in or hardware PCM; the owner check records which device works on the test machine.
+- Rust's musl target defaults to `crt-static`. The staticlibs must match the final executable's libc linkage; two libcs fail the link.
+- FFmpeg's VideoToolbox decoders and hwaccels are macOS-only. The Linux allowlist drops them; hardware decode through VA-API is not in this campaign.
 - Static fontconfig reads system font configuration at runtime. Embedded fonts and libass shaping are the paths to verify in L2.3; system-font discovery is the main risk.
 - `mlua` with `lua52` and `vendored` builds Lua from source. The Linux build must not add a second interpreter or link a distro Lua.
 
 ### Measurement protocol
 
-`scripts/measure-linux.sh` reports, for a named revision: stripped binary size, unique link closure, cold and warm `--version` startup (7 runs, median and spread), first-frame latency (`--frames=1 --untimed`, 7 runs), idle and 1080p RSS, 1080p CPU, seek latency, exit latency, and protocol count. Use `/usr/bin/time -v` for RSS and CPU; use the same fixtures and flags every time. Interleave baseline and candidate runs when comparing. Record the command, revision, and date in `docs/metrics.md`. Do not present the tarball size as the binary size.
+`scripts/measure-linux.sh` reports, for a named revision: stripped binary size, direct `NEEDED` entries, static link size, cold and warm `--version` startup (7 runs, median and spread), first-frame latency (`--frames=1 --untimed`, 7 runs), idle and 1080p RSS, 1080p CPU, seek latency, exit latency, and protocol count. Use `/usr/bin/time -v` for RSS and CPU; use the same fixtures and flags every time. Interleave baseline and candidate runs when comparing. Record the command, revision, and date in `docs/metrics.md`. Do not present the tarball size as the binary size.
 
 ## Sequence
 
@@ -118,34 +123,34 @@ Every item names owned files, prerequisites, and one acceptance command. Items a
 **L0.1 Linux build probe.** (S)
 - Owns: `scripts/linux-check.sh`, `docs/status.md`.
 - Prereq: none.
-- Do: run `alpine:edge` x86_64, install `build-base clang cmake meson ninja pkgconf python3 wayland-dev wayland-protocols libxkbcommon-dev alsa-lib-dev`, and configure `build-linux` with `-Dcplayer=true -Dlibmpv=false -Dgpl=true -Dtests=false -Dfuzzers=false -Dbuild-date=false -Dwayland=enabled -Dalsa=enabled -Dvulkan=disabled -Dgl=disabled`. Record the first failure.
+- Do: run `alpine:edge` x86_64, install `build-base clang cmake meson ninja pkgconf python3 linux-headers wayland-dev wayland-protocols libxkbcommon-dev alsa-lib-dev vulkan-loader-dev vulkan-headers mesa-vulkan-drivers`, and configure `build-linux` with `-Dcplayer=true -Dlibmpv=false -Dgpl=true -Dtests=false -Dfuzzers=false -Dbuild-date=false -Dwayland=enabled -Dvulkan=enabled -Dalsa=enabled -Dgl=disabled -Dx11=disabled -Ddrm=disabled`. Record the first failure.
 - Accept: `scripts/linux-check.sh` exits nonzero and names the missing files; `docs/status.md` records the stop.
 
 **L0.2 Restore the Linux source set.** (M)
-- Owns: `video/out/wayland_common.c`, `video/out/wayland_common.h`, `video/out/vo_wlshm.c`, `audio/out/ao_alsa.c`, `osdep/als-linux.c`, `docs/licenses.md`.
+- Owns: `video/out/wayland_common.c`, `video/out/wayland_common.h`, `video/out/vulkan/context_wayland.c`, `audio/out/ao_alsa.c`, `osdep/als-linux.c`, `docs/licenses.md`.
 - Prereq: L0.1.
 - Do: copy each file from mpv v0.41.0 `41f6a645068483470267271e1d09966ca3b9f413`, keep the headers, and make no edits. Diff each against the pin.
 - Accept: `git diff --no-index` is empty for every restored file; `meson setup` gets past source resolution.
 
 **L0.3 Platform gates and the first Linux binary.** (M)
-- Owns: `meson.build`, `meson.options`, `video/out/vo.c`, `audio/out/ao.c`, `player/main.c`, `scripts/build-linux.sh`.
+- Owns: `audio/out/ao.c`, `player/main.c`, `meson.build`, `meson.options`, `scripts/build-linux.sh`.
 - Prereq: L0.2.
-- Do: make libplacebo optional and the placebo/gpu-next sources conditional; add `wlshm` and `alsa` to the driver tables under `HAVE_WAYLAND` and `HAVE_ALSA`; guard the bundle code in `player/main.c`; build `build-linux/player` with `wlshm` and ALSA enabled and `--vo=null --ao=null`.
-- Accept: `build-linux/player --version` runs; `--vo=help` lists `wlshm`; `--ao=help` lists `alsa`; the binary links no macOS framework.
+- Do: add `audio_out_alsa` to the AO table under `HAVE_ALSA`; guard the bundle code in `player/main.c`; enable Wayland, Vulkan, and ALSA; build `build-linux/player` with `gpu-next` and ALSA.
+- Accept: `build-linux/player --version` runs; `--vo=help` lists `gpu-next`; `--gpu-context=help` lists `waylandvk`; `--ao=help` lists `alsa`.
 
 **L0.4 Linux baseline.** (M)
 - Owns: `scripts/measure-linux.sh`, `docs/metrics.md`, `docs/architecture.md`.
 - Prereq: L0.3.
-- Do: record the binary size, link closure, cold and warm `--version`, idle RSS, and protocol count; write the platform split into `docs/architecture.md`.
+- Do: record the binary size, `NEEDED` entries, cold and warm `--version`, idle RSS, and protocol count; write the platform split into `docs/architecture.md`.
 - Accept: `scripts/measure-linux.sh baseline` writes one row; the doc names the remaining Linux gaps.
 
-### L1 — Static closure
+### L1 — Mostly static closure
 
 **L1.1 musl dependency prefix.** (L)
-- Owns: `scripts/build-deps-linux.sh`, `docs/licenses.md`, `docs/ffmpeg.md`.
+- Owns: `scripts/build-deps-linux.sh`, `docs/licenses.md`, `docs/linux.md`.
 - Prereq: L0.4.
-- Do: pin and build Wayland, wayland-protocols, libxkbcommon, ALSA, fontconfig, expat, FreeType, FriBiDi, HarfBuzz, libass, dav1d, and FFmpeg into `.work/deps/linux`. Build static libraries only. Do not build libplacebo, shaderc, glslang, SPIRV, Vulkan, or MoltenVK.
-- Accept: `pkg-config --static` resolves every dependency; the prefix contains no `.so`; every shipped `.a` has a recorded version.
+- Do: build libplacebo, shaderc, glslang, SPIRV-Headers, SPIRV-Tools, libass, fontconfig, expat, FreeType, FriBiDi, HarfBuzz, dav1d, and FFmpeg as static libraries for musl. Take the Vulkan loader, Wayland, xkbcommon, and ALSA from the pinned Alpine image as shared libraries. Do not build MoltenVK, GL, EGL, or DRM.
+- Accept: `pkg-config --static` resolves every static dependency; the prefix contains no `.so`; the shared libraries resolve from the Alpine image and every version is recorded.
 
 **L1.2 Linux FFmpeg allowlist.** (M)
 - Owns: `scripts/ffmpeg-components.txt`, `scripts/build-ffmpeg.sh`, `scripts/ffmpeg-manifest.sh`.
@@ -153,25 +158,25 @@ Every item names owned files, prerequisites, and one acceptance command. Items a
 - Do: split the allowlist into common and platform sections. Linux drops `h264_videotoolbox`, `hevc_videotoolbox`, and `--enable-videotoolbox`; it keeps the demuxers, decoders, parsers, bitstream filters, filters, and the `file` protocol. Validate every name against the pinned `configure --list-*`.
 - Accept: `tests/run.sh ffmpeg-audit` passes on Linux; `--list-protocols` reports `file` only; the manifest has no encoder, muxer, device, or network protocol.
 
-**L1.3 Static link.** (L)
+**L1.3 Mostly static link.** (L)
 - Owns: `meson.build`, `scripts/build-linux.sh`, `rust/player-release/Cargo.toml`, `rust/Cargo.toml`.
 - Prereq: L1.2.
-- Do: build `player-ffi` and `player-audio` for `x86_64-unknown-linux-musl`; link them statically into the C player; do not build the `player-release` cdylib on Linux; add `-static` or `-static-pie`; strip.
-- Accept: `file dist/player` reports `statically linked` or `static-pie linked`; `readelf -lW` has no `INTERP`; `readelf -dW` has no `NEEDED`; `ldd` reports not dynamic; `dist/player --version` runs.
+- Do: build `player-ffi` and `player-audio` for `x86_64-unknown-linux-musl` with the target installed through rustup; link them and the bundled libraries statically; link only LD1's dynamic libraries; link the C++ runtime statically; do not build the `player-release` cdylib on Linux; strip.
+- Accept: `file dist/player` reports an ELF 64-bit x86-64 executable; `readelf -dW` lists only the allowed `NEEDED` entries; `ldd` resolves every entry; `dist/player --version` runs.
 
-**L1.4 Static audit.** (S)
+**L1.4 Mostly static audit.** (S)
 - Owns: `scripts/audit-linux.sh`, `tests/run.sh`.
 - Prereq: L1.3.
-- Do: check the static shape, absence of network symbols and protocol strings, one `luaL_newstate` in the pre-strip binary, one `file` protocol, and license files. Add a negative case that a temporary `NEEDED` entry fails.
+- Do: check the `NEEDED` set, absence of build paths, absence of network symbols and protocol strings, one `luaL_newstate` in the pre-strip binary, one `file` protocol, and license files. Add a negative case that an extra `NEEDED` entry fails.
 - Accept: `scripts/audit-linux.sh` passes; the negative case fails as expected and is removed.
 
 ### L2 — Display and audio
 
-**L2.1 `wlshm` output.** (L)
-- Owns: `video/out/vo.c`, `video/out/wayland_common.c`, `video/out/vo_wlshm.c`, `video/out/meson.build`, `docs/architecture.md`.
+**L2.1 `gpu-next` output.** (L)
+- Owns: `video/out/wayland_common.c`, `video/out/vulkan/context_wayland.c`, `docs/architecture.md`.
 - Prereq: L1.4.
-- Do: register `wlshm`, disable `dmabuf-wayland`, and verify xdg-shell, fractional scale, resize, fullscreen, OSD, and clean shutdown against a headless Weston compositor.
-- Accept: a 1080p fixture plays through Weston; logs show `VO: [wlshm]`; no hang or crash.
+- Do: verify the Wayland Vulkan context, xdg-shell, fractional scale, resize, fullscreen, OSD, and clean shutdown under a headless Weston compositor with Mesa lavapipe.
+- Accept: a 1080p fixture plays through Weston; logs show `VO: [gpu-next]` and a Vulkan context; no hang or crash.
 
 **L2.2 Wayland input.** (M)
 - Owns: `video/out/wayland_common.c`, `input/input.c`, `player/lua/osc.lua`.
@@ -188,7 +193,7 @@ Every item names owned files, prerequisites, and one acceptance command. Items a
 **L2.4 ALSA output.** (M)
 - Owns: `audio/out/ao.c`, `audio/out/ao_alsa.c`, `scripts/build-deps-linux.sh`, `docs/linux.md`.
 - Prereq: L1.4.
-- Do: link static ALSA, register `alsa`, and test mono, stereo, 5.1, pause, seek, and device selection. Use a built-in or hardware PCM; do not depend on a shared ALSA plugin.
+- Do: link musl ALSA, register `alsa`, and test mono, stereo, 5.1, pause, seek, and device selection. Use a built-in or hardware PCM; do not depend on a shared ALSA plugin.
 - Accept: `--ao=help` lists `alsa`; playback through an ALSA null PCM exits cleanly; audible output is owner-run.
 
 ### L3 — Control plane and boundary
@@ -196,7 +201,7 @@ Every item names owned files, prerequisites, and one acceptance command. Items a
 **L3.1 Rust staticlibs on musl.** (M)
 - Owns: `rust/player-release/Cargo.toml`, `rust/Cargo.toml`, `scripts/build-linux.sh`.
 - Prereq: L1.3.
-- Do: build the staticlibs for `x86_64-unknown-linux-musl`, link them through Meson, and remove any macOS-only link argument or cdylib assumption from the Linux path.
+- Do: build the staticlibs for `x86_64-unknown-linux-musl` with the same libc linkage as the final executable, link them through Meson, and remove any macOS-only link argument or cdylib assumption from the Linux path.
 - Accept: `cargo test --target x86_64-unknown-linux-musl` passes; `nm` shows the bridge symbols; no duplicate Rust runtime.
 
 **L3.2 Local file and input.** (M)
@@ -215,7 +220,7 @@ Every item names owned files, prerequisites, and one acceptance command. Items a
 - Owns: `rust/player-lua`, `player/lua/`, `meson.build`.
 - Prereq: L3.1.
 - Do: build the vendored Lua 5.2 through `mlua` for musl, load the built-in OSC, and prove one interpreter in the static link.
-- Accept: `tests/run.sh lua-host` and `tests/run.sh osc` pass; the unstripped binary has one `luaL_newstate`.
+- Accept: `tests/run.sh lua-host` and `tests/run.sh osc` pass; the pre-strip binary has one `luaL_newstate`.
 
 ### L4 — Tests and release
 
@@ -225,11 +230,11 @@ Every item names owned files, prerequisites, and one acceptance command. Items a
 - Do: select the player path, IPC socket directory, `XDG_RUNTIME_DIR`, and network-denial command by platform; keep `--no-config`, `--vo=null`, and `--ao=null` for logic gates.
 - Accept: `linux-corpus`, `linux-audio`, `linux-local-only`, and `linux-osc` pass on Alpine x86_64; the macOS suite still passes.
 
-**L4.2 Headless Wayland gate.** (M)
+**L4.2 Headless GPU gate.** (M)
 - Owns: `tests/wayland.py`, `tests/run.sh`, `scripts/linux-check.sh`.
 - Prereq: L2.2, L4.1.
-- Do: start `weston --backend=headless-backend.so` with a private socket, play a fixture through `wlshm`, and assert the log, exit status, and OSD path. Keep screenshots diagnostic only.
-- Accept: `tests/run.sh linux-wlshm` passes in CI and locally.
+- Do: start `weston --backend=headless-backend.so` with a private socket, select Mesa lavapipe through the Vulkan ICD, play a fixture through `gpu-next`, and assert the log, exit status, and OSD path. Keep screenshots diagnostic only.
+- Accept: `tests/run.sh linux-gpu-next` passes in CI and locally.
 
 **L4.3 Fixtures.** (M)
 - Owns: `tests/fixtures/gen.sh`, `scripts/build-deps-linux.sh`.
@@ -248,19 +253,19 @@ Every item names owned files, prerequisites, and one acceptance command. Items a
 **L5.1 Linux docs.** (M)
 - Owns: `README.md`, `docs/install.md`, `docs/linux.md`, `docs/architecture.md`, `docs/scope.md`, `docs/ffmpeg.md`, `docs/licenses.md`, `docs/metrics.md`, `docs/status.md`, `AGENTS.md`.
 - Prereq: L4.4.
-- Do: document the Alpine build, the static limits (`wlshm`, ALSA PCMs, no GPU), runtime requirements, licenses, measurements, and the macOS/Linux split. Keep one topic per file and link from `AGENTS.md`.
+- Do: document the Alpine build, the dynamic library set, the musl runtime requirement, Vulkan/Mesa setup, ALSA PCMs, licenses, measurements, and the macOS/Linux split. Keep one topic per file and link from `AGENTS.md`.
 - Accept: every changed path and link resolves; the docs match the built binary.
 
 **L5.2 Linux CI.** (M)
 - Owns: `.github/workflows/linux.yml`.
 - Prereq: L4.4.
-- Do: add an `alpine:edge` x86_64 job that installs the build tools, runs `scripts/build-deps-linux.sh`, `scripts/release-linux.sh`, `scripts/audit-linux.sh`, and `tests/run.sh suite`, and uploads the tarball.
-- Accept: the job is green on a push; the artifact contains a static binary.
+- Do: add an `alpine:edge` x86_64 job that installs the build tools, Rust through rustup with the musl target, linux-headers, Vulkan, Wayland, xkbcommon, ALSA, Weston, and Mesa lavapipe; runs `scripts/build-deps-linux.sh`, `scripts/release-linux.sh`, `scripts/audit-linux.sh`, and `tests/run.sh suite`; and uploads the tarball.
+- Accept: the job is green on a push; the artifact contains the binary and the runtime package list.
 
 **L5.3 Final report.** (S)
 - Owns: `docs/final-report.md`, `docs/status.md`, `docs/repo-audit.md`.
 - Prereq: L5.1, L5.2.
-- Do: record the outcome, budgets, known limits (software rendering, no Pulse/PipeWire, no GPU), provenance, and follow-on boundary.
+- Do: record the outcome, budgets, known limits (musl runtime only, no glibc artifact, no hardware decode, lavapipe CI), provenance, and follow-on boundary.
 - Accept: `docs/status.md` lists the evidence; the report and audit agree with the built artifacts.
 
 ## Acceptance
@@ -269,24 +274,24 @@ Every item names owned files, prerequisites, and one acceptance command. Items a
 
 | Gate | Checks |
 |---|---|
-| `linux-check` | The Alpine container has the build tools; configure fails only at the recorded gaps. |
+| `linux-check` | The Alpine container has the build tools, Vulkan, Wayland, xkbcommon, ALSA, Weston, and lavapipe; configure fails only at the recorded gaps. |
 | `linux-build` | `scripts/release-linux.sh` produces `dist/player` and the tarball. |
-| `linux-static` | `file`, `readelf -l`, `readelf -d`, and `ldd` prove a static x86-64 executable. |
-| `linux-audit` | No network symbols or protocols, one `file` protocol, one Lua state, and the license set. |
+| `linux-mostly-static` | `readelf -d` lists only the allowed `NEEDED` entries and `ldd` resolves them. |
+| `linux-audit` | No network symbols or protocols, one `file` protocol, one Lua state, no build paths, and the license set. |
 | `linux-corpus` | Every fixture plays with `--vo=null --ao=null` and exits cleanly. |
-| `linux-wlshm` | A fixture plays through `wlshm` under headless Weston with no crash or hang. |
+| `linux-gpu-next` | A fixture plays through `gpu-next` and Vulkan under headless Weston with lavapipe. |
 | `linux-audio` | ALSA opens a null or hardware PCM for mono, stereo, and 5.1. |
 | `linux-local-only` | The URL matrix is rejected, local paths play, and playback succeeds under `unshare -n`. |
 | `linux-osc` | The OSC loads, registers its bindings and messages, and updates the OSD. |
 | `linux-release` | The tarball extracts, runs, and matches the recorded SHA-256. |
 
-`tests/run.sh suite` is the union of `linux-corpus`, `linux-audio`, `linux-wlshm`, `linux-local-only`, `linux-osc`, `linux-static`, and `linux-audit`, plus rapid pause/resume, repeated open/close, truncated and malformed input, unsupported codecs, and clean shutdown. Visual and audible judgment is owner-run and is never a gate.
+`tests/run.sh suite` is the union of `linux-corpus`, `linux-audio`, `linux-gpu-next`, `linux-local-only`, `linux-osc`, `linux-mostly-static`, and `linux-audit`, plus rapid pause/resume, repeated open/close, truncated and malformed input, unsupported codecs, and clean shutdown. Visual and audible judgment is owner-run and is never a gate.
 
 ### Definition of done
 
 - A fresh Alpine x86_64 checkout builds with `scripts/build-deps-linux.sh` then `scripts/release-linux.sh`.
-- `dist/player` is a stripped static x86-64 executable with no interpreter and no `NEEDED` entries.
-- The corpus plays under a Wayland compositor through `wlshm`, with working OSD, subtitles, keyboard, and pointer input.
+- `dist/player` is a stripped x86-64 musl executable whose `NEEDED` entries are inside the LD1 set.
+- The corpus plays under a Wayland compositor through `gpu-next` and Vulkan, with working OSD, subtitles, keyboard, and pointer input.
 - The player exposes one `file` protocol and makes no network connection.
 - ALSA plays on real hardware; the owner checklist records audibility and channel placement.
 - The macOS app, suite, and `make install` are unchanged.
@@ -298,14 +303,14 @@ Measured against the L0.4 baseline on the same host and fixtures.
 
 | Metric | Target |
 |---|---:|
-| Stripped binary | ≤ 40,000,000 B |
+| Stripped binary | ≤ 50,000,000 B |
+| Direct dynamic libraries | ≤ 6 |
 | Cold `--version` | ≤ 300 ms |
 | Warm `--version` | ≤ 150 ms |
 | First frame, 1080p | ≤ 1 s |
 | 1080p RSS | ≤ 300 MB |
 | Seek to first new frame | ≤ 250 ms |
 | Network schemes | 0 |
-| Dynamic dependencies | 0 |
 | Duplicate Lua interpreters | 0 |
 
 Report a failure as a failure. Do not relax a budget to hide a regression; investigate it.
@@ -314,10 +319,11 @@ Report a failure as a failure. Do not relax a budget to hide a regression; inves
 
 These need the owner or hardware the executor does not have. They do not hold slices open; record the result in `docs/manual-checklist.md` at each milestone and before release.
 
+- An Alpine or other musl desktop with a Vulkan loader and Mesa driver for real GPU output.
 - A real Wayland compositor (sway, GNOME, KDE) for window, fullscreen, fractional-scale, and input behavior.
 - A real ALSA device for audibility, channel placement, and underrun checks. CI has no sound card.
-- x86-64 Linux hosts other than Alpine and the CI runner, if the tarball is distributed broadly.
-- Visual quality: subtitle shaping and positioning, motion smoothness, letterboxing, and scaling artifacts from the software output.
+- x86-64 musl hosts other than Alpine, if the tarball is distributed beyond Alpine.
+- Visual quality: subtitle shaping and positioning, motion smoothness, letterboxing, HDR behavior, and GPU scaling.
 - Signing or distribution. Linux binaries are unsigned; no package repository or notarization is in scope.
 
 Command: `scripts/manual-checklist.sh --fixture-dir .work/fixtures --release-linux` opens the Linux binary with each fixture and prints the checklist; the owner records pass/fail in `docs/manual-checklist.md`.
@@ -329,7 +335,7 @@ Command: `scripts/manual-checklist.sh --fixture-dir .work/fixtures --release-lin
 - Restore the named files from the mpv v0.41.0 pin and rewrite the Linux build surface.
 - Build the dependency closure from pinned sources in `.work/deps/linux`.
 - Add Linux tests, scripts, docs, and the Linux CI job.
-- Build and run the player, drive IPC, run a headless Wayland compositor, and inspect the static binary.
+- Build and run the player, drive IPC, run a headless Wayland compositor with lavapipe, and inspect the dynamic and static closure.
 - Commit local changes. Do not publish a release, push tags, or notarize.
 
 ### Hard stops
@@ -339,30 +345,31 @@ Park the item on `park/<item>` with the exact cause and a retry condition when: 
 ### Forbidden
 
 - Network access by the built player; network protocols, TLS, CA bundles, remote resource loading, or subprocess URL resolution.
-- X11, OpenGL, Vulkan, EGL, DRM, libplacebo, shaderc, MoltenVK, or a GPU driver in the static build.
-- PulseAudio, PipeWire, JACK, SDL, or a shared ALSA plugin in the release path.
-- aarch64 Linux, universal binaries, distribution packages, systemd units, or desktop-file integration.
+- X11, OpenGL, EGL, DRM, wlshm, a second graphics API, or a GPU driver in the static closure.
+- Adding dynamic libraries outside LD1; PulseAudio, PipeWire, JACK, SDL, or a shared ALSA plugin.
+- A glibc artifact, aarch64 Linux, universal binaries, distribution packages, systemd units, or desktop-file integration.
 - Changing macOS behavior, the macOS release shape, or the macOS dependency pins.
 - Automatic user config or scripts in the shipped player.
 - Feature parity with mpv. This is the defined local-playback scope only.
 
 ### Contract changes carried by this campaign
 
-- A second platform with a static binary and a tarball release.
-- A second VO (`wlshm`) and AO (`alsa`) on Linux.
-- No GPU rendering, HDR, or hardware video decode on Linux.
-- No PulseAudio or PipeWire routing; ALSA devices only.
+- A second platform with a mostly static musl binary and a tarball release.
+- A second VO (`gpu-next` over Vulkan/Wayland) and AO (`alsa`) on Linux.
+- The dynamic library set is limited to musl libc, Vulkan, Wayland, xkbcommon, and ALSA.
+- The artifact runs on musl systems only; glibc distributions are a separate follow-on.
 - The local-only rejection boundary is unchanged.
 
 ### Non-goals
 
-aarch64 Linux, X11, Wayland dmabuf, Vulkan/OpenGL rendering, VA-API, DRM/KMS, PulseAudio, PipeWire, JACK, SDL, Flatpak, Snap, AppImage, distro packages, systemd integration, desktop portals, HDR, hardware decode, a Rust OSC, universal binaries, notarization, and upstream feature parity.
+glibc builds, aarch64 Linux, X11, Wayland dmabuf, OpenGL/EGL rendering, VA-API, DRM/KMS, hardware video decode, PulseAudio, PipeWire, JACK, SDL, Flatpak, Snap, AppImage, distro packages, systemd integration, desktop portals, a Rust OSC, universal binaries, notarization, and upstream feature parity.
 
 ### Follow-on (not scheduled)
 
-- A mostly-static GPU build with `gpu-next`, Vulkan, and VA-API, packaged separately from the fully static build.
+- A mostly static glibc `gpu-next` build for mainstream distributions.
+- A fully static musl `wlshm` build as a portable software fallback.
 - aarch64 Linux and additional musl architectures.
-- Packaging for one distribution family after the static tarball is stable.
+- VA-API hardware decode and HDR output after the GPU path is stable.
 
 ## Reference
 
@@ -373,20 +380,21 @@ Verified against mpv v0.41.0 at `41f6a645068483470267271e1d09966ca3b9f413` and F
 | Path | Why it matters |
 |---|---|
 | `video/out/wayland_common.c`, `.h` | Wayland registry, surface, seat, input, and xdg-shell state. |
-| `video/out/vo_wlshm.c` | Software Wayland output over `wl_shm`; the only static VO in the pin. |
-| `audio/out/ao_alsa.c` | ALSA output; the only static audio path. |
+| `video/out/vulkan/context_wayland.c` | Vulkan context over a Wayland surface; the `gpu-next` path. |
+| `audio/out/ao_alsa.c` | ALSA output; the only audio path. |
 | `osdep/als-linux.c` | Ambient light sensor reader for Linux; `meson.build` names it but the file is gone. |
-| `video/out/vo.c` | VO registry; add `wlshm` under a feature guard. |
-| `audio/out/ao.c` | AO registry; add `alsa` under a feature guard. |
+| `audio/out/ao.c` | AO registry; add `alsa` under `HAVE_ALSA`. |
 | `player/main.c` | Guard bundle-only `MPVBUNDLE` and `VK_DRIVER_FILES` code for macOS. |
 
 ### Upstream and prior art
 
-- mpv: <https://github.com/mpv-player/mpv> — authoritative playback, Wayland, and ALSA behavior.
+- mpv: <https://github.com/mpv-player/mpv> — authoritative playback, Wayland, Vulkan, and ALSA behavior.
 - FFmpeg: <https://github.com/FFmpeg/FFmpeg> — component selection and static build.
+- libplacebo: <https://github.com/haasn/libplacebo> — rendering and color management.
 - libass: <https://github.com/libass/libass> — subtitle shaping and rendering.
 - Wayland: <https://gitlab.freedesktop.org/wayland/wayland> — client library and protocol scanner.
 - ALSA: <https://github.com/alsa-project/alsa-lib> — audio output.
+- Mesa: <https://gitlab.freedesktop.org/mesa/mesa> — Vulkan drivers, including lavapipe for CI.
 
 ### Campaign documents
 

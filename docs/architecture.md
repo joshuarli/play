@@ -71,4 +71,4 @@ A bundle launch that exits with a load error shows one alert with the log path. 
 
 ## Follow-on
 
-The A/V scheduler, general demux and decode orchestration beyond the Symphonia audio bridge, renderer integration, and Linux remain outside this scope. A network capability, a second Lua interpreter, or automatic user config and scripts would need an explicit decision.
+The A/V scheduler, general demux and decode orchestration beyond the Symphonia audio bridge, and renderer integration remain outside this scope. The Linux x86-64 musl gpu-next build is the active campaign (`PLAN.md`). A network capability, a second Lua interpreter, or automatic user config and scripts would need an explicit decision.
