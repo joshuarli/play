@@ -82,7 +82,7 @@ fi
 echo
 echo "Commands:"
 
-python3 - "$ROOT/tests/fixtures/manifest.json" "$FIXTURE_DIR" "$PLAYER" <<'PY'
+python3 - "$ROOT/tests/fixtures/manifest.json" "$FIXTURE_DIR" "$PLAYER" "$LINUX" <<'PY'
 import json
 import pathlib
 import shlex
@@ -91,6 +91,7 @@ import sys
 manifest = json.loads(pathlib.Path(sys.argv[1]).read_text())
 fixture_dir = pathlib.Path(sys.argv[2])
 player = pathlib.Path(sys.argv[3])
+audio = "alsa" if sys.argv[4] == "1" else "coreaudio"
 for name, entry in sorted(manifest["fixtures"].items()):
     if entry.get("role") not in ("corpus", "audio", "hwdec-fallback"):
         continue
@@ -98,7 +99,7 @@ for name, entry in sorted(manifest["fixtures"].items()):
     if not path.exists():
         continue
     print(f"  {name}: {path}")
-    print(f"    {shlex.quote(str(player))} --no-config --vo=gpu-next --ao=coreaudio "
+    print(f"    {shlex.quote(str(player))} --no-config --vo=gpu-next --ao={audio} "
           f"{shlex.quote(str(path))}")
 PY
 
