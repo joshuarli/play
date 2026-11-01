@@ -1,0 +1,34 @@
+[package]
+name = "symphonia-play"
+description = "Project Symphonia audio player demo application."
+authors = ["Philip Deljanov <philip.deljanov@gmail.com>"]
+publish = false
+default-run = "symphonia-play"
+# Common package metadata located in workspace Cargo.toml.
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[features]
+exp-video-codecs = ["symphonia/exp-video-codecs"]
+exp-subtitle-codecs = ["symphonia/exp-subtitle-codecs"]
+
+# Enable experimental features since symphonia-play is a development tool.
+default = ["exp-subtitle-codecs", "exp-video-codecs"]
+
+[dependencies]
+cpal = "0.18.2"
+crossterm = { version = "0.29.0", default-features = false, features = ["events"] }
+lazy_static = { workspace = true }
+lexopt = "0.3.2"
+log = { workspace = true, features = ["release_max_level_info"] }
+rb = "0.4.1"
+regex-lite = "0.1.9"
+rubato = "5.0.1"
+symphonia = { version = "0.6.1", path = "../symphonia", features = ["all"] }
+
+[lints]
+workspace = true

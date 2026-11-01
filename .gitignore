@@ -1,0 +1,9 @@
+/subprojects/*
+!/subprojects/packagefiles
+!/subprojects/*.wrap
+.work/
+build/
+dist/
+target/
+__pycache__/
+*.pyc

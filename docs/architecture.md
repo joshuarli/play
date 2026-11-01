@@ -1,0 +1,25 @@
+# Architecture
+
+## Audio decode boundary (P1.2)
+
+- **Demuxing:** FFmpeg (`demux_lavf`) remains the only demuxer. It produces encoded audio and video packets and the per-stream codec parameters. Keeping one demuxer preserves mpv's existing timestamp, seek, and A/V scheduling behavior.
+- **Video decode:** FFmpeg decodes video through `vd_lavc`, including the VideoToolbox hardware path.
+- **Audio decode:** Symphonia, vendored at `vendor/symphonia` (commit `b6336209bb40d57e4ed71079cf7f7fc6c4626aae`, MPL-2.0), decodes AAC, ALAC, FLAC, MP3, Opus, PCM, and Vorbis.
+- **Bridge:** `rust/player-audio` is a Rust staticlib. `audio/decode/ad_symphonia.c` maps `mp_codec_params` to `struct player_audio_params`, and the Rust side creates a Symphonia `AudioDecoder` from `AudioCodecParameters`. The C ABI is in `rust/player-audio/include/player_audio.h`.
+- **Data flow:** the demuxer packet bytes and timestamps go to `player_audio_decode`; Symphonia returns interleaved f32 PCM in a handle-owned buffer; the C filter copies it into an `mp_aframe` (`AF_FORMAT_FLOAT`) and writes it to the decoder output pin. The buffer is valid until the next decode or destroy call.
+- **Selection:** `mp_decoder_entry` carries a driver id. `audio_decoder_list()` registers Symphonia first and libavcodec second. P1.2 used libavcodec as a fallback while the bridge matured; P1.3 removed the FFmpeg audio decoders, so Symphonia is the only audio decoder in the final link.
+- **Extradata:** mpv copies subtitle extradata into `mp_codec_params.extradata`; for audio and video the original `lav_codecpar` holds it. `ad_symphonia.c` prefers `codec->extradata` and falls back to `codec->lav_codecpar`.
+- **Lifetime and errors:** the Rust handle is owned by the C filter and destroyed on filter destroy. Every FFI entry point catches panics and writes a bounded error string. No Rust unwind crosses the C boundary. Decode errors fail the audio filter and are logged.
+- **Build:** `scripts/build.sh` builds `rust/Cargo.toml -p player-audio` with `CARGO_TARGET_DIR=.work/deps/player-audio/target`, then passes `-Dplayer-audio-lib=<staticlib>` to Meson. Meson links the archive through `declare_dependency(link_args: ...)`. P4.1 replaces this temporary option with the workspace's Meson/Cargo integration.
+- **Not changed:** mpv's A/V scheduler, seek pipeline, audio filters, CoreAudio output, and demuxer. Symphonia does not demux; a second demuxer would need a separate synchronization design and is follow-on work.
+
+## License boundary
+
+Symphonia is MPL-2.0. mpv remains GPL-2.0-or-later. Symphonia's source and license are preserved in `vendor/symphonia`. The release must carry the MPL notice and source availability; `docs/licenses.md` records the inventory and P8.3 audits it.
+
+## Open work
+
+- P1.4 added the FFmpeg manifest gate over the frozen allowlist.
+- P2.1 locks the Meson feature surface and removes unused Lua modules.
+- P4.1 moves the Rust link into the normal workspace/Meson path and adds `player-core`/`player-ffi`.
+- P7 moves config, playlist, input, state, and local file handling into Rust; the audio bridge stays at the decode boundary.

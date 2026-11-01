@@ -1,0 +1,2 @@
+[alias]
+dist = ["build", "--profile", "dist", "-p", "symphonia-play", "-Z", "build-std=core,std,alloc,panic_abort"]

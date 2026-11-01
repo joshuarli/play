@@ -1,0 +1,20 @@
+[package]
+name = "player-audio"
+version = "0.1.0"
+edition = "2024"
+license = "MPL-2.0"
+
+[lib]
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+symphonia = { path = "../../vendor/symphonia/symphonia", default-features = false, features = [
+    "aac",
+    "alac",
+    "flac",
+    "mp3",
+    "opus",
+    "pcm",
+    "vorbis",
+    "opt-simd",
+] }

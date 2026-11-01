@@ -1,0 +1,21 @@
+[package]
+name = "symphonia-check"
+description = "Project Symphonia QA tool."
+authors = ["Philip Deljanov <philip.deljanov@gmail.com>"]
+publish = false
+# Common package metadata located in workspace Cargo.toml.
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+version.workspace = true
+
+[dependencies]
+clap = "4.6.7"
+log = { workspace = true, features = ["release_max_level_info"] }
+regex-lite = "0.1.9"
+symphonia = { version = "0.6.1", path = "../symphonia", features = ["all"] }
+
+[lints]
+workspace = true
