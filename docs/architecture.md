@@ -33,6 +33,15 @@ The stream list contains `stream_file` and `stream_cb` only; the demuxer list co
 
 When `libmpv` is disabled, the sources compile directly into the `mpv` executable; no shared `libmpv` target or dylib is produced. The build gate asserts that no shared-library target exists, no `libmpv` dylib remains, and `otool -L` does not reference `libmpv`. The macOS playback path is the explicit top-level source set; inherited optional-feature conditionals are disabled and outside the built path.
 
+## FFI boundary (P4.3)
+
+- Opaque handles: `player-audio` decoders are created by `player_audio_create()` and destroyed by `player_audio_destroy()`; the C caller owns the handle and must not use it after destruction. No Rust-owned pointer escapes.
+- Strings and errors: `player_ffi_classify_input()` writes a NUL-terminated path or error into caller-provided buffers. It never returns Rust-owned memory, and `BUFFER_TOO_SMALL` is a typed result.
+- Typed errors: `PLAYER_FFI_INPUT_REJECTED` distinguishes a policy rejection from `PLAYER_FFI_INPUT_INVALID` (empty or malformed) and `PLAYER_FFI_INPUT_BUFFER_TOO_SMALL`.
+- Panics: exported functions catch unwinding before returning; no Rust panic crosses the C boundary. `player_ffi_panic_for_test()` exercises that path.
+- Threading: `player-audio` decoder handles are not thread-safe; the caller serializes access. There are no shared mutable globals in the FFI.
+- Callbacks: none are exposed yet. Future registration must be paired with explicit unregister/cleanup and must not run after the owning handle is destroyed.
+
 ## Open work
 
 - P1.4 added the FFmpeg manifest gate over the frozen allowlist.
@@ -45,5 +54,6 @@ When `libmpv` is disabled, the sources compile directly into the `mpv` executabl
 - P3.2 locked the boundary with the URL/playlist/hostile-config tests and `scripts/audit.sh`.
 - P4.1 added `player-core`/`player-ffi`, built both static libraries, and linked/called `player_ffi_abi_version` from the player.
 - P4.2 moved the input classifier to `player-core::input`; the C boundary delegates through `player_ffi_classify_input` with typed results.
-- P4.3 documents the FFI invariants and adds the C bridge test.
+- P4.3 documented the FFI invariants and added the C bridge test.
+- P5.1 audits and ports the Lua API surface to `mlua`.
 - P7 moves config, playlist, input, state, and local file handling into Rust; the audio bridge stays at the decode boundary.

@@ -77,6 +77,11 @@ unsafe fn copy_cstr(dst: *mut c_char, cap: usize, value: &str) -> bool {
     true
 }
 
+#[unsafe(no_mangle)]
+pub extern "C" fn player_ffi_panic_for_test() -> i32 {
+    catch_unwind(|| panic!("ffi test panic")).map(|_| 0).unwrap_or(1)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

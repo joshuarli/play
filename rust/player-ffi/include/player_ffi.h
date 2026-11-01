@@ -18,4 +18,6 @@ int32_t player_ffi_classify_input(
     char *out_path, size_t out_path_cap,
     char *err, size_t err_cap);
 
+int32_t player_ffi_panic_for_test(void);
+
 #endif

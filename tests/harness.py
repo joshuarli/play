@@ -1116,6 +1116,31 @@ def gate_rust_link(results, args):
     results.check("rust-link: exit", mpv.returncode == 0, f"exit {mpv.returncode}")
 
 
+def gate_ffi(results, args):
+    proc = subprocess.run(
+        [str(ROOT / "scripts" / "build.sh")], cwd=str(ROOT),
+        capture_output=True, text=True, timeout=300,
+    )
+    results.check("ffi: build", proc.returncode == 0,
+                  tail((proc.stdout + proc.stderr).splitlines(), 20))
+    ffi_lib = ROOT / ".work" / "deps" / "player-audio" / "target" / "release" / "libplayer_ffi.a"
+    binary = ROOT / "build" / "ffi_test"
+    proc = subprocess.run(
+        ["cc", "-std=c11", "-Wall", "-Wextra",
+         "-I", str(ROOT / "rust" / "player-ffi" / "include"),
+         str(ROOT / "tests" / "ffi_test.c"), str(ffi_lib), "-o", str(binary)],
+        cwd=str(ROOT), capture_output=True, text=True, timeout=120,
+    )
+    results.check("ffi: compile", proc.returncode == 0,
+                  tail((proc.stdout + proc.stderr).splitlines(), 20))
+    if proc.returncode != 0:
+        return
+    proc = subprocess.run([str(binary)], cwd=str(ROOT), capture_output=True,
+                          text=True, timeout=30)
+    results.check("ffi: run", proc.returncode == 0 and "ffi ok" in proc.stdout,
+                  f"exit {proc.returncode}: {(proc.stdout + proc.stderr).strip()}")
+
+
 def gate_baseline_docs(results, args):
     path = ROOT / "docs" / "baseline.md"
     if not path.exists():
@@ -1297,6 +1322,7 @@ GATES = {
     "state": gate_state,
     "build": gate_build,
     "rust-link": gate_rust_link,
+    "ffi": gate_ffi,
     "baseline-docs": gate_baseline_docs,
     "meta": gate_meta,
     "failures": gate_failures,
@@ -1305,7 +1331,7 @@ GATES = {
 SUITE = [
     "fixtures", "corpus", "audio", "hwdec", "seek", "local-paths",
     "local-only", "osc", "input", "playlist", "cli", "state", "failures",
-    "rust-link",
+    "rust-link", "ffi",
 ]
 
 
