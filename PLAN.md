@@ -3,13 +3,13 @@
 ## Status
 
 - **Goal:** A compact, dependable, local-only macOS ARM64 media player: mpv's proven playback pipeline, a minimal pinned FFmpeg, no network backend, and a Rust-owned control plane with the OSC running on `mlua`.
-- **Last accepted revision:** `ea8ce98` (P7.3). P0.1–P1.4 and P2.1–P7.3 have run.
-- **Accepted:** P0.1–P1.4, P2.1–P7.3. **Red:** none. **Parked:** none.
-- **Next slice:** P7.4 — move player state and event dispatch into Rust.
-- **Resume prompt:** `Read PLAN.md and execute P7.4. Continue in item order; stop only at a hard stop or when P8 is complete.`
-- **First command:** `rg -n 'mp_property|mp_notify|MP_EVENT|mp_client' player/client.c player/command.c player/osd.c | head -80`.
+- **Last accepted revision:** `a8df081` (P7.5). P0.1–P1.4 and P2.1–P7.5 have run.
+- **Accepted:** P0.1–P1.4, P2.1–P7.5. **Red:** none. **Parked:** none.
+- **Next slice:** P8.1 — build the release dependency closure and app bundle.
+- **Resume prompt:** `Read PLAN.md and execute P8.1. Continue in item order; stop only at a hard stop or when P8 is complete.`
+- **First command:** `rg -n 'URL|SHA|version' scripts/build-ffmpeg.sh; brew info --json=v2 ffmpeg libplacebo libass shaderc dav1d molten-vk vulkan-loader vulkan-headers`.
 - **Test mode:** headless (`--vo=null --ao=null`); GUI and renderer checks are owner-run.
-- **Scope:** P7.3 typed the supported command vocabulary and validation; P7.4 moves state/events.
+- **Scope:** P7.5 moved local file I/O into Rust; P8 builds the pinned release closure and app.
 
 This file is the campaign log as well as the plan. Update **Status** after every accepted slice. Git history holds the past; do not append dated checkpoints, handoffs, or a second status register.
 
