@@ -756,6 +756,31 @@ def gate_local_only(results, args):
     results.check("local-only remote subtitle: exit", mpv.returncode == 0,
                   f"exit {mpv.returncode}")
 
+    hostile = TMP / "hostile-home"
+    hostile_conf = hostile / ".config" / "mpv"
+    hostile_conf.mkdir(parents=True, exist_ok=True)
+    (hostile_conf / "mpv.conf").write_text(
+        "script=/nonexistent/evil.lua\n"
+        "load-scripts=yes\n"
+        "vo=x11\n"
+    )
+    (hostile_conf / "input.conf").write_text("x quit\n")
+    env = os.environ.copy()
+    env["HOME"] = str(hostile)
+    env["MPV_HOME"] = str(hostile_conf)
+    env["XDG_CONFIG_HOME"] = str(hostile / ".config")
+    env["XDG_STATE_HOME"] = str(hostile / ".state")
+    env["XDG_CACHE_HOME"] = str(hostile / ".cache")
+    proc = subprocess.run(
+        [str(MPV), "--vo=null", "--ao=null", "--frames=1", str(h264)],
+        cwd=str(ROOT), env=env, capture_output=True, text=True, timeout=30,
+    )
+    hostile_output = (proc.stdout + proc.stderr).lower()
+    results.check("local-only hostile config: no script",
+                  proc.returncode == 0 and "evil.lua" not in hostile_output and
+                  "failed to load script" not in hostile_output,
+                  f"exit {proc.returncode}: {hostile_output.strip()}")
+
     sandbox = shutil.which("sandbox-exec")
     if sandbox:
         proc = subprocess.run(
@@ -1123,6 +1148,7 @@ def gate_meta(results, args):
         "scripts/build.sh", "scripts/dev-deps.sh",
         "scripts/build-ffmpeg.sh", "scripts/measure.sh",
         "scripts/ffmpeg-components.txt", "scripts/ffmpeg-manifest.sh",
+        "scripts/audit.sh",
         "scripts/manual-checklist.sh", "tests/run.sh", "tests/harness.py",
         "tests/fixtures/gen.sh", "tests/fixtures/manifest.json",
         "rust/Cargo.toml", "rust/Cargo.lock",

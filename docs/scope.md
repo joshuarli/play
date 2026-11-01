@@ -53,6 +53,10 @@ The boundary is applied at startup and CLI playlist insertion, IPC `loadfile`, M
 
 Automatic user config and scripts are disabled by default (`load_config=false`, `auto_load_scripts=false`); the built-in OSC remains. The sandbox gate uses `(version 1)(allow default)(deny network*)`; this host requires the explicit default allow to execute the player under `sandbox-exec`.
 
+## Boundary audit (P3.2)
+
+`tests/local_only.py` carries the URL matrix. The local-only gate also creates a hostile temporary `HOME` with `mpv.conf`, `input.conf`, and a nonexistent script; playback succeeds without loading them. `scripts/audit.sh` runs the FFmpeg audit, build gate, and local-only gate, then rechecks `--list-protocols` and `otool -L` for network protocols and stray linked libraries.
+
 ## Remaining technical debt
 
 - `stream_memory` remains as an internal helper for charset conversion; it has no protocol registration.

@@ -80,4 +80,4 @@ Current result: 19 passed, 0 failed. A temporary manifest with `http` added to t
 
 ## Next
 
-P3.1 enforced the local-only input boundary and disabled automatic user config/scripts. P3.2 locks the boundary with the URL, playlist, hostile-config, and audit tests.
+P3.2 locked the local-only boundary with the URL matrix, hostile-config check, and `scripts/audit.sh`. P4.1 adds the first Rust control-plane link.
