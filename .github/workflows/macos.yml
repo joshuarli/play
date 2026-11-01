@@ -51,9 +51,9 @@ jobs:
           path: |
             .work/deps/release
             .work/deps/player-audio/target
-          key: player-macos-deps-${{ hashFiles('scripts/build-deps.sh', 'scripts/build-ffmpeg.sh', 'scripts/ffmpeg-components.txt', 'rust/Cargo.lock', 'rust-toolchain.toml') }}
+          key: player-macos-deps-${{ github.workspace }}-${{ hashFiles('scripts/build-deps.sh', 'scripts/build-ffmpeg.sh', 'scripts/ffmpeg-components.txt', 'rust/Cargo.lock', 'rust-toolchain.toml') }}
           restore-keys: |
-            player-macos-deps-
+            player-macos-deps-${{ github.workspace }}-
 
       - name: Build release app
         run: scripts/release.sh
