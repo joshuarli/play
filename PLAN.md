@@ -3,13 +3,13 @@
 ## Status
 
 - **Goal:** A compact, dependable, local-only macOS ARM64 media player: mpv's proven playback pipeline, a minimal pinned FFmpeg, no network backend, and a Rust-owned control plane with the OSC running on `mlua`.
-- **Last accepted revision:** `campaign-base` (consolidated root; P0.1–P1.4 accepted).
-- **Accepted:** P0.1–P1.4. **Red:** none. **Parked:** none.
-- **Next slice:** P2.1 — lock the Meson feature surface.
-- **Resume prompt:** `Read PLAN.md and execute P2.1. Continue in item order; stop only at a hard stop or when P8 is complete.`
-- **First command:** `meson configure build`.
+- **Last accepted revision:** `b8588ea` (P2.1). P0.1–P1.4 and P2.1 have run.
+- **Accepted:** P0.1–P1.4, P2.1. **Red:** none. **Parked:** none.
+- **Next slice:** P2.2 — remove unsupported stream/network/disc/capture modules.
+- **Resume prompt:** `Read PLAN.md and execute P2.2. Continue in item order; stop only at a hard stop or when P8 is complete.`
+- **First command:** `build/mpv --list-protocols`.
 - **Test mode:** headless (`--vo=null --ao=null`); GUI and renderer checks are owner-run.
-- **Scope:** P1.4 landed: FFmpeg is video/demux only; Symphonia decodes AAC, ALAC, FLAC, MP3, Opus, PCM, and Vorbis. The repository history is consolidated under D16.
+- **Scope:** P2.1 locked the feature surface and embedded Lua modules; P2.2 reduces the stream/demux surface to local playback.
 
 This file is the campaign log as well as the plan. Update **Status** after every accepted slice. Git history holds the past; do not append dated checkpoints, handoffs, or a second status register.
 
