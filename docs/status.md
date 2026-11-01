@@ -2,7 +2,7 @@
 
 ## Campaign
 
-The campaign is complete through P8.3. P8.4 is the final documentation pass.
+The campaign is complete through P8.4. The final report, install/resume material, architecture/provenance, and license audit are in place.
 
 | Slice | State | Evidence |
 |---|---|---|
@@ -16,7 +16,7 @@ The campaign is complete through P8.3. P8.4 is the final documentation pass.
 | P8.1 | accepted | pinned closure and `dist/Player.app` |
 | P8.2 | accepted | 26.8 MB app / 9.64 MB executable |
 | P8.3 | accepted | 292-case suite, audit, final budget gate |
-| P8.4 | in progress | final report/install/resume |
+| P8.4 | complete | final report/install/resume |
 
 ## Final evidence
 
@@ -36,6 +36,6 @@ The campaign is complete through P8.3. P8.4 is the final documentation pass.
 
 ## Resume
 
-`Read PLAN.md and execute P8.4. Continue in item order; stop only at a hard stop or when P8 is complete.`
+`Read PLAN.md and verify the final state. The campaign is complete; stop at a documented limitation or an owner decision.`
 
 First command: `tests/run.sh suite && scripts/audit.sh`.

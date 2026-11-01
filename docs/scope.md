@@ -62,7 +62,8 @@ Automatic user config and scripts are disabled by default (`load_config=false`, 
 - `stream_memory` remains as an internal helper for charset conversion; it has no protocol registration.
 - `demux_timeline` and the CUE parser remain for local MKV ordered chapters and embedded CUE metadata.
 - `demux_lavf` keeps m3u8/HLS extension heuristics, but the FFmpeg HLS demuxer is not built.
-- The P2.3 source list still contains dead platform conditionals; P2.5 simplifies it.
+- The P2.3 source list still contains dead platform conditionals; P2.5 simplified the reachable build surface and left the conditionals documented.
+- The C `subprocess` command, `.run` script backend, and disabled cplugin loader remain reachable only by trusted scripts; they are not part of the built-in OSC or local-file path.
 
 
 ## Removed in P7.2

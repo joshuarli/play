@@ -3,13 +3,13 @@
 ## Status
 
 - **Goal:** A compact, dependable, local-only macOS ARM64 media player: mpv's proven playback pipeline, a minimal pinned FFmpeg, no network backend, and a Rust-owned control plane with the OSC running on `mlua`.
-- **Last accepted revision:** `acf2fea` (P8.2). P0.1–P1.4 and P2.1–P8.2 have run.
-- **Accepted:** P0.1–P1.4, P2.1–P8.2. **Red:** none. **Parked:** none.
-- **Next slice:** P8.3 — final closure verification and evidence.
-- **Resume prompt:** `Read PLAN.md and execute P8.3. Continue in item order; stop only at a hard stop or when P8 is complete.`
-- **First command:** `scripts/release.sh && tests/run.sh suite`.
+- **Last accepted revision:** `f1cb7e0` (P8.3); P8.4 is the final documentation commit on top.
+- **Accepted:** P0.1–P1.4, P2.1–P8.4. **Red:** none. **Parked:** none.
+- **Next slice:** none. The campaign is complete.
+- **Resume prompt:** `Read PLAN.md and verify the final state. The campaign is complete; stop at a documented limitation or an owner decision.`
+- **First command:** `tests/run.sh suite && scripts/audit.sh`.
 - **Test mode:** headless (`--vo=null --ao=null`); GUI and renderer checks are owner-run.
-- **Scope:** P8.2 measured and shrank the release app; P8.3 runs the final closure verification and evidence.
+- **Scope:** P8.4 records the final docs, provenance, budgets, jank findings, and follow-on boundary.
 
 This file is the campaign log as well as the plan. Update **Status** after every accepted slice. Git history holds the past; do not append dated checkpoints, handoffs, or a second status register.
 
@@ -387,7 +387,7 @@ Apply the migration rule to every P7 item: map the existing implementation and c
 ### P8 — Release
 
 **P8.1 Reproducible dependency build and app bundle.** (L)
-- Owns: `scripts/build-deps.sh`, `scripts/release.sh`, `packaging/`, `tests/release.py`, `tests/run.sh`, `docs/licenses.md`.
+- Owns: `scripts/build-deps.sh`, `scripts/release.sh`, `scripts/bundle.py`, `tests/harness.py`, `tests/run.sh`, `docs/licenses.md`.
 - Prereq: P7.5.
 - Do: build FFmpeg/libass/libplacebo/shaderc (or glslang)/dav1d/Vulkan headers+loader/Lua from pinned sources (or checksum-pinned official MoltenVK binaries) into `.work/deps/release`; no Homebrew libraries. Link the smallest viable closure; bundle `libMoltenVK.dylib` and the ICD JSON in `Player.app`; set `VK_ICD_FILENAMES`/`VK_DRIVER_FILES` before Vulkan init; audit `@rpath`/`@loader_path`. Ad-hoc sign for local testing only.
 - Accept: `scripts/release.sh` produces `dist/Player.app`; `tests/run.sh release` launches it, plays the corpus, and `otool -L` contains no `/opt/homebrew` path and no unexpected dylib.

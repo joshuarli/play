@@ -78,6 +78,6 @@ The configure auto-selects `h263` (pulled in by the MPEG-4 path) and `vp9_superf
 
 Current result: 19 passed, 0 failed. A temporary manifest with `http` added to the protocols fails 2 cases (`protocols allowed`, `no network protocols`) and exits nonzero; the temporary file is removed after the check.
 
-## Next
+## Final state (P8)
 
-P8.1 builds the pinned release closure and Player.app from source; the only runtime dylibs are the pinned prefix's. P8.2 measures and optimizes the release.
+The release app bundles the minimal FFmpeg 9.0.2 built from the pinned allowlist. `--list-protocols` reports only `file`; the manifest gate passes; no encoder, muxer, device, network protocol, or external library beyond dav1d is enabled. The app links the pinned closure, not Homebrew, and is measured in `docs/metrics.md`.

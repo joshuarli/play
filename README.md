@@ -2,6 +2,12 @@
 
 # mpv
 
+> **Campaign fork:** this tree is a local-only macOS ARM64 build with a Rust-owned control plane, a minimal pinned FFmpeg, and the simplified Lua OSC. The release app is `dist/Player.app`. It accepts local files only; there is no network, encoding, recording, lavfi, or clipboard support.
+>
+> Build: `scripts/build-deps.sh` then `scripts/release.sh`. Verify: `tests/run.sh suite`, `scripts/audit.sh`, `scripts/measure.sh final`.
+>
+> Documentation: [install](docs/install.md), [status](docs/status.md), [final report](docs/final-report.md), [jank audit](docs/jank-audit.md), [resume](docs/resume.md), [architecture](docs/architecture.md), [metrics](docs/metrics.md).
+
 
 * [External links](#external-links)
 * [Overview](#overview)

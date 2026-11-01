@@ -6,7 +6,7 @@ A local-only macOS mpv fork with a minimal FFmpeg and a Rust-owned control plane
 
 ## Current state
 
-P0.1–P8.3 are accepted. P8.4 is the final documentation pass. The release app is `dist/Player.app`; the full suite, audit, and final budget gate are green.
+P0.1–P8.4 are accepted. The campaign is complete. The release app is `dist/Player.app`; the full suite, audit, and final budget gate are green.
 
 ## First command
 

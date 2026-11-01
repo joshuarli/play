@@ -134,7 +134,35 @@ D4 remains: the simplified Lua OSC on `mlua` is the permanent default. Rust owns
 - This moved the Rust control plane out of the executable: the executable is 9.64 MB and the distributable is 26.8 MB. Plain LTO was rejected because the two Rust staticlibs duplicate std symbols at link time; `opt-level = "s"` increased the executable and was reverted. Shaderc is built `MinSizeRel`.
 - The dev and FFI test builds keep the staticlibs; only the release app uses the cdylib.
 
-## Open work
+## Ownership boundaries (final)
+
+- **C:** playback loop, demux/decode pipeline, filters, subtitles, video output (`gpu-next`/libplacebo/Vulkan), CoreAudio, Cocoa/platform glue, client API event delivery, track-list payloads, and execution of the supported command vocabulary.
+- **Rust:** typed startup/config, playlist, input/command validation, scalar control state and change detection, local file I/O, the Lua host, and the Symphonia audio bridge.
+- **FFI:** opaque handles and typed errors in `player-ffi`; `player-release` is the release-only cdylib. No duplicate ownership of player state; C reports facts in and reads facts out at the boundary.
+
+## Renderer and audio integration
+
+The renderer is `vo=gpu-next` over libplacebo and Vulkan/MoltenVK; `gl`, `gl-cocoa`, `videotoolbox-gl`, and `macos-cocoa-cb` are disabled. The release bundles MoltenVK and its ICD and points the loader at it before renderer initialization. VideoToolbox is the hardware decoder path. CoreAudio is the only audio output; the D7 ChannelMap deviation remains. Symphonia decodes AAC, ALAC, FLAC, MP3, Opus, PCM, and Vorbis; FFmpeg demuxes and decodes video; `libswresample` converts and resamples.
+
+## Migration sequence
+
+P4 established the Rust workspace and FFI contract; P5 replaced the C Lua host with mlua and the Rust script host; P6 simplified the OSC and measured it; P7 moved startup, playlist, input/commands, state/events, and local file I/O; P8 built the pinned closure, the app, and the final audit. The C host, external Lua, and superseded static link shape are deleted or retained only as dev build paths.
+
+## Remaining C and dependencies
+
+216 retained C files and 137,228 C/H lines implement the playback pipeline and platform glue. The dependency inventory is in `docs/final-report.md`; the release closure is 13 files. FFmpeg is minimal, static inside the executable, with dav1d as the only external codec library. libass is built with CoreText and without fontconfig; shaderc, glslang, SPIRV-Tools, FreeType, FriBiDi, and HarfBuzz are source-built and bundled.
+
+## Provenance and divergence
+
+Pins: mpv v0.41.0 at `41f6a645068483470267271e1d09966ca3b9f413`; FFmpeg n9.0.2 at `ce8f11b9fac4cd7ccfb41ca7c01bc17f5cda8cc3`. D7 skips the broken CoreAudio ChannelMap. D16 consolidated history to `campaign-base`; upstream histories are not retained. Removed surfaces are listed in `docs/scope.md`. There is no network backend, TLS stack, CA bundle, encoding, recording, lavfi, or clipboard support.
+
+## Final verification
+
+`tests/run.sh suite` reports 292 passed; `scripts/audit.sh` is ok; `scripts/measure.sh final` and `compare` pass the P8 budgets. The app is 26.8 MB with a 9.64 MB executable and a 16.37 MiB closure. See `docs/status.md`, `docs/metrics.md`, and `docs/final-report.md`.
+
+## Follow-on boundary
+
+A/V scheduler, general demux/decode orchestration, renderer integration (7.6–7.8), and Linux remain follow-on work. The jank audit keeps user-facing packaging items open; no network capability returns without a new owner decision.
 
 - P1.4 added the FFmpeg manifest gate over the frozen allowlist.
 - P2.1 locked the Meson feature surface and reduced the embedded Lua modules.
