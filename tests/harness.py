@@ -717,6 +717,33 @@ def linux_audio_controls(results, manifest):
         results.check("linux-audio controls", False, str(exc))
 
 
+VAAPI_FIXTURES = ("h264", "hevc", "vp9", "av1")
+
+
+def gate_linux_vaapi(results, args):
+    nodes = sorted(Path("/dev/dri").glob("renderD*"))
+    results.check("linux-vaapi: render node present", bool(nodes),
+                  "no /dev/dri/renderD*; this gate needs a GPU with a VA-API driver")
+    if not nodes:
+        return
+    for name in VAAPI_FIXTURES:
+        entry = fixture_entry(name)
+        try:
+            with Mpv(["--vo=null", "--ao=null", "--hwdec=vaapi-copy", "--keep-open=yes"]) as mpv:
+                mpv.load(fixture_path(entry))
+                mpv.wait_event("file-loaded", timeout=15)
+                current = mpv.wait_property(
+                    "hwdec-current", lambda value: value != "", timeout=15)
+                results.check(f"linux-vaapi {name}: hardware decode", current == "vaapi-copy",
+                              f"hwdec-current {current!r}; log:\n{tail(mpv.lines)}")
+                mpv.wait_property("eof-reached", lambda value: value is True, timeout=30)
+                check_no_errors(results, f"linux-vaapi {name}", mpv)
+            results.check(f"linux-vaapi {name}: exit", mpv.returncode == 0,
+                          f"exit {mpv.returncode}")
+        except Failure as exc:
+            results.check(f"linux-vaapi {name}", False, str(exc))
+
+
 def gate_hwdec(results, args):
     for name in ("h264", "hevc"):
         entry = fixture_entry(name)
@@ -1722,6 +1749,7 @@ GATES = {
     "linux-osc": gate_linux_osc,
     "linux-gpu-next": gate_linux_gpu_next,
     "linux-audit": gate_linux_audit,
+    "linux-vaapi": gate_linux_vaapi,
     "linux-mostly-static": gate_linux_audit,
     "linux-rust-link": gate_linux_rust_link,
     "hwdec": gate_hwdec,
