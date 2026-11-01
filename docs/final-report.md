@@ -74,7 +74,7 @@ The development loop is `scripts/build.sh` plus `tests/run.sh suite`. Scratch ar
 
 ### Outcome
 
-The Linux build is a mostly static `x86_64-unknown-linux-musl` executable: the mpv pipeline, the pinned minimal FFmpeg n9.0.2, the Rust control plane as one staticlib, one Lua 5.2 interpreter, `vo=gpu-next` over Vulkan and Wayland, and ALSA. The release is `dist/player-x86_64-linux-musl.tar.gz` (player and README) with a SHA-256 file. The stripped executable is 26,355,208 B and needs exactly six shared libraries: musl, `libvulkan.so.1`, `libwayland-client.so.0`, `libwayland-cursor.so.0`, `libxkbcommon.so.0`, and `libasound.so.2`.
+The Linux build is a mostly static `x86_64-unknown-linux-musl` executable: the mpv pipeline, the pinned minimal FFmpeg n9.0.2, the Rust control plane as one staticlib, one Lua 5.2 interpreter, `vo=gpu-next` over Vulkan and Wayland, and ALSA. The release is `dist/player-x86_64-linux-musl.tar.gz` (player and README) with a SHA-256 file. The stripped executable is 26,355,208 B and needs exactly nine shared libraries: musl, `libvulkan.so.1`, `libwayland-client.so.0`, `libwayland-cursor.so.0`, `libxkbcommon.so.0`, `libasound.so.2`, and, for opt-in VA-API hardware decode, `libva.so.2`, `libva-drm.so.2`, and `libva-wayland.so.2`.
 
 ### Verification
 
@@ -89,7 +89,7 @@ The Linux build is a mostly static `x86_64-unknown-linux-musl` executable: the m
 | Budget | Limit | Actual |
 |---|---:|---:|
 | Stripped binary | 50,000,000 B | 26,355,208 B |
-| Direct dynamic libraries | 6 | 6 |
+| Direct dynamic libraries | 9 (6 before VA-API) | 9 |
 | 1080p RSS | 300 MB | 128.94 MB |
 | Network schemes | 0 | 0 |
 | Duplicate Lua interpreters | 0 | 0 |
@@ -104,12 +104,12 @@ Cold start, warm start, first frame, and seek are **perf gate deferred: host bus
 ### Known limits
 
 - musl systems only. A glibc system cannot load the Vulkan, Wayland, xkbcommon, and ALSA libraries. glibc is explicitly out of scope.
-- No hardware video decode, X11, OpenGL, or DRM.
+- Hardware decode is VA-API only and opt-in; zero-copy import needs a real compositor and is owner-run. No X11, OpenGL, or DRM output.
 - The headless gate uses lavapipe with `--gpu-sw=yes` and `--vulkan-swap-mode=mailbox`. FIFO pacing, fractional scale, real pointer and keyboard input, GPU output, and ALSA hardware are owner-run (`docs/manual-checklist.md`).
 - Linux fixtures differ byte-for-byte from the macOS ones (`tests/fixtures/hashes-linux.json`); their structure is identical.
 - `.github/workflows/linux.yml` has not run: nothing was pushed. The unprivileged user namespace the local-only gate needs may be blocked on a CI runner.
 - The macOS suite was not re-run from the Linux host after the shared harness changed; the macOS paths are unchanged branches of `sys.platform` checks, the `macos/` allowlist prefix, and the platform split in `build-ffmpeg.sh`.
-- Follow-on: aarch64 Linux, VA-API decode, and HDR output.
+- Follow-on: aarch64 Linux and HDR output.
 
 ### Reproduction
 

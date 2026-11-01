@@ -18,12 +18,13 @@ Player is a local-only media player. The macOS release artifact is `dist/Player.
 - Clipboard commands are compiled and reachable. Encoding, recording, and the lavfi filter graph are compiled but unreachable because the release FFmpeg has no encoders or muxers.
 - The `subprocess` command and the `.run` script backend are reachable from explicit scripts and IPC. No built-in module uses them.
 - Follow-on: A/V scheduler, general demux and decode orchestration, and renderer integration.
-- Linux: glibc is explicitly out of scope. aarch64, X11, hardware decode, and a real-GPU, real-compositor, and real-ALSA check are outside the automated gates. The headless gate uses lavapipe with `--gpu-sw` and `mailbox` swap because headless Weston never releases FIFO buffers.
+- Linux: glibc is explicitly out of scope. aarch64, X11, and a real-GPU, zero-copy VA-API, real-compositor, and real-ALSA check are outside the automated gates. The headless gate uses lavapipe with `--gpu-sw` and `mailbox` swap because headless Weston never releases FIFO buffers.
 
 ## Linux
 
 - `scripts/linux-container.sh tests/run.sh suite`: passes on Alpine x86_64, including `linux-gpu-next` under headless Weston with lavapipe, `linux-audio` on the ALSA null PCM, `linux-local-only` under `unshare -rn`, and `linux-audit`.
-- `scripts/audit-linux.sh`: ok. `dist/player` needs exactly six libraries: musl, Vulkan, Wayland client and cursor, xkbcommon, and ALSA.
+- `scripts/audit-linux.sh`: ok. `dist/player` needs exactly nine libraries: musl, Vulkan, Wayland client and cursor, xkbcommon, ALSA, and libva, libva-drm, and libva-wayland.
+- `tests/run.sh linux-vaapi` (needs a GPU render node, not part of `suite`): passes on an AMD Raphael iGPU for h264, hevc, vp9, and av1 with `vaapi-copy`.
 - Fixtures regenerate deterministically with Alpine's FFmpeg 9.0.2; their hashes differ from macOS (`tests/fixtures/hashes-linux.json`).
 - Measurements are in `docs/metrics.md`; the runtime set, headless gates, and fixtures are in `docs/linux.md`.
 

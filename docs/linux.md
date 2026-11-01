@@ -23,8 +23,20 @@ The executable may link only these shared libraries from the Alpine image:
 | `libwayland-client.so.0`, `libwayland-cursor.so.0` | `wayland-libs-client`, `wayland-libs-cursor` 1.26.0-r0 |
 | `libxkbcommon.so.0` | `libxkbcommon` 1.13.2-r0 |
 | `libasound.so.2` | `alsa-lib` 1.2.16.1-r0 |
+| `libva.so.2`, `libva-drm.so.2`, `libva-wayland.so.2` | `libva` 2.24.1-r0 |
 
 Fontconfig reads `/etc/fonts` at run time, so a system needs a fontconfig configuration and fonts for system-font discovery.
+
+## Hardware decode
+
+`--hwdec=vaapi` decodes H.264, HEVC, VP9, and AV1 through VA-API and imports the frame into Vulkan as a dmabuf. `--hwdec=vaapi-copy` decodes on the GPU and copies the frame back, so it also works with `--vo=null`. The default stays `--hwdec=no`.
+
+The VA driver comes from the host, the same way the Vulkan ICD does: `mesa-va-gallium` for AMD and Nouveau, `intel-media-driver` for current Intel GPUs, or `libva-intel-driver` for older ones. The three libva libraries are shared because the drivers are dlopened and link libva themselves.
+
+- `vaapi` takes its VA display from the Wayland connection, so it needs a real compositor with `linux-dmabuf` and a Vulkan device that can import dmabufs. It does not work with `--vo=null` or on lavapipe.
+- When an explicit `--hwdec=vaapi` cannot load, mpv logs the reason and `Loading failed`, then decodes in software; `hwdec-current` is `no`. `tests/wayland.py` covers this on lavapipe.
+- `tests/run.sh linux-vaapi` decodes the h264, hevc, vp9, and av1 fixtures with `vaapi-copy` and asserts `hwdec-current`. It needs a GPU with a render node and fails without one, so it is not part of `suite`. `scripts/linux-container.sh` passes every `/dev/dri/renderD*` into the container. `tests/run.sh linux-vaapi` ran on an AMD Raphael iGPU with `mesa-va-gallium` 26.2.6.
+- The zero-copy path, `VK_EXT_image_drm_format_modifier` import, 10-bit output, and a different GPU for decode and display are owner checks.
 
 ## Headless GPU gate
 

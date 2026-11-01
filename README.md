@@ -39,7 +39,7 @@ The on-screen controls provide play and pause, seek, volume and mute, fullscreen
 
 macOS 27 on Apple Silicon. Building needs the Xcode command-line tools, Meson, Ninja, pkg-config, CMake, Python 3, curl, and `shasum`.
 
-Linux x86-64 on musl (Alpine or similar) with a Vulkan driver, a Wayland compositor, and ALSA. Building needs Docker; the toolchain lives in the pinned image. glibc systems cannot run the Linux build, and glibc support is explicitly out of scope.
+Linux x86-64 on musl (Alpine or similar) with a Vulkan driver, a Wayland compositor, and ALSA. Hardware decode is opt-in with `--hwdec=vaapi` and needs a VA-API driver such as `mesa-va-gallium` or `intel-media-driver`. Building needs Docker; the toolchain lives in the pinned image. glibc systems cannot run the Linux build, and glibc support is explicitly out of scope.
 
 ## Help and development
 

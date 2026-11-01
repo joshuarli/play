@@ -35,10 +35,10 @@ The local-only gate creates a hostile temporary `HOME` with `mpv.conf`, `input.c
 - Disc, external CUE, EDL, libarchive, image-file, `mpv`, null, and raw audio or video demuxers.
 - The yt-dlp hook and the option tables for stream-lavf, raw demuxers, discs, and capture.
 - Windows and Android audio outputs, video outputs, and window systems; GL and OpenGL; and all Linux audio outputs other than ALSA and window systems other than Wayland.
-- Video outputs that are not `gpu-next`, including image, terminal, X11, DRM, SDL, VA-API, VDPAU, Direct3D, and MediaCodec.
+- Video outputs that are not `gpu-next`, including image, terminal, X11, DRM, SDL, VA-API output, VDPAU, Direct3D, and MediaCodec. VA-API hardware decode is retained on Linux, and `vf_vavpp` with it.
 - JavaScript, VapourSynth, C plugins, Touch Bar, and Media Player integration.
 - Built-in Lua modules that the player no longer loads: `auto_profiles`, `commands`, `console`, `context_menu`, `fzy`, `positioning`, and `stats`.
-- Filter entry points for lavfi, VapourSynth, VA-API, VDPAU, D3D11, fingerprint, and AC-3 encoding.
+- Filter entry points for lavfi, VapourSynth, VDPAU, D3D11, fingerprint, and AC-3 encoding.
 - Playlist shuffle and loop commands and options. A-B loop remains.
 
 ## CLI

@@ -30,7 +30,7 @@ The extracted tree is `FFmpeg-n9.0.2/`. The script writes a `VERSION` file conta
 
 `--disable-autodetect` leaves dav1d 1.5.4 plus the system VideoToolbox, CoreFoundation, CoreMedia, CoreVideo, and CoreServices frameworks. `TMPDIR` points at `.work/tmp`. No `ffmpeg` or `ffprobe` program is installed. `scripts/build.sh` prepends the development FFmpeg pkg-config path; `scripts/release.sh` links the release prefix.
 
-A line prefixed `macos/` applies to macOS only; today that is the VideoToolbox hwaccels. Linux reads the same file without those lines, drops `--enable-videotoolbox`, and adds `--enable-pic --arch=x86_64`. `scripts/build-deps-linux.sh` puts the Linux build at `.work/deps/linux/ffmpeg`, and the manifest gate reads that tree on Linux.
+A line prefixed `macos/` or `linux/` applies to that platform only. macOS carries the VideoToolbox hwaccels. Linux carries the `h264_vaapi`, `hevc_vaapi`, `vp9_vaapi`, and `av1_vaapi` hwaccels and the native `av1` decoder they attach to (software AV1 still uses `libdav1d`), drops `--enable-videotoolbox`, and adds `--enable-pic --arch=x86_64 --enable-vaapi`. Platform lines add to the common categories. `scripts/build-deps-linux.sh` puts the Linux build at `.work/deps/linux/ffmpeg`, and the manifest gate reads that tree on Linux.
 
 Add a component only after a named fixture fails without it; remove components in groups while the corpus stays green. Do not start from a guessed allowlist, and do not respond to a failure by enabling everything.
 

@@ -6,6 +6,7 @@
 - **Last accepted revision:** `e5136e5` (macOS release, `make install`, macOS CI, docs). The macOS campaign is complete; `docs/status.md` and `docs/final-report.md` are the record.
 - **Accepted:** L0.1, L0.2, L0.3, L0.4, L1.1, L1.2, L1.3, L1.4, L2.1, L2.2, L2.3, L2.4, L3.1, L3.2, L3.3, L3.4, L4.1, L4.2, L4.3, L4.4, L5.1, L5.2 (CI run not verified: no push), L5.3. **Red:** none. **Parked:** none.
 - **Next slice:** none; campaign complete.
+- **Added after close:** VA-API hardware decode (LD12), with the dynamic set widened to nine libraries.
 - **Resume prompt:** `Read PLAN.md and continue at Status. Stop at a documented limitation or an owner decision.`
 - **First command:** `scripts/linux-check.sh`, created by L0.1.
 - **Test mode:** headless (`--vo=null --ao=null`) for logic, a headless Weston compositor with Mesa lavapipe for `gpu-next`, and owner-run checks for real GPU output and audible output.
@@ -38,7 +39,7 @@
 
 ### Owner-decided
 
-- **LD1 — Target.** Linux x86-64, `x86_64-unknown-linux-musl`, mostly static. Static-link FFmpeg, libplacebo, shaderc, glslang, SPIRV, libass, fontconfig, FreeType, FriBiDi, HarfBuzz, Rust, and Lua. The only dynamic libraries are musl libc, `libvulkan.so.1`, `libwayland-client.so.0`, `libwayland-cursor.so.0`, `libxkbcommon.so.0`, and `libasound.so.2`.
+- **LD1 — Target.** Linux x86-64, `x86_64-unknown-linux-musl`, mostly static. Static-link FFmpeg, libplacebo, shaderc, glslang, SPIRV, libass, fontconfig, FreeType, FriBiDi, HarfBuzz, Rust, and Lua. The only dynamic libraries are musl libc, `libvulkan.so.1`, `libwayland-client.so.0`, `libwayland-cursor.so.0`, `libxkbcommon.so.0`, `libasound.so.2`, and, since LD12, `libva.so.2`, `libva-drm.so.2`, and `libva-wayland.so.2`.
 - **LD2 — Renderer.** `vo=gpu-next` with `--gpu-context=waylandvk` and Vulkan. The system Vulkan loader discovers the ICD at runtime. No OpenGL, EGL, DRM, X11, or software `wlshm` path.
 - **LD3 — Audio.** ALSA only, dynamically linked against the musl `libasound`. No PulseAudio, PipeWire, JACK, SDL, or OSS. ALSA plugins that need `dlopen` are unavailable; use a built-in or hardware PCM.
 - **LD4 — Release.** The release artifact is `player-x86_64-linux-musl.tar.gz` containing one stripped `player` binary and a `README` that lists the musl runtime packages. A SHA-256 file sits beside it.
@@ -63,6 +64,7 @@ Three whole designs were considered before the sequence was written:
 
 ### Delegated
 
+- **LD12 — VA-API.** Added after the campaign closed, with the owner's approval of the dynamic-set change. `--hwdec=vaapi` decodes with FFmpeg's `h264_vaapi`, `hevc_vaapi`, `vp9_vaapi`, and `av1_vaapi` hwaccels and imports the dmabuf into Vulkan through `dmabuf_interop_pl.c`; `vaapi-copy` decodes on the GPU and copies to memory. It is opt-in (`--hwdec` stays `no`). `libva`, `libva-drm`, and `libva-wayland` are shared because the VA drivers are dlopened and link libva themselves, so a static copy would load twice. The driver comes from the host like the Vulkan ICD. `libva-wayland` is the only display the Vulkan path supports, and `libva-drm` serves `vaapi-copy`. `vaapi-x11` and mpv's own `drm` feature stay off.
 - **DL1 — Pins.** Resolve the exact Alpine package versions and the libplacebo, shaderc, glslang, SPIRV, Wayland, xkbcommon, ALSA, fontconfig, and expat versions at L1.1. Record them in `docs/licenses.md`, `docs/linux.md`, and the build scripts.
 - **DL2 — Source list.** L0.2 decides the exact file set by compiling the Linux target; restore a file only when the compiler or link step needs it.
 - **DL3 — Scaler and color.** Keep the libplacebo defaults that play the corpus without artifacts. Record any non-default scaling, color, or HDR choice in `docs/architecture.md`.
@@ -106,7 +108,7 @@ The Rust plane is portable. `player-core`, `player-ffi`, `player-lua`, and `play
 - The C++ runtime used by shaderc, glslang, and SPIRV-Tools is not in LD1. Link it statically or the `NEEDED` check fails.
 - ALSA's `default` PCM may route through a shared plugin. The release must use a built-in or hardware PCM; the owner check records which device works on the test machine.
 - Rust's musl target defaults to `crt-static`. The staticlibs must match the final executable's libc linkage; two libcs fail the link.
-- FFmpeg's VideoToolbox decoders and hwaccels are macOS-only. The Linux allowlist drops them; hardware decode through VA-API is not in this campaign.
+- FFmpeg's VideoToolbox decoders and hwaccels are macOS-only. The Linux allowlist drops them and carries the VA-API hwaccels instead (LD12).
 - Static fontconfig reads system font configuration at runtime. Embedded fonts and libass shaping are the paths to verify in L2.3; system-font discovery is the main risk.
 - `mlua` with `lua52` and `vendored` builds Lua from source. The Linux build must not add a second interpreter or link a distro Lua.
 
@@ -304,7 +306,7 @@ Measured against the L0.4 baseline on the same host and fixtures.
 | Metric | Target |
 |---|---:|
 | Stripped binary | ≤ 50,000,000 B |
-| Direct dynamic libraries | ≤ 6 |
+| Direct dynamic libraries | ≤ 9 (6 before LD12) |
 | Cold `--version` | ≤ 300 ms |
 | Warm `--version` | ≤ 150 ms |
 | First frame, 1080p | ≤ 1 s |
@@ -362,13 +364,13 @@ Park the item on `park/<item>` with the exact cause and a retry condition when: 
 
 ### Non-goals
 
-glibc builds (explicitly out of scope, not deferred), aarch64 Linux, X11, Wayland dmabuf, OpenGL/EGL rendering, VA-API, DRM/KMS, hardware video decode, PulseAudio, PipeWire, JACK, SDL, Flatpak, Snap, AppImage, distro packages, systemd integration, desktop portals, a Rust OSC, universal binaries, notarization, and upstream feature parity.
+glibc builds (explicitly out of scope, not deferred), aarch64 Linux, X11, Wayland dmabuf, OpenGL/EGL rendering, DRM/KMS, hardware video decode other than VA-API, PulseAudio, PipeWire, JACK, SDL, Flatpak, Snap, AppImage, distro packages, systemd integration, desktop portals, a Rust OSC, universal binaries, notarization, and upstream feature parity.
 
 ### Follow-on (not scheduled)
 
 - A fully static musl `wlshm` build as a portable software fallback.
 - aarch64 Linux and additional musl architectures.
-- VA-API hardware decode and HDR output after the GPU path is stable.
+- HDR output after the GPU path is stable.
 
 ## Reference
 
