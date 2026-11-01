@@ -80,7 +80,7 @@ The Linux build is a mostly static `x86_64-unknown-linux-musl` executable: the m
 
 | Command | Result |
 |---|---|
-| `scripts/linux-container.sh tests/run.sh suite` | 286 passed, 0 failed (includes `linux-gpu-next`, `linux-audio`, `linux-local-only`, `linux-osc`, `linux-audit`) |
+| `scripts/linux-container.sh tests/run.sh suite` | 293 passed, 0 failed (includes `linux-gpu-next`, `linux-audio`, `linux-local-only`, `linux-osc`, `linux-audit`) |
 | `scripts/linux-container.sh scripts/audit-linux.sh` | ok; the extra-`NEEDED` negative case failed as expected |
 | `scripts/linux-container.sh tests/run.sh ffmpeg-audit` | 19 passed |
 | `cargo test --target x86_64-unknown-linux-musl` | 60 passed |
