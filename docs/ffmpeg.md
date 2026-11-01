@@ -80,4 +80,4 @@ Current result: 19 passed, 0 failed. A temporary manifest with `http` added to t
 
 ## Next
 
-P7.2 moved local playlist ownership into `player-core::playlist`, with an opaque FFI handle mapping entry IDs to C payloads. Shuffle and repeat were removed; P7.3 types command and input dispatch.
+P7.3 moved the supported command vocabulary and argument validation into `player-core::command`; input parsing consults it before the C executor. P7.4 moves player state and event dispatch into Rust.

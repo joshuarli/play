@@ -102,6 +102,12 @@ D4 remains: the simplified Lua OSC on `mlua` is the permanent default. Rust owns
 - Shuffle/unshuffle and the `--shuffle`, `--loop-playlist`, `--loop-file`, `playlist-shuffle`, and `playlist-unshuffle` surfaces are removed. A-B loop remains.
 - Local-only rejection is unchanged; URL entries are rejected at the boundary.
 
+## Typed command boundary (P7.3)
+
+- `player-core::command` owns the supported command vocabulary and argument validation: pause/fullscreen/mute toggles and sets, seek modes, frame-step, volume/speed add and set, stop/quit, loadfile modes, playlist next/previous, screenshot, subtitle add, and audio/subtitle/video track selection.
+- `player-ffi` exposes `player_ffi_command_check_strv` and `player_ffi_command_check_str`. `input/cmd.c` runs the checker before the existing parser builds an `mp_cmd`: supported commands are type-checked, unsupported commands pass through, and malformed supported commands are rejected with a typed message. Multi-command strings and `;` lists stay with the C parser.
+- Execution remains at the C playback boundary (`player/command.c`), so the stringly Lua/IPC edge is unchanged. The typed set excludes the removed shuffle/loop paths.
+
 ## Open work
 
 - P1.4 added the FFmpeg manifest gate over the frozen allowlist.
@@ -115,5 +121,5 @@ D4 remains: the simplified Lua OSC on `mlua` is the permanent default. Rust owns
 - P4.1 added `player-core`/`player-ffi`, built both static libraries, and linked/called `player_ffi_abi_version` from the player.
 - P4.2 moved the input classifier to `player-core::input`; the C boundary delegates through `player_ffi_classify_input` with typed results.
 - P4.3 documented the FFI invariants and added the C bridge test.
-- P7.2 moved local playlist ownership into Rust and removed shuffle/repeat; P7.3 types the command and input dispatch.
+- P7.3 typed the supported command vocabulary and validation; P7.4 moves player state and event dispatch into Rust.
 - P7 moves config, playlist, input, state, and local file handling into Rust; the audio bridge stays at the decode boundary.

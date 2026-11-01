@@ -28,6 +28,7 @@
 #include "misc/json.h"
 
 #include "mpv/client.h"
+#include "player_command.h"
 
 static void destroy_cmd(void *ptr)
 {
@@ -449,6 +450,15 @@ error:
 mp_cmd_t *mp_input_parse_cmd_str(struct mp_log *log, bstr str, const char *loc)
 {
     void *tmp = talloc_new(NULL);
+    char *text = bstrto0(NULL, str);
+    char err[160] = {0};
+    int checked = player_ffi_command_check_str(text, err, sizeof(err));
+    talloc_free(text);
+    if (checked < 0) {
+        mp_err(log, "Command rejected: %s\n", err);
+        talloc_free(tmp);
+        return NULL;
+    }
     bstr original = str;
     struct mp_cmd *cmd = parse_cmd_str(log, tmp, &str, loc);
     if (!cmd)
@@ -509,6 +519,11 @@ struct mp_cmd *mp_input_parse_cmd_strv(struct mp_log *log, const char **argv)
     int count = 0;
     while (argv[count])
         count++;
+    char err[160] = {0};
+    if (player_ffi_command_check_strv(count, argv, err, sizeof(err)) < 0) {
+        mp_err(log, "Command rejected: %s\n", err);
+        return NULL;
+    }
     mpv_node *items = talloc_zero_array(NULL, mpv_node, count);
     mpv_node_list list = {.values = items, .num = count};
     mpv_node node = {.format = MPV_FORMAT_NODE_ARRAY, .u = {.list = &list}};

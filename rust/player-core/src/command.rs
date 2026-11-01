@@ -1,0 +1,448 @@
+use std::fmt;
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Command {
+    Pause(Toggle),
+    Fullscreen(Toggle),
+    Mute(Toggle),
+    Seek { amount: f64, mode: SeekMode, exact: bool },
+    FrameStep(i32),
+    Volume(Adjust),
+    Speed(Adjust),
+    Stop,
+    Quit,
+    LoadFile { path: String, mode: LoadMode },
+    PlaylistNext,
+    PlaylistPrevious,
+    Screenshot,
+    SubtitleAdd(String),
+    SelectTrack { kind: TrackKind, id: Option<i64> },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Toggle {
+    Toggle,
+    Set(bool),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Adjust {
+    Add(f64),
+    Set(f64),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SeekMode {
+    Relative,
+    Absolute,
+    AbsolutePercent,
+    RelativePercent,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LoadMode {
+    Replace,
+    Append,
+    InsertNext,
+    InsertAt(i64),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrackKind {
+    Audio,
+    Subtitle,
+    Video,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandError(String);
+
+impl CommandError {
+    fn new(message: impl Into<String>) -> Self {
+        Self(message.into())
+    }
+}
+
+impl fmt::Display for CommandError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for CommandError {}
+
+pub fn parse_string(input: &str) -> Result<Option<Command>, CommandError> {
+    let args = tokenize(input)?;
+    parse_args(&args)
+}
+
+pub fn parse_args(args: &[String]) -> Result<Option<Command>, CommandError> {
+    let mut index = 0;
+    while index < args.len() && is_flag(&args[index]) {
+        index += 1;
+    }
+    if index >= args.len() {
+        return Ok(None);
+    }
+    let name = &args[index];
+    let rest = &args[index + 1..];
+    match name.as_str() {
+        "cycle" => parse_cycle(rest),
+        "set" => parse_set(rest),
+        "add" => parse_add(rest),
+        "seek" => parse_seek(rest),
+        "frame-step" => Ok(Some(Command::FrameStep(1))),
+        "frame-back-step" => Ok(Some(Command::FrameStep(-1))),
+        "stop" => Ok(Some(Command::Stop)),
+        "quit" => Ok(Some(Command::Quit)),
+        "loadfile" => parse_loadfile(rest),
+        "playlist-next" => Ok(Some(Command::PlaylistNext)),
+        "playlist-prev" => Ok(Some(Command::PlaylistPrevious)),
+        "screenshot" => Ok(Some(Command::Screenshot)),
+        "sub-add" => parse_sub_add(rest),
+        _ => Ok(None),
+    }
+}
+
+fn parse_cycle(args: &[String]) -> Result<Option<Command>, CommandError> {
+    let Some(property) = args.first() else {
+        return Err(CommandError::new("cycle requires a property"));
+    };
+    Ok(match property.as_str() {
+        "pause" => Some(Command::Pause(Toggle::Toggle)),
+        "fullscreen" => Some(Command::Fullscreen(Toggle::Toggle)),
+        "mute" => Some(Command::Mute(Toggle::Toggle)),
+        _ => None,
+    })
+}
+
+fn parse_set(args: &[String]) -> Result<Option<Command>, CommandError> {
+    let Some(property) = args.first() else {
+        return Err(CommandError::new("set requires a property"));
+    };
+    let value = args.get(1).map(String::as_str);
+    match property.as_str() {
+        "pause" => Ok(Some(Command::Pause(Toggle::Set(parse_bool(value)?)))),
+        "fullscreen" => Ok(Some(Command::Fullscreen(Toggle::Set(parse_bool(value)?)))),
+        "mute" => Ok(Some(Command::Mute(Toggle::Set(parse_bool(value)?)))),
+        "volume" => Ok(Some(Command::Volume(Adjust::Set(parse_number(value)?)))),
+        "speed" => Ok(Some(Command::Speed(Adjust::Set(parse_number(value)?)))),
+        "aid" => parse_track(TrackKind::Audio, value),
+        "sid" => parse_track(TrackKind::Subtitle, value),
+        "vid" => parse_track(TrackKind::Video, value),
+        _ => Ok(None),
+    }
+}
+
+fn parse_add(args: &[String]) -> Result<Option<Command>, CommandError> {
+    let Some(property) = args.first() else {
+        return Err(CommandError::new("add requires a property"));
+    };
+    let value = args.get(1).map(String::as_str);
+    match property.as_str() {
+        "volume" => Ok(Some(Command::Volume(Adjust::Add(parse_number(value)?)))),
+        "speed" => Ok(Some(Command::Speed(Adjust::Add(parse_number(value)?)))),
+        _ => Ok(None),
+    }
+}
+
+fn parse_seek(args: &[String]) -> Result<Option<Command>, CommandError> {
+    let Some(amount) = args.first() else {
+        return Err(CommandError::new("seek requires an amount"));
+    };
+    let amount = amount
+        .parse::<f64>()
+        .map_err(|_| CommandError::new(format!("invalid seek amount '{amount}'")))?;
+    if !amount.is_finite() {
+        return Err(CommandError::new("invalid seek amount"));
+    }
+    let mut mode = SeekMode::Relative;
+    let mut exact = false;
+    if let Some(value) = args.get(1) {
+        for part in value.split('+') {
+            match part {
+                "relative" => mode = SeekMode::Relative,
+                "absolute" => mode = SeekMode::Absolute,
+                "absolute-percent" => mode = SeekMode::AbsolutePercent,
+                "relative-percent" => mode = SeekMode::RelativePercent,
+                "exact" => exact = true,
+                "keyframes" => exact = false,
+                "default" | "" => {}
+                _ => return Ok(None),
+            }
+        }
+    }
+    Ok(Some(Command::Seek {
+        amount,
+        mode,
+        exact,
+    }))
+}
+
+fn parse_loadfile(args: &[String]) -> Result<Option<Command>, CommandError> {
+    let Some(path) = args.first() else {
+        return Err(CommandError::new("loadfile requires a path"));
+    };
+    let mode = match args.get(1).map(String::as_str) {
+        None | Some("replace") => LoadMode::Replace,
+        Some("append") => LoadMode::Append,
+        Some("insert-next") => LoadMode::InsertNext,
+        Some(value) if value.starts_with("insert-at:") => {
+            let index = value["insert-at:".len()..]
+                .parse::<i64>()
+                .map_err(|_| CommandError::new("invalid loadfile insert index"))?;
+            LoadMode::InsertAt(index)
+        }
+        Some(_) => return Ok(None),
+    };
+    Ok(Some(Command::LoadFile {
+        path: path.clone(),
+        mode,
+    }))
+}
+
+fn parse_sub_add(args: &[String]) -> Result<Option<Command>, CommandError> {
+    let Some(path) = args.first() else {
+        return Err(CommandError::new("sub-add requires a path"));
+    };
+    Ok(Some(Command::SubtitleAdd(path.clone())))
+}
+
+fn parse_track(
+    kind: TrackKind,
+    value: Option<&str>,
+) -> Result<Option<Command>, CommandError> {
+    let Some(value) = value else {
+        return Err(CommandError::new("track selection requires a value"));
+    };
+    let id = if value == "no" {
+        None
+    } else {
+        Some(
+            value
+                .parse::<i64>()
+                .map_err(|_| CommandError::new(format!("invalid track id '{value}'")))?,
+        )
+    };
+    Ok(Some(Command::SelectTrack { kind, id }))
+}
+
+fn parse_bool(value: Option<&str>) -> Result<bool, CommandError> {
+    match value {
+        Some("yes") | Some("true") | Some("1") => Ok(true),
+        Some("no") | Some("false") | Some("0") => Ok(false),
+        Some(value) => Err(CommandError::new(format!("invalid boolean '{value}'"))),
+        None => Err(CommandError::new("missing boolean value")),
+    }
+}
+
+fn parse_number(value: Option<&str>) -> Result<f64, CommandError> {
+    let Some(value) = value else {
+        return Err(CommandError::new("missing numeric value"));
+    };
+    let number = value
+        .parse::<f64>()
+        .map_err(|_| CommandError::new(format!("invalid number '{value}'")))?;
+    if !number.is_finite() {
+        return Err(CommandError::new(format!("invalid number '{value}'")));
+    }
+    Ok(number)
+}
+
+fn is_flag(value: &str) -> bool {
+    matches!(
+        value,
+        "no-osd"
+            | "osd-bar"
+            | "osd-msg"
+            | "osd-msg-bar"
+            | "osd-auto"
+            | "expand-properties"
+            | "raw"
+            | "repeatable"
+            | "nonrepeatable"
+            | "nonscalable"
+            | "async"
+            | "sync"
+    )
+}
+
+fn tokenize(input: &str) -> Result<Vec<String>, CommandError> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut quoted = false;
+    let mut escaped = false;
+    for character in input.chars() {
+        if escaped {
+            current.push(character);
+            escaped = false;
+            continue;
+        }
+        match character {
+            '\\' if quoted => escaped = true,
+            '"' => quoted = !quoted,
+            character if character.is_whitespace() && !quoted => {
+                if !current.is_empty() {
+                    tokens.push(std::mem::take(&mut current));
+                }
+            }
+            character => current.push(character),
+        }
+    }
+    if quoted {
+        return Err(CommandError::new("unterminated quote"));
+    }
+    if escaped {
+        return Err(CommandError::new("trailing escape"));
+    }
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+    Ok(tokens)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn command(values: &[&str]) -> Option<Command> {
+        parse_args(&values.iter().map(|value| (*value).to_owned()).collect::<Vec<_>>())
+            .unwrap()
+    }
+
+    #[test]
+    fn command_parses_toggles_and_sets() {
+        assert_eq!(command(&["cycle", "pause"]), Some(Command::Pause(Toggle::Toggle)));
+        assert_eq!(
+            command(&["set", "pause", "yes"]),
+            Some(Command::Pause(Toggle::Set(true)))
+        );
+        assert_eq!(
+            command(&["set", "fullscreen", "no"]),
+            Some(Command::Fullscreen(Toggle::Set(false)))
+        );
+        assert_eq!(
+            command(&["cycle", "mute"]),
+            Some(Command::Mute(Toggle::Toggle))
+        );
+    }
+
+    #[test]
+    fn command_parses_adjustments_and_seeks() {
+        assert_eq!(
+            command(&["add", "volume", "5"]),
+            Some(Command::Volume(Adjust::Add(5.0)))
+        );
+        assert_eq!(
+            command(&["set", "speed", "1.5"]),
+            Some(Command::Speed(Adjust::Set(1.5)))
+        );
+        assert_eq!(
+            command(&["seek", "5"]),
+            Some(Command::Seek {
+                amount: 5.0,
+                mode: SeekMode::Relative,
+                exact: false
+            })
+        );
+        assert_eq!(
+            command(&["seek", "12.5", "absolute+exact"]),
+            Some(Command::Seek {
+                amount: 12.5,
+                mode: SeekMode::Absolute,
+                exact: true
+            })
+        );
+        assert_eq!(
+            command(&["seek", "50", "absolute-percent"]),
+            Some(Command::Seek {
+                amount: 50.0,
+                mode: SeekMode::AbsolutePercent,
+                exact: false
+            })
+        );
+    }
+
+    #[test]
+    fn command_parses_actions_and_tracks() {
+        assert_eq!(command(&["frame-step"]), Some(Command::FrameStep(1)));
+        assert_eq!(command(&["frame-back-step"]), Some(Command::FrameStep(-1)));
+        assert_eq!(command(&["stop"]), Some(Command::Stop));
+        assert_eq!(command(&["quit"]), Some(Command::Quit));
+        assert_eq!(command(&["playlist-next"]), Some(Command::PlaylistNext));
+        assert_eq!(command(&["playlist-prev"]), Some(Command::PlaylistPrevious));
+        assert_eq!(command(&["screenshot"]), Some(Command::Screenshot));
+        assert_eq!(
+            command(&["sub-add", "/tmp/a.srt"]),
+            Some(Command::SubtitleAdd("/tmp/a.srt".to_owned()))
+        );
+        assert_eq!(
+            command(&["set", "aid", "2"]),
+            Some(Command::SelectTrack {
+                kind: TrackKind::Audio,
+                id: Some(2)
+            })
+        );
+        assert_eq!(
+            command(&["set", "sid", "no"]),
+            Some(Command::SelectTrack {
+                kind: TrackKind::Subtitle,
+                id: None
+            })
+        );
+    }
+
+    #[test]
+    fn command_parses_loadfile_modes() {
+        assert_eq!(
+            command(&["loadfile", "/tmp/a.mkv"]),
+            Some(Command::LoadFile {
+                path: "/tmp/a.mkv".to_owned(),
+                mode: LoadMode::Replace
+            })
+        );
+        assert_eq!(
+            command(&["loadfile", "/tmp/a.mkv", "append"]),
+            Some(Command::LoadFile {
+                path: "/tmp/a.mkv".to_owned(),
+                mode: LoadMode::Append
+            })
+        );
+        assert_eq!(
+            command(&["loadfile", "/tmp/a.mkv", "insert-at:2"]),
+            Some(Command::LoadFile {
+                path: "/tmp/a.mkv".to_owned(),
+                mode: LoadMode::InsertAt(2)
+            })
+        );
+    }
+
+    #[test]
+    fn command_parses_strings_and_flags() {
+        assert_eq!(
+            parse_string("no-osd cycle pause").unwrap(),
+            Some(Command::Pause(Toggle::Toggle))
+        );
+        assert_eq!(
+            parse_string(r#"loadfile "/tmp/a b.mkv" append"#).unwrap(),
+            Some(Command::LoadFile {
+                path: "/tmp/a b.mkv".to_owned(),
+                mode: LoadMode::Append
+            })
+        );
+        assert_eq!(parse_string("unknown-command").unwrap(), None);
+        assert!(parse_string("seek nope").is_err());
+        assert_eq!(parse_string("seek 5 weird-mode").unwrap(), None);
+        assert_eq!(parse_string("loadfile /tmp/a.mkv append-play").unwrap(), None);
+        assert!(parse_string("set pause maybe").is_err());
+        assert!(parse_string("loadfile").is_err());
+        assert!(parse_string("\"unterminated").is_err());
+    }
+
+    #[test]
+    fn command_passes_unsupported_properties_through() {
+        assert_eq!(command(&["cycle", "chapter"]), None);
+        assert_eq!(command(&["set", "chapter", "2"]), None);
+        assert_eq!(command(&["add", "chapter", "1"]), None);
+    }
+}
