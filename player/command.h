@@ -91,6 +91,7 @@ void mp_option_run_callback(struct MPContext *mpctx, struct mp_option_callback *
 
 void mp_notify(struct MPContext *mpctx, int event, void *arg);
 void mp_notify_property(struct MPContext *mpctx, const char *property);
+void mp_control_state_sync(struct MPContext *mpctx);
 
 void handle_command_updates(struct MPContext *mpctx);
 

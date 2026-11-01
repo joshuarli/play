@@ -68,6 +68,7 @@
 #include "client.h"
 #include "player_ffi.h"
 #include "player_startup.h"
+#include "player_state.h"
 #include "command.h"
 #include "screenshot.h"
 
@@ -212,6 +213,8 @@ void mp_destroy(struct MPContext *mpctx)
     mp_assert(!mpctx->num_abort_list);
     talloc_free(mpctx->abort_list);
     mp_mutex_destroy(&mpctx->abort_lock);
+    player_ffi_state_destroy(mpctx->control_state);
+    mpctx->control_state = NULL;
     talloc_free(mpctx->mconfig); // destroy before dispatch
     talloc_free(mpctx);
 }
@@ -277,6 +280,7 @@ struct MPContext *mp_create(void)
         .term_osd_contents = talloc_strdup(mpctx, ""),
         .osd_progbar = { .type = -1 },
         .playlist = playlist_new(mpctx),
+        .control_state = player_ffi_state_create(),
         .dispatch = mp_dispatch_create(mpctx),
         .playback_abort = mp_cancel_new(mpctx),
         .thread_pool = mp_thread_pool_create(mpctx, 0, 1, 30),
@@ -485,6 +489,8 @@ int mp_initialize(struct MPContext *mpctx, char **options)
     // config files. This explicitly includes values set by config files and
     // the command line.
     m_config_backup_watch_later_opts(mpctx->mconfig);
+
+    mp_control_state_sync(mpctx);
 
     mp_input_load_config(mpctx->input);
 

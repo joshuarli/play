@@ -108,6 +108,13 @@ D4 remains: the simplified Lua OSC on `mlua` is the permanent default. Rust owns
 - `player-ffi` exposes `player_ffi_command_check_strv` and `player_ffi_command_check_str`. `input/cmd.c` runs the checker before the existing parser builds an `mp_cmd`: supported commands are type-checked, unsupported commands pass through, and malformed supported commands are rejected with a typed message. Multi-command strings and `;` lists stay with the C parser.
 - Execution remains at the C playback boundary (`player/command.c`), so the stringly Lua/IPC edge is unchanged. The typed set excludes the removed shuffle/loop paths.
 
+## Rust control state (P7.4)
+
+- `player-core::state::PlaybackState` owns the scalar control-plane state: pause, fullscreen, mute, volume, speed, time-pos, duration, and EOF, with a change sequence. The pure store is unit-tested.
+- C creates one state handle per `MPContext`. Option changes, the playloop time update, demuxer duration changes, and EOF report facts through the FFI. The property getters for these fields read the Rust store, and the option-change callback uses the Rust change result to decide whether to notify.
+- `control-state` returns the Rust snapshot; `tests/run.sh state` asserts it at `pause=0/volume=100/speed=1` and again at `pause=1` after the round trip.
+- Track-list remains a C payload at the boundary, and the C client event queue still delivers events. The scalar values and change detection are Rust-owned; the payload and delivery boundary stay with the existing client API.
+
 ## Open work
 
 - P1.4 added the FFmpeg manifest gate over the frozen allowlist.
@@ -121,5 +128,5 @@ D4 remains: the simplified Lua OSC on `mlua` is the permanent default. Rust owns
 - P4.1 added `player-core`/`player-ffi`, built both static libraries, and linked/called `player_ffi_abi_version` from the player.
 - P4.2 moved the input classifier to `player-core::input`; the C boundary delegates through `player_ffi_classify_input` with typed results.
 - P4.3 documented the FFI invariants and added the C bridge test.
-- P7.3 typed the supported command vocabulary and validation; P7.4 moves player state and event dispatch into Rust.
+- P7.4 moved the scalar control state and change detection into Rust; P7.5 moves the local file stream abstraction.
 - P7 moves config, playlist, input, state, and local file handling into Rust; the audio bridge stays at the decode boundary.

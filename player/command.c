@@ -72,6 +72,7 @@
 #include "misc/dispatch.h"
 #include "misc/language.h"
 #include "misc/node.h"
+#include "player_state.h"
 #include "misc/thread_pool.h"
 #include "misc/thread_tools.h"
 #include "misc/path_utils.h"
@@ -4335,11 +4336,161 @@ static int mp_property_clipboard(void *ctx, struct m_property *prop,
 #define M_PROPERTY_DEPRECATED_ALIAS(name, real_property) \
     {(name), mp_property_deprecated_alias, .priv = (real_property)}
 
+static int control_state_sync_option(struct MPContext *mpctx,
+                                     struct m_config_option *co)
+{
+    if (!co || !mpctx->control_state)
+        return -1;
+    struct MPOpts *opts = mpctx->opts;
+    const char *name = co->name;
+    if (!strcmp(name, "pause"))
+        return player_ffi_state_set_bool(mpctx->control_state, "pause", opts->pause);
+    if (!strcmp(name, "fullscreen") || !strcmp(name, "vo/fullscreen"))
+        return player_ffi_state_set_bool(mpctx->control_state, "fullscreen",
+                                         opts->vo->fullscreen);
+    if (!strcmp(name, "mute"))
+        return player_ffi_state_set_bool(mpctx->control_state, "mute",
+                                         opts->softvol_mute);
+    if (!strcmp(name, "volume"))
+        return player_ffi_state_set_number(mpctx->control_state, "volume",
+                                           opts->softvol_volume);
+    if (!strcmp(name, "speed"))
+        return player_ffi_state_set_number(mpctx->control_state, "speed",
+                                           opts->playback_speed);
+    return -1;
+}
+
+void mp_control_state_sync(struct MPContext *mpctx)
+{
+    struct MPOpts *opts = mpctx->opts;
+    if (!mpctx->control_state || !opts)
+        return;
+    player_ffi_state_set_bool(mpctx->control_state, "pause", opts->pause);
+    player_ffi_state_set_bool(mpctx->control_state, "fullscreen",
+                              opts->vo->fullscreen);
+    player_ffi_state_set_bool(mpctx->control_state, "mute", opts->softvol_mute);
+    player_ffi_state_set_number(mpctx->control_state, "volume",
+                                opts->softvol_volume);
+    player_ffi_state_set_number(mpctx->control_state, "speed",
+                                opts->playback_speed);
+}
+
+static int mp_property_state_bool(void *ctx, struct m_property *prop,
+                                  int action, void *arg)
+{
+    MPContext *mpctx = ctx;
+    if (action == M_PROPERTY_GET || action == M_PROPERTY_PRINT) {
+        int value;
+        if (!mpctx->control_state ||
+            player_ffi_state_get_bool(mpctx->control_state, prop->name,
+                                      &value) < 0)
+            return M_PROPERTY_ERROR;
+        if (action == M_PROPERTY_PRINT) {
+            *(char **)arg = talloc_strdup(NULL, value ? "yes" : "no");
+            return M_PROPERTY_OK;
+        }
+        *(int *)arg = value;
+        return M_PROPERTY_OK;
+    }
+    return mp_property_generic_option(mpctx, prop, action, arg);
+}
+
+static int mp_property_state_volume(void *ctx, struct m_property *prop,
+                                    int action, void *arg)
+{
+    MPContext *mpctx = ctx;
+    if (action == M_PROPERTY_GET) {
+        double value;
+        if (!mpctx->control_state ||
+            player_ffi_state_get_number(mpctx->control_state, "volume",
+                                        &value) < 0)
+            return M_PROPERTY_ERROR;
+        *(float *)arg = value;
+        return M_PROPERTY_OK;
+    }
+    return mp_property_volume(mpctx, prop, action, arg);
+}
+
+static int mp_property_state_speed(void *ctx, struct m_property *prop,
+                                   int action, void *arg)
+{
+    MPContext *mpctx = ctx;
+    if (action == M_PROPERTY_GET) {
+        double value;
+        if (!mpctx->control_state ||
+            player_ffi_state_get_number(mpctx->control_state, "speed",
+                                        &value) < 0)
+            return M_PROPERTY_ERROR;
+        *(double *)arg = value;
+        return M_PROPERTY_OK;
+    }
+    return mp_property_playback_speed(mpctx, prop, action, arg);
+}
+
+static int mp_property_state_time_pos(void *ctx, struct m_property *prop,
+                                      int action, void *arg)
+{
+    MPContext *mpctx = ctx;
+    if (action == M_PROPERTY_GET || action == M_PROPERTY_PRINT ||
+        action == M_PROPERTY_FIXED_LEN_PRINT)
+    {
+        if (!mpctx->playback_initialized)
+            return M_PROPERTY_UNAVAILABLE;
+        double value;
+        if (!mpctx->control_state ||
+            player_ffi_state_get_number(mpctx->control_state, "time-pos",
+                                        &value) < 0)
+            return M_PROPERTY_UNAVAILABLE;
+        return property_time(action, arg, value);
+    }
+    return mp_property_time_pos(mpctx, prop, action, arg);
+}
+
+static int mp_property_control_state(void *ctx, struct m_property *prop,
+                                     int action, void *arg)
+{
+    MPContext *mpctx = ctx;
+    if (action == M_PROPERTY_GET) {
+        char text[256];
+        if (!mpctx->control_state ||
+            player_ffi_state_describe(mpctx->control_state, text,
+                                      sizeof(text)) < 0)
+            return M_PROPERTY_ERROR;
+        *(char **)arg = talloc_strdup(NULL, text);
+        return M_PROPERTY_OK;
+    }
+    if (action == M_PROPERTY_GET_TYPE) {
+        *(struct m_option *)arg = (struct m_option){.type = CONF_TYPE_STRING};
+        return M_PROPERTY_OK;
+    }
+    return M_PROPERTY_NOT_IMPLEMENTED;
+}
+
+static int mp_property_state_duration(void *ctx, struct m_property *prop,
+                                      int action, void *arg)
+{
+    MPContext *mpctx = ctx;
+    if (action == M_PROPERTY_GET || action == M_PROPERTY_PRINT ||
+        action == M_PROPERTY_FIXED_LEN_PRINT)
+    {
+        double value;
+        if (!mpctx->control_state ||
+            player_ffi_state_get_number(mpctx->control_state, "duration",
+                                        &value) < 0 || value < 0)
+            return M_PROPERTY_UNAVAILABLE;
+        return property_time(action, arg, value);
+    }
+    return mp_property_duration(mpctx, prop, action, arg);
+}
+
 // Base list of properties. This does not include option-mapped properties.
 static const struct m_property mp_properties_base[] = {
     // General
     {"pid", mp_property_pid},
-    {"speed", mp_property_playback_speed},
+    {"speed", mp_property_state_speed},
+    {"pause", mp_property_state_bool},
+    {"fullscreen", mp_property_state_bool},
+    {"mute", mp_property_state_bool},
     {"pitch", mp_property_playback_pitch},
     {"audio-speed-correction", mp_property_av_speed_correction, .priv = "a"},
     {"video-speed-correction", mp_property_av_speed_correction, .priv = "v"},
@@ -4354,7 +4505,8 @@ static const struct m_property mp_properties_base[] = {
     {"file-format", mp_property_file_format},
     {"stream-pos", mp_property_stream_pos},
     {"stream-end", mp_property_stream_end},
-    {"duration", mp_property_duration},
+    {"duration", mp_property_state_duration},
+    {"control-state", mp_property_control_state},
     {"avsync", mp_property_avsync},
     {"total-avsync-change", mp_property_total_avsync_change},
     {"mistimed-frame-count", mp_property_mistimed_frame_count},
@@ -4366,7 +4518,7 @@ static const struct m_property mp_properties_base[] = {
     {"vo-delayed-frame-count", mp_property_vo_delayed_frame_count},
     {"percent-pos", mp_property_percent_pos},
     {"time-start", mp_property_time_start},
-    {"time-pos", mp_property_time_pos},
+    {"time-pos", mp_property_state_time_pos},
     {"time-remaining", mp_property_remaining},
     {"audio-pts", mp_property_audio_pts},
     {"playtime-remaining", mp_property_playtime_remaining},
@@ -4418,7 +4570,7 @@ static const struct m_property mp_properties_base[] = {
 
     // Audio
     {"mixer-active", mp_property_mixer_active},
-    {"volume", mp_property_volume},
+    {"volume", mp_property_state_volume},
     {"volume-gain", mp_property_volume_gain},
     {"ao-volume", mp_property_ao_volume},
     {"ao-mute", mp_property_ao_mute},
@@ -7683,8 +7835,11 @@ void mp_option_change_callback(void *ctx, struct m_config_option *co, uint64_t f
     struct MPOpts *opts = mpctx->opts;
     void *opt_ptr = !co ? NULL : co->data; // NULL on start
 
-    if (co)
-        mp_notify_property(mpctx, co->name);
+    if (co) {
+        int state_change = control_state_sync_option(mpctx, co);
+        if (state_change != 0)
+            mp_notify_property(mpctx, co->name);
+    }
     if (opt_ptr == &opts->media_title)
         mp_notify(mpctx, MP_EVENT_METADATA_UPDATE, NULL);
 

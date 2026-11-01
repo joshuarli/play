@@ -2,6 +2,7 @@ pub mod command;
 pub mod config;
 pub mod input;
 pub mod playlist;
+pub mod state;
 
 pub fn abi_version() -> u32 {
     1

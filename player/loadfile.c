@@ -61,6 +61,7 @@
 
 #include "core.h"
 #include "command.h"
+#include "player_state.h"
 
 // Called from the demuxer thread if a new packet is available, or other changes.
 static void wakeup_demux(void *pctx)
@@ -296,8 +297,10 @@ void print_track_list(struct MPContext *mpctx, const char *msg)
 void update_demuxer_properties(struct MPContext *mpctx)
 {
     struct demuxer *demuxer = mpctx->demuxer;
-    if (!demuxer)
+    if (!demuxer) {
+        player_ffi_state_set_duration(mpctx->control_state, -1);
         return;
+    }
     demux_update(demuxer, get_current_time(mpctx));
     int events = demuxer->events;
     if ((events & DEMUX_EVENT_INIT) && demuxer->num_editions > 1) {
@@ -350,6 +353,7 @@ void update_demuxer_properties(struct MPContext *mpctx)
     }
     if (events & DEMUX_EVENT_DURATION)
         mp_notify(mpctx, MP_EVENT_DURATION_UPDATE, NULL);
+    player_ffi_state_set_duration(mpctx->control_state, get_time_length(mpctx));
     demuxer->events = 0;
 }
 

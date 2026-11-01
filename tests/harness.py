@@ -959,6 +959,10 @@ def gate_state(results, args):
         results.check("state: volume 100", mpv.get_property("volume") == 100.0)
         results.check("state: speed 1", mpv.get_property("speed") == 1.0)
         results.check("state: mute false", mpv.get_property("mute") is False)
+        control = mpv.get_property("control-state")
+        results.check("state: rust control state",
+                      "pause=0" in control and "volume=100.000" in control and
+                      "speed=1.000" in control, control)
         tracks = mpv.get_property("track-list")
         results.check("state: track list", len(tracks) >= 3, f"count {len(tracks)}")
 

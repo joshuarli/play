@@ -238,6 +238,7 @@ typedef struct MPContext {
     mp_thread core_thread;
     struct mpv_global *global;
     struct MPOpts *opts;
+    struct player_state *control_state;
     struct mp_log *log;
     struct stats_ctx *stats;
     struct m_config *mconfig;

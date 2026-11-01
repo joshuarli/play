@@ -6,6 +6,7 @@ use player_core::input::{classify_input, InputError, InputPath};
 mod command;
 mod lua;
 mod playlist;
+mod state;
 mod startup;
 
 pub const PLAYER_FFI_INPUT_LOCAL: i32 = 0;

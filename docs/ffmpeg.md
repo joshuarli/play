@@ -80,4 +80,4 @@ Current result: 19 passed, 0 failed. A temporary manifest with `http` added to t
 
 ## Next
 
-P7.3 moved the supported command vocabulary and argument validation into `player-core::command`; input parsing consults it before the C executor. P7.4 moves player state and event dispatch into Rust.
+P7.4 moved the scalar control state and change detection into `player-core::state`; C reports facts through the FFI and the property getters serve Rust. P7.5 moves the local file stream abstraction.

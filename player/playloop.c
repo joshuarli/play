@@ -23,6 +23,7 @@
 
 #include "client.h"
 #include "command.h"
+#include "player_state.h"
 #include "core.h"
 #include "mpv_talloc.h"
 #include "screenshot.h"
@@ -1135,6 +1136,12 @@ static void handle_playback_time(struct MPContext *mpctx)
         if (mpts != MP_NOPTS_VALUE)
             mpctx->playback_pts = mpts;
     }
+    double time = get_playback_time(mpctx);
+    if (time == MP_NOPTS_VALUE)
+        time = 0;
+    player_ffi_state_set_time_pos(mpctx->control_state, time);
+    player_ffi_state_set_eof_reached(mpctx->control_state,
+        mpctx->video_status == STATUS_EOF && mpctx->audio_status == STATUS_EOF);
 }
 
 // We always make sure audio and video buffers are filled before actually
