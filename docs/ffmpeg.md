@@ -80,4 +80,4 @@ Current result: 19 passed, 0 failed. A temporary manifest with `http` added to t
 
 ## Next
 
-P3.2 locked the local-only boundary with the URL matrix, hostile-config check, and `scripts/audit.sh`. P4.1 adds the first Rust control-plane link.
+P4.1 added the `player-core`/`player-ffi` Rust static libraries and linked the first FFI symbol. P4.2 moves the input predicate into Rust.

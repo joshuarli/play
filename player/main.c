@@ -66,6 +66,7 @@
 
 #include "core.h"
 #include "client.h"
+#include "player_ffi.h"
 #include "command.h"
 #include "screenshot.h"
 
@@ -356,6 +357,7 @@ int mp_initialize(struct MPContext *mpctx, char **options)
     }
 
     mp_print_version(mpctx->log, false);
+    MP_VERBOSE(mpctx, "player-core ABI %u\n", player_ffi_abi_version());
 
     mp_parse_cfgfiles(mpctx);
 

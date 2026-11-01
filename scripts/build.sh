@@ -18,8 +18,9 @@ export PKG_CONFIG_PATH
 RUST_TARGET="$ROOT/.work/deps/player-audio/target"
 mkdir -p "$RUST_TARGET"
 CARGO_TARGET_DIR="$RUST_TARGET" cargo build --release \
-    --manifest-path "$ROOT/rust/Cargo.toml" -p player-audio
+    --manifest-path "$ROOT/rust/Cargo.toml" -p player-audio -p player-ffi
 PLAYER_AUDIO_LIB="$RUST_TARGET/release/libplayer_audio.a"
+PLAYER_FFI_LIB="$RUST_TARGET/release/libplayer_ffi.a"
 
 options=(
     -Dcplayer=true -Dlibmpv=false -Dgpl=true -Dlua=lua52
@@ -27,6 +28,7 @@ options=(
     -Ddisable-packet-pool=false
     -Dmacos-bundle-category=video -Dswift-flags= -Dwin32-subsystem=windows
     -Dplayer-audio-lib="$PLAYER_AUDIO_LIB"
+    -Dplayer-ffi-lib="$PLAYER_FFI_LIB"
 )
 
 enabled_features=(

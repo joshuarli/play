@@ -47,6 +47,11 @@ if player_audio_lib != ''
     dependencies += declare_dependency(link_args: [player_audio_lib])
 endif
 
+player_ffi_lib = get_option('player-ffi-lib')
+if player_ffi_lib != ''
+    dependencies += declare_dependency(link_args: [player_ffi_lib])
+endif
+
 # Keeps track of all enabled/disabled features
 features = {
     'debug': get_option('debug'),
@@ -1676,6 +1681,7 @@ endif
 
 incdir_public = include_directories('./include')
 incdir_player_audio = include_directories('rust/player-audio/include')
+incdir_player_ffi = include_directories('rust/player-ffi/include')
 client_h_define = cc.get_define('MPV_CLIENT_API_VERSION', prefix: '#include "mpv/client.h"',
                                 include_directories: incdir_public)
 major = client_h_define.split('|')[0].split('<<')[0].strip('() ')
@@ -1686,7 +1692,7 @@ libmpv = []
 libmpv_objects = []
 if get_option('libmpv')
     libmpv = library('mpv', sources, dependencies: dependencies, gnu_symbol_visibility: 'hidden',
-                     include_directories: [incdir_public, incdir_player_audio],
+                     include_directories: [incdir_public, incdir_player_audio, incdir_player_ffi],
                      link_args: cc.get_supported_link_arguments(['-Wl,-Bsymbolic']),
                      version: client_api_version, install: true,
                      build_by_default: true)
@@ -1743,7 +1749,7 @@ if get_option('cplayer')
                          win_subsystem: get_option('win32-subsystem'), install: true)
     else
         mpv = executable('mpv', main_fn_source + sources, dependencies: dependencies,
-                         include_directories: [incdir_public, incdir_player_audio],
+                         include_directories: [incdir_public, incdir_player_audio, incdir_player_ffi],
                          win_subsystem: get_option('win32-subsystem'), install: true)
     endif
 

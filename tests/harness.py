@@ -1081,6 +1081,41 @@ def gate_build(results, args):
                   ", ".join(path.name for path in stray))
 
 
+def gate_rust_link(results, args):
+    proc = subprocess.run(
+        [str(ROOT / "scripts" / "build.sh")], cwd=str(ROOT),
+        capture_output=True, text=True, timeout=300,
+    )
+    results.check("rust-link: build", proc.returncode == 0,
+                  tail((proc.stdout + proc.stderr).splitlines(), 20))
+    if not MPV.exists():
+        results.check("rust-link: player exists", False, str(MPV))
+        return
+
+    nm = subprocess.run(["nm", "-g", str(MPV)], capture_output=True, text=True,
+                        timeout=30).stdout
+    results.check("rust-link: symbol", "player_ffi_abi_version" in nm, "symbol missing")
+
+    proc = subprocess.run(
+        ["cargo", "test", "--manifest-path", str(ROOT / "rust" / "Cargo.toml"),
+         "-p", "player-core", "-p", "player-ffi"],
+        cwd=str(ROOT), capture_output=True, text=True, timeout=300,
+    )
+    results.check("rust-link: cargo test", proc.returncode == 0,
+                  tail((proc.stdout + proc.stderr).splitlines(), 20))
+
+    entry = fixture_entry("h264")
+    with Mpv(["--vo=null", "--ao=null", "--hwdec=no"]) as mpv:
+        mpv.load(fixture_path(entry))
+        mpv.wait_event("file-loaded", timeout=10)
+        mpv.wait_property(
+            "time-pos", lambda value: isinstance(value, (int, float)) and value > 0,
+            timeout=10,
+        )
+        results.check("rust-link: playback", True)
+    results.check("rust-link: exit", mpv.returncode == 0, f"exit {mpv.returncode}")
+
+
 def gate_baseline_docs(results, args):
     path = ROOT / "docs" / "baseline.md"
     if not path.exists():
@@ -1261,6 +1296,7 @@ GATES = {
     "playlist": gate_playlist,
     "state": gate_state,
     "build": gate_build,
+    "rust-link": gate_rust_link,
     "baseline-docs": gate_baseline_docs,
     "meta": gate_meta,
     "failures": gate_failures,
@@ -1269,6 +1305,7 @@ GATES = {
 SUITE = [
     "fixtures", "corpus", "audio", "hwdec", "seek", "local-paths",
     "local-only", "osc", "input", "playlist", "cli", "state", "failures",
+    "rust-link",
 ]
 
 
