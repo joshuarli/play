@@ -1375,6 +1375,18 @@ def gate_release(results, args):
         f"icon={plist.get('CFBundleIconFile')!r}",
     )
 
+    release_binary = ROOT / "build-release/mpv"
+    try:
+        stamp = json.loads((app / "Contents/Resources/build.json").read_text())
+        expected = hashlib.sha256(release_binary.read_bytes()).hexdigest()
+        results.check(
+            "release: build stamp",
+            stamp.get("release_binary_sha256") == expected,
+            f"stamp={stamp.get('release_binary_sha256')!r} binary={expected!r}",
+        )
+    except (OSError, json.JSONDecodeError) as exc:
+        results.check("release: build stamp", False, f"{type(exc).__name__}: {exc}")
+
     bad = []
     targets = [binary] + sorted(frameworks.glob("*.dylib"))
     for target in targets:

@@ -15,16 +15,6 @@ Next: 20
 - **Effort:** M
 - **Design:** none
 
-### PLAY-6 · P2 · The release gate can pass on a stale app and the audit never inspects it
-
-- **Area:** Build
-- **Where:** `tests/harness.py:1357-1408`, `scripts/release.sh:11`, `scripts/audit.sh:6-8`
-- **Problem:** `gate_release` inspects whatever is in `dist/Player.app` and never compares it with `build-release/mpv`, a revision, or a build stamp. `release.sh` removes nothing before building, so a failed build leaves the previous app and the suite still passes. `scripts/audit.sh`, which the README and status doc name next to the suite, never runs the release gate at all.
-- **Recommendation:** write a build stamp into `Contents/Resources` with the revision and the hashes of the executable and bundled dylibs, make `gate_release` verify it, and add `tests/run.sh release` to `scripts/audit.sh`. A stale app then fails on the missing or mismatched stamp.
-- **Fix with:** durable-state
-- **Effort:** S
-- **Design:** none
-
 ### PLAY-7 · P2 · The FFmpeg manifest audits the development tree and dependency stamps ignore changed inputs
 
 - **Area:** Build

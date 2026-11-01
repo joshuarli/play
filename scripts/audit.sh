@@ -6,6 +6,7 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 "$ROOT/tests/run.sh" ffmpeg-audit
 "$ROOT/tests/run.sh" build
 "$ROOT/tests/run.sh" local-only
+"$ROOT/tests/run.sh" release
 
 protocols=$("$ROOT/build/mpv" --no-config --list-protocols)
 if ! printf '%s\n' "$protocols" | rg -q 'file://'; then

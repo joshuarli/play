@@ -8,6 +8,7 @@ BUILD="$ROOT/build-release"
 export MACOSX_DEPLOYMENT_TARGET=${MACOSX_DEPLOYMENT_TARGET:-27.0}
 
 cd "$ROOT"
+rm -rf "$ROOT/dist/Player.app"
 scripts/build-deps.sh
 
 export PKG_CONFIG_LIBDIR="$PREFIX/lib/pkgconfig:$FFMPEG_PREFIX/lib/pkgconfig"

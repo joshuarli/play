@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Assemble Player.app from the release build and its pinned dependency prefix."""
 
+import hashlib
 import json
 import platform
 import plistlib
@@ -183,6 +184,14 @@ def main():
     }
     with open(APP / "Contents/Info.plist", "wb") as handle:
         plistlib.dump(info, handle, sort_keys=True)
+
+    stamp = {
+        "release_binary_sha256": hashlib.sha256(BINARY.read_bytes()).hexdigest(),
+        "revision": subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
+        ).strip(),
+    }
+    (RESOURCES / "build.json").write_text(json.dumps(stamp, indent=2) + "\n")
 
     for binary in [executable] + list(FRAMEWORKS.glob("*.dylib")):
         subprocess.run(

@@ -18,7 +18,7 @@ Recorded 2026-11-01 at `7a8958b`.
 
 - Development: `scripts/build.sh`, then `tests/run.sh suite`.
 - Release: `scripts/release.sh`; the pinned closure is built by `scripts/build-deps.sh` into `.work/deps/release`.
-- Audit: `scripts/audit.sh`; budgets: `scripts/measure.sh final` and `scripts/measure.sh compare`.
+- Audit: `scripts/audit.sh` runs the FFmpeg manifest, build, local-only, and release gates; budgets: `scripts/measure.sh final` and `scripts/measure.sh compare`.
 - Clean rebuild evidence: the dependency prefix was moved aside and rebuilt from the pinned tarballs, then the app was rebuilt and the release gate passed.
 
 ## Security and correctness
