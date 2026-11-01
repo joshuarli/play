@@ -487,6 +487,12 @@ int mp_initialize(struct MPContext *mpctx, char **options)
         m_config_set_profile(mpctx->mconfig, "pseudo-gui", 0);
     }
 
+#if HAVE_COCOA
+    if (getenv("MPVBUNDLE") && opts->player_idle_mode == 0 &&
+        !playlist_entry_count(mpctx->playlist))
+        opts->player_idle_mode = 2;
+#endif
+
     // Backup the default settings, which should not be stored in the resume
     // config files. This explicitly includes values set by config files and
     // the command line.

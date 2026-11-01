@@ -2,6 +2,7 @@
 import hashlib
 import json
 import os
+import plistlib
 import re
 import shutil
 import socket
@@ -1361,6 +1362,18 @@ def gate_release(results, args):
     results.check("release: app", app.is_dir() and binary.is_file())
     if not binary.is_file():
         return
+
+    plist = plistlib.loads((app / "Contents/Info.plist").read_bytes())
+    environment = plist.get("LSEnvironment", {})
+    results.check(
+        "release: bundle identity",
+        environment.get("MPVBUNDLE") == "true"
+        and bool(plist.get("CFBundleDocumentTypes"))
+        and bool(plist.get("CFBundleIconFile")),
+        f"MPVBUNDLE={environment.get('MPVBUNDLE')!r} "
+        f"documentTypes={bool(plist.get('CFBundleDocumentTypes'))} "
+        f"icon={plist.get('CFBundleIconFile')!r}",
+    )
 
     bad = []
     targets = [binary] + sorted(frameworks.glob("*.dylib"))

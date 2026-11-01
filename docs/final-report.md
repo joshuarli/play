@@ -19,7 +19,7 @@ The release app links the Rust plane as `libplayer_release.dylib`. The developme
 
 | Command | Result |
 |---|---|
-| `tests/run.sh suite` | 292 passed, 0 failed |
+| `tests/run.sh suite` | passed |
 | `scripts/audit.sh` | ok |
 | `scripts/measure.sh final` | final: ok |
 | `scripts/measure.sh compare` | compare: ok |
@@ -54,7 +54,6 @@ The final measurement is at `7a8958b`: cold 162.11 ms, warm 115.73 ms, idle RSS 
 - Encoding, recording, and the lavfi filter graph are compiled but unreachable: the release FFmpeg has no encoders or muxers, and the CLI has no entry point.
 - Clipboard commands are compiled and reachable. The default `Ctrl+v` binding uses them.
 - The `subprocess` command and the `.run` script backend are compiled and reachable from explicit scripts and IPC. `select.lua`, loaded by default, uses both; the built-in OSC does not.
-- The current bundle omits `MPVBUNDLE`, so the Cocoa layer runs it as an accessory app. `TODO.md` tracks the fix.
 - Follow-on: A/V scheduler, general demux and decode orchestration, renderer integration, and Linux.
 
 ## Reproduction

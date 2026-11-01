@@ -4,8 +4,8 @@ Player is a local-only macOS media player. The release artifact is `dist/Player.
 
 ## Current state
 
-- The last release measurement is at `7a8958b`. Changes since then are documentation.
-- `tests/run.sh suite`: 292 passed, 0 failed. The run includes the release gate.
+- The last full release measurement is at `7a8958b`.
+- `tests/run.sh suite`: the full suite passes. The run includes the release gate.
 - `scripts/audit.sh`: ok.
 - `scripts/measure.sh final`: all published budgets pass.
 - App: 26,807,168 B; executable 9,640,432 B; framework closure 17,166,736 B in 13 files.
@@ -17,7 +17,6 @@ Player is a local-only macOS media player. The release artifact is `dist/Player.
 - GUI, HDR and 10-bit color, subtitle shaping, Retina scaling, audio audibility, real mouse and drag, and signing or notarization are owner-run. See `docs/manual-checklist.md`.
 - Clipboard commands are compiled and reachable. Encoding, recording, and the lavfi filter graph are compiled but unreachable because the release FFmpeg has no encoders or muxers.
 - The `subprocess` command and the `.run` script backend are reachable from explicit scripts and IPC. `select.lua`, which loads by default, uses both. The built-in OSC does not.
-- The current bundle omits `MPVBUNDLE` from `Info.plist`, so the Cocoa layer runs it as an accessory app without a menu bar. `TODO.md` tracks the fix.
 - Follow-on: A/V scheduler, general demux and decode orchestration, renderer integration, and Linux.
 
 ## Evidence

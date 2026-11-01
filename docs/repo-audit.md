@@ -38,7 +38,7 @@ Recorded 2026-11-01 at `7a8958b`.
 - Retained C and headers: 216 C files and 137,228 lines under the retained source roots. This includes upstream mpv internals kept for the playback pipeline.
 - Rust: 6,685 lines in 22 files under `rust/`. By crate: core 1,648, FFI 2,309, Lua 2,401, audio 318, release 2.
 - FFI: 49 exported `player_ffi_*` and `player_audio_*` symbols; 49 `#[unsafe(no_mangle)]` declarations.
-- Tests: 23 gates in `tests/harness.py`; the suite reports 292 cases on the recorded host.
+- Tests: 23 gates in `tests/harness.py`; the suite passes on the recorded host.
 - Distributable: 26.8 MB, with a 9.64 MB executable and a 16.37 MiB closure in 13 files.
 
 ## Known limits

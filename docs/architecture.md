@@ -58,7 +58,7 @@ FFmpeg demuxes every container and decodes video. VideoToolbox is the hardware p
 
 `player/main.c` sets `VK_DRIVER_FILES` and `VK_ICD_FILENAMES` to the bundled ICD before renderer initialization. No Homebrew path is linked into the release.
 
-The bundle must set `MPVBUNDLE=true` in `Info.plist`; the Cocoa layer uses that value to choose the regular activation policy, the Dock icon, and the menu bar. The current bundler omits the key.
+The bundler sets `MPVBUNDLE=true` in `Info.plist`; the Cocoa layer uses that value to choose the regular activation policy, the Dock icon, and the menu bar. It also declares the movie, audio, and playlist types and bundles the icon. A bundle launch with no file stays idle so a Finder open event can play.
 
 ## Provenance
 

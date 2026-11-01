@@ -3,18 +3,6 @@ Next: 20
 
 # Backlog
 
-## P1
-
-### PLAY-1 · P1 · The release bundle runs as an accessory app and cannot accept Finder opens
-
-- **Area:** Build
-- **Where:** `scripts/bundle.py:142-156`, `osdep/mac/app_hub.swift:40`, `osdep/mac/application.swift:103`, `player/main.c:518-525`, `TOOLS/osxbundle/mpv.app/Contents/Info.plist:139-145`
-- **Problem:** `AppHub.isBundle` is true only when the environment contains `MPVBUNDLE=true`. The bundler writes an `Info.plist` without `LSEnvironment`, and the built `dist/Player.app/Contents/Info.plist` confirms the key is absent. `Application.main` therefore selects `.accessory`: no Dock tile and no menu bar. The bundle also has no idle default, so a Finder launch with no file reaches the empty-playlist bail and exits, and a Finder open event queued through `mp_event_drop_files` can arrive after that decision and be discarded. `setupBundle`'s `-psn_` guard never runs, and `osdep/path-mac.m:24` never resolves the bundle resource directory.
-- **Recommendation:** write `LSEnvironment` with `MPVBUNDLE=true`, add `CFBundleDocumentTypes` and `CFBundleIconFile`, and keep the bundle idle when it starts with no file so a queued open event can play. Add release-gate assertions for the plist keys. Verify one Finder launch and one double-click; those are owner-run.
-- **Fix with:** lifecycle-concurrency
-- **Effort:** M
-- **Design:** none
-
 ## P2
 
 ### PLAY-2 · P2 · The default built-in `select.lua` exposes process execution and URL opening

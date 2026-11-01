@@ -103,6 +103,11 @@ def main():
     icd["ICD"]["library_path"] = "../../../Frameworks/libMoltenVK.dylib"
     (ICD_DIR / "MoltenVK_icd.json").write_text(json.dumps(icd, indent=4) + "\n")
 
+    shutil.copy2(
+        ROOT / "TOOLS/osxbundle/mpv.app/Contents/Resources/icon.icns",
+        RESOURCES / "icon.icns",
+    )
+
     path_map = {}
     for name, source in closure.items():
         path_map[str(source)] = f"@rpath/{name}"
@@ -141,7 +146,28 @@ def main():
 
     info = {
         "CFBundleDevelopmentRegion": "en",
+        "CFBundleDocumentTypes": [
+            {
+                "CFBundleTypeName": "Movie",
+                "CFBundleTypeRole": "Viewer",
+                "LSHandlerRank": "Alternate",
+                "LSItemContentTypes": ["public.movie"],
+            },
+            {
+                "CFBundleTypeName": "Audio",
+                "CFBundleTypeRole": "Viewer",
+                "LSHandlerRank": "Alternate",
+                "LSItemContentTypes": ["public.audio"],
+            },
+            {
+                "CFBundleTypeName": "Playlist",
+                "CFBundleTypeRole": "Viewer",
+                "LSHandlerRank": "Alternate",
+                "LSItemContentTypes": ["public.m3u-playlist", "public.pls-playlist"],
+            },
+        ],
         "CFBundleExecutable": "player",
+        "CFBundleIconFile": "icon.icns",
         "CFBundleIdentifier": "local.player",
         "CFBundleInfoDictionaryVersion": "6.0",
         "CFBundleName": "Player",
@@ -150,6 +176,7 @@ def main():
         "CFBundleShortVersionString": "0.41.0",
         "CFBundleVersion": "41",
         "LSApplicationCategoryType": "public.app-category.video",
+        "LSEnvironment": {"MPVBUNDLE": "true"},
         "LSMinimumSystemVersion": "27.0",
         "NSHighResolutionCapable": True,
         "NSPrincipalClass": "NSApplication",

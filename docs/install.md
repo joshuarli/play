@@ -15,9 +15,7 @@ The app is `dist/Player.app`. Open it from Finder, or run a file directly:
 dist/Player.app/Contents/MacOS/player FILE
 ```
 
-The bundle carries its own pinned dylibs, Vulkan loader, MoltenVK, and the Rust cdylib. It does not use Homebrew at runtime. It is ad-hoc signed and not notarized. Do not distribute the build without a signing identity.
-
-The current bundle omits the `MPVBUNDLE` key in `Info.plist`, so macOS runs it as an accessory app without a menu bar. Launching it with a file argument still plays. The bundle fix is tracked in `TODO.md`.
+The bundle carries its own pinned dylibs, Vulkan loader, MoltenVK, and the Rust cdylib. It does not use Homebrew at runtime. It is ad-hoc signed and not notarized. Do not distribute the build without a signing identity. It declares `MPVBUNDLE`, the supported document types, and the application icon in `Info.plist`.
 
 ## Local-only contract
 
