@@ -744,6 +744,24 @@ def gate_linux_vaapi(results, args):
             results.check(f"linux-vaapi {name}", False, str(exc))
 
 
+def gate_linux_hwdec_default(results, args):
+    has_gpu = bool(list(Path("/dev/dri").glob("renderD*")))
+    expected = "vaapi-copy" if has_gpu else "no"
+    with Mpv(["--vo=null", "--ao=null"]) as mpv:
+        results.check("linux-hwdec-default: auto", mpv.get_property("hwdec") == ["auto"],
+                      str(mpv.get_property("hwdec")))
+        mpv.load(fixture_path(fixture_entry("h264")))
+        mpv.wait_event("file-loaded", timeout=10)
+        mpv.wait_property("time-pos", lambda value: isinstance(value, (int, float)) and value > 0.1,
+                          timeout=10)
+        current = mpv.get_property("hwdec-current")
+        current = "no" if current == "" else current
+        results.check(f"linux-hwdec-default: vo=null decodes with {expected}", current == expected,
+                      f"hwdec-current {current!r}, render node {'present' if has_gpu else 'absent'}")
+        check_no_errors(results, "linux-hwdec-default", mpv)
+    results.check("linux-hwdec-default: exit", mpv.returncode == 0, f"exit {mpv.returncode}")
+
+
 def gate_hwdec(results, args):
     for name in ("h264", "hevc"):
         entry = fixture_entry(name)
@@ -1750,6 +1768,7 @@ GATES = {
     "linux-gpu-next": gate_linux_gpu_next,
     "linux-audit": gate_linux_audit,
     "linux-vaapi": gate_linux_vaapi,
+    "linux-hwdec-default": gate_linux_hwdec_default,
     "linux-mostly-static": gate_linux_audit,
     "linux-rust-link": gate_linux_rust_link,
     "hwdec": gate_hwdec,
@@ -1783,7 +1802,7 @@ SUITE = [
 
 LINUX_SUITE = [
     "fixtures", "linux-corpus", "linux-audio", "linux-gpu-next", "linux-local-only", "linux-osc",
-    "linux-mostly-static", "local-paths", "seek", "input", "playlist", "cli", "state",
+    "linux-mostly-static", "linux-hwdec-default", "local-paths", "seek", "input", "playlist", "cli", "state",
     "failures", "lua-host", "lua-api-audit", "linux-rust-link",
 ]
 

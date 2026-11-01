@@ -164,7 +164,11 @@ const struct m_sub_options hwdec_conf = {
     .size = sizeof(struct hwdec_opts),
     .defaults = &(const struct hwdec_opts){
         .software_fallback = 3,
+#if HAVE_VAAPI
+        .hwdec_api = (char *[]){"auto", NULL,},
+#else
         .hwdec_api = (char *[]){"no", NULL,},
+#endif
         .hwdec_codecs = "h264,vc1,hevc,vp8,vp9,av1,prores,prores_raw,ffv1,dpx",
         // Maximum number of surfaces the player wants to buffer. This number
         // might require adjustment depending on whatever the player does;
