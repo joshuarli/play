@@ -194,7 +194,7 @@ if ! have shaderc; then
     done
     run_log shaderc cmake -S "$SRC/shaderc-$SHADERC_VERSION" \
         -B "$SRC/build-shaderc" -DCMAKE_INSTALL_PREFIX="$PREFIX" \
-        -DCMAKE_BUILD_TYPE=Release -DSHADERC_SKIP_TESTS=ON \
+        -DCMAKE_BUILD_TYPE=MinSizeRel -DSHADERC_SKIP_TESTS=ON \
         -DSKIP_GLSLANG_INSTALL=ON -DSKIP_SPIRV_TOOLS_INSTALL=ON \
         -DSKIP_GOOGLETEST_INSTALL=ON -DBUILD_SHARED_LIBS=ON \
         -DCMAKE_MACOSX_RPATH=ON

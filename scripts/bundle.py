@@ -11,6 +11,7 @@ from pathlib import Path
 
 ROOT = Path(sys.argv[1] if len(sys.argv) > 1 else ".").resolve()
 PREFIX = ROOT / ".work/deps/release"
+RUST_TARGET = ROOT / ".work/deps/player-audio/target/release"
 BINARY = ROOT / "build-release/mpv"
 APP = ROOT / "dist/Player.app"
 MACOS = APP / "Contents/MacOS"
@@ -35,7 +36,11 @@ def dependencies(path):
 
 def resolve(dep):
     if dep.startswith("@rpath/"):
-        return PREFIX / "lib" / dep[len("@rpath/"):]
+        name = dep[len("@rpath/"):]
+        candidate = PREFIX / "lib" / name
+        if candidate.exists():
+            return candidate
+        return RUST_TARGET / name
     if dep.startswith("@loader_path/"):
         return PREFIX / "lib" / dep[len("@loader_path/"):]
     if dep.startswith(str(PREFIX)):

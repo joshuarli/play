@@ -1374,7 +1374,7 @@ def gate_release(results, args):
         "libass.9.dylib", "libplacebo.387.dylib", "libvulkan.1.dylib",
         "libMoltenVK.dylib", "libshaderc_shared.1.dylib",
         "libdav1d.7.dylib", "libfreetype.6.dylib", "libfribidi.0.dylib",
-        "libharfbuzz.0.dylib",
+        "libharfbuzz.0.dylib", "libplayer_release.dylib",
     }
     present = {path.name for path in frameworks.glob("*.dylib")}
     results.check("release: bundled closure", expected <= present,

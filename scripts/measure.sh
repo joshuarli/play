@@ -41,33 +41,7 @@ MPV = ROOT / ("dist/Player.app/Contents/MacOS/player"
              if MODE in ("release", "final") else "build/mpv")
 BUILD_DIR = "build-release" if MODE in ("release", "final") else "build"
 FRAMEWORKS = ROOT / "dist/Player.app/Contents/Frameworks"
-if MODE == "compare":
-    import json as _json
-    paths = {
-        "p8.2": TMP / "measure-p8.2.json",
-        "final": TMP / "measure-final.json",
-    }
-    values = {}
-    for name, path in paths.items():
-        if not path.exists():
-            raise SystemExit(f"missing {path}; run scripts/measure.sh release p8.2 and scripts/measure.sh final")
-        values[name] = _json.loads(path.read_text())
-    before, after = values["p8.2"], values["final"]
-    print("metric                 p8.2        final       delta")
-    for key, getter in (
-        ("startup warm ms", lambda v: v["startup"]["warm_ms"]),
-        ("first frame ms", lambda v: v["first_frame_1080p_ms"]),
-        ("idle RSS MB", lambda v: v["idle_rss_mb"]),
-        ("1080p RSS MB", lambda v: v["playback"]["1080p"]["rss_mb"]),
-        ("1080p CPU s", lambda v: v["playback"]["1080p"]["cpu_s"]),
-        ("4K CPU s", lambda v: v["playback"]["4k"]["cpu_s"]),
-        ("seek ms", lambda v: v["seek_ms"]),
-        ("closure B", lambda v: v["closure"]["bytes"]),
-    ):
-        old, new = getter(before), getter(after)
-        delta = new - old
-        print(f"{key:20} {old:>10} {new:>10} {delta:>10.2f}")
-    raise SystemExit(0)
+
 
 
 MEASURE_DIR = ROOT / ".work" / "fixtures" / "measure"
@@ -81,6 +55,9 @@ if not MPV.exists():
     raise SystemExit(f"missing player: {MPV}; run scripts/build.sh")
 
 sys.path.insert(0, str(ROOT / "tests"))
+P0_UNIQUE_CLOSURE = 59_084_272
+P0_CPU_1080 = 0.21
+
 import harness  # noqa: E402
 harness.MPV = MPV
 from harness import Mpv, Failure  # noqa: E402
@@ -317,6 +294,8 @@ def component_for(path):
         return "dav1d"
     if "lua" in lowered:
         return "Lua"
+    if "player_release" in lowered:
+        return "Rust"
     if name.startswith(("libfreetype", "libfribidi", "libharfbuzz")):
         return "fonts/shaping"
     return "remaining external"
@@ -476,6 +455,44 @@ def hwdec():
     }
 
 
+def lua_interpreters():
+    paths = [MPV, ROOT / ".work/deps/player-audio/target/release/libplayer_release.dylib"]
+    count = 0
+    for path in paths:
+        if not path.exists():
+            continue
+        text = run(["nm", str(path)], timeout=30).stdout
+        count += len(re.findall(r"\bluaL_newstate\b", text))
+    return count
+
+
+def budget_checks(value):
+    executable = value["sizes"]["unstripped"]
+    closure = value["closure"]["bytes"]
+    distributable = executable + closure
+    cpu_limit = P0_CPU_1080 * 1.1
+    return [
+        ("distributable <= 50% of P0", distributable <= P0_UNIQUE_CLOSURE * 0.5,
+         f"{distributable} B <= {int(P0_UNIQUE_CLOSURE * 0.5)} B"),
+        ("executable <= 10 MB", executable <= 10_000_000,
+         f"{executable} B <= 10000000 B"),
+        ("first frame <= 1 s", value["first_frame_1080p_ms"] <= 1000,
+         f"{value['first_frame_1080p_ms']} ms"),
+        ("1080p CPU <= baseline + 10%",
+         value["playback"]["1080p"]["cpu_s"] <= cpu_limit,
+         f"{value['playback']['1080p']['cpu_s']} s <= {cpu_limit:.3f} s"),
+        ("1080p RSS <= 300 MB", value["playback"]["1080p"]["rss_mb"] <= 300,
+         f"{value['playback']['1080p']['rss_mb']} MB"),
+        ("seek <= 250 ms", value["seek_ms"] <= 250, f"{value['seek_ms']} ms"),
+        ("no frame drops", value["frame_drop_count_1080p"] == 0,
+         str(value["frame_drop_count_1080p"])),
+        ("no network schemes", not value["protocols"]["network"],
+         ",".join(value["protocols"]["network"])),
+        ("one Lua interpreter", value["lua_interpreters"] == 1,
+         str(value["lua_interpreters"])),
+    ]
+
+
 def license_obligations():
     return [
         "mpv: GPL-2.0-or-later; source and notice obligations on distribution.",
@@ -489,6 +506,41 @@ def license_obligations():
         "Lua 5.2.4: MIT; notice.",
     ]
 
+
+if MODE == "compare":
+    paths = {
+        "p8.2": TMP / "measure-p8.2.json",
+        "final": TMP / "measure-final.json",
+    }
+    values = {}
+    for name, path in paths.items():
+        if not path.exists():
+            raise SystemExit(f"missing {path}; run scripts/measure.sh release p8.2 and scripts/measure.sh final")
+        values[name] = json.loads(path.read_text())
+    before, after = values["p8.2"], values["final"]
+    print("metric                 p8.2        final       delta")
+    for key, getter in (
+        ("startup warm ms", lambda v: v["startup"]["warm_ms"]),
+        ("first frame ms", lambda v: v["first_frame_1080p_ms"]),
+        ("idle RSS MB", lambda v: v["idle_rss_mb"]),
+        ("1080p RSS MB", lambda v: v["playback"]["1080p"]["rss_mb"]),
+        ("1080p CPU s", lambda v: v["playback"]["1080p"]["cpu_s"]),
+        ("4K CPU s", lambda v: v["playback"]["4k"]["cpu_s"]),
+        ("seek ms", lambda v: v["seek_ms"]),
+        ("closure B", lambda v: v["closure"]["bytes"]),
+        ("executable B", lambda v: v["sizes"]["unstripped"]),
+    ):
+        old, new = getter(before), getter(after)
+        print(f"{key:20} {old:>10} {new:>10} {new - old:>10.2f}")
+    failed = []
+    for name, ok, detail in budget_checks(after):
+        print(("PASS" if ok else "FAIL") + " budget: " + name + " (" + detail + ")")
+        if not ok:
+            failed.append(name)
+    if failed:
+        raise SystemExit("compare: failed " + ", ".join(failed))
+    print("compare: ok")
+    raise SystemExit(0)
 
 fixtures = ensure_measure_fixtures()
 revision = git_revision()
@@ -629,21 +681,16 @@ print(f"protocols: {proto['listed']} listed, {proto['unique']} unique; "
 print(f"hwdec ffmpeg videotoolbox: {hw['ffmpeg_videotoolbox']}; "
       f"mpv headless playback: {hw['mpv_headless_playback']}")
 
-if MODE == "final":
-    checks = [
-        ("one local protocol", proto["listed"] == 1 and not proto["network"]),
-        ("no audio underruns", underruns == 0),
-        ("no frame drops", drops == 0),
-        ("closure under 64 MiB", closure_data["bytes"] < 64 * 1024 * 1024),
-        ("warm startup under 500 ms", startup["warm_ms"] < 500),
-        ("first frame under 1000 ms", first_frame < 1000),
-        ("1080p CPU under 3 s", playback["1080p"]["cpu_s"] < 3),
-        ("idle RSS under 512 MB", idle < 512),
-        ("1080p RSS under 1024 MB", playback["1080p"]["rss_mb"] < 1024),
+if MODE in ("final", "compare"):
+    checks = budget_checks(result)
+    checks += [
+        ("one local protocol", proto["listed"] == 1 and not proto["network"],
+         f"{proto['listed']} listed"),
+        ("no audio underruns", underruns == 0, str(underruns)),
     ]
-    failed = [name for name, ok in checks if not ok]
-    for name, ok in checks:
-        print(("PASS" if ok else "FAIL") + " final: " + name)
+    failed = [name for name, ok, _ in checks if not ok]
+    for name, ok, detail in checks:
+        print(("PASS" if ok else "FAIL") + " budget: " + name + " (" + detail + ")")
     if failed:
         raise SystemExit("final: failed " + ", ".join(failed))
     print("final: ok")

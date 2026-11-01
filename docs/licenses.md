@@ -20,4 +20,5 @@ The release app is assembled from the pinned sources in `scripts/build-deps.sh`.
 | HarfBuzz | 15.0.0 | MIT |
 | MoltenVK (binary) | 1.4.2 | Apache-2.0 |
 | Lua (vendored by mlua) | 5.2.4 | MIT |
+| `player-release` Rust cdylib | campaign | MPL-2.0 |
 | Rust crates | `Cargo.lock` | per-crate; P8.4 audit |

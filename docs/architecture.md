@@ -128,6 +128,12 @@ D4 remains: the simplified Lua OSC on `mlua` is the permanent default. Rust owns
 - `player/main.c` sets `VK_DRIVER_FILES` and `VK_ICD_FILENAMES` to the bundled MoltenVK manifest before renderer initialization, unless either is already set.
 - `tests/run.sh release` checks the app, the closure (no Homebrew or build paths), the expected dylibs, the ICD, the rpath, playback of the h264 fixture, and the ad-hoc signature.
 
+## Release link shape (P8.2)
+
+- The release app links one Rust cdylib, `libplayer_release.dylib` (MPL-2.0), which carries the `player-ffi` and `player-audio` symbols. The cdylib is built with `-undefined dynamic_lookup`; the mpv executable exports its C symbols with `-export_dynamic`. The bundler preserves those exports by stripping with `strip -x` (a full strip removes them).
+- This moved the Rust control plane out of the executable: the executable is 9.64 MB and the distributable is 26.8 MB. Plain LTO was rejected because the two Rust staticlibs duplicate std symbols at link time; `opt-level = "s"` increased the executable and was reverted. Shaderc is built `MinSizeRel`.
+- The dev and FFI test builds keep the staticlibs; only the release app uses the cdylib.
+
 ## Open work
 
 - P1.4 added the FFmpeg manifest gate over the frozen allowlist.

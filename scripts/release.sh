@@ -13,20 +13,21 @@ scripts/build-deps.sh
 export PKG_CONFIG_LIBDIR="$PREFIX/lib/pkgconfig:$FFMPEG_PREFIX/lib/pkgconfig"
 unset PKG_CONFIG_PATH
 export CFLAGS="-I$PREFIX/include -I$FFMPEG_PREFIX/include"
-export LDFLAGS="-L$PREFIX/lib -L$FFMPEG_PREFIX/lib -ldav1d -Wl,-rpath,@loader_path/../Frameworks"
+export LDFLAGS="-L$PREFIX/lib -L$FFMPEG_PREFIX/lib -ldav1d -Wl,-dead_strip -Wl,-export_dynamic -Wl,-rpath,@loader_path/../Frameworks"
 
 RUST_TARGET="$ROOT/.work/deps/player-audio/target"
 mkdir -p "$RUST_TARGET"
 CARGO_TARGET_DIR="$RUST_TARGET" cargo build --release \
-    --manifest-path "$ROOT/rust/Cargo.toml" -p player-audio -p player-ffi
+    --manifest-path "$ROOT/rust/Cargo.toml" -p player-release
+PLAYER_RELEASE_LIB="$RUST_TARGET/release/libplayer_release.dylib"
 
 options=(
     -Dcplayer=true -Dlibmpv=false -Dgpl=true
     -Dtests=false -Dfuzzers=false -Dbuild-date=false
     -Ddisable-packet-pool=false
     -Dmacos-bundle-category=video -Dswift-flags= -Dwin32-subsystem=windows
-    -Dplayer-audio-lib="$RUST_TARGET/release/libplayer_audio.a"
-    -Dplayer-ffi-lib="$RUST_TARGET/release/libplayer_ffi.a"
+    -Dplayer-audio-lib=
+    -Dplayer-ffi-lib="$PLAYER_RELEASE_LIB"
 )
 
 enabled_features=(

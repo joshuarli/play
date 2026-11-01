@@ -222,6 +222,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "player-release"
+version = "0.1.0"
+dependencies = [
+ "player-audio",
+ "player-ffi",
+]
+
+[[package]]
 name = "primal-check"
 version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
