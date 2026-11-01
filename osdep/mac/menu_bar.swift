@@ -92,26 +92,12 @@ class MenuBar: NSObject, EventSubscriber {
         UserDefaults.standard.set(true, forKey: "NSDisabledCharacterPaletteMenuItem")
         NSWindow.allowsAutomaticWindowTabbing = false
         appIcon = appHub.getIcon()
-        dialog = Dialog(appHub.option)
+        dialog = Dialog()
 
         super.init()
 
         let appMenuConfigs = [
             Config(name: "About mpv", action: #selector(about), target: self),
-            Config(type: .separator),
-            Config(
-                name: "Settings…",
-                key: ",",
-                action: #selector(settings(_:)),
-                target: self,
-                url: "mpv.conf"
-            ),
-            Config(
-                name: "Keyboard Shortcuts Config…",
-                action: #selector(settings(_:)),
-                target: self,
-                url: "input.conf"
-            ),
             Config(type: .separator),
             Config(name: "Services", type: .menuServices),
             Config(type: .separator),
@@ -125,7 +111,6 @@ class MenuBar: NSObject, EventSubscriber {
 
         let fileMenuConfigs = [
             Config(name: "Open File…", key: "o", action: #selector(openFiles), target: self),
-            Config(name: "Open URL…", key: "O", action: #selector(openUrl), target: self),
             Config(name: "Open Playlist…", action: #selector(openPlaylist), target: self),
             Config(type: .separator),
             Config(name: "Close", key: "w", action: #selector(NSWindow.performClose(_:))),
@@ -213,9 +198,6 @@ class MenuBar: NSObject, EventSubscriber {
             Config(type: .separator),
             Config(name: "Next File", action: #selector(command(_:)), target: self, command: "playlist-next"),
             Config(name: "Previous File", action: #selector(command(_:)), target: self, command: "playlist-prev"),
-            Config(name: "Toggle Loop File", action: #selector(command(_:)), target: self, command: "cycle-values loop-file \"inf\" \"no\""),
-            Config(name: "Toggle Loop Playlist", action: #selector(command(_:)), target: self, command: "cycle-values loop-playlist \"inf\" \"no\""),
-            Config(name: "Shuffle", action: #selector(command(_:)), target: self, command: "playlist-shuffle"),
             Config(type: .separator),
             Config(name: "Next Chapter", action: #selector(command(_:)), target: self, command: "add chapter 1"),
             Config(name: "Previous Chapter", action: #selector(command(_:)), target: self, command: "add chapter -1"),
@@ -306,32 +288,6 @@ class MenuBar: NSObject, EventSubscriber {
         ])
     }
 
-    @objc func settings(_ menuItem: MenuItem) {
-        guard let menuConfig = menuItem.config else { return }
-        let configPaths: [URL] = [
-            URL(fileURLWithPath: NSHomeDirectory() + "/.config/mpv/", isDirectory: true),
-            URL(fileURLWithPath: NSHomeDirectory() + "/.mpv/", isDirectory: true)
-        ]
-
-        for path in configPaths {
-            let configFile = path.appendingPathComponent(menuConfig.url, isDirectory: false)
-
-            if FileManager.default.fileExists(atPath: configFile.path) {
-                if NSWorkspace.shared.open(configFile) {
-                    return
-                }
-                NSWorkspace.shared.open(path)
-                dialog.alert(title: "No Application found to open your config file.", text: "Please open the \(menuConfig.url) file with your preferred text editor in the now open folder to edit your config.")
-                return
-            }
-
-            if NSWorkspace.shared.open(path) {
-                dialog.alert(title: "No config file found.", text: "Please create a \(menuConfig.url) file with your preferred text editor in the now open folder.")
-                return
-            }
-        }
-    }
-
     @objc func openFiles() {
         guard let files = dialog.openFiles(path: currentDir) else { return }
         appHub.input.open(files: files)
@@ -340,11 +296,6 @@ class MenuBar: NSObject, EventSubscriber {
     @objc func openPlaylist() {
         guard let file = dialog.openPlaylist(path: currentDir) else { return }
         appHub.input.command("loadlist \"\(file)\"")
-    }
-
-    @objc func openUrl() {
-        guard let file = dialog.openUrl() else { return }
-        appHub.input.open(files: [file])
     }
 
     @objc func command(_ menuItem: MenuItem) {

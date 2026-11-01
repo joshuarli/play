@@ -21,23 +21,18 @@ import UniformTypeIdentifiers
 #endif
 
 class Dialog: NSObject, NSWindowDelegate, NSOpenSavePanelDelegate {
-    var option: OptionHelper?
-
-    init(_ option: OptionHelper? = nil) {
-        self.option = option
-    }
-
     func openFiles(title: String? = nil, path: URL? = nil) -> [String]? {
-         let types: [String] = TypeHelper.toStringArray(option?.root.video_exts) +
-            TypeHelper.toStringArray(option?.root.audio_exts) +
-            TypeHelper.toStringArray(option?.root.image_exts) +
-            TypeHelper.toStringArray(option?.root.archive_exts) +
-            TypeHelper.toStringArray(option?.root.playlist_exts)
+        let types = [
+            "mp4", "m4v", "mov", "mkv", "webm", "avi",
+            "mp3", "m4a", "aac", "flac", "wav", "ogg", "opus",
+            "srt", "ass", "vtt",
+            "m3u", "m3u8", "pls",
+        ]
         return open(title: title, path: path, types: types)
     }
 
     func openPlaylist(title: String? = nil, path: URL? = nil) -> String? {
-        let types: [String] = TypeHelper.toStringArray(option?.root.playlist_exts)
+        let types = ["m3u", "m3u8", "pls"]
         return open(title: title, path: path, directories: false, multiple: false, types: types)?.first
     }
 
@@ -57,25 +52,6 @@ class Dialog: NSObject, NSWindowDelegate, NSOpenSavePanelDelegate {
 
         if panel.runModal() == .OK {
             return panel.urls.map { $0.path }
-        }
-
-        return nil
-    }
-
-    func openUrl() -> String? {
-        let alert = NSAlert()
-        alert.messageText = "Open URL"
-        alert.icon = AppHub.shared.getIcon()
-        alert.addButton(withTitle: "Ok")
-        alert.addButton(withTitle: "Cancel")
-
-        let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
-        input.placeholderString = "URL"
-        alert.accessoryView = input
-        alert.window.initialFirstResponder = input
-
-        if alert.runModal() == .alertFirstButtonReturn && input.stringValue.count > 0 {
-            return input.stringValue
         }
 
         return nil

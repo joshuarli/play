@@ -25,16 +25,6 @@ Next: 20
 - **Effort:** S
 - **Design:** none
 
-### PLAY-9 · P2 · The macOS menu exposes removed commands and ignored config
-
-- **Area:** Dead code
-- **Where:** `osdep/mac/menu_bar.swift:128-129`, `:216-218`, `:113-124`, `:345-348`, `osdep/mac/dialog.swift:36-42`, `options/options.c:979-985`
-- **Problem:** The File menu offers `Open URL…`, which the player refuses. The Playback menu offers Shuffle, Toggle Loop File, and Toggle Loop Playlist; `playlist-shuffle` is absent from the command table and the loop options were removed, so each is a silent no-op. Settings and Keyboard Shortcuts open `~/.config/mpv` and `~/.mpv`, which the shipped player does not load. The file pickers allow image, archive, and CUE extensions that have no demuxer; a `.cue` picked as a playlist is parsed as plaintext.
-- **Recommendation:** remove the Open URL, Settings, Keyboard Shortcuts, Shuffle, and loop items. Restrict the picker to the built video, audio, subtitle, and playlist extensions. Leave the local-only contract unchanged.
-- **Fix with:** dead-code-archaeology
-- **Effort:** S
-- **Design:** none
-
 ### PLAY-10 · P2 · A failed launch has no visible explanation
 
 - **Area:** Errors
