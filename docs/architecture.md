@@ -45,12 +45,12 @@ FFmpeg demuxes every container and decodes video. VideoToolbox is the hardware p
 
 ## Script host
 
-- **Interpreter:** `rust/player-lua` owns one Lua state per script through `mlua` 0.12.2 with `lua52` and `vendored`. The only interpreter in the process is the vendored Lua 5.2.4.
+- **Interpreter:** `rust/player-lua` owns one Lua state per script through `mlua` 0.12.2 with `lua52` and `vendored`. The only interpreter in the process is the vendored Lua 5.2.4. Lua 5.2.4 is the newest non-JIT interpreter mpv v0.41.0 supports; LuaJIT and Lua 5.3 are not options.
 - **Libraries:** the interpreter opens `io`, `os`, and `package`, which the built-in modules use. It does not open `debug`. The host is not a sandbox: scripts can open files, run processes with `os.execute`, and send the full mpv command table, including `subprocess` and `run`. Explicitly loaded scripts are trusted code.
 - **Built-in modules:** `defaults.lua`, `assdraw.lua`, `options.lua`, `input.lua`, and `osc.lua`.
 - **Values:** Lua-to-native table conversion is bounded at 64 levels. Arrays and maps keep the `mp.ARRAY`/`mp.MAP` sentinels, and map entries are sorted so command nodes are deterministic.
 - **Threading:** each script runs on its own thread; the C script thread pumps mpv events into a bounded queue (1024) that `raw_wait_event` drains. A full queue drops only `property-change`, `tick`, and `log-message` events and the script is told how many; shutdown, client messages, and replies are always queued. After the mpv shutdown event the script has 2 s to return. If it does not, the C thread logs an error, closes the client gate so every later `mp.*` call from the abandoned thread fails instead of touching the freed client, and returns so the player can exit. The spinning thread is not killed.
-- **OSC:** one bottom bar with play and pause, seek, elapsed and duration, volume and mute, fullscreen, and optional track selectors. It publishes `user-data/osc/areas`, `user-data/osc/margins`, and `user-data/osc/visibility`, and registers the `osc-message`, `osc-visibility`, `osc-show`, and `osc-hide` messages.
+- **OSC:** one bottom bar with play and pause, seek, elapsed and duration, volume and mute, fullscreen, and optional track selectors. It publishes `user-data/osc/areas`, `user-data/osc/margins`, and `user-data/osc/visibility`, and registers the `osc-message`, `osc-visibility`, `osc-show`, and `osc-hide` messages. The OSC stays in Lua; revisit a Rust rewrite only if the script host exceeds 10% of the distributable footprint or 50 ms of cold startup.
 
 ## Release and dependencies
 

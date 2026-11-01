@@ -30,6 +30,8 @@ The extracted tree is `FFmpeg-n9.0.2/`. The script writes a `VERSION` file conta
 
 `--disable-autodetect` leaves dav1d 1.5.4 plus the system VideoToolbox, CoreFoundation, CoreMedia, CoreVideo, and CoreServices frameworks. `TMPDIR` points at `.work/tmp`. No `ffmpeg` or `ffprobe` program is installed. `scripts/build.sh` prepends the development FFmpeg pkg-config path; `scripts/release.sh` links the release prefix.
 
+Add a component only after a named fixture fails without it; remove components in groups while the corpus stays green. Do not start from a guessed allowlist, and do not respond to a failure by enabling everything.
+
 The release build puts FFmpeg at `.work/deps/release/ffmpeg`; a standalone `scripts/build-ffmpeg.sh` defaults to `.work/deps/ffmpeg-full`. The manifest gate reads the release tree when it exists and falls back to the development tree. `scripts/build-deps.sh` stamps every component with a hash of the build script, the FFmpeg build script, and the allowlist; a changed input rebuilds the closure. Old `ok` stamps are invalid and cause one full rebuild.
 
 ## Verification
