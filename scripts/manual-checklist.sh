@@ -75,6 +75,8 @@ Linux (real compositor, GPU, and sound card):
   [ ] Keyboard and pointer input reach the OSC; click and drag seek.
   [ ] ALSA plays audibly on a hardware PCM; channel placement is right for stereo and 5.1.
   [ ] Subtitle shaping and system-font fallback look right for CJK, Arabic, and Greek text.
+  [ ] --hwdec=vaapi plays zero-copy on a real compositor and hwdec-current reports vaapi.
+  [ ] 10-bit HEVC and AV1 decode with --hwdec=vaapi, and a decode GPU that differs from the display GPU.
   [ ] The tarball extracts and runs on a second musl host, if distributed.
 LINUX_CHECKS
 fi

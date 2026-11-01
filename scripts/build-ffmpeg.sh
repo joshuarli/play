@@ -67,7 +67,7 @@ configure_args=(
 )
 case "$PLATFORM" in
     macos) configure_args+=(--enable-videotoolbox) ;;
-    linux) configure_args+=(--enable-pic --arch=x86_64) ;;
+    linux) configure_args+=(--enable-pic --arch=x86_64 --enable-vaapi) ;;
 esac
 
 while IFS= read -r line; do

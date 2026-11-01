@@ -7,6 +7,7 @@ RUN apk add --no-cache \
         wayland-dev wayland-protocols libxkbcommon-dev alsa-lib-dev \
         vulkan-loader-dev vulkan-headers \
         mesa-vulkan-swrast weston weston-backend-headless weston-clients weston-shell-desktop font-dejavu fontconfig \
+        libva-dev libdrm-dev mesa-va-gallium libva-utils \
         ffmpeg rustup gperf ripgrep
 
 ENV RUSTUP_HOME=/opt/rustup CARGO_HOME=/opt/cargo PATH=/opt/cargo/bin:$PATH

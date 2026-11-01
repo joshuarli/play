@@ -7,6 +7,7 @@ UNSTRIPPED=${UNSTRIPPED:-$ROOT/build-linux/mpv}
 ALLOWED_NEEDED=(
     libvulkan.so.1 libwayland-client.so.0 libwayland-cursor.so.0
     libxkbcommon.so.0 libasound.so.2 libc.musl-x86_64.so.1
+    libva.so.2 libva-drm.so.2 libva-wayland.so.2
 )
 LICENSED=(FFmpeg libass libplacebo shaderc dav1d FreeType FriBiDi HarfBuzz zlib expat fontconfig Lua)
 FORBIDDEN_IMPORTS='^(getaddrinfo|freeaddrinfo|getnameinfo|gethostbyname2?|gethostbyaddr|connect|SSL_.*|TLS_.*|curl_.*)$'
@@ -41,7 +42,6 @@ for lib in "${needed[@]}"; do
     [ "$found" = 1 ] || extra+=("$lib")
 done
 check "NEEDED inside the allowed set" "$([ ${#extra[@]} -eq 0 ] && echo 1 || echo 0)" "${extra[*]:-}"
-check "at most six NEEDED entries" "$([ ${#needed[@]} -le 6 ] && echo 1 || echo 0)" "${#needed[@]}"
 
 rpath=$(readelf -dW "$PLAYER" | rg 'RPATH|RUNPATH' || true)
 check "no RPATH or RUNPATH" "$([ -z "$rpath" ] && echo 1 || echo 0)" "$rpath"

@@ -34,7 +34,7 @@ options=(
     -Dplayer-ffi-lib="$RUST_LIB_DIR/libplayer_release.a"
 )
 
-enabled_features=(alsa iconv vulkan wayland zlib)
+enabled_features=(alsa iconv vaapi vaapi-drm vaapi-wayland vulkan wayland zlib)
 
 disabled_features=(
     cdda cocoa coreaudio cplugins dvbin dvdnav javascript jpeg lcms2 libarchive
@@ -45,8 +45,8 @@ disabled_features=(
     caca d3d11 direct3d dmabuf-wayland drm egl egl-android egl-angle
     egl-angle-lib egl-angle-win32 egl-drm egl-wayland egl-x11 gbm
     gl gl-cocoa gl-dxinterop gl-win32 gl-x11 sdl2-video shaderc sixel
-    spirv-cross plain-gl vdpau vdpau-gl-x11 vaapi vaapi-drm
-    vaapi-wayland vaapi-win32 vaapi-x11 x11 xv
+    spirv-cross plain-gl vdpau vdpau-gl-x11
+    vaapi-win32 vaapi-x11 x11 xv
     android-media-ndk cuda-hwaccel cuda-interop d3d-hwaccel d3d9-hwaccel
     gl-dxinterop-d3d9 ios-gl videotoolbox-gl videotoolbox-pl
     macos-cocoa-cb macos-media-player macos-touchbar

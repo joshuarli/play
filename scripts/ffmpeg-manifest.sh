@@ -59,7 +59,7 @@ def parse_allowlist():
             platform, category = category.split("/", 1)
             if platform != PLATFORM:
                 continue
-        allowed[category] = set(names.split())
+        allowed.setdefault(category, set()).update(names.split())
     return allowed
 
 
