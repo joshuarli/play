@@ -18,6 +18,7 @@ Player is a local-only media player. The macOS release artifact is `dist/Player.
 - Clipboard commands are compiled and reachable. Encoding, recording, and the lavfi filter graph are compiled but unreachable because the release FFmpeg has no encoders or muxers.
 - The `subprocess` command and the `.run` script backend are reachable from explicit scripts and IPC. No built-in module uses them.
 - Follow-on: A/V scheduler, general demux and decode orchestration, and renderer integration. Linux x86-64 musl gpu-next is the active campaign (`PLAN.md`).
+- Linux L0.1: `scripts/linux-check.sh` exits 1 on Alpine x86_64; `meson setup build-linux` stops at the missing Linux source set (`osdep/language-posix.c` first).
 
 ## Evidence
 
