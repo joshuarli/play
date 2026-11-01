@@ -1,6 +1,6 @@
 # Repository guide
 
-Player is a local-only macOS media player: the mpv v0.41.0 playback pipeline, a minimal pinned FFmpeg n9.0.2, and a Rust-owned control plane. The release artifact is `dist/Player.app`.
+Player is a local-only media player built on the mpv v0.41.0 playback pipeline, a minimal pinned FFmpeg n9.0.2, and a Rust-owned control plane. The macOS release artifact is `dist/Player.app`; the Linux x86-64 musl static build is the active campaign (`PLAN.md`).
 
 ## Commands
 
@@ -37,4 +37,4 @@ Player is a local-only macOS media player: the mpv v0.41.0 playback pipeline, a 
 - `docs/manual-checklist.md`: owner-run visual and audio checks.
 - `docs/lua-api.md`: generated Lua API audit.
 - `docs/repo-audit.md`: dated security, license, and complexity evidence.
-- `PLAN.md`: completed campaign record, not the current plan.
+- `PLAN.md`: Linux x86-64 musl static campaign.

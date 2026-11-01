@@ -17,7 +17,7 @@ Player is a local-only macOS media player. The release artifact is `dist/Player.
 - GUI, HDR and 10-bit color, subtitle shaping, Retina scaling, audio audibility, real mouse and drag, and signing or notarization are owner-run. See `docs/manual-checklist.md`.
 - Clipboard commands are compiled and reachable. Encoding, recording, and the lavfi filter graph are compiled but unreachable because the release FFmpeg has no encoders or muxers.
 - The `subprocess` command and the `.run` script backend are reachable from explicit scripts and IPC. No built-in module uses them.
-- Follow-on: A/V scheduler, general demux and decode orchestration, renderer integration, and Linux.
+- Follow-on: A/V scheduler, general demux and decode orchestration, and renderer integration. Linux x86-64 musl static is the active campaign (`PLAN.md`).
 
 ## Evidence
 
