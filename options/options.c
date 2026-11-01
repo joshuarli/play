@@ -480,7 +480,6 @@ static const m_option_t mp_opts[] = {
         {"cplayer", 0}, {"pseudo-gui", 1}),
         .flags = M_OPT_PRE_PARSE | M_OPT_NOPROP},
 
-    {"shuffle", OPT_BOOL(shuffle)},
 
 // ------------------------- common options --------------------
     {"quiet", OPT_BOOL(quiet)},
@@ -743,18 +742,6 @@ static const m_option_t mp_opts[] = {
 
     {"stop-playback-on-init-failure", OPT_BOOL(stop_playback_on_init_failure)},
 
-    {"loop-playlist", OPT_CHOICE(loop_times,
-        {"no", 1},
-        {"inf", -1}, {"yes", -1},
-        {"force", -2}),
-        M_RANGE(1, 10000)},
-    {"loop-file", OPT_CHOICE(loop_file,
-        {"no", 0},
-        {"inf", -1},
-        {"yes", -1}),
-        M_RANGE(0, 10000), .force_update = true},
-    {"loop", OPT_ALIAS("loop-file")},
-
     {"resume-playback", OPT_BOOL(position_resume)},
     {"resume-playback-check-mtime", OPT_BOOL(position_check_mtime)},
     {"save-position-on-quit", OPT_BOOL(position_save_on_quit)},
@@ -928,7 +915,6 @@ static const struct MPOpts mp_default_opts = {
     .lua_load_select = true,
 #endif
     .auto_load_scripts = false,
-    .loop_times = 1,
     .ordered_chapters = true,
     .chapter_merge_threshold = 100,
     .chapter_seek_threshold = 5.0,

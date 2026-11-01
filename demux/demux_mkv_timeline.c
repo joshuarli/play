@@ -256,9 +256,9 @@ static void find_ordered_chapter_sources(struct tl_ctx *ctx)
                 playlist_parse_file(opts->ordered_chapters_files,
                                     ctx->tl->cancel, ctx->global);
             talloc_steal(tmp, pl);
-            for (int n = 0; n < pl->num_entries; n++) {
+            for (int n = 0; n < playlist_entry_count(pl); n++) {
                 MP_TARRAY_APPEND(tmp, filenames, num_filenames,
-                                 pl->entries[n]->filename);
+                                 playlist_entry_from_index(pl, n)->filename);
             }
         } else if (!ctx->demuxer->stream->is_local_fs) {
             MP_WARN(ctx, "Playback source is not a "

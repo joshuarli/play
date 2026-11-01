@@ -80,4 +80,4 @@ Current result: 19 passed, 0 failed. A temporary manifest with `http` added to t
 
 ## Next
 
-P7.1 moved positional files, fullscreen, start time, and audio/subtitle path operations into `player-core::config`, applied through the FFI startup sink. P7.2 moves local playlist ownership into Rust.
+P7.2 moved local playlist ownership into `player-core::playlist`, with an opaque FFI handle mapping entry IDs to C payloads. Shuffle and repeat were removed; P7.3 types command and input dispatch.

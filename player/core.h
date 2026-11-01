@@ -423,7 +423,6 @@ typedef struct MPContext {
     int max_frames;
     bool playing_msg_shown;
 
-    int remaining_file_loops;
     int remaining_ab_loops;
 
     bool paused_for_cache;
@@ -546,7 +545,7 @@ struct track *mp_track_by_tid(struct MPContext *mpctx, enum stream_type type,
 void add_demuxer_tracks(struct MPContext *mpctx, struct demuxer *demuxer);
 bool mp_remove_track(struct MPContext *mpctx, struct track *track);
 struct playlist_entry *mp_next_file(struct MPContext *mpctx, int direction,
-                                    bool force, bool update_loop);
+                                    bool force);
 void mp_set_playlist_entry(struct MPContext *mpctx, struct playlist_entry *e);
 void mp_play_files(struct MPContext *mpctx);
 void update_demuxer_properties(struct MPContext *mpctx);

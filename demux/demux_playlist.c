@@ -591,14 +591,14 @@ static int parse_dir(struct pl_parser *p)
 
     if (p->opts->dir_mode == DIR_AUTO) {
         struct MPOpts *opts = mp_get_config_group(NULL, p->global, &mp_opt_root);
-        p->opts->dir_mode = opts->shuffle ? DIR_RECURSIVE : DIR_LAZY;
+        p->opts->dir_mode = DIR_LAZY;
         talloc_free(opts);
     }
 
     scan_dir(p, path, dir_stack, 0, autocreate);
 
     p->add_base = false;
-    ret = p->pl->num_entries > 0 ? 0 : -1;
+    ret = playlist_entry_count(p->pl) > 0 ? 0 : -1;
 
 done:
     if (stream != p->real_stream)
@@ -662,7 +662,7 @@ static int open_file(struct demuxer *demuxer, enum demux_check check)
     struct pl_parser *p = talloc_zero(NULL, struct pl_parser);
     p->global = demuxer->global;
     p->log = demuxer->log;
-    p->pl = talloc_zero(p, struct playlist);
+    p->pl = playlist_new(p);
     p->real_stream = demuxer->stream;
     p->add_base = true;
 

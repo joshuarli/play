@@ -94,6 +94,14 @@ D4 remains: the simplified Lua OSC on `mlua` is the permanent default. Rust owns
 - `--version`, `--help`, engine options, and removed-option failures stay in the C option frontend; there is no second dynamic-option framework. The option table remains for help and runtime properties.
 - The local-only boundary still classifies paths at load; the startup parser only classifies argv shape.
 
+## Rust playlist ownership (P7.2)
+
+- `player-core::playlist` owns the entry order, IDs, current entry, completed/started flags, insertion, removal, clear, move, and next/previous. Entries are identified by a `u64`; the pure list is unit-tested.
+- `player-ffi` exposes an opaque `player_playlist` handle that maps Rust IDs to the C `playlist_entry` pointers. `common/playlist.c` is now a thin C shim: entry payloads (filename, title, params, flags) and their talloc lifetime stay at the C boundary, while the C list arrays and current/index fields are gone. Callers use `playlist_get_current`, `playlist_entry_count`, `playlist_entry_from_index`, and the other accessors.
+- `playlist_transfer_entries`/`playlist_transfer_entries_to` move entries into the destination, assign new IDs, and steal the talloc ownership and playlist-path strings; `playlist_parse_file` uses the same path.
+- Shuffle/unshuffle and the `--shuffle`, `--loop-playlist`, `--loop-file`, `playlist-shuffle`, and `playlist-unshuffle` surfaces are removed. A-B loop remains.
+- Local-only rejection is unchanged; URL entries are rejected at the boundary.
+
 ## Open work
 
 - P1.4 added the FFmpeg manifest gate over the frozen allowlist.
@@ -107,5 +115,5 @@ D4 remains: the simplified Lua OSC on `mlua` is the permanent default. Rust owns
 - P4.1 added `player-core`/`player-ffi`, built both static libraries, and linked/called `player_ffi_abi_version` from the player.
 - P4.2 moved the input classifier to `player-core::input`; the C boundary delegates through `player_ffi_classify_input` with typed results.
 - P4.3 documented the FFI invariants and added the C bridge test.
-- P7.1 moved the supported startup options into `player-core::config`; P7.2 moves local playlist ownership into Rust.
+- P7.2 moved local playlist ownership into Rust and removed shuffle/repeat; P7.3 types the command and input dispatch.
 - P7 moves config, playlist, input, state, and local file handling into Rust; the audio bridge stays at the decode boundary.

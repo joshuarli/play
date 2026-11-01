@@ -892,13 +892,6 @@ static int mp_property_playtime_remaining(void *ctx, struct m_property *prop,
     return property_time(action, arg, remaining / speed);
 }
 
-static int mp_property_remaining_file_loops(void *ctx, struct m_property *prop,
-        int action, void *arg)
-{
-    MPContext *mpctx = ctx;
-    return m_property_int_ro(action, arg, mpctx->remaining_file_loops);
-}
-
 static int mp_property_remaining_ab_loops(void *ctx, struct m_property *prop,
         int action, void *arg)
 {
@@ -3386,11 +3379,11 @@ static int mp_property_playlist_current_pos(void *ctx, struct m_property *prop,
 
     switch (action) {
     case M_PROPERTY_GET: {
-        *(int *)arg = playlist_entry_to_index(pl, pl->current);
+        *(int *)arg = playlist_entry_to_index(pl, playlist_get_current(pl));
         return M_PROPERTY_OK;
     }
     case M_PROPERTY_SET: {
-        pl->current = playlist_entry_from_index(pl, *(int *)arg);
+        playlist_set_current_entry(pl, playlist_entry_from_index(pl, *(int *)arg));
         mp_notify(mpctx, MP_EVENT_CHANGE_PLAYLIST, NULL);
         return M_PROPERTY_OK;
     }
@@ -3419,13 +3412,13 @@ static int mp_property_playlist_pos_x(void *ctx, struct m_property *prop,
 
     switch (action) {
     case M_PROPERTY_GET: {
-        int pos = playlist_entry_to_index(pl, pl->current);
+        int pos = playlist_entry_to_index(pl, playlist_get_current(pl));
         *(int *)arg = pos < 0 ? -1 : pos + base;
         return M_PROPERTY_OK;
     }
     case M_PROPERTY_SET: {
         int pos = *(int *)arg - base;
-        if (pos >= 0 && playlist_entry_to_index(pl, pl->current) == pos)
+        if (pos >= 0 && playlist_entry_to_index(pl, playlist_get_current(pl)) == pos)
             return M_PROPERTY_OK;
         mp_set_playlist_entry(mpctx, playlist_entry_from_index(pl, pos));
         return M_PROPERTY_OK;
@@ -3466,7 +3459,7 @@ static int get_playlist_entry(int item, int action, void *arg, void *ctx)
     if (!e)
         return M_PROPERTY_ERROR;
 
-    bool current = mpctx->playlist->current == e;
+    bool current = playlist_get_current(mpctx->playlist) == e;
     bool playing = mpctx->playing == e;
     struct m_sub_property props[] = {
         {"filename",      SUB_PROP_STR(e->filename)},
@@ -3485,10 +3478,10 @@ static int mp_property_playlist_path(void *ctx, struct m_property *prop,
                                      int action, void *arg)
 {
     MPContext *mpctx = ctx;
-    if (!mpctx->playlist->current)
+    if (!playlist_get_current(mpctx->playlist))
         return M_PROPERTY_UNAVAILABLE;
 
-    struct playlist_entry *e = mpctx->playlist->current;
+    struct playlist_entry *e = playlist_get_current(mpctx->playlist);
     return m_property_strdup_ro(action, arg, e->playlist_path);
 }
 
@@ -3500,11 +3493,11 @@ static int mp_property_playlist(void *ctx, struct m_property *prop,
         struct playlist *pl = mpctx->playlist;
         char *res = talloc_strdup(NULL, "");
 
-        for (int n = 0; n < pl->num_entries; n++) {
-            struct playlist_entry *e = pl->entries[n];
-            if (pl->current == e)
+        for (int n = 0; n < playlist_entry_count(pl); n++) {
+            struct playlist_entry *e = playlist_entry_from_index(pl, n);
+            if (playlist_get_current(pl) == e)
                 res = append_selected_style(mpctx, res);
-            const char *reset = pl->current == e ? get_style_reset(mpctx) : "";
+            const char *reset = playlist_get_current(pl) == e ? get_style_reset(mpctx) : "";
             char *p = e->title;
             if (!p || mpctx->opts->playlist_entry_name > 0) {
                 p = e->filename;
@@ -3522,7 +3515,7 @@ static int mp_property_playlist(void *ctx, struct m_property *prop,
         }
 
         *(char **)arg = cut_osd_list(mpctx, "Playlist", res,
-                                     playlist_entry_to_index(pl, pl->current));
+                                     playlist_entry_to_index(pl, playlist_get_current(pl)));
         return M_PROPERTY_OK;
     }
 
@@ -4378,7 +4371,6 @@ static const struct m_property mp_properties_base[] = {
     {"audio-pts", mp_property_audio_pts},
     {"playtime-remaining", mp_property_playtime_remaining},
     M_PROPERTY_ALIAS("playback-time", "time-pos"),
-    {"remaining-file-loops", mp_property_remaining_file_loops},
     {"remaining-ab-loops", mp_property_remaining_ab_loops},
     {"chapter", mp_property_chapter},
     {"edition", mp_property_edition},
@@ -4770,8 +4762,6 @@ static const struct property_osd_display {
     const char *msg;
 } property_osd_display[] = {
     // general
-    {"loop-playlist", "Loop playlist"},
-    {"loop-file", "Loop current file"},
     {"chapter",
      .seek_msg = OSD_SEEK_INFO_CHAPTER_TEXT,
      .seek_bar = OSD_SEEK_INFO_BAR},
@@ -5890,7 +5880,7 @@ static void cmd_playlist_next_prev(void *p)
     int dir = *(int *)cmd->priv;
     int force = cmd->args[0].v.i;
 
-    struct playlist_entry *e = mp_next_file(mpctx, dir, force, true);
+    struct playlist_entry *e = mp_next_file(mpctx, dir, force);
     if (!e && !force) {
         cmd->success = false;
         return;
@@ -5910,27 +5900,6 @@ static void cmd_playlist_next_prev_playlist(void *p)
     struct playlist_entry *entry =
         playlist_get_first_in_next_playlist(mpctx->playlist, direction);
 
-    if (!entry && mpctx->opts->loop_times != 1 && mpctx->playlist->current) {
-        entry = direction > 0 ? playlist_get_first(mpctx->playlist)
-                              : playlist_get_last(mpctx->playlist);
-
-        if (entry && entry->playlist_path &&
-            mpctx->playlist->current->playlist_path &&
-            strcmp(entry->playlist_path,
-                   mpctx->playlist->current->playlist_path) == 0)
-            entry = NULL;
-
-        if (direction > 0 && entry && mpctx->opts->loop_times > 1) {
-            mpctx->opts->loop_times--;
-            m_config_notify_change_opt_ptr(mpctx->mconfig,
-                                           &mpctx->opts->loop_times);
-        }
-
-        if (direction < 0)
-            entry = playlist_get_first_in_same_playlist(
-                        entry, mpctx->playlist->current->playlist_path);
-    }
-
     if (!entry) {
         cmd->success = false;
         return;
@@ -5949,7 +5918,7 @@ static void cmd_playlist_play_index(void *p)
     int pos = cmd->args[0].v.i;
 
     if (pos == -2)
-        pos = playlist_entry_to_index(pl, pl->current);
+        pos = playlist_entry_to_index(pl, playlist_get_current(pl));
 
     mp_set_playlist_entry(mpctx, playlist_entry_from_index(pl, pos));
     if (cmd->on_osd & MP_ON_OSD_MSG)
@@ -6147,7 +6116,7 @@ static void cmd_loadfile(void *p)
     node_init(res, MPV_FORMAT_NODE_MAP, NULL);
     node_map_add_int64(res, "playlist_entry_id", entry->id);
 
-    if (action.type == LOAD_TYPE_REPLACE || (action.play && !mpctx->playlist->current)) {
+    if (action.type == LOAD_TYPE_REPLACE || (action.play && !playlist_get_current(mpctx->playlist))) {
         if (mpctx->opts->position_save_on_quit) // requested in issue #1148
             mp_write_watch_later_conf(mpctx);
         mp_set_playlist_entry(mpctx, entry);
@@ -6173,11 +6142,11 @@ static void cmd_loadlist(void *p)
 
     if (pl) {
         prepare_playlist(mpctx, pl);
-        struct playlist_entry *new = pl->current;
+        struct playlist_entry *new = playlist_get_current(pl);
         if (action.type == LOAD_TYPE_REPLACE)
             playlist_clear(mpctx->playlist);
         struct playlist_entry *first = playlist_entry_from_index(pl, 0);
-        int num_entries = pl->num_entries;
+        int num_entries = playlist_entry_count(pl);
 
         struct playlist_entry *at = get_insert_entry(mpctx, &action, insert_at_idx);
         if (at == NULL) {
@@ -6192,7 +6161,7 @@ static void cmd_loadlist(void *p)
             new = playlist_get_first(mpctx->playlist);
 
         if ((action.type == LOAD_TYPE_REPLACE ||
-            (action.play && !mpctx->playlist->current)) && new) {
+            (action.play && !playlist_get_current(mpctx->playlist))) && new) {
             mp_set_playlist_entry(mpctx, new);
         }
 
@@ -6217,8 +6186,8 @@ static void cmd_playlist_clear(void *p)
     struct MPContext *mpctx = cmd->mpctx;
 
     // Supposed to clear the playlist, except the currently played item.
-    if (mpctx->playlist->current_was_replaced)
-        mpctx->playlist->current = NULL;
+    if (playlist_current_was_replaced(mpctx->playlist))
+        playlist_set_current_entry(mpctx->playlist, NULL);
     playlist_clear_except_current(mpctx->playlist);
     mp_notify(mpctx, MP_EVENT_CHANGE_PLAYLIST, NULL);
     mp_wakeup_core(mpctx);
@@ -6232,14 +6201,14 @@ static void cmd_playlist_remove(void *p)
     struct playlist_entry *e = playlist_entry_from_index(mpctx->playlist,
                                                          cmd->args[0].v.i);
     if (cmd->args[0].v.i < 0)
-        e = mpctx->playlist->current;
+        e = playlist_get_current(mpctx->playlist);
     if (!e) {
         cmd->success = false;
         return;
     }
 
     // Can't play a removed entry
-    if (mpctx->playlist->current == e && !mpctx->stop_play)
+    if (playlist_get_current(mpctx->playlist) == e && !mpctx->stop_play)
         mpctx->stop_play = PT_NEXT_ENTRY;
     playlist_remove(mpctx->playlist, e);
     mp_notify(mpctx, MP_EVENT_CHANGE_PLAYLIST, NULL);
@@ -6261,24 +6230,6 @@ static void cmd_playlist_move(void *p)
     }
 
     playlist_move(mpctx->playlist, e1, e2);
-    mp_notify(mpctx, MP_EVENT_CHANGE_PLAYLIST, NULL);
-}
-
-static void cmd_playlist_shuffle(void *p)
-{
-    struct mp_cmd_ctx *cmd = p;
-    struct MPContext *mpctx = cmd->mpctx;
-
-    playlist_shuffle(mpctx->playlist);
-    mp_notify(mpctx, MP_EVENT_CHANGE_PLAYLIST, NULL);
-}
-
-static void cmd_playlist_unshuffle(void *p)
-{
-    struct mp_cmd_ctx *cmd = p;
-    struct MPContext *mpctx = cmd->mpctx;
-
-    playlist_unshuffle(mpctx->playlist);
     mp_notify(mpctx, MP_EVENT_CHANGE_PLAYLIST, NULL);
 }
 
@@ -7112,8 +7063,6 @@ const struct mp_cmd_def mp_cmds[] = {
                 M_RANGE(-1, INT_MAX)},
         }
     },
-    { "playlist-shuffle", cmd_playlist_shuffle, },
-    { "playlist-unshuffle", cmd_playlist_unshuffle, },
     { "sub-step", cmd_sub_step_seek,
         {
             {"skip", OPT_INT(v.i)},
@@ -7961,11 +7910,6 @@ void mp_option_run_callback(struct MPContext *mpctx, struct mp_option_callback *
 
     if (opt_ptr == &opts->cursor_autohide_delay)
         mpctx->mouse_timer = 0;
-
-    if (opt_ptr == &opts->loop_file) {
-        mpctx->remaining_file_loops = opts->loop_file;
-        mp_notify_property(mpctx, "remaining-file-loops");
-    }
 
     if (opt_ptr == &opts->ab_loop[0] || opt_ptr == &opts->ab_loop[1] ||
         opt_ptr == &opts->ab_loop_count) {

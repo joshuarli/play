@@ -222,9 +222,6 @@ typedef struct MPOpts {
 
     bool untimed;
     bool stop_playback_on_init_failure;
-    int loop_times;
-    int loop_file;
-    bool shuffle;
     bool ordered_chapters;
     char *ordered_chapters_files;
     int chapter_merge_threshold;

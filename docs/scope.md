@@ -64,3 +64,8 @@ Automatic user config and scripts are disabled by default (`load_config=false`, 
 - `demux_lavf` keeps m3u8/HLS extension heuristics, but the FFmpeg HLS demuxer is not built.
 - The P2.3 source list still contains dead platform conditionals; P2.5 simplifies it.
 
+
+## Removed in P7.2
+
+- Playlist shuffle/unshuffle commands and state.
+- `--shuffle`, `--loop-playlist`, `--loop-file`, and `--loop` options and the remaining-file-loops property. A-B loop remains.

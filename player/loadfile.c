@@ -288,7 +288,7 @@ void print_track_list(struct MPContext *mpctx, const char *msg)
                 // Indent tracks after messages like "Tracks switched" and
                 // "Playing:".
                 print_stream(mpctx, mpctx->tracks[n], msg ||
-                             mpctx->playlist->num_entries > 1 ||
+                             playlist_entry_count(mpctx->playlist) > 1 ||
                              mpctx->playing->playlist_path);
     }
 }
@@ -304,7 +304,7 @@ void update_demuxer_properties(struct MPContext *mpctx)
         for (int n = 0; n < demuxer->num_editions; n++) {
             struct demux_edition *edition = &demuxer->editions[n];
             char b[128] = {0};
-            if (mpctx->playlist->num_entries > 1 || mpctx->playing->playlist_path)
+            if (playlist_entry_count(mpctx->playlist) > 1 || mpctx->playing->playlist_path)
                 APPEND(b, " ");
             APPEND(b, "%s --edition=%d", n == demuxer->edition ?
                    BLACK_CIRCLE : WHITE_CIRCLE, n);
@@ -1016,24 +1016,21 @@ void prepare_playlist(struct MPContext *mpctx, struct playlist *pl)
 {
     struct MPOpts *opts = mpctx->opts;
 
-    pl->current = NULL;
-    pl->playlist_completed = false;
-    pl->playlist_started = false;
+    playlist_set_current_entry(pl, NULL);
+    playlist_set_completed(pl, false);
+    playlist_set_started(pl, false);
 
     if (opts->playlist_pos >= 0)
-        pl->current = playlist_entry_from_index(pl, opts->playlist_pos);
+        playlist_set_current_entry(pl, playlist_entry_from_index(pl, opts->playlist_pos));
 
     if (pl->playlist_dir)
         playlist_set_current(pl);
 
-    if (opts->shuffle)
-        playlist_shuffle(pl);
+    if (!playlist_get_current(pl))
+        playlist_set_current_entry(pl, mp_check_playlist_resume(mpctx, pl));
 
-    if (!pl->current)
-        pl->current = mp_check_playlist_resume(mpctx, pl);
-
-    if (!pl->current)
-        pl->current = playlist_get_first(pl);
+    if (!playlist_get_current(pl))
+        playlist_set_current_entry(pl, playlist_get_first(pl));
 }
 
 // Replace the current playlist entry with playlist contents. Moves the entries
@@ -1041,16 +1038,16 @@ void prepare_playlist(struct MPContext *mpctx, struct playlist *pl)
 static void transfer_playlist(struct MPContext *mpctx, struct playlist *pl,
                               int64_t *start_id, int *num_new_entries)
 {
-    if (pl->num_entries) {
+    if (playlist_entry_count(pl)) {
         prepare_playlist(mpctx, pl);
-        struct playlist_entry *new = pl->current;
-        *num_new_entries = pl->num_entries;
+        struct playlist_entry *new = playlist_get_current(pl);
+        *num_new_entries = playlist_entry_count(pl);
         *start_id = playlist_transfer_entries(mpctx->playlist, pl);
         // current entry is replaced
-        if (mpctx->playlist->current)
-            playlist_remove(mpctx->playlist, mpctx->playlist->current);
+        if (playlist_get_current(mpctx->playlist))
+            playlist_remove(mpctx->playlist, playlist_get_current(mpctx->playlist));
         if (new)
-            mpctx->playlist->current = new;
+            playlist_set_current_entry(mpctx->playlist, new);
         mpctx->playlist->playlist_dir = talloc_steal(mpctx->playlist, pl->playlist_dir);
     } else {
         MP_WARN(mpctx, "Empty playlist!\n");
@@ -1129,7 +1126,7 @@ static MP_THREAD_VOID open_demux_thread(void *ctx)
         .force_format = mpctx->open_format,
         .stream_flags = mpctx->open_url_flags,
         .is_top_level = true,
-        .allow_playlist_create = mpctx->playlist->num_entries <= 1 &&
+        .allow_playlist_create = playlist_entry_count(mpctx->playlist) <= 1 &&
                                  !mpctx->playlist->playlist_dir,
     };
     struct demuxer *demux =
@@ -1276,7 +1273,7 @@ void prefetch_next(struct MPContext *mpctx)
     if (!mpctx->opts->prefetch_open || mpctx->open_active)
         return;
 
-    struct playlist_entry *new_entry = mp_next_file(mpctx, +1, false, false);
+    struct playlist_entry *new_entry = mp_next_file(mpctx, +1, false);
     if (new_entry && new_entry->filename) {
         MP_VERBOSE(mpctx, "Prefetching: %s\n", new_entry->filename);
         start_open(mpctx, new_entry->filename, new_entry->stream_flags, true);
@@ -1291,8 +1288,8 @@ static void clear_playlist_paths(struct MPContext *mpctx)
 
 static bool infinite_playlist_loading_loop(struct MPContext *mpctx, struct playlist *pl)
 {
-    if (pl->num_entries) {
-        struct playlist_entry *e = pl->entries[0];
+    if (playlist_entry_count(pl)) {
+        struct playlist_entry *e = playlist_get_first(pl);
         for (int n = 0; n < mpctx->playlist_paths_len; n++) {
             if (strcmp(mpctx->playlist_paths[n], e->filename) == 0) {
                 clear_playlist_paths(mpctx);
@@ -1633,12 +1630,12 @@ static void play_current_file(struct MPContext *mpctx)
     mpctx->stop_play = 0;
 
     process_hooks(mpctx, "on_before_start_file");
-    if (mpctx->stop_play || !mpctx->playlist->current)
+    if (mpctx->stop_play || !playlist_get_current(mpctx->playlist))
         return;
 
-    if (!mp_input_is_local_path(mpctx->playlist->current->filename, false, NULL)) {
+    if (!mp_input_is_local_path(playlist_get_current(mpctx->playlist)->filename, false, NULL)) {
         MP_ERR(mpctx, "Refusing non-local input: %s\n",
-               mpctx->playlist->current->filename);
+               playlist_get_current(mpctx->playlist)->filename);
         mpctx->error_playing = MPV_ERROR_LOADING_FAILED;
         mpctx->files_errored += 1;
         mpctx->stop_play = PT_ERROR;
@@ -1646,7 +1643,7 @@ static void play_current_file(struct MPContext *mpctx)
     }
 
     mpv_event_start_file start_event = {
-        .playlist_entry_id = mpctx->playlist->current->id,
+        .playlist_entry_id = playlist_get_current(mpctx->playlist)->id,
     };
     mpv_event_end_file end_event = {
         .playlist_entry_id = start_event.playlist_entry_id,
@@ -1680,11 +1677,11 @@ static void play_current_file(struct MPContext *mpctx)
     reset_playback_state(mpctx);
 
 #ifdef FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
-    if (mpctx->playlist->num_entries > 3)
+    if (playlist_entry_count(mpctx->playlist) > 3)
         goto terminate_playback;
 #endif
 
-    mpctx->playing = mpctx->playlist->current;
+    mpctx->playing = playlist_get_current(mpctx->playlist);
     mp_assert(mpctx->playing);
     mp_assert(mpctx->playing->filename);
     mpctx->playing->reserved += 1;
@@ -1714,8 +1711,6 @@ static void play_current_file(struct MPContext *mpctx)
     load_per_file_options(mpctx->mconfig, mpctx->playing->params,
                           mpctx->playing->num_params);
 
-    mpctx->remaining_file_loops = mpctx->opts->loop_file;
-    mp_notify_property(mpctx, "remaining-file-loops");
     mpctx->remaining_ab_loops = mpctx->opts->ab_loop_count;
     mp_notify_property(mpctx, "remaining-ab-loops");
 
@@ -1723,7 +1718,7 @@ static void play_current_file(struct MPContext *mpctx)
 
     handle_force_window(mpctx, false);
 
-    if (mpctx->playlist->num_entries > 1 ||
+    if (playlist_entry_count(mpctx->playlist) > 1 ||
         mpctx->playing->playlist_path)
         MP_INFO(mpctx, "Playing: %s\n", mpctx->filename);
 
@@ -1865,8 +1860,8 @@ static void play_current_file(struct MPContext *mpctx)
 
     mpctx->playback_initialized = true;
     mpctx->playing->playlist_prev_attempt = false;
-    mpctx->playlist->playlist_completed = false;
-    mpctx->playlist->playlist_started = true;
+    playlist_set_completed(mpctx->playlist, false);
+    playlist_set_started(mpctx->playlist, true);
     mp_notify(mpctx, MPV_EVENT_FILE_LOADED, NULL);
     update_screensaver_state(mpctx);
     clear_playlist_paths(mpctx);
@@ -2025,7 +2020,7 @@ terminate_playback:
     process_hooks(mpctx, "on_after_end_file");
 
     if (playlist_prev_continue) {
-        struct playlist_entry *e = mp_next_file(mpctx, -1, false, true);
+        struct playlist_entry *e = mp_next_file(mpctx, -1, false);
         if (e) {
             mp_set_playlist_entry(mpctx, e);
             play_current_file(mpctx);
@@ -2037,42 +2032,12 @@ terminate_playback:
 // it can have side-effects and mutate mpctx.
 //  direction: -1 (previous) or +1 (next)
 //  force: if true, don't skip playlist entries marked as failed
-//  update_loop: whether to decrement --loop-playlist=N if it was specified
 struct playlist_entry *mp_next_file(struct MPContext *mpctx, int direction,
-                                    bool force, bool update_loop)
+                                    bool force)
 {
     struct playlist_entry *next = playlist_get_next(mpctx->playlist, direction);
     if (next && direction < 0 && !force)
         next->playlist_prev_attempt = true;
-    if (!next && mpctx->opts->loop_times != 1) {
-        if (direction > 0) {
-            if (mpctx->opts->shuffle) {
-                if (!update_loop)
-                    return NULL;
-                playlist_shuffle(mpctx->playlist);
-            }
-            next = playlist_get_first(mpctx->playlist);
-            if (next && mpctx->opts->loop_times > 1 && update_loop) {
-                mpctx->opts->loop_times--;
-                m_config_notify_change_opt_ptr(mpctx->mconfig,
-                                               &mpctx->opts->loop_times);
-            }
-        } else {
-            next = playlist_get_last(mpctx->playlist);
-        }
-        bool ignore_failures = mpctx->opts->loop_times == -2;
-        if (!force && next && next->init_failed && !ignore_failures) {
-            // Don't endless loop if no file in playlist is playable
-            bool all_failed = true;
-            for (int n = 0; n < mpctx->playlist->num_entries; n++) {
-                all_failed &= mpctx->playlist->entries[n]->init_failed;
-                if (!all_failed)
-                    break;
-            }
-            if (all_failed)
-                next = NULL;
-        }
-    }
     return next;
 }
 
@@ -2101,7 +2066,7 @@ void mp_play_files(struct MPContext *mpctx)
         if (mpctx->stop_play == PT_QUIT)
             break;
 
-        if (mpctx->playlist->current)
+        if (playlist_get_current(mpctx->playlist))
             play_current_file(mpctx);
 
         if (mpctx->stop_play == PT_QUIT)
@@ -2111,19 +2076,19 @@ void mp_play_files(struct MPContext *mpctx)
         if (mpctx->stop_play == PT_NEXT_ENTRY || mpctx->stop_play == PT_ERROR ||
             mpctx->stop_play == AT_END_OF_FILE)
         {
-            new_entry = mp_next_file(mpctx, +1, false, true);
+            new_entry = mp_next_file(mpctx, +1, false);
         } else if (mpctx->stop_play == PT_CURRENT_ENTRY) {
-            new_entry = mpctx->playlist->current;
+            new_entry = playlist_get_current(mpctx->playlist);
         }
 
         if (!new_entry)
-            mpctx->playlist->playlist_completed = true;
+            playlist_set_completed(mpctx->playlist, true);
 
-        mpctx->playlist->current = new_entry;
-        mpctx->playlist->current_was_replaced = false;
+        playlist_set_current_entry(mpctx->playlist, new_entry);
+        playlist_set_current_was_replaced(mpctx->playlist, false);
         mpctx->stop_play = new_entry ? PT_NEXT_ENTRY : PT_STOP;
 
-        if (!mpctx->playlist->current && mpctx->opts->player_idle_mode < 2)
+        if (!playlist_get_current(mpctx->playlist) && mpctx->opts->player_idle_mode < 2)
             break;
     }
 
@@ -2146,8 +2111,8 @@ void mp_play_files(struct MPContext *mpctx)
 void mp_set_playlist_entry(struct MPContext *mpctx, struct playlist_entry *e)
 {
     mp_assert(!e || playlist_entry_to_index(mpctx->playlist, e) >= 0);
-    mpctx->playlist->current = e;
-    mpctx->playlist->current_was_replaced = false;
+    playlist_set_current_entry(mpctx->playlist, e);
+    playlist_set_current_was_replaced(mpctx->playlist, false);
     mp_notify(mpctx, MP_EVENT_CHANGE_PLAYLIST, NULL);
     // Make it pick up the new entry.
     if (mpctx->stop_play != PT_QUIT)
