@@ -4377,6 +4377,15 @@ void mp_control_state_sync(struct MPContext *mpctx)
                                 opts->playback_speed);
 }
 
+void mp_control_state_update(struct MPContext *mpctx)
+{
+    if (!mpctx->control_state || !mpctx->opts)
+        return;
+    if (player_ffi_state_set_bool(mpctx->control_state, "fullscreen",
+                                  mpctx->opts->vo->fullscreen) > 0)
+        mp_notify_property(mpctx, "fullscreen");
+}
+
 static int mp_property_state_bool(void *ctx, struct m_property *prop,
                                   int action, void *arg)
 {

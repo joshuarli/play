@@ -15,16 +15,6 @@ Next: 20
 - **Effort:** M
 - **Design:** none
 
-### PLAY-11 · P2 · The Rust fullscreen mirror goes stale on window-initiated changes
-
-- **Area:** Data
-- **Where:** `rust/player-core/src/state.rs:4`, `:40-56`, `:113-121`, `player/command.c:4339-4350`, `:7839`, `osdep/mac/option_helper.swift:56-61`, `video/out/mac/window.swift:193`, `:202`, `:250`, `:269`
-- **Problem:** The Rust store is updated only from `control_state_sync_option`, which the core option callback runs. The macOS window writes the `fullscreen` option through `m_config_cache_write_opt`, which updates the shadow and wakes cache listeners but never invokes the core callback. Entering or leaving fullscreen from the green button or the window menu therefore leaves `mpv_get_property("fullscreen")`, the `control-state` snapshot, and the OSC's fullscreen state permanently wrong. The property SET path still works, so only the window-originated direction is stale.
-- **Recommendation:** notify the core after the VO cache write, or remove `fullscreen` from the Rust mirror and read the live option. Add a test that changes the VO option and reads `control-state`.
-- **Fix with:** make-invalid-states-unrepresentable
-- **Effort:** S
-- **Design:** none
-
 ### PLAY-12 · P2 · The 1080p CPU budget passes inside run noise and compare cannot fail a regression
 
 - **Area:** Performance
