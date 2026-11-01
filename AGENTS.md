@@ -35,5 +35,5 @@ Player is a local-only macOS media player: the mpv v0.41.0 playback pipeline, a 
 - `docs/licenses.md`: shipped licenses.
 - `docs/manual-checklist.md`: owner-run visual and audio checks.
 - `docs/lua-api.md`: generated Lua API audit.
-- `docs/repo-audit.md` and `docs/jank-audit.md`: dated audit evidence.
+- `docs/repo-audit.md`: dated security, license, and complexity evidence.
 - `PLAN.md`: completed campaign record, not the current plan.

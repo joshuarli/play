@@ -25,16 +25,6 @@ Next: 20
 - **Effort:** S
 - **Design:** none
 
-### PLAY-10 · P2 · A failed launch has no visible explanation
-
-- **Area:** Errors
-- **Where:** `player/main.c:616-648`, `osdep/mac/application.swift:89-94`, `osdep/mac/dialog.swift:84-89`, `osdep/mac/menu_bar.swift:345-348`
-- **Problem:** A missing or unsupported file logs `Cannot open file` and `Failed to open` and returns 2 or 3 from `mpv_main`. The Cocoa playback thread calls `exit(exitCode)` with no alert, and a Finder launch has no terminal. The menu `Open URL…` path is different again: `cmd_loadfile` sets `cmd->success = false`, and its error is logged above the OSD gate, so the running file keeps playing and the user sees nothing.
-- **Recommendation:** before exiting from the Cocoa playback thread on exit code 2 or 3, show one alert on the main thread with the log path. For a running app, make a rejected `loadfile` visible with an OSD-level message. Keep the terminal log.
-- **Fix with:** error-model
-- **Effort:** M
-- **Design:** none
-
 ### PLAY-11 · P2 · The Rust fullscreen mirror goes stale on window-initiated changes
 
 - **Area:** Data

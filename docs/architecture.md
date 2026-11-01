@@ -61,6 +61,8 @@ FFmpeg demuxes every container and decodes video. VideoToolbox is the hardware p
 
 The bundler sets `MPVBUNDLE=true` in `Info.plist`; the Cocoa layer uses that value to choose the regular activation policy, the Dock icon, and the menu bar. It also declares the movie, audio, and playlist types and bundles the icon. A bundle launch with no file stays idle so a Finder open event can play.
 
+A bundle launch that exits with a load error shows one alert with the log path. A rejected `loadfile` command shows an OSD message and leaves the current file playing.
+
 ## Provenance
 
 - mpv v0.41.0 at `41f6a645068483470267271e1d09966ca3b9f413`.

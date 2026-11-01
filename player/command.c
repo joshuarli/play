@@ -6245,6 +6245,8 @@ static void cmd_loadfile(void *p)
 
     if (!mp_input_is_local_path(filename, false, NULL)) {
         mp_cmd_msg(cmd, MSGL_ERR, "Refusing non-local input: %s\n", filename);
+        set_osd_msg(mpctx, 1, mpctx->opts->osd_duration,
+                    "Refusing non-local input");
         cmd->success = false;
         return;
     }

@@ -90,6 +90,17 @@ class Application: NSApplication, NSApplicationDelegate {
         let application: Application = TypeHelper.bridge(ptr: ptr)
         mp_thread_set_name("core/playback")
         let exitCode: Int32 = mpv_main(application.argc ?? 1, application.argv)
+        if (exitCode == 2 || exitCode == 3) && AppHub.shared.isBundle {
+            DispatchQueue.main.sync {
+                NSApp.activate(ignoringOtherApps: true)
+                let alert = NSAlert()
+                alert.messageText = "Playback failed"
+                alert.informativeText = "The file could not be opened or played. See ~/Library/Logs/mpv.log for details."
+                alert.alertStyle = .warning
+                alert.addButton(withTitle: "OK")
+                alert.runModal()
+            }
+        }
         // exit of any proper shut down
         exit(exitCode)
     }
