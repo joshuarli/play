@@ -8,7 +8,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import harness  # noqa: E402
-from harness import FIXTURES, Failure, Mpv, Results, ROOT, TMP, tail  # noqa: E402
+from harness import (FIXTURES, Failure, Mpv, Results, ROOT, TMP, fixture_entry,  # noqa: E402
+                     fixture_path, subtitle_args, tail)
 
 ICD_DIR = Path("/usr/share/vulkan/icd.d")
 GPU_ARGS = ["--vo=gpu-next", "--gpu-context=waylandvk", "--gpu-sw=yes", "--ao=null",
@@ -67,6 +68,7 @@ def gate_linux_gpu_next(results, args):
     try:
         play(results, compositor)
         window(results, compositor)
+        subtitles(results, compositor)
         shutdown(results, compositor)
     finally:
         compositor.close()
@@ -116,6 +118,51 @@ def window(results, compositor):
         resized = player.wait_property("osd-dimensions", lambda value: value["w"] != before,
                                        timeout=10)
         results.check("gpu-next: resize", resized["w"] != before, f"{before} -> {resized['w']}")
+
+
+SUBTITLE_FIXTURES = (
+    "h264-embedded-srt", "h264-external-srt", "h264-external-ass",
+    "h264-external-vtt", "h264-movtext", "vp9-webvtt",
+)
+MIXED_SCRIPT_SRT = """1
+00:00:00,000 --> 00:00:09,000
+Latin éèü, 日本語の字幕, مرحبا بالعالم, Ελληνικά
+"""
+
+
+def render_subtitle(results, compositor, label, path, extra=()):
+    with Mpv([*GPU_ARGS, "--pause=yes", "--sid=1", *extra], env=compositor.env) as player:
+        player.load(path)
+        player.wait_event("file-loaded", timeout=30)
+        player.command("seek", 1, "absolute+exact")
+        text = player.wait_property("sub-text", lambda value: bool(value.strip()), timeout=15)
+        failures = player.log_matches(r"Failed to load fontconfig|fontconfig.*(error|failed)")
+        results.check(f"subtitles {label}: cue decoded", bool(text), tail(player.lines))
+        results.check(f"subtitles {label}: libass fonts", not failures, tail(failures))
+        return text
+
+
+def subtitles(results, compositor):
+    for name in SUBTITLE_FIXTURES:
+        entry = fixture_entry(name)
+        render_subtitle(results, compositor, name, fixture_path(entry), subtitle_args(entry))
+    directory = TMP / f"subtitles-{os.getpid()}"
+    unicode_dir = directory / "字幕 vidéo"
+    unicode_dir.mkdir(parents=True)
+    try:
+        source = fixture_path(fixture_entry("h264"))
+        media = unicode_dir / "映画 clip.mp4"
+        media.symlink_to(source)
+        mixed = unicode_dir / "混合 subs.srt"
+        mixed.write_text(MIXED_SCRIPT_SRT, encoding="utf-8")
+        text = render_subtitle(results, compositor, "non-ASCII path and mixed scripts", media,
+                               [f"--sub-file={mixed}"])
+        results.check("subtitles: mixed-script text preserved", "日本語" in text and "مرحبا" in text,
+                      repr(text))
+    finally:
+        for path in sorted(directory.rglob("*"), reverse=True):
+            path.unlink() if not path.is_dir() or path.is_symlink() else path.rmdir()
+        directory.rmdir()
 
 
 def shutdown(results, compositor):
