@@ -287,32 +287,13 @@ static int open_f(stream_t *stream, const struct stream_open_args *args)
     int m = O_CLOEXEC | (write ? O_RDWR | O_CREAT | O_TRUNC : O_RDONLY);
 
     char *filename = stream->path;
-    char *url = "";
     if (!strict_fs) {
         char *fn = mp_file_url_to_filename(stream, bstr0(stream->url));
         if (fn)
             filename = stream->path = fn;
-        url = stream->url;
     }
 
-    bool is_fdclose = strncmp(url, "fdclose://", 10) == 0;
-    if (strncmp(url, "fd://", 5) == 0 || is_fdclose) {
-        stream->is_local_fs = false;
-        char *begin = strstr(stream->url, "://") + 3, *end = NULL;
-        p->fd = strtol(begin, &end, 0);
-        if (!end || end == begin || end[0] || p->fd < 0) {
-            MP_ERR(stream, "Invalid FD number: %s\n", stream->url);
-            return STREAM_ERROR;
-        }
-#ifdef F_SETFD
-        if (fcntl(p->fd, F_GETFD) == -1) {
-            MP_ERR(stream, "Invalid FD: %d\n", p->fd);
-            return STREAM_ERROR;
-        }
-#endif
-        if (is_fdclose)
-            p->close = true;
-    } else if (!strict_fs && !strcmp(filename, "-")) {
+    if (!strict_fs && !strcmp(filename, "-")) {
         stream->is_local_fs = false;
         if (!write) {
             MP_INFO(stream, "Reading from stdin...\n");
@@ -322,9 +303,6 @@ static int open_f(stream_t *stream, const struct stream_open_args *args)
             p->fd = 1;
         }
     } else {
-        if (bstr_startswith0(bstr0(stream->url), "appending://"))
-            p->appending = true;
-
         mode_t openmode = S_IRUSR | S_IWUSR;
 #ifndef __MINGW32__
         openmode |= S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH;
@@ -406,16 +384,8 @@ static int open_f(stream_t *stream, const struct stream_open_args *args)
 const stream_info_t stream_info_file = {
     .name = "file",
     .open2 = open_f,
-    .protocols = (const char*const[]){ "file", "", "appending", NULL },
+    .protocols = (const char*const[]){ "file", "", NULL },
     .can_write = true,
     .local_fs = true,
     .stream_origin = STREAM_ORIGIN_FS,
-};
-
-const stream_info_t stream_info_fd = {
-    .name = "fd",
-    .open2 = open_f,
-    .protocols = (const char*const[]){ "fd", "fdclose", NULL },
-    .can_write = true,
-    .stream_origin = STREAM_ORIGIN_UNSAFE,
 };

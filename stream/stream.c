@@ -42,56 +42,12 @@
 #include "options/m_option.h"
 #include "options/m_config.h"
 
-extern const stream_info_t stream_info_mpv;
-extern const stream_info_t stream_info_cdda;
-extern const stream_info_t stream_info_dvb;
-extern const stream_info_t stream_info_null;
-extern const stream_info_t stream_info_memory;
-extern const stream_info_t stream_info_mf;
-extern const stream_info_t stream_info_ffmpeg;
-extern const stream_info_t stream_info_ffmpeg_unsafe;
-extern const stream_info_t stream_info_avdevice;
 extern const stream_info_t stream_info_file;
-extern const stream_info_t stream_info_slice;
-extern const stream_info_t stream_info_fd;
-extern const stream_info_t stream_info_ifo_dvdnav;
-extern const stream_info_t stream_info_dvdnav;
-extern const stream_info_t stream_info_bdmv_dir;
-extern const stream_info_t stream_info_bluray;
-extern const stream_info_t stream_info_edl;
-extern const stream_info_t stream_info_libarchive;
 extern const stream_info_t stream_info_cb;
 
 static const stream_info_t *const stream_list[] = {
-    &stream_info_mpv,
-#if HAVE_CDDA
-    &stream_info_cdda,
-#endif
-    &stream_info_avdevice,
-#if HAVE_DVBIN
-    &stream_info_dvb,
-#endif
-#if HAVE_DVDNAV
-    &stream_info_ifo_dvdnav,
-    &stream_info_dvdnav,
-#endif
-#if HAVE_LIBBLURAY
-    &stream_info_bdmv_dir,
-    &stream_info_bluray,
-#endif
-#if HAVE_LIBARCHIVE
-    &stream_info_libarchive,
-#endif
-    &stream_info_memory,
-    &stream_info_null,
-    &stream_info_mf,
-    &stream_info_edl,
     &stream_info_file,
-    &stream_info_slice,
-    &stream_info_fd,
     &stream_info_cb,
-    &stream_info_ffmpeg,
-    &stream_info_ffmpeg_unsafe,
 };
 
 // Because of guarantees documented on STREAM_BUFFER_SIZE.

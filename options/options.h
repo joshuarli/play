@@ -246,7 +246,6 @@ typedef struct MPOpts {
     int chapter_merge_threshold;
     double chapter_seek_threshold;
     char *chapter_file;
-    bool merge_files;
     bool quiet;
     bool load_config;
     char *force_configdir;
@@ -363,13 +362,6 @@ typedef struct MPOpts {
     int w32_priority;
     bool media_controls;
 
-    struct mp_bluray_opts *stream_bluray_opts;
-    struct cdda_opts *stream_cdda_opts;
-    struct dvb_opts *stream_dvb_opts;
-    struct lavf_opts *stream_lavf_opts;
-
-    struct demux_rawaudio_opts *demux_rawaudio;
-    struct demux_rawvideo_opts *demux_rawvideo;
     struct demux_playlist_opts *demux_playlist;
     struct demux_lavf_opts *demux_lavf;
     struct demux_mkv_opts *demux_mkv;
@@ -408,7 +400,6 @@ typedef struct MPOpts {
     struct drm_opts *drm_opts;
     struct wingl_opts *wingl_opts;
     struct cuda_opts *cuda_opts;
-    struct dvd_opts *dvd_opts;
     struct vaapi_opts *vaapi_opts;
     struct sws_opts *sws_opts;
     struct zimg_opts *zimg_opts;

@@ -58,15 +58,9 @@ static void print_version(struct mp_log *log)
 }
 
 extern const struct m_sub_options tv_params_conf;
-extern const struct m_sub_options stream_bluray_conf;
-extern const struct m_sub_options stream_cdda_conf;
-extern const struct m_sub_options stream_dvb_conf;
-extern const struct m_sub_options stream_lavf_conf;
 extern const struct m_sub_options sws_conf;
 extern const struct m_sub_options zimg_conf;
 extern const struct m_sub_options drm_conf;
-extern const struct m_sub_options demux_rawaudio_conf;
-extern const struct m_sub_options demux_rawvideo_conf;
 extern const struct m_sub_options demux_playlist_conf;
 extern const struct m_sub_options demux_lavf_conf;
 extern const struct m_sub_options demux_mkv_conf;
@@ -579,13 +573,7 @@ static const m_option_t mp_opts[] = {
 
 // ------------------------- stream options --------------------
 
-#if HAVE_DVDNAV
-    {"dvd", OPT_SUBSTRUCT(dvd_opts, dvd_conf)},
-#endif
     {"edition", OPT_CHOICE(edition_id, {"auto", -1}), M_RANGE(0, 8190)},
-#if HAVE_LIBBLURAY
-    {"bluray", OPT_SUBSTRUCT(stream_bluray_opts, stream_bluray_conf)},
-#endif /* HAVE_LIBBLURAY */
 
 // ------------------------- demuxer options --------------------
 
@@ -647,10 +635,6 @@ static const m_option_t mp_opts[] = {
 
     {"display-tags", OPT_STRINGLIST(display_tags)},
 
-#if HAVE_CDDA
-    {"cdda", OPT_SUBSTRUCT(stream_cdda_opts, stream_cdda_conf)},
-#endif
-
     // demuxer.c - select audio/sub file/demuxer
     {"demuxer", OPT_STRING(demuxer_name), .help = demuxer_help, .flags = UPDATE_DEMUXER},
     {"audio-demuxer", OPT_STRING(audio_demuxer_name), .help = demuxer_help},
@@ -662,11 +646,6 @@ static const m_option_t mp_opts[] = {
     {"cache-pause", OPT_BOOL(cache_pause)},
     {"cache-pause-initial", OPT_BOOL(cache_pause_initial)},
     {"cache-pause-wait", OPT_FLOAT(cache_pause_wait), M_RANGE(0, FLT_MAX)},
-
-#if HAVE_DVBIN
-    {"dvbin", OPT_SUBSTRUCT(stream_dvb_opts, stream_dvb_conf)},
-#endif
-    {"", OPT_SUBSTRUCT(stream_lavf_opts, stream_lavf_conf)},
 
 // ------------------------- a-v sync options --------------------
 
@@ -699,8 +678,6 @@ static const m_option_t mp_opts[] = {
     {"", OPT_SUBSTRUCT(hwdec_opts, hwdec_conf)},
 
     {"", OPT_SUBSTRUCT(demux_lavf, demux_lavf_conf)},
-    {"demuxer-rawaudio", OPT_SUBSTRUCT(demux_rawaudio, demux_rawaudio_conf)},
-    {"demuxer-rawvideo", OPT_SUBSTRUCT(demux_rawvideo, demux_rawvideo_conf)},
     {"", OPT_SUBSTRUCT(demux_playlist, demux_playlist_conf)},
     {"demuxer-mkv", OPT_SUBSTRUCT(demux_mkv, demux_mkv_conf)},
 
@@ -852,8 +829,6 @@ static const m_option_t mp_opts[] = {
     {"chapter-seek-threshold", OPT_DOUBLE(chapter_seek_threshold)},
 
     {"chapters-file", OPT_STRING(chapter_file), .flags = M_OPT_FILE},
-
-    {"merge-files", OPT_BOOL(merge_files)},
 
     // a-v sync stuff:
     {"initial-audio-sync", OPT_BOOL(initial_audio_sync)},

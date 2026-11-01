@@ -80,4 +80,4 @@ Current result: 19 passed, 0 failed. A temporary manifest with `http` added to t
 
 ## Next
 
-P2.2 removes unsupported stream/network/disc/capture modules from mpv. P2.1 already locked the Meson feature surface and reduced the embedded Lua modules.
+P2.2 removed the remote/disc/capture stream and demux modules; `--list-protocols` is `file://` only. P2.3 removes encoding, recording, JavaScript, plugins, and unused UI/platform integrations.

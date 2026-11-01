@@ -318,29 +318,6 @@ done:
     return ok ? 0 : -1;
 }
 
-void merge_playlist_files(struct playlist *pl)
-{
-    if (!pl->num_entries)
-        return;
-    char *edl = talloc_strdup(NULL, "edl://");
-    for (int n = 0; n < pl->num_entries; n++) {
-        struct playlist_entry *e = pl->entries[n];
-        if (n)
-            edl = talloc_strdup_append_buffer(edl, ";");
-        // Escape if needed
-        if (e->filename[strcspn(e->filename, "=%,;\n")] ||
-            bstr_strip(bstr0(e->filename)).len != strlen(e->filename))
-        {
-            // %length%
-            edl = talloc_asprintf_append_buffer(edl, "%%%zd%%", strlen(e->filename));
-        }
-        edl = talloc_strdup_append_buffer(edl, e->filename);
-    }
-    playlist_clear(pl);
-    playlist_append_file(pl, edl);
-    talloc_free(edl);
-}
-
 const char *mp_status_str(enum playback_status st)
 {
     switch (st) {

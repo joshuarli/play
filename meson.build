@@ -99,17 +99,10 @@ sources = files(
     'demux/cue.c',
     'demux/cache.c',
     'demux/demux.c',
-    'demux/demux_cue.c',
-    'demux/demux_disc.c',
-    'demux/demux_edl.c',
     'demux/demux_lavf.c',
-    'demux/demux_mf.c',
     'demux/demux_mkv.c',
     'demux/demux_mkv_timeline.c',
-    'demux/demux_mpv.c',
-    'demux/demux_null.c',
     'demux/demux_playlist.c',
-    'demux/demux_raw.c',
     'demux/demux_timeline.c',
     'demux/ebml.c',
     'demux/packet.c',
@@ -186,19 +179,10 @@ sources = files(
     'player/clipboard/clipboard-vo.c',
 
     ## Streams
-    'stream/cookies.c',
     'stream/stream.c',
-    'stream/stream_avdevice.c',
     'stream/stream_cb.c',
-    'stream/stream_concat.c',
-    'stream/stream_edl.c',
     'stream/stream_file.c',
-    'stream/stream_lavf.c',
     'stream/stream_memory.c',
-    'stream/stream_mf.c',
-    'stream/stream_mpv.c',
-    'stream/stream_null.c',
-    'stream/stream_slice.c',
 
     ## Subtitles
     'sub/ass_mp.c',
@@ -622,32 +606,16 @@ cdda_opt = get_option('cdda').require(
 cdio = dependency('libcdio', version: '>= 0.90', required: cdda_opt)
 cdda = dependency('libcdio_paranoia', required: cdda_opt)
 features += {'cdda': cdda.found() and cdio.found()}
-if features['cdda']
-    dependencies += [cdda, cdio]
-    sources += files('stream/stream_cdda.c')
-endif
 
 dvbin_opt = get_option('dvbin').require(
     get_option('gpl'),
     error_message: 'the build is not GPL!',
 )
-dvbin = cc.has_header('linux/dvb/frontend.h', required: dvbin_opt)
-features += {'dvbin': dvbin}
-if features['dvbin']
-    sources += files('stream/dvb_tune.c',
-                     'stream/stream_dvb.c')
-endif
 
 dvdnav_opt = get_option('dvdnav').require(
     get_option('gpl'),
     error_message: 'the build is not GPL!',
 )
-dvdnav = dependency('dvdnav', version: '>= 4.2.0', required: dvdnav_opt)
-features += {'dvdnav': dvdnav.found()}
-if features['dvdnav']
-    dependencies += dvdnav
-    sources += files('stream/stream_dvdnav.c')
-endif
 
 iconv = dependency('iconv', required: get_option('iconv'))
 features += {'iconv': iconv.found()}
@@ -672,24 +640,12 @@ endif
 
 libarchive = dependency('libarchive', version: '>= 3.4.0', required: get_option('libarchive'))
 features += {'libarchive': libarchive.found()}
-if features['libarchive']
-    dependencies += libarchive
-    sources += files('demux/demux_libarchive.c',
-                     'stream/stream_libarchive.c')
-endif
 
 libavdevice = dependency('libavdevice', version: '>= 60.3.100', required: get_option('libavdevice'))
 features += {'libavdevice': libavdevice.found()}
-if features['libavdevice']
-    dependencies += libavdevice
-endif
 
 libbluray = dependency('libbluray', version: '>= 0.5.0', required: get_option('libbluray'))
 features += {'libbluray': libbluray.found()}
-if features['libbluray']
-    dependencies += libbluray
-    sources += files('stream/stream_bluray.c')
-endif
 
 libm = cc.find_library('m', required: false)
 if libm.found()

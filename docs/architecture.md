@@ -25,10 +25,15 @@ Symphonia is MPL-2.0. mpv remains GPL-2.0-or-later. Symphonia's source and licen
 
 The embedded Lua modules are reduced to `defaults.lua`, `assdraw.lua`, `options.lua`, `input.lua`, `select.lua`, and `osc.lua`. The `.inc` build targets and the `player/lua.c` / `player/scripting.c` loading tables match that set; `ytdl_hook`, `stats`, `console`, `auto_profiles`, `positioning`, `commands`, `context_menu`, and `fzy` are no longer embedded or loaded.
 
+## Input surface (P2.2)
+
+The stream list contains `stream_file` and `stream_cb` only; the demuxer list contains the local directory, Matroska, lavf, playlist, and timeline demuxers. `--list-protocols` reports `file://` only. Network, wrapper, disc, capture, and remote-playlist modules and their option tables are removed; `docs/scope.md` records the retained local utilities and remaining debt.
+
 ## Open work
 
 - P1.4 added the FFmpeg manifest gate over the frozen allowlist.
 - P2.1 locked the Meson feature surface and reduced the embedded Lua modules.
-- P2.2 removes unsupported stream/network/disc/capture modules.
+- P2.2 restricted the input surface to local files.
+- P2.3 removes encoding, recording, JavaScript, plugins, and unused UI/platform integrations.
 - P4.1 moves the Rust link into the normal workspace/Meson path and adds `player-core`/`player-ffi`.
 - P7 moves config, playlist, input, state, and local file handling into Rust; the audio bridge stays at the decode boundary.

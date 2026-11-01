@@ -2413,9 +2413,6 @@ static int demux_mkv_open(demuxer_t *demuxer, enum demux_check check)
     mkv_d->a_skip_preroll = 1;
     mkv_d->skip_to_timecode = INT64_MIN;
 
-    if (demuxer->params)
-        mkv_d->probably_webm_dash_init = demuxer->params->init_fragment.len > 0;
-
     // Make sure you can seek back after read_ebml_header() if no EBML ID.
     if (stream_read_peek(s, &(char[4]){0}, 4) != 4)
         return -1;

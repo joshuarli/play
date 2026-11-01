@@ -22,7 +22,6 @@ struct timeline_part {
 // would conflict in demux_timeline.c.
 // "par" is short for parallel stream.
 struct timeline_par {
-    bstr init_fragment;
     bool dash, no_clip, delay_open;
 
     // Of any of these, _some_ fields are used. If delay_open==true, this

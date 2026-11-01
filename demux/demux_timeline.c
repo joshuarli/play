@@ -215,7 +215,6 @@ static void reopen_lazy_segments(struct demuxer *demuxer,
     // by the segments. Closing them would create dangling pointers.
 
     struct demuxer_params params = {
-        .init_fragment = src->tl->init_fragment,
         .skip_lavf_probing = src->tl->dash,
         .stream_flags = demuxer->stream_origin,
         .depth = demuxer->depth + 1,

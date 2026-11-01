@@ -404,39 +404,13 @@ static void convert_charset(struct demuxer *demuxer)
     talloc_free(alloc);
 }
 
-static char *remove_prefix(char *s, const char *const *prefixes)
-{
-    for (int n = 0; prefixes[n]; n++) {
-        int len = strlen(prefixes[n]);
-        if (strncmp(s, prefixes[n], len) == 0)
-            return s + len;
-    }
-    return s;
-}
-
-static const char *const prefixes[] =
-    {"ffmpeg://", "lavf://", "avdevice://", "av://", NULL};
-
 static int lavf_check_file(demuxer_t *demuxer, enum demux_check check)
 {
     lavf_priv_t *priv = demuxer->priv;
     struct demux_lavf_opts *lavfdopts = priv->opts;
     struct stream *s = priv->stream;
 
-    priv->filename = remove_prefix(s->url, prefixes);
-
-    char *avdevice_format = NULL;
-    if (s->info && strcmp(s->info->name, "avdevice") == 0) {
-        // always require filename in the form "format:filename"
-        char *sep = strchr(priv->filename, ':');
-        if (!sep) {
-            MP_FATAL(demuxer, "Must specify filename in 'format:filename' form\n");
-            return -1;
-        }
-        avdevice_format = talloc_strndup(priv, priv->filename,
-                                         sep - priv->filename);
-        priv->filename = sep + 1;
-    }
+    priv->filename = s->url;
 
     char *mime_type = s->mime_type;
     if (!lavfdopts->allow_mimetype || !mime_type)
@@ -446,8 +420,6 @@ static int lavf_check_file(demuxer_t *demuxer, enum demux_check check)
     const char *format = lavfdopts->format;
     if (!format || !format[0])
         format = s->lavf_type;
-    if (!format)
-        format = avdevice_format;
     if (format) {
         if (strcmp(format, "help") == 0) {
             list_formats(demuxer);
@@ -1021,8 +993,6 @@ static int demux_open_lavf(demuxer_t *demuxer, enum demux_check check)
     }
 
     if ((priv->avif_flags & AVFMT_NOFILE) || priv->format_hack.no_stream) {
-        mp_setup_av_network_options(&dopts, priv->avif->name,
-                                    demuxer->global, demuxer->log);
         // This might be incorrect.
         demuxer->seekable = true;
     } else {

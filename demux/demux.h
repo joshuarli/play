@@ -209,7 +209,6 @@ struct demuxer_params {
     bool *matroska_was_valid;
     struct timeline *timeline;
     bool disable_timeline;
-    bstr init_fragment;
     bool skip_lavf_probing;
     bool stream_record; // if true, enable stream recording if option is set
     int stream_flags;

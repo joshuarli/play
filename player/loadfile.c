@@ -834,9 +834,7 @@ int mp_add_external_file(struct MPContext *mpctx, char *filename,
 
     void *unescaped_url = NULL;
     char *disp_filename = filename;
-    if (strncmp(disp_filename, "memory://", 9) == 0) {
-        disp_filename = "memory://"; // avoid noise
-    } else if (mp_is_url(bstr0(disp_filename))) {
+    if (mp_is_url(bstr0(disp_filename))) {
         disp_filename = unescaped_url = mp_url_unescape(NULL, disp_filename);
     }
 
@@ -1026,9 +1024,6 @@ void prepare_playlist(struct MPContext *mpctx, struct playlist *pl)
 
     if (opts->shuffle)
         playlist_shuffle(pl);
-
-    if (opts->merge_files)
-        merge_playlist_files(pl);
 
     if (!pl->current)
         pl->current = mp_check_playlist_resume(mpctx, pl);

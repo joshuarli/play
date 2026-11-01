@@ -47,41 +47,22 @@
 #include "packet_pool.h"
 #include "timeline.h"
 #include "stheader.h"
+#include "demux.h"
 #include "cue.h"
 
 // Demuxer list
-extern const demuxer_desc_t demuxer_desc_mpv;
-extern const demuxer_desc_t demuxer_desc_edl;
-extern const demuxer_desc_t demuxer_desc_cue;
-extern const demuxer_desc_t demuxer_desc_rawaudio;
-extern const demuxer_desc_t demuxer_desc_rawvideo;
-extern const demuxer_desc_t demuxer_desc_mf;
 extern const demuxer_desc_t demuxer_desc_matroska;
 extern const demuxer_desc_t demuxer_desc_lavf;
 extern const demuxer_desc_t demuxer_desc_playlist;
 extern const demuxer_desc_t demuxer_desc_directory;
-extern const demuxer_desc_t demuxer_desc_disc;
-extern const demuxer_desc_t demuxer_desc_rar;
-extern const demuxer_desc_t demuxer_desc_libarchive;
-extern const demuxer_desc_t demuxer_desc_null;
 extern const demuxer_desc_t demuxer_desc_timeline;
 
 static const demuxer_desc_t *const demuxer_list[] = {
     &demuxer_desc_directory,
-    &demuxer_desc_disc,
-    &demuxer_desc_edl,
-    &demuxer_desc_cue,
-    &demuxer_desc_rawaudio,
-    &demuxer_desc_rawvideo,
     &demuxer_desc_matroska,
-#if HAVE_LIBARCHIVE
-    &demuxer_desc_libarchive,
-#endif
     &demuxer_desc_lavf,
-    &demuxer_desc_mf,
     &demuxer_desc_playlist,
-    &demuxer_desc_null,
-    &demuxer_desc_mpv,
+    &demuxer_desc_timeline,
     NULL
 };
 
@@ -3466,22 +3447,6 @@ done:
     return demuxer;
 }
 
-static struct stream *create_webshit_concat_stream(struct mpv_global *global,
-                                                   struct mp_cancel *c,
-                                                   bstr init, struct stream *real)
-{
-    struct stream *mem = stream_memory_open(global, init.start, init.len);
-    mp_assert(mem);
-
-    struct stream *streams[2] = {mem, real};
-    struct stream *concat = stream_concat_open(global, c, streams, 2);
-    if (!concat) {
-        free_stream(mem);
-        free_stream(real);
-    }
-    return concat;
-}
-
 // Convenience function: open the stream, enable the cache (according to params
 // and global opts.), open the demuxer.
 // Also for some reason may close the opened stream if it's not needed.
@@ -3499,14 +3464,8 @@ struct demuxer *demux_open_url(const char *url,
     if (cancel)
         mp_cancel_set_parent(priv_cancel, cancel);
     struct stream *s = params->external_stream;
-    if (!s) {
-        s = stream_create(url, STREAM_READ | params->stream_flags,
-                          priv_cancel, global);
-        if (s && params->init_fragment.len) {
-            s = create_webshit_concat_stream(global, priv_cancel,
-                                             params->init_fragment, s);
-        }
-    }
+    if (!s)
+        s = stream_create(url, STREAM_READ | params->stream_flags, priv_cancel, global);
     if (!s) {
         talloc_free(priv_cancel);
         return NULL;
