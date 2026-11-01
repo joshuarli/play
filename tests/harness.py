@@ -609,6 +609,76 @@ def gate_audio(results, args):
             results.check(f"audio {name}", False, str(exc))
 
 
+def gate_linux_audio(results, args):
+    manifest = load_manifest()
+    for name, entry in manifest["fixtures"].items():
+        if entry.get("role") != "audio":
+            continue
+        try:
+            with Mpv(["--ao=alsa", "--audio-device=alsa/null", "--audio-channels=auto",
+                      "--msg-level=all=info,ao/alsa=v", "--vo=null",
+                      "--no-video", "--volume=0", "--pause=yes", "--keep-open=yes"]) as mpv:
+                mpv.load(fixture_path(entry))
+                mpv.wait_event("file-loaded", timeout=10)
+                mpv.wait_log(r"AO: \[alsa\]", timeout=10)
+                mpv.wait_log(r"\[ao/alsa\] opening device 'null'", timeout=10)
+                wait_symphonia(mpv, codec="pcm_s16le")
+                params = mpv.wait_property("audio-params", lambda value: True, timeout=10)
+                channels = params.get("channel-count") if isinstance(params, dict) else None
+                expected = entry.get("channels", [None])[0]
+                results.check(f"linux-audio {name}: alsa init", True)
+                results.check(f"linux-audio {name}: {expected} channels", channels == expected,
+                              f"got {channels}")
+                mpv.set_property("pause", False)
+                mpv.wait_property("eof-reached", lambda value: value is True,
+                                  timeout=entry.get("duration", 3) + 10)
+                results.check(f"linux-audio {name}: played to eof", True)
+                linux_audio_no_errors(results, f"linux-audio {name}", mpv)
+            results.check(f"linux-audio {name}: exit", mpv.returncode == 0,
+                          f"exit {mpv.returncode}")
+        except Failure as exc:
+            results.check(f"linux-audio {name}", False, str(exc))
+    linux_audio_controls(results, manifest)
+
+
+def linux_audio_no_errors(results, name, mpv):
+    errors = [line for line in mpv.error_lines() if "audio end or underrun" not in line]
+    results.check(f"{name}: no error lines", not errors, tail(errors))
+
+
+def linux_audio_controls(results, manifest):
+    entry = manifest["fixtures"]["audio-stereo"]
+    try:
+        with Mpv(["--ao=alsa", "--audio-device=alsa/null", "--audio-channels=auto",
+                      "--msg-level=all=info,ao/alsa=v", "--vo=null", "--no-video",
+                  "--volume=0", "--keep-open=yes", "--pause=yes"]) as mpv:
+            mpv.load(fixture_path(entry))
+            mpv.wait_event("file-loaded", timeout=10)
+            devices = [device["name"] for device in mpv.get_property("audio-device-list")]
+            results.check("linux-audio: auto device listed", "auto" in devices, str(devices[:6]))
+            mpv.wait_log(r"\[ao/alsa\] opening device 'null'", timeout=10)
+            results.check("linux-audio: null PCM opened", True)
+            results.check("linux-audio: device selected",
+                          mpv.get_property("audio-device") == "alsa/null")
+            mpv.set_property("pause", False)
+            mpv.wait_property("time-pos", lambda value: value > 0.2, timeout=10)
+            mpv.set_property("pause", True)
+            held = mpv.get_property("time-pos")
+            time.sleep(0.4)
+            results.check("linux-audio: pause holds position",
+                          abs(mpv.get_property("time-pos") - held) < 0.05)
+            mpv.command("seek", 1.5, "absolute+exact")
+            seeked = mpv.wait_property("time-pos", lambda value: abs(value - 1.5) < 0.1, timeout=10)
+            results.check("linux-audio: seek", abs(seeked - 1.5) < 0.1, str(seeked))
+            mpv.set_property("pause", False)
+            mpv.wait_property("eof-reached", lambda value: value is True, timeout=15)
+            results.check("linux-audio: resume to eof", True)
+            linux_audio_no_errors(results, "linux-audio controls", mpv)
+        results.check("linux-audio controls: exit", mpv.returncode == 0, f"exit {mpv.returncode}")
+    except Failure as exc:
+        results.check("linux-audio controls", False, str(exc))
+
+
 def gate_hwdec(results, args):
     for name in ("h264", "hevc"):
         entry = fixture_entry(name)
@@ -1552,6 +1622,7 @@ GATES = {
     "cli": gate_cli,
     "corpus": gate_corpus,
     "audio": gate_audio,
+    "linux-audio": gate_linux_audio,
     "hwdec": gate_hwdec,
     "seek": gate_seek,
     "local-paths": gate_local_paths,
