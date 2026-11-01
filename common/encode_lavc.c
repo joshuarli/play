@@ -75,17 +75,6 @@ struct mux_stream {
 #define OPT_BASE_STRUCT struct encode_opts
 const struct m_sub_options encode_config = {
     .opts = (const m_option_t[]) {
-        {"o", OPT_STRING(file), .flags = M_OPT_NOCFG | M_OPT_PRE_PARSE | M_OPT_FILE},
-        {"of", OPT_STRING(format)},
-        {"ofopts", OPT_KEYVALUELIST(fopts), .flags = M_OPT_HAVE_HELP},
-        {"ovc", OPT_STRING(vcodec)},
-        {"ovcopts", OPT_KEYVALUELIST(vopts), .flags = M_OPT_HAVE_HELP},
-        {"oac", OPT_STRING(acodec)},
-        {"oacopts", OPT_KEYVALUELIST(aopts), .flags = M_OPT_HAVE_HELP},
-        {"orawts", OPT_BOOL(rawts)},
-        {"ocopy-metadata", OPT_BOOL(copy_metadata)},
-        {"oset-metadata", OPT_KEYVALUELIST(set_metadata)},
-        {"oremove-metadata", OPT_STRINGLIST(remove_metadata)},
         {0}
     },
     .size = sizeof(struct encode_opts),

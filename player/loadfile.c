@@ -1718,12 +1718,6 @@ static void play_current_file(struct MPContext *mpctx)
     if (mpctx->stop_play)
         goto terminate_playback;
 
-    if (opts->stream_dump && opts->stream_dump[0]) {
-        if (stream_dump(mpctx, mpctx->stream_open_filename) >= 0)
-            mpctx->error_playing = 1;
-        goto terminate_playback;
-    }
-
     open_demux_reentrant(mpctx);
     if (!mpctx->stop_play && !mpctx->demuxer) {
         process_hooks(mpctx, "on_load_fail");

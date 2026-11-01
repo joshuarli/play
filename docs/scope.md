@@ -39,6 +39,12 @@ The player is local-only. It opens filesystem paths and local playlist files; it
 - Encoding, stream recording, and the `f_lavfi` graph remain compiled but are unreachable in the shipped configuration: the minimal FFmpeg build has no encoders or muxers. P2.4 removes their CLI surface, and P8 audits the remaining source.
 - Clipboard remains because the clipboard property/commands and the macOS app bridge still reference it.
 
+## CLI surface (P2.4)
+
+Supported: `player FILE...`, `--fullscreen`/`--fs`, `--start`, `--audio-file`/`--audio-files`, `--sub-file`/`--sub-files`, `--version`, `--help`, and the playback/track/OSD controls used by the OSC and local playback.
+
+Removed: `--ytdl*`, `--hls-bitrate`, `--lavfi-complex`, `--stream-dump`, `--stretch-dvd-subs`, the encoding group (`--o`, `--of`, `--ovc`, `--oac`, their `*opts`, `--orawts`, and metadata flags), the Windows window/capture group, and the options for deleted Lua overlay modules. `--http-header-fields` and the other network groups were already absent after P2.2. The encode suboption table is now empty, so the retained encode implementation has no CLI entry point.
+
 ## Remaining technical debt
 
 - `stream_memory` remains as an internal helper for charset conversion; it has no protocol registration.

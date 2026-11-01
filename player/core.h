@@ -577,7 +577,6 @@ void update_content_type(struct MPContext *mpctx, struct track *track);
 void update_vo_playback_state(struct MPContext *mpctx);
 void update_window_title(struct MPContext *mpctx, bool force);
 void error_on_track(struct MPContext *mpctx, struct track *track);
-int stream_dump(struct MPContext *mpctx, const char *source_filename);
 double get_track_seek_offset(struct MPContext *mpctx, struct track *track);
 bool str_in_list(bstr str, char **list);
 char *mp_format_track_metadata(void *ctx, struct track *t, bool add_lang);

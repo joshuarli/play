@@ -212,30 +212,6 @@ static const m_option_t mp_vo_opt_list[] = {
         M_RANGE(0, INT_MAX)},
     {"wayland-present", OPT_BOOL(wl_present)},
 #endif
-#if HAVE_WIN32_DESKTOP
-// For old MinGW-w64 compatibility
-#define DWMWCP_DEFAULT 0
-#define DWMWCP_DONOTROUND 1
-#define DWMWCP_ROUND 2
-#define DWMWCP_ROUNDSMALL 3
-
-#define DWMSBT_AUTO 0
-#define DWMSBT_NONE 1
-#define DWMSBT_MAINWINDOW 2
-#define DWMSBT_TRANSIENTWINDOW 3
-#define DWMSBT_TABBEDWINDOW 4
-
-    {"backdrop-type", OPT_CHOICE(backdrop_type, {"auto", DWMSBT_AUTO}, {"none", DWMSBT_NONE},
-        {"mica", DWMSBT_MAINWINDOW}, {"acrylic", DWMSBT_TRANSIENTWINDOW}, {"mica-alt", DWMSBT_TABBEDWINDOW})},
-    {"window-affinity", OPT_CHOICE(window_affinity, {"default", WDA_NONE},
-        {"excludefromcapture", WDA_EXCLUDEFROMCAPTURE}, {"monitor", WDA_MONITOR})},
-    {"vo-mmcss-profile", OPT_STRING(mmcss_profile)},
-    {"window-corners", OPT_CHOICE(window_corners,
-        {"default", DWMWCP_DEFAULT},
-        {"donotround", DWMWCP_DONOTROUND},
-        {"round", DWMWCP_ROUND},
-        {"roundsmall", DWMWCP_ROUNDSMALL})},
-#endif
 #if HAVE_EGL_ANDROID
     {"android-surface-size", OPT_SIZE_BOX(android_surface_size)},
 #endif
@@ -278,7 +254,6 @@ const struct m_sub_options vo_sub_opts = {
         .wl_edge_pixels_touch = 32,
         .wl_internal_vsync = 1,
         .wl_present = true,
-        .mmcss_profile = "Playback",
         .ontop_level = -1,
         .timing_offset = 0.050,
         .swapchain_depth = 2,
@@ -294,7 +269,6 @@ const struct m_sub_options mp_subtitle_sub_opts = {
         {"sub-fps", OPT_FLOAT(sub_fps)},
         {"sub-speed", OPT_FLOAT(sub_speed)},
         {"sub-forced-events-only", OPT_BOOL(sub_forced_events_only)},
-        {"stretch-dvd-subs", OPT_BOOL(stretch_dvd_subs)},
         {"stretch-image-subs-to-screen", OPT_BOOL(stretch_image_subs)},
         {"image-subs-video-resolution", OPT_BOOL(image_subs_video_res)},
         {"sub-fix-timing", OPT_BOOL(sub_fix_timing)},
@@ -549,26 +523,9 @@ static const m_option_t mp_opts[] = {
     {"script-opt", OPT_CLI_ALIAS("script-opts-append")},
     {"load-scripts", OPT_BOOL(auto_load_scripts)},
 #endif
-#if HAVE_JAVASCRIPT
-    {"js-memory-report", OPT_BOOL(js_memory_report)},
-#endif
 #if HAVE_LUA
     {"osc", OPT_BOOL(lua_load_osc), .flags = UPDATE_BUILTIN_SCRIPTS},
-    {"ytdl", OPT_BOOL(lua_load_ytdl), .flags = UPDATE_BUILTIN_SCRIPTS},
-    {"ytdl-format", OPT_STRING(lua_ytdl_format)},
-    {"ytdl-raw-options", OPT_KEYVALUELIST(lua_ytdl_raw_options)},
-    {"load-stats-overlay", OPT_BOOL(lua_load_stats),
-        .flags = UPDATE_BUILTIN_SCRIPTS},
-    {"load-console", OPT_BOOL(lua_load_console),
-        .flags = UPDATE_BUILTIN_SCRIPTS},
-    {"load-osd-console", OPT_REPLACED("load-console")},
-    {"load-auto-profiles",
-        OPT_CHOICE(lua_load_auto_profiles, {"no", 0}, {"yes", 1}, {"auto", -1}),
-        .flags = UPDATE_BUILTIN_SCRIPTS},
     {"load-select", OPT_BOOL(lua_load_select), .flags = UPDATE_BUILTIN_SCRIPTS},
-    {"load-positioning", OPT_BOOL(lua_load_positioning), .flags = UPDATE_BUILTIN_SCRIPTS},
-    {"load-commands", OPT_BOOL(lua_load_commands), .flags = UPDATE_BUILTIN_SCRIPTS},
-    {"load-context-menu", OPT_BOOL(lua_load_context_menu), .flags = UPDATE_BUILTIN_SCRIPTS},
 #endif
 
 // ------------------------- stream options --------------------
@@ -625,13 +582,8 @@ static const m_option_t mp_opts[] = {
     {"subs-fallback-forced", OPT_CHOICE(subs_fallback_forced, {"no", 0},
         {"yes", 1}, {"always", 2})},
 
-    {"lavfi-complex", OPT_STRING(lavfi_complex), .flags = UPDATE_LAVFI_COMPLEX},
-
     {"audio-display", OPT_CHOICE(audio_display, {"no", 0},
         {"embedded-first", 1}, {"external-first", 2})},
-
-    {"hls-bitrate", OPT_CHOICE(hls_bitrate,
-        {"no", -1}, {"min", 0}, {"max", INT_MAX}), M_RANGE(0, INT_MAX)},
 
     {"display-tags", OPT_STRINGLIST(display_tags)},
 
@@ -788,8 +740,6 @@ static const m_option_t mp_opts[] = {
     {"video-latency-hacks", OPT_BOOL(video_latency_hacks)},
 
     {"untimed", OPT_BOOL(untimed)},
-
-    {"stream-dump", OPT_STRING(stream_dump), .flags = M_OPT_FILE},
 
     {"stop-playback-on-init-failure", OPT_BOOL(stop_playback_on_init_failure)},
 
@@ -975,18 +925,7 @@ static const struct MPOpts mp_default_opts = {
     .osd_duration = 1000,
 #if HAVE_LUA
     .lua_load_osc = true,
-    .lua_load_ytdl = true,
-    .lua_ytdl_format = NULL,
-    .lua_ytdl_raw_options = NULL,
-    .lua_load_stats = true,
-    .lua_load_console = true,
-    .lua_load_auto_profiles = -1,
     .lua_load_select = true,
-    .lua_load_positioning = true,
-    .lua_load_commands = true,
-#ifndef _WIN32
-    .lua_load_context_menu = true,
-#endif
 #endif
     .auto_load_scripts = true,
     .loop_times = 1,

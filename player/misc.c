@@ -265,59 +265,6 @@ void error_on_track(struct MPContext *mpctx, struct track *track)
     mp_wakeup_core(mpctx);
 }
 
-int stream_dump(struct MPContext *mpctx, const char *source_filename)
-{
-    struct MPOpts *opts = mpctx->opts;
-    bool ok = false;
-
-    char *filename = mp_get_user_path(NULL, mpctx->global, opts->stream_dump);
-    stream_t *stream = stream_create(source_filename,
-                                     STREAM_ORIGIN_DIRECT | STREAM_READ,
-                                     mpctx->playback_abort, mpctx->global);
-    if (!stream || stream->is_directory)
-        goto done;
-
-    int64_t size = stream_get_size(stream);
-    int64_t start_pos = stream->pos;
-
-    FILE *dest = fopen(filename, "wb");
-    if (!dest) {
-        MP_ERR(mpctx, "Error opening dump file: %s\n", mp_strerror(errno));
-        goto done;
-    }
-
-    ok = true;
-
-    while (mpctx->stop_play == KEEP_PLAYING && ok) {
-        if (!opts->quiet && ((stream->pos / (1024 * 1024)) % 2) == 1) {
-            int64_t pos = stream->pos;
-            if (size > 0 && pos >= start_pos) {
-                double percent = 100.0 * (pos - start_pos) / (size - start_pos);
-                MP_MSG(mpctx, MSGL_STATUS, "Dumping %" PRId64 "/%" PRId64 " (%.2f%%)...",
-                       pos, size, percent);
-            } else {
-                MP_MSG(mpctx, MSGL_STATUS, "Dumping %" PRId64 "/%" PRId64 "...",
-                       pos, size);
-            }
-        }
-        uint8_t buf[4096];
-        int len = stream_read(stream, buf, sizeof(buf));
-        if (!len) {
-            ok &= stream->eof;
-            break;
-        }
-        ok &= fwrite(buf, len, 1, dest) == 1;
-        mp_wakeup_core(mpctx); // don't actually sleep
-        mp_idle(mpctx); // but process input
-    }
-
-    ok &= fclose(dest) == 0;
-done:
-    free_stream(stream);
-    talloc_free(filename);
-    return ok ? 0 : -1;
-}
-
 const char *mp_status_str(enum playback_status st)
 {
     switch (st) {

@@ -80,4 +80,4 @@ Current result: 19 passed, 0 failed. A temporary manifest with `http` added to t
 
 ## Next
 
-P2.3 removed the unsupported platform/UI/scripting/plugin sources; encoding, recording, and lavfi remain compiled as debt, but the minimal FFmpeg has no encoders or muxers. P2.4 reduces the user-visible CLI and config surface.
+P2.4 removed the ytdl, HLS, stream-dump, lavfi-complex, DVD, Windows capture, and encoding CLI groups. P2.5 simplifies the macOS source list and verifies the built target surface.

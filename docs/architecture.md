@@ -35,6 +35,7 @@ The stream list contains `stream_file` and `stream_cb` only; the demuxer list co
 - P2.1 locked the Meson feature surface and reduced the embedded Lua modules.
 - P2.2 restricted the input surface to local files.
 - P2.3 removed the unsupported platform, UI, scripting, plugin, and filter sources; encoding/recording/lavfi and clipboard remain compiled as documented debt because the minimal FFmpeg has no encoders or muxers.
-- P2.4 reduces the user-visible CLI and config surface.
+- P2.4 reduced the user-visible CLI and config surface; the encode/lavfi/recording debt has no remaining CLI entry point.
+- P2.5 simplifies the macOS source list.
 - P4.1 moves the Rust link into the normal workspace/Meson path and adds `player-core`/`player-ffi`.
 - P7 moves config, playlist, input, state, and local file handling into Rust; the audio bridge stays at the decode boundary.

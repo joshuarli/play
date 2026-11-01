@@ -412,6 +412,88 @@ def gate_play(results, args):
     results.check(f"play {name}: process exit", mpv.returncode == 0, f"exit {mpv.returncode}")
 
 
+def gate_cli(results, args):
+    def run(argv, timeout=20):
+        return subprocess.run(
+            [str(MPV), "--no-config", *argv], cwd=str(ROOT),
+            capture_output=True, text=True, timeout=timeout,
+        )
+
+    proc = run(["--version"])
+    version_text = proc.stdout + proc.stderr
+    results.check("cli: version", proc.returncode == 0 and "mpv" in version_text.lower(),
+                  f"exit {proc.returncode}: {version_text.strip()}")
+
+    proc = run(["--help"])
+    help_text = proc.stdout + proc.stderr
+    results.check("cli: help", proc.returncode == 0, f"exit {proc.returncode}")
+    for option in ("--fs", "--start", "--sub-file"):
+        results.check(f"cli: help {option}", option in help_text, "option missing from help")
+
+    for option in ("--http-header-fields=X", "--ytdl=yes",
+                   "--lavfi-complex=null", "--o=out.mp4"):
+        proc = run([option])
+        output = (proc.stdout + proc.stderr).lower()
+        clean = proc.returncode != 0 and any(
+            text in output for text in ("not found", "unknown option", "unrecognized"))
+        results.check(f"cli: removed {option.split('=')[0]}", clean,
+                      f"exit {proc.returncode}: {output.strip()}")
+
+    entry = fixture_entry("h264")
+    path = fixture_path(entry)
+
+    with Mpv(["--vo=null", "--ao=null", "--fullscreen"]) as mpv:
+        mpv.load(path)
+        mpv.wait_event("file-loaded", timeout=10)
+        mpv.wait_property("fullscreen", lambda value: value is True, timeout=10)
+        results.check("cli: --fullscreen", True)
+    results.check("cli: --fullscreen exit", mpv.returncode == 0,
+                  f"exit {mpv.returncode}")
+
+    with Mpv(["--vo=null", "--ao=null", "--start=0.5"]) as mpv:
+        mpv.load(path)
+        mpv.wait_event("file-loaded", timeout=10)
+        mpv.wait_property(
+            "time-pos", lambda value: isinstance(value, (int, float)) and value >= 0.5,
+            timeout=10,
+        )
+        results.check("cli: --start", True)
+    results.check("cli: --start exit", mpv.returncode == 0, f"exit {mpv.returncode}")
+
+    audio_path = fixture_path(fixture_entry("audio-mono"))
+    with Mpv(["--vo=null", "--ao=null", f"--audio-file={audio_path}"]) as mpv:
+        mpv.load(path)
+        mpv.wait_event("file-loaded", timeout=10)
+        mpv.wait_property(
+            "track-list",
+            lambda tracks: any(track.get("type") == "audio" for track in tracks),
+            timeout=10,
+        )
+        results.check("cli: --audio-file", True)
+    results.check("cli: --audio-file exit", mpv.returncode == 0,
+                  f"exit {mpv.returncode}")
+
+    sub_entry = fixture_entry("h264-external-srt")
+    with Mpv(["--vo=null", "--ao=null", *subtitle_args(sub_entry)]) as mpv:
+        mpv.load(fixture_path(sub_entry))
+        mpv.wait_event("file-loaded", timeout=10)
+        mpv.wait_property(
+            "track-list",
+            lambda tracks: any(track.get("type") == "sub" for track in tracks),
+            timeout=10,
+        )
+        results.check("cli: --sub-file", True)
+    results.check("cli: --sub-file exit", mpv.returncode == 0, f"exit {mpv.returncode}")
+
+    second = fixture_path(fixture_entry("unicode"))
+    with Mpv(["--vo=null", "--ao=null", str(path), str(second)]) as mpv:
+        mpv.wait_property(
+            "playlist-count", lambda value: value == 2, timeout=10)
+        mpv.wait_event("file-loaded", timeout=10)
+        results.check("cli: FILE...", True)
+    results.check("cli: FILE... exit", mpv.returncode == 0, f"exit {mpv.returncode}")
+
+
 def corpus_case(results, name, entry):
     path = fixture_path(entry)
     with Mpv(["--vo=null", "--ao=null", "--hwdec=no", *subtitle_args(entry)]) as mpv:
@@ -1022,6 +1104,7 @@ def gate_failures(results, args):
 GATES = {
     "fixtures": gate_fixtures,
     "play": gate_play,
+    "cli": gate_cli,
     "corpus": gate_corpus,
     "audio": gate_audio,
     "hwdec": gate_hwdec,
@@ -1039,7 +1122,7 @@ GATES = {
 
 SUITE = [
     "fixtures", "corpus", "audio", "hwdec", "seek", "local-paths",
-    "osc", "input", "playlist", "state", "failures",
+    "osc", "input", "playlist", "cli", "state", "failures",
 ]
 
 

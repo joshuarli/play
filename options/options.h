@@ -75,11 +75,6 @@ typedef struct mp_vo_opts {
     bool force_render;
     bool force_window_position;
 
-    int backdrop_type;
-    int window_affinity;
-    char *mmcss_profile;
-    int window_corners;
-
     double display_fps_override;
     double timing_offset;
     int video_sync;
@@ -180,18 +175,8 @@ typedef struct MPOpts {
     char **reset_options;
     char **script_files;
     char **script_opts;
-    bool js_memory_report;
     bool lua_load_osc;
-    bool lua_load_ytdl;
-    char *lua_ytdl_format;
-    char **lua_ytdl_raw_options;
-    bool lua_load_stats;
-    bool lua_load_console;
-    int lua_load_auto_profiles;
     bool lua_load_select;
-    bool lua_load_positioning;
-    bool lua_load_commands;
-    bool lua_load_context_menu;
 
     bool auto_load_scripts;
 
@@ -236,7 +221,6 @@ typedef struct MPOpts {
     bool video_osd;
 
     bool untimed;
-    char *stream_dump;
     bool stop_playback_on_init_failure;
     int loop_times;
     int loop_file;
