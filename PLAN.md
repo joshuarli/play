@@ -3,13 +3,13 @@
 ## Status
 
 - **Goal:** A compact, dependable, local-only macOS ARM64 media player: mpv's proven playback pipeline, a minimal pinned FFmpeg, no network backend, and a Rust-owned control plane with the OSC running on `mlua`.
-- **Last accepted revision:** `2bb93c3` (P7.1). P0.1–P1.4 and P2.1–P7.1 have run.
-- **Accepted:** P0.1–P1.4, P2.1–P7.1. **Red:** none. **Parked:** none.
-- **Next slice:** P7.2 — move local playlist ownership into Rust.
-- **Resume prompt:** `Read PLAN.md and execute P7.2. Continue in item order; stop only at a hard stop or when P8 is complete.`
-- **First command:** `rg -n 'playlist_' common/playlist.c player/loadfile.c | head -60`.
+- **Last accepted revision:** `9f776d4` (P7.2). P0.1–P1.4 and P2.1–P7.2 have run.
+- **Accepted:** P0.1–P1.4, P2.1–P7.2. **Red:** none. **Parked:** none.
+- **Next slice:** P7.3 — type the command and input dispatch.
+- **Resume prompt:** `Read PLAN.md and execute P7.3. Continue in item order; stop only at a hard stop or when P8 is complete.`
+- **First command:** `rg -n 'MP_CMD|mp_cmd|input_bindings|keypress' input/cmd.c input/input.c player/command.c | head -80`.
 - **Test mode:** headless (`--vo=null --ao=null`); GUI and renderer checks are owner-run.
-- **Scope:** P7.1 moved the supported startup configuration into `player-core::config`; P7.2 moves the local playlist.
+- **Scope:** P7.2 moved local playlist ownership into Rust and removed shuffle/repeat; P7.3 types command and input dispatch.
 
 This file is the campaign log as well as the plan. Update **Status** after every accepted slice. Git history holds the past; do not append dated checkpoints, handoffs, or a second status register.
 
