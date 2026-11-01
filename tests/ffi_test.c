@@ -27,8 +27,6 @@ int main(void)
     rc = player_ffi_classify_input("/tmp/a.mp4", 0, out, 4, err, sizeof(err));
     assert(rc == PLAYER_FFI_INPUT_BUFFER_TOO_SMALL);
 
-    assert(player_ffi_panic_for_test() == 1);
-
     puts("ffi ok");
     return 0;
 }

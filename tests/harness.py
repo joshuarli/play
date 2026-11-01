@@ -1479,6 +1479,15 @@ def gate_release(results, args):
         f"icon={plist.get('CFBundleIconFile')!r}",
     )
 
+    version = (ROOT / "MPV_VERSION").read_text().strip()
+    results.check(
+        "release: bundle version",
+        plist.get("CFBundleShortVersionString") == version
+        and plist.get("CFBundleVersion") == version,
+        f"short={plist.get('CFBundleShortVersionString')!r} "
+        f"build={plist.get('CFBundleVersion')!r} expected={version!r}",
+    )
+
     release_binary = ROOT / "build-release/mpv"
     try:
         stamp = json.loads((app / "Contents/Resources/build.json").read_text())

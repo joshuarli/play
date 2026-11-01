@@ -19,12 +19,33 @@ mkdir -p "$PREFIX" "$SRC" "$LOGS"
 INPUT_HASH=$(cat "$ROOT/scripts/build-deps.sh" "$ROOT/scripts/build-ffmpeg.sh" \
     "$ROOT/scripts/ffmpeg-components.txt" | shasum -a 256 | awk '{print $1}')
 
-for tool in curl tar shasum cmake meson ninja pkg-config python3; do
+for tool in curl tar shasum xcrun; do
     command -v "$tool" >/dev/null || {
         printf 'error: %s is required (development tool)\n' "$tool" >&2
         exit 1
     }
 done
+
+require_version() {
+    local tool=$1 minimum=$2 found
+    command -v "$tool" >/dev/null || {
+        printf 'error: %s is required (development tool)\n' "$tool" >&2
+        exit 1
+    }
+    found=$("$tool" --version 2>&1 | head -1 | rg -o '[0-9]+(\.[0-9]+)+' | head -1)
+    if [ -z "$found" ] ||
+        [ "$(printf '%s\n%s\n' "$minimum" "$found" | sort -V | head -1)" != "$minimum" ]; then
+        printf 'error: %s %s or newer is required, found %s\n' \
+            "$tool" "$minimum" "${found:-no version}" >&2
+        exit 1
+    fi
+}
+
+require_version cmake 3.22.1
+require_version meson 1.3.0
+require_version ninja 1.10
+require_version pkg-config 0.29
+require_version python3 3.9
 
 fetch() {
     local url=$1 sha=$2 out=$3
@@ -120,21 +141,25 @@ if ! have dav1d; then
     stamp dav1d
 fi
 
-# FreeType advertises zlib even though zlib is a system library on macOS.
-if [ ! -f "$PREFIX/lib/pkgconfig/zlib.pc" ]; then
-    cat >"$PREFIX/lib/pkgconfig/zlib.pc" <<'EOF'
+SDK_ZLIB_VERSION=$(rg -o 'define ZLIB_VERSION "[0-9.]+"' "$(xcrun --show-sdk-path)/usr/include/zlib.h" |
+    rg -o '[0-9]+(\.[0-9]+)+')
+[ -n "$SDK_ZLIB_VERSION" ] || {
+    printf 'error: cannot read ZLIB_VERSION from the SDK zlib.h\n' >&2
+    exit 1
+}
+mkdir -p "$PREFIX/lib/pkgconfig"
+cat >"$PREFIX/lib/pkgconfig/zlib.pc" <<EOF
 prefix=/usr
-exec_prefix=${prefix}
+exec_prefix=\${prefix}
 libdir=/usr/lib
-includedir=${prefix}/include
+includedir=\${prefix}/include
 
 Name: zlib
-Description: System zlib
-Version: 1.2.12
+Description: macOS SDK zlib
+Version: $SDK_ZLIB_VERSION
 Libs: -lz
 Cflags:
 EOF
-fi
 
 if ! have freetype; then
     FT="freetype-$FREETYPE_VERSION.tar.xz"

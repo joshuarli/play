@@ -15,6 +15,7 @@ PREFIX = ROOT / ".work/deps/release"
 RUST_TARGET = ROOT / ".work/deps/player-audio/target/release"
 BINARY = ROOT / "build-release/mpv"
 APP = ROOT / "dist/Player.app"
+VERSION = (ROOT / "MPV_VERSION").read_text().strip()
 MACOS = APP / "Contents/MacOS"
 FRAMEWORKS = APP / "Contents/Frameworks"
 RESOURCES = APP / "Contents/Resources"
@@ -174,8 +175,8 @@ def main():
         "CFBundleName": "Player",
         "CFBundleDisplayName": "Player",
         "CFBundlePackageType": "APPL",
-        "CFBundleShortVersionString": "0.41.0",
-        "CFBundleVersion": "41",
+        "CFBundleShortVersionString": VERSION,
+        "CFBundleVersion": VERSION,
         "LSApplicationCategoryType": "public.app-category.video",
         "LSEnvironment": {"MPVBUNDLE": "true"},
         "LSMinimumSystemVersion": "27.0",
