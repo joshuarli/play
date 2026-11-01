@@ -268,4 +268,6 @@ PREFIX="$PREFIX/ffmpeg" DAV1D_PREFIX="$PREFIX" "$ROOT/scripts/build-ffmpeg.sh" \
     exit 1
 }
 
+sed -i 's/^Libs: .*/& -l:libstdc++.a/' "$PREFIX/lib/pkgconfig/shaderc_combined.pc"
+
 printf 'linux dependencies ready in %s\n' "$PREFIX"
