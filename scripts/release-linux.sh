@@ -33,8 +33,9 @@ $runtime_packages
 It also needs a Vulkan driver for your GPU (for example mesa-vulkan-layers
 and mesa-vulkan-intel, mesa-vulkan-ati, or mesa-vulkan-swrast), a Wayland
 compositor, and fontconfig with a font such as font-dejavu for subtitles.
-Hardware decode is opt-in (--hwdec=vaapi) and needs a VA-API driver for your
-GPU, such as mesa-va-gallium, intel-media-driver, or libva-intel-driver.
+Hardware decode is on by default (--hwdec=auto) and needs a VA-API driver for
+your GPU, such as mesa-va-gallium, intel-media-driver, or libva-intel-driver.
+Without one, or with --hwdec=no, it decodes in software.
 It does not load a user config or scripts. glibc systems cannot run it, and glibc
 support is out of scope.
 

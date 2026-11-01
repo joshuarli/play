@@ -29,7 +29,7 @@ Fontconfig reads `/etc/fonts` at run time, so a system needs a fontconfig config
 
 ## Hardware decode
 
-`--hwdec=vaapi` decodes H.264, HEVC, VP9, and AV1 through VA-API and imports the frame into Vulkan as a dmabuf. `--hwdec=vaapi-copy` decodes on the GPU and copies the frame back, so it also works with `--vo=null`. The default stays `--hwdec=no`.
+`--hwdec=vaapi` decodes H.264, HEVC, VP9, and AV1 through VA-API and imports the frame into Vulkan as a dmabuf. `--hwdec=vaapi-copy` decodes on the GPU and copies the frame back, so it also works with `--vo=null`. On Linux the default is `--hwdec=auto`: mpv tries the whitelisted methods in order and takes the first that works, so with a Wayland display and a Vulkan device that imports dmabufs it uses `vaapi`, on `--vo=null` it uses `vaapi-copy` when a render node exists, and otherwise it decodes in software. The default comes from `HAVE_VAAPI` in `video/decode/vd_lavc.c`; macOS keeps `--hwdec=no`. `tests/run.sh linux-hwdec-default` pins this and is part of `suite`; it expects `vaapi-copy` when `/dev/dri/renderD*` exists and software otherwise.
 
 The VA driver comes from the host, the same way the Vulkan ICD does: `mesa-va-gallium` for AMD and Nouveau, `intel-media-driver` for current Intel GPUs, or `libva-intel-driver` for older ones. The three libva libraries are shared because the drivers are dlopened and link libva themselves.
 

@@ -24,6 +24,7 @@ Player is a local-only media player. The macOS release artifact is `dist/Player.
 
 - `scripts/linux-container.sh tests/run.sh suite`: passes on Alpine x86_64, including `linux-gpu-next` under headless Weston with lavapipe, `linux-audio` on the ALSA null PCM, `linux-local-only` under `unshare -rn`, and `linux-audit`.
 - `scripts/audit-linux.sh`: ok. `dist/player` needs exactly nine libraries: musl, Vulkan, Wayland client and cursor, xkbcommon, ALSA, and libva, libva-drm, and libva-wayland.
+- `--hwdec` defaults to `auto` on Linux and `no` on macOS. `suite` passes 297 checks with and without a GPU render node in the container.
 - `tests/run.sh linux-vaapi` (needs a GPU render node, not part of `suite`): passes on an AMD Raphael iGPU for h264, hevc, vp9, and av1 with `vaapi-copy`.
 - Fixtures regenerate deterministically with Alpine's FFmpeg 9.0.2; their hashes differ from macOS (`tests/fixtures/hashes-linux.json`).
 - Measurements are in `docs/metrics.md`; the runtime set, headless gates, and fixtures are in `docs/linux.md`.

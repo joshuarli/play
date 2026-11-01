@@ -74,13 +74,13 @@ The development loop is `scripts/build.sh` plus `tests/run.sh suite`. Scratch ar
 
 ### Outcome
 
-The Linux build is a mostly static `x86_64-unknown-linux-musl` executable: the mpv pipeline, the pinned minimal FFmpeg n9.0.2, the Rust control plane as one staticlib, one Lua 5.2 interpreter, `vo=gpu-next` over Vulkan and Wayland, and ALSA. The release is `dist/player-x86_64-linux-musl.tar.gz` (player and README) with a SHA-256 file. The stripped executable is 26,355,208 B and needs exactly nine shared libraries: musl, `libvulkan.so.1`, `libwayland-client.so.0`, `libwayland-cursor.so.0`, `libxkbcommon.so.0`, `libasound.so.2`, and, for opt-in VA-API hardware decode, `libva.so.2`, `libva-drm.so.2`, and `libva-wayland.so.2`.
+The Linux build is a mostly static `x86_64-unknown-linux-musl` executable: the mpv pipeline, the pinned minimal FFmpeg n9.0.2, the Rust control plane as one staticlib, one Lua 5.2 interpreter, `vo=gpu-next` over Vulkan and Wayland, and ALSA. The release is `dist/player-x86_64-linux-musl.tar.gz` (player and README) with a SHA-256 file. The stripped executable is 26,355,208 B and needs exactly nine shared libraries: musl, `libvulkan.so.1`, `libwayland-client.so.0`, `libwayland-cursor.so.0`, `libxkbcommon.so.0`, `libasound.so.2`, and, for VA-API hardware decode, `libva.so.2`, `libva-drm.so.2`, and `libva-wayland.so.2`.
 
 ### Verification
 
 | Command | Result |
 |---|---|
-| `scripts/linux-container.sh tests/run.sh suite` | 293 passed, 0 failed (includes `linux-gpu-next`, `linux-audio`, `linux-local-only`, `linux-osc`, `linux-audit`) |
+| `scripts/linux-container.sh tests/run.sh suite` | 297 passed, 0 failed (includes `linux-gpu-next`, `linux-audio`, `linux-local-only`, `linux-osc`, `linux-audit`) |
 | `scripts/linux-container.sh scripts/audit-linux.sh` | ok; the extra-`NEEDED` negative case failed as expected |
 | `scripts/linux-container.sh tests/run.sh ffmpeg-audit` | 19 passed |
 | `cargo test --target x86_64-unknown-linux-musl` | 60 passed |
@@ -104,7 +104,7 @@ Cold start, warm start, first frame, and seek are **perf gate deferred: host bus
 ### Known limits
 
 - musl systems only. A glibc system cannot load the Vulkan, Wayland, xkbcommon, and ALSA libraries. glibc is explicitly out of scope.
-- Hardware decode is VA-API only and opt-in; zero-copy import needs a real compositor and is owner-run. No X11, OpenGL, or DRM output.
+- Hardware decode is VA-API only and on by default (`--hwdec=auto`, Linux only); zero-copy import needs a real compositor and is owner-run. No X11, OpenGL, or DRM output.
 - The headless gate uses lavapipe with `--gpu-sw=yes` and `--vulkan-swap-mode=mailbox`. FIFO pacing, fractional scale, real pointer and keyboard input, GPU output, and ALSA hardware are owner-run (`docs/manual-checklist.md`).
 - Linux fixtures differ byte-for-byte from the macOS ones (`tests/fixtures/hashes-linux.json`); their structure is identical.
 - `.github/workflows/linux.yml` has not run: nothing was pushed. The unprivileged user namespace the local-only gate needs may be blocked on a CI runner.
