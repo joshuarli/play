@@ -241,9 +241,9 @@ Audio parsers and `aac_adtstoasc` remain because the FFmpeg demuxer uses them to
 ### P2 — Strip mpv
 
 **P2.1 Lock the Meson feature surface.** (M)
-- Owns: `meson.build`, `meson.options`, `scripts/build.sh`, `player/lua/meson.build`.
+- Owns: `meson.build`, `meson.options`, `scripts/build.sh`, `player/lua/meson.build`, `player/lua.c`, `player/scripting.c`, `tests/harness.py`.
 - Prereq: P1.4.
-- Do: make every option explicit in `scripts/build.sh`; disable every unsupported audio/video/platform/hwaccel feature named in **Non-goals**; disable external libmpv distribution but keep the internal client API; disable the GL paths per D6; remove unused built-in Lua modules from the install list (keep `defaults.lua`, `assdraw.lua`, `options.lua`, `input.lua`, `select.lua`, `osc.lua`). Do not remove the internal client API. Make unexpected automatic detection a configure-time failure where Meson can express it.
+- Do: make every option explicit in `scripts/build.sh`; disable every unsupported audio/video/platform/hwaccel feature named in **Non-goals**; disable external libmpv distribution but keep the internal client API; disable the GL paths per D6; remove unused built-in Lua modules from the install list and the embedded/loading tables (keep `defaults.lua`, `assdraw.lua`, `options.lua`, `input.lua`, `select.lua`, `osc.lua`). Do not remove the internal client API. Lock the full feature surface in `tests/run.sh build`.
 - Accept: `tests/run.sh build` and `tests/run.sh corpus` pass; `meson configure build` shows every non-macOS feature disabled; `otool -L build/mpv` has no curl/bluray/dvdnav/cdda/pipewire/pulse/jack/avfoundation/X11/Wayland libraries.
 
 **P2.2 Remove unsupported stream/network/disc/capture modules.** (L)

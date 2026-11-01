@@ -17,9 +17,18 @@
 
 Symphonia is MPL-2.0. mpv remains GPL-2.0-or-later. Symphonia's source and license are preserved in `vendor/symphonia`. The release must carry the MPL notice and source availability; `docs/licenses.md` records the inventory and P8.3 audits it.
 
+## Feature surface (P2.1)
+
+`scripts/build.sh` sets all 94 Meson feature options explicitly. Enabled features are `cocoa`, `coreaudio`, `vulkan`, `videotoolbox-pl`, `swift-build`, `iconv`, `zlib`, and the four macOS SDK feature checks. Every other feature option is `disabled`, including all non-macOS audio/video outputs, GL/EGL, X11, Wayland, DRM, VAAPI, VDPAU, SDL, capture, disc, JavaScript, VapourSynth, plugins, and shader compilers that are only used on Windows.
+
+`tests/run.sh build` parses `meson.options` and `meson configure build` and fails if any feature outside that enabled set is not `disabled`, or if an expected feature is not `enabled`. It also rejects unsupported linked libraries.
+
+The embedded Lua modules are reduced to `defaults.lua`, `assdraw.lua`, `options.lua`, `input.lua`, `select.lua`, and `osc.lua`. The `.inc` build targets and the `player/lua.c` / `player/scripting.c` loading tables match that set; `ytdl_hook`, `stats`, `console`, `auto_profiles`, `positioning`, `commands`, `context_menu`, and `fzy` are no longer embedded or loaded.
+
 ## Open work
 
 - P1.4 added the FFmpeg manifest gate over the frozen allowlist.
-- P2.1 locks the Meson feature surface and removes unused Lua modules.
+- P2.1 locked the Meson feature surface and reduced the embedded Lua modules.
+- P2.2 removes unsupported stream/network/disc/capture modules.
 - P4.1 moves the Rust link into the normal workspace/Meson path and adds `player-core`/`player-ffi`.
 - P7 moves config, playlist, input, state, and local file handling into Rust; the audio bridge stays at the decode boundary.

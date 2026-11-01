@@ -808,20 +808,51 @@ def gate_build(results, args):
         ["meson", "configure", "build"], cwd=str(ROOT),
         capture_output=True, text=True, timeout=60,
     ).stdout
-    expected = {
+    basic = {
         "cplayer": "true", "libmpv": "false", "gpl": "true", "lua": "lua52",
-        "cocoa": "enabled", "swift-build": "enabled", "coreaudio": "enabled",
-        "vulkan": "enabled", "videotoolbox-pl": "enabled", "gl": "disabled",
-        "gl-cocoa": "disabled", "videotoolbox-gl": "disabled",
-        "macos-cocoa-cb": "disabled", "x11": "disabled", "wayland": "disabled",
+        "tests": "false", "build-date": "false",
     }
     missing = []
-    for option, value in expected.items():
+    for option, value in basic.items():
         if not re.search(rf"^\s*{re.escape(option)}\s+{re.escape(value)}\s",
                          configured, re.MULTILINE):
             missing.append(f"{option}={value}")
-    results.check("build: feature summary", not missing,
+    results.check("build: core options", not missing,
                   f"not found: {', '.join(missing)}")
+
+    feature_text = (ROOT / "meson.options").read_text()
+    feature_names = re.findall(
+        r"option\('([^']+)',\s*type\s*:\s*'feature'", feature_text)
+    values = {}
+    for line in configured.splitlines():
+        fields = line.split()
+        if len(fields) >= 2 and fields[0] in feature_names:
+            values[fields[0]] = fields[1]
+    allowed_enabled = {
+        "cocoa", "coreaudio", "vulkan", "videotoolbox-pl", "swift-build",
+        "iconv", "zlib", "macos-10-15-4-features", "macos-11-features",
+        "macos-11-3-features", "macos-12-features",
+    }
+    missing_features = [name for name in feature_names if name not in values]
+    wrong = [f"{name}={values.get(name)}" for name in feature_names
+             if name not in allowed_enabled and values.get(name) != "disabled"]
+    not_enabled = [f"{name}={values.get(name)}" for name in allowed_enabled
+                   if values.get(name) != "enabled"]
+    results.check("build: feature surface",
+                  not missing_features and not wrong and not not_enabled,
+                  f"missing={missing_features[:3]} wrong={wrong[:5]} "
+                  f"not-enabled={not_enabled[:5]}")
+
+    otool = subprocess.run(
+        ["otool", "-L", str(MPV)], capture_output=True, text=True, timeout=30,
+    ).stdout
+    bad_needles = ("curl", "bluray", "dvdnav", "cdio", "pipewire",
+                   "libpulse", "libjack", "avfoundation", "libx11",
+                   "libwayland", "libsdl", "libssl", "libcrypto")
+    bad_libraries = [line.strip() for line in otool.splitlines()
+                     if any(needle in line.lower() for needle in bad_needles)]
+    results.check("build: no unsupported libraries", not bad_libraries,
+                  "; ".join(bad_libraries[:3]))
 
 
 def gate_baseline_docs(results, args):

@@ -58,9 +58,6 @@ static const char * const builtin_lua_scripts[][2] = {
     {"mp.assdraw",
 #   include "player/lua/assdraw.lua.inc"
     },
-    {"mp.fzy",
-#   include "player/lua/fzy.lua.inc"
-    },
     {"mp.input",
 #   include "player/lua/input.lua.inc"
     },
@@ -70,29 +67,8 @@ static const char * const builtin_lua_scripts[][2] = {
     {"@osc.lua",
 #   include "player/lua/osc.lua.inc"
     },
-    {"@ytdl_hook.lua",
-#   include "player/lua/ytdl_hook.lua.inc"
-    },
-    {"@stats.lua",
-#   include "player/lua/stats.lua.inc"
-    },
-    {"@console.lua",
-#   include "player/lua/console.lua.inc"
-    },
-    {"@auto_profiles.lua",
-#   include "player/lua/auto_profiles.lua.inc"
-    },
     {"@select.lua",
 #   include "player/lua/select.lua.inc"
-    },
-    {"@positioning.lua",
-#   include "player/lua/positioning.lua.inc"
-    },
-    {"@commands.lua",
-#   include "player/lua/commands.lua.inc"
-    },
-    {"@context_menu.lua",
-#   include "player/lua/context_menu.lua.inc"
     },
     {0}
 };
