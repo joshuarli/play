@@ -13,6 +13,8 @@ Player opens local filesystem paths and local playlist files. It does not implem
 
 Two boundary limits remain. `--playlist=FILE` and `loadlist FILE` hand the playlist path to the stream layer without the classifier, so `file://` is accepted there and only a network scheme fails closed. Startup parsing and the classifier take UTF-8, so a non-UTF-8 argument is rejected with `command line argument is not UTF-8`; the path API is narrower than upstream mpv's byte-transparent one.
 
+The local-only gate creates a hostile temporary `HOME` with `mpv.conf`, `input.conf`, and a nonexistent script. Playback succeeds without loading them, and a positive control asserts that the config's `volume=42` did not take effect.
+
 ## Retained modules
 
 - `stream_file`: `file`, including stdin and stdout, and the write path used by screenshots.

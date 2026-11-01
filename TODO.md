@@ -25,16 +25,6 @@ Next: 20
 - **Effort:** S
 - **Design:** none
 
-### PLAY-8 · P2 · The hostile-HOME gate cannot fail its script assertion
-
-- **Area:** Tests
-- **Where:** `tests/harness.py:759-782`, `player/scripting.c:90`, `options/options.c:520`, `:917`
-- **Problem:** The gate asserts that `"failed to load script"` is absent from the output, but the loader emits `Could not load %s script %s`, and the asserted phrase appears nowhere except the test. The other half checks for `evil.lua`, so the test passes when the config is ignored and also cannot prove that a config-driven `script=` key is rejected. There is no positive control that the config was not read.
-- **Recommendation:** add a benign key from the hostile `mpv.conf` (`volume=42` or `msg-level=all=no`) and assert it did not take effect; assert the loader's real error phrase; exercise `script=` and `scripts-append=`. One run settles the behavior.
-- **Fix with:** test-audit
-- **Effort:** S
-- **Design:** none
-
 ### PLAY-9 · P2 · The macOS menu exposes removed commands and ignored config
 
 - **Area:** Dead code

@@ -764,6 +764,7 @@ def gate_local_only(results, args):
         "script=/nonexistent/evil.lua\n"
         "load-scripts=yes\n"
         "vo=x11\n"
+        "volume=42\n"
     )
     (hostile_conf / "input.conf").write_text("x quit\n")
     env = os.environ.copy()
@@ -773,13 +774,17 @@ def gate_local_only(results, args):
     env["XDG_STATE_HOME"] = str(hostile / ".state")
     env["XDG_CACHE_HOME"] = str(hostile / ".cache")
     proc = subprocess.run(
-        [str(MPV), "--vo=null", "--ao=null", "--frames=1", str(h264)],
+        [str(MPV), "--vo=null", "--ao=null", "--frames=1",
+         "--term-playing-msg=volume=${volume}", str(h264)],
         cwd=str(ROOT), env=env, capture_output=True, text=True, timeout=30,
     )
     hostile_output = (proc.stdout + proc.stderr).lower()
     results.check("local-only hostile config: no script",
                   proc.returncode == 0 and "evil.lua" not in hostile_output and
-                  "failed to load script" not in hostile_output,
+                  "could not load" not in hostile_output,
+                  f"exit {proc.returncode}: {hostile_output.strip()}")
+    results.check("local-only hostile config: config ignored",
+                  "volume=100" in hostile_output and "volume=42" not in hostile_output,
                   f"exit {proc.returncode}: {hostile_output.strip()}")
 
     sandbox = shutil.which("sandbox-exec")
