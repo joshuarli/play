@@ -304,4 +304,17 @@ if [ "${1:-}" = "--write-manifest" ]; then
     printf 'wrote %s\n' "$TRACKED_MANIFEST"
 fi
 
+if [ "${1:-}" = "--write-linux-hashes" ]; then
+    python3 - "$MANIFEST" "$ROOT/tests/fixtures/hashes-linux.json" <<'PY'
+import json
+import sys
+
+fixtures = json.load(open(sys.argv[1]))["fixtures"]
+hashes = {name: {"sha256": entry["sha256"], "bytes": entry["bytes"]}
+          for name, entry in sorted(fixtures.items())}
+open(sys.argv[2], "w").write(json.dumps(hashes, indent=2, sort_keys=True) + "\n")
+PY
+    printf 'wrote %s\n' "$ROOT/tests/fixtures/hashes-linux.json"
+fi
+
 printf 'fixtures generated in %s\n' "$FIXTURES"

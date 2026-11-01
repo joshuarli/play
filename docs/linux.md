@@ -25,3 +25,7 @@ Fontconfig reads `/etc/fonts` at run time, so a system needs a fontconfig config
 ## ALSA
 
 `tests/run.sh linux-audio` plays the mono, stereo, and 5.1 audio fixtures with `--ao=alsa --audio-device=alsa/null --audio-channels=auto`, then checks pause, seek, and device selection on the stereo fixture. ALSA's `null` PCM is built into `libasound`, so the gate needs no sound card and loads no plugin. Without `--audio-channels=auto`, mpv's default `auto-safe` downmixes 5.1 to stereo on this device. The null PCM is not clocked, so a fixture finishes faster than real time; the gate starts paused and keeps the file open so `audio-params` stays readable. mpv logs `audio end or underrun` at end of stream, and the gate ignores that line. Audibility, channel placement, and underruns on real hardware are owner checks, and the release must not rely on the `default` PCM, which may route through a shared plugin.
+
+## Fixtures
+
+`tests/fixtures/gen.sh` generates the 27-file corpus with the image's FFmpeg 9.0.2 (Alpine `ffmpeg`, fixed by the image digest). Stream structure matches `tests/fixtures/manifest.json` exactly, but the encoder builds differ from the macOS Homebrew ones, so the bytes differ for 21 fixtures. `tests/fixtures/hashes-linux.json` records the Linux hashes; the gate compares structure against the tracked manifest and bytes against that file. After an intended encoder change, review the drift and run `tests/fixtures/gen.sh --write-linux-hashes`.

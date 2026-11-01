@@ -379,15 +379,33 @@ def gate_fixtures(results, args):
     results.check("fixtures: manifest generator", manifest.get("generator") == "ffmpeg 9.0.2",
                   str(manifest.get("generator")))
     generated = json.loads((FIXTURES / "manifest.json").read_text())
+    linux = sys.platform.startswith("linux")
+    linux_hashes = {}
+    if linux:
+        linux_hashes = json.loads(
+            (ROOT / "tests" / "fixtures" / "hashes-linux.json").read_text())
+
+    def structure(entry):
+        return {key: value for key, value in (entry or {}).items()
+                if not (linux and key in ("sha256", "bytes"))}
+
+    generated_entries = generated.get("fixtures", {})
+    tracked_entries = manifest.get("fixtures", {})
     drift = sorted(
-        name for name in set(generated.get("fixtures", {})) | set(manifest.get("fixtures", {}))
-        if generated.get("fixtures", {}).get(name) != manifest.get("fixtures", {}).get(name)
+        name for name in set(generated_entries) | set(tracked_entries)
+        if structure(generated_entries.get(name)) != structure(tracked_entries.get(name))
     )
     results.check("fixtures: generated manifest matches the tracked manifest",
-                  generated == manifest and not drift,
+                  generated.get("generator") == manifest.get("generator") and not drift,
                   f"drift in: {', '.join(drift[:8])}; "
                   "review, then run tests/fixtures/gen.sh --write-manifest")
-    entries = manifest.get("fixtures", {})
+    if linux:
+        recorded = {name: {"sha256": entry["sha256"], "bytes": entry["bytes"]}
+                    for name, entry in generated_entries.items()}
+        results.check("fixtures: generated hashes match hashes-linux.json",
+                      recorded == linux_hashes,
+                      "run tests/fixtures/gen.sh --write-linux-hashes after reviewing the drift")
+    entries = tracked_entries
     missing = []
     hash_errors = []
     seen = set()
@@ -397,8 +415,9 @@ def gate_fixtures(results, args):
             missing.append(name)
             continue
         seen.add(path)
+        expected = linux_hashes[name]["sha256"] if linux else entry.get("sha256")
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
-        if digest != entry.get("sha256"):
+        if digest != expected:
             hash_errors.append(name)
     results.check("fixtures: all manifest files exist", not missing,
                   f"missing: {', '.join(missing[:5])}")
@@ -1735,7 +1754,7 @@ SUITE = [
 
 
 LINUX_SUITE = [
-    "linux-corpus", "linux-audio", "linux-gpu-next", "linux-local-only", "linux-osc",
+    "fixtures", "linux-corpus", "linux-audio", "linux-gpu-next", "linux-local-only", "linux-osc",
     "linux-mostly-static", "local-paths", "seek", "input", "playlist", "cli", "state",
     "failures", "lua-host", "lua-api-audit", "linux-rust-link",
 ]

@@ -1,0 +1,130 @@
+{
+  "audio-alac": {
+    "bytes": 55852,
+    "sha256": "c642ab3da9c36751882767ab224367200a30dd6f6a40c613d524042cfbb6f930"
+  },
+  "audio-flac": {
+    "bytes": 58330,
+    "sha256": "9ab992e26923030d5b2d9550698d3ac32c8395ad742e6f0375e3c4f27ce53c8c"
+  },
+  "audio-mono": {
+    "bytes": 288044,
+    "sha256": "9a593112fb5663188883aa2d740268600a002e87c1d8016ca92ba511ed753c33"
+  },
+  "audio-mp3": {
+    "bytes": 48788,
+    "sha256": "3cf5b8e3458a0945ef775365486aa141256f9678ba7ce7b778831c57affb3cf7"
+  },
+  "audio-ogg": {
+    "bytes": 45410,
+    "sha256": "7eec961755d2548cf62b1ed773a59f20d5dbf9cac73bda9a0b8f38b48faa3763"
+  },
+  "audio-stereo": {
+    "bytes": 576044,
+    "sha256": "f304bb339bfd29a4f3de141c854834e36c377ff1ce1e9b65bbfaf0c3642f3828"
+  },
+  "audio-surround51": {
+    "bytes": 1728068,
+    "sha256": "0bf3769e5ec8f80a8cba9c01a7496d16b1f1ddbcb69d85d482c4af9fc795b227"
+  },
+  "audio-wav": {
+    "bytes": 576044,
+    "sha256": "f304bb339bfd29a4f3de141c854834e36c377ff1ce1e9b65bbfaf0c3642f3828"
+  },
+  "av1": {
+    "bytes": 90327,
+    "sha256": "83b307ab3156df56679da40002cd3007829d9c9ac34bbb808e43b848a0124a4a"
+  },
+  "colon": {
+    "bytes": 238026,
+    "sha256": "1aa99550a1c42af3198a2cb78dd7d852868e203650a7f60711c9bcfb2a34c068"
+  },
+  "corrupt": {
+    "bytes": 106942,
+    "sha256": "48c833a4055001919bd48128ab19c6ef382b0536189d39e63331e60707116980"
+  },
+  "external-ass": {
+    "bytes": 638,
+    "sha256": "0fda04a320fb0db05180f67e7a50b6cac2e526ea84ed656b2ab8a123d861a853"
+  },
+  "external-srt": {
+    "bytes": 96,
+    "sha256": "c3b3742a1da8ac719d6547efa5e4be7f49dbb789f3f16197c09193247081789a"
+  },
+  "external-vtt": {
+    "bytes": 100,
+    "sha256": "7def4cad2b56f213baed54e3c6512c827b7b02e5ccd89fb57e618a552a6118ab"
+  },
+  "h264": {
+    "bytes": 238026,
+    "sha256": "1aa99550a1c42af3198a2cb78dd7d852868e203650a7f60711c9bcfb2a34c068"
+  },
+  "h264-embedded-srt": {
+    "bytes": 220895,
+    "sha256": "24e0863283cb31f75e367fd6ffde2dea7e9f94a896825fa928c996cd045f79f8"
+  },
+  "h264-external-ass": {
+    "bytes": 238026,
+    "sha256": "1aa99550a1c42af3198a2cb78dd7d852868e203650a7f60711c9bcfb2a34c068"
+  },
+  "h264-external-srt": {
+    "bytes": 238026,
+    "sha256": "1aa99550a1c42af3198a2cb78dd7d852868e203650a7f60711c9bcfb2a34c068"
+  },
+  "h264-external-vtt": {
+    "bytes": 238026,
+    "sha256": "1aa99550a1c42af3198a2cb78dd7d852868e203650a7f60711c9bcfb2a34c068"
+  },
+  "h264-movtext": {
+    "bytes": 221922,
+    "sha256": "b90b78e5fbc983d96c0102d9300e5a3560600738ab3728f42773fca62c0c1886"
+  },
+  "hevc": {
+    "bytes": 106942,
+    "sha256": "eb6bda37f8da304f57db51b2c88df5ca3f77fca80380d752def6d870052ed819"
+  },
+  "link": {
+    "bytes": 238026,
+    "sha256": "1aa99550a1c42af3198a2cb78dd7d852868e203650a7f60711c9bcfb2a34c068"
+  },
+  "mpeg4": {
+    "bytes": 241016,
+    "sha256": "07e2a4b63e94df26d4f1c8341692b81671ed1e7f157814a28b993c35fc4e0730"
+  },
+  "multiaudio": {
+    "bytes": 270795,
+    "sha256": "63a3ccd98b5671957cad1d6e171145994a5e32d49a95b0e903c522ebffac7ce8"
+  },
+  "space": {
+    "bytes": 238026,
+    "sha256": "1aa99550a1c42af3198a2cb78dd7d852868e203650a7f60711c9bcfb2a34c068"
+  },
+  "surround51": {
+    "bytes": 1728068,
+    "sha256": "0bf3769e5ec8f80a8cba9c01a7496d16b1f1ddbcb69d85d482c4af9fc795b227"
+  },
+  "truncated": {
+    "bytes": 11901,
+    "sha256": "2e3434e32e4a74d5a6d7691788966e8c6fc4d35f634039b30821aa236bc88550"
+  },
+  "unicode": {
+    "bytes": 238026,
+    "sha256": "1aa99550a1c42af3198a2cb78dd7d852868e203650a7f60711c9bcfb2a34c068"
+  },
+  "unsupported": {
+    "bytes": 558558,
+    "sha256": "d09d054ce8e02f4c3f7289ad72e80e0b4db749bcba63c04cd17ea1854551f5ef"
+  },
+  "vfr": {
+    "bytes": 116022,
+    "sha256": "5740fedd2de9df2b80360fdd4aeeffae1cff0c8c8a26b9b00712e1852f64c8a1"
+  },
+  "vp9": {
+    "bytes": 101313,
+    "sha256": "646b65123a85911bf7f2bb40547298573804dfd07849f2f1c6ffc23348b8ef42"
+  },
+  "vp9-webvtt": {
+    "bytes": 101510,
+    "sha256": "0d4cda9677e03612129ad31265d7418299372c9e5ece2489e6876962487275e9"
+  }
+}
