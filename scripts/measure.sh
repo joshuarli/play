@@ -596,6 +596,9 @@ result = {
     "hwdec": hw,
     "licenses": license_obligations(),
     "headless": True,
+    "mode": MODE,
+    "distributable_bytes": sizes["unstripped"] + closure_data["bytes"],
+    "lua_interpreters": lua_interpreters(),
 }
 RESULT_PATH.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
 
