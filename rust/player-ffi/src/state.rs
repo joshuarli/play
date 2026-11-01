@@ -50,19 +50,21 @@ pub unsafe extern "C" fn player_ffi_state_set_bool(
     value: c_int,
 ) -> c_int {
     let Some(handle) = (unsafe { as_state(handle) }) else {
-        return -1;
+        return -2;
     };
     if name.is_null() {
-        return -1;
+        return -2;
     }
     // SAFETY: name is a NUL-terminated string.
     let Ok(name) = unsafe { CStr::from_ptr(name) }.to_str() else {
-        return -1;
+        return -2;
     };
+    if !PlaybackState::supports_bool(name) {
+        return -1;
+    }
     match handle.state.set_bool(name, value != 0) {
         Some(_) => 1,
-        None if handle.state.get_bool(name).is_some() => 0,
-        None => -1,
+        None => 0,
     }
 }
 
@@ -76,20 +78,24 @@ pub unsafe extern "C" fn player_ffi_state_set_number(
     value: f64,
 ) -> c_int {
     let Some(handle) = (unsafe { as_state(handle) }) else {
-        return -1;
+        return -2;
     };
     if name.is_null() {
-        return -1;
+        return -2;
     }
     // SAFETY: name is a NUL-terminated string.
     let Ok(name) = unsafe { CStr::from_ptr(name) }.to_str() else {
-        return -1;
+        return -2;
     };
-    let existed = handle.state.get_number(name).is_some();
+    if !PlaybackState::supports_number(name) {
+        return -1;
+    }
+    if !value.is_finite() {
+        return -2;
+    }
     match handle.state.set_number(name, value) {
         Some(_) => 1,
-        None if existed || handle.state.get_number(name).is_some() => 0,
-        None => -1,
+        None => 0,
     }
 }
 
@@ -251,6 +257,7 @@ mod tests {
         let pause = CString::new("pause").unwrap();
         let volume = CString::new("volume").unwrap();
         let duration = CString::new("duration").unwrap();
+        let unknown = CString::new("unknown").unwrap();
         // SAFETY: the handle and names are valid for the calls.
         unsafe {
             assert_eq!(player_ffi_state_set_bool(handle, pause.as_ptr(), 1), 1);
@@ -269,6 +276,15 @@ mod tests {
             assert_eq!(
                 player_ffi_state_get_number(handle, duration.as_ptr(), &mut number),
                 -1
+            );
+            assert_eq!(player_ffi_state_set_number(handle, duration.as_ptr(), 12.0), 1);
+            assert_eq!(player_ffi_state_set_number(handle, duration.as_ptr(), 12.0), 0);
+            assert_eq!(player_ffi_state_set_number(handle, unknown.as_ptr(), 1.0), -1);
+            assert_eq!(player_ffi_state_set_bool(handle, unknown.as_ptr(), 1), -1);
+            assert_eq!(player_ffi_state_set_number(handle, volume.as_ptr(), f64::NAN), -2);
+            assert_eq!(
+                player_ffi_state_set_bool(std::ptr::null_mut(), pause.as_ptr(), 1),
+                -2
             );
             assert_eq!(player_ffi_state_set_time_pos(handle, 1.0), 1);
             assert_eq!(player_ffi_state_set_time_pos(handle, 1.0), 0);

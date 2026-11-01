@@ -120,6 +120,14 @@ impl PlaybackState {
         }
     }
 
+    pub fn supports_bool(name: &str) -> bool {
+        matches!(name, "pause" | "fullscreen" | "mute" | "eof-reached")
+    }
+
+    pub fn supports_number(name: &str) -> bool {
+        matches!(name, "volume" | "speed" | "time-pos" | "duration")
+    }
+
     pub fn get_number(&self, name: &str) -> Option<f64> {
         match name {
             "volume" => Some(self.volume),

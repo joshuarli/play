@@ -67,16 +67,6 @@ Next: 20
 - **Effort:** M
 - **Design:** none
 
-### PLAY-15 · P3 · `state_change != 0` treats unsupported options as changed
-
-- **Area:** Errors
-- **Where:** `player/command.c:4339-4361`, `:7839-7841`, `rust/player-ffi/src/state.rs:84-105`, `rust/player-core/src/state.rs:58-91`
-- **Problem:** `control_state_sync_option` returns `-1` for an option it does not own, for a null handle, and for an FFI failure. The caller treats every nonzero value as a change and notifies the property. Every unrelated option change therefore emits a property-change event, and a real FFI failure is indistinguishable from a value change. `set_number` also returns `-1` for a supported property with a non-finite or unknown value, collapsing three outcomes.
-- **Recommendation:** define a tri-state or four-state result (`0` unchanged, `1` changed, `-1` unsupported, `-2` error) across the FFI, notify only on `> 0`, and return unsupported only for an unknown name. Add a test for an unrelated option and for a rejected value.
-- **Fix with:** error-model
-- **Effort:** S
-- **Design:** none
-
 ### PLAY-18 · P3 · Generated docs and fixtures heal their own oracles instead of failing on drift
 
 - **Area:** Tests

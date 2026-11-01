@@ -4339,7 +4339,9 @@ static int mp_property_clipboard(void *ctx, struct m_property *prop,
 static int control_state_sync_option(struct MPContext *mpctx,
                                      struct m_config_option *co)
 {
-    if (!co || !mpctx->control_state)
+    if (!mpctx->control_state)
+        return -2;
+    if (!co)
         return -1;
     struct MPOpts *opts = mpctx->opts;
     const char *name = co->name;
@@ -7839,8 +7841,10 @@ void mp_option_change_callback(void *ctx, struct m_config_option *co, uint64_t f
 
     if (co) {
         int state_change = control_state_sync_option(mpctx, co);
-        if (state_change != 0)
+        if (state_change > 0)
             mp_notify_property(mpctx, co->name);
+        else if (state_change == -2)
+            MP_ERR(mpctx, "Control state update failed for %s\n", co->name);
     }
     if (opt_ptr == &opts->media_title)
         mp_notify(mpctx, MP_EVENT_METADATA_UPDATE, NULL);
