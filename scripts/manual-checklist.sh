@@ -5,6 +5,7 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 FIXTURE_DIR="$ROOT/.work/fixtures"
 PLAYER="$ROOT/build/mpv"
 RUN=0
+LINUX=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -16,12 +17,17 @@ while [ $# -gt 0 ]; do
             PLAYER="$ROOT/dist/Player.app/Contents/MacOS/player"
             shift
             ;;
+        --release-linux)
+            PLAYER="$ROOT/dist/player"
+            LINUX=1
+            shift
+            ;;
         --run)
             RUN=1
             shift
             ;;
         *)
-            printf 'usage: scripts/manual-checklist.sh [--fixture-dir DIR] [--release] [--run]\n' >&2
+            printf 'usage: scripts/manual-checklist.sh [--fixture-dir DIR] [--release | --release-linux] [--run]\n' >&2
             exit 2
             ;;
     esac
@@ -59,8 +65,22 @@ Interaction:
   [ ] Drag-and-drop and external subtitle loading work.
   [ ] Quit and repeated open/close are clean.
 
-Commands:
 EOF
+
+if [ "$LINUX" = 1 ]; then
+    cat <<'LINUX_CHECKS'
+Linux (real compositor, GPU, and sound card):
+  [ ] vo=gpu-next picks the GPU Vulkan device, not llvmpipe, and plays with the default FIFO swap mode.
+  [ ] Fractional scale, fullscreen, resize, and cursor shape look right on sway, GNOME, or KDE.
+  [ ] Keyboard and pointer input reach the OSC; click and drag seek.
+  [ ] ALSA plays audibly on a hardware PCM; channel placement is right for stereo and 5.1.
+  [ ] Subtitle shaping and system-font fallback look right for CJK, Arabic, and Greek text.
+  [ ] The tarball extracts and runs on a second musl host, if distributed.
+LINUX_CHECKS
+fi
+
+echo
+echo "Commands:"
 
 python3 - "$ROOT/tests/fixtures/manifest.json" "$FIXTURE_DIR" "$PLAYER" <<'PY'
 import json

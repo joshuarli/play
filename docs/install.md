@@ -1,5 +1,17 @@
 # Install and run
 
+macOS builds `dist/Player.app`; Linux x86-64 on musl builds `dist/player`. Sections below cover macOS unless titled Linux.
+
+## Linux
+
+The build runs in the pinned Alpine edge image (`docker/linux/Dockerfile`) through `scripts/linux-container.sh`:
+
+```sh
+make linux
+```
+
+`make linux` builds the static dependency prefix with `scripts/build-deps-linux.sh`, then `scripts/release-linux.sh` builds, audits, and writes `dist/player-x86_64-linux-musl.tar.gz` with a `.sha256` file. The tarball holds `player` and a `README` listing the musl runtime packages. `make install` builds the same and copies `player` to `~/.local/bin`; set `BINDIR` to change it, and `make uninstall` removes it. Run a file with `player FILE`. The system needs a Vulkan driver, a Wayland compositor, and fontconfig with a font; `docs/linux.md` covers the runtime set, the headless gates, and ALSA.
+
 ## Release app
 
 Build the pinned dependency closure and the app:

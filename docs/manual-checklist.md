@@ -1,6 +1,6 @@
 # Manual checklist
 
-Owner-run checks at each milestone and before release. Automated gates are headless; these checks need a window, speakers, or real input devices. Run `scripts/manual-checklist.sh --fixture-dir .work/fixtures` for the dev build, or `scripts/manual-checklist.sh --fixture-dir .work/fixtures --release` for the shipped app at `dist/Player.app/Contents/MacOS/player`. Do not treat these as automated gates.
+Owner-run checks at each milestone and before release. Automated gates are headless; these checks need a window, speakers, or real input devices. Run `scripts/manual-checklist.sh --fixture-dir .work/fixtures` for the dev build, or `scripts/manual-checklist.sh --fixture-dir .work/fixtures --release` for the shipped app at `dist/Player.app/Contents/MacOS/player`, or `scripts/manual-checklist.sh --fixture-dir .work/fixtures --release-linux` for `dist/player` on Linux. Do not treat these as automated gates.
 
 | Area | Check | Result |
 |---|---|---|
@@ -19,3 +19,9 @@ Owner-run checks at each milestone and before release. Automated gates are headl
 | Interaction | Clean quit and repeated open/close | not run |
 | Platform | Other Apple Silicon Macs and older macOS versions, if distributed | not run |
 | Distribution | Signing and notarization, if distributed | not run |
+| Linux | `gpu-next` selects the GPU Vulkan device and plays with default FIFO swap on a real compositor | not run |
+| Linux | Fractional scale, fullscreen, resize, and cursor shape on sway, GNOME, or KDE | not run |
+| Linux | Keyboard and pointer input reach the OSC; click and drag seek | not run |
+| Linux | ALSA audible on a hardware PCM; channel placement for stereo and 5.1 | not run |
+| Linux | Subtitle shaping and system-font fallback for CJK, Arabic, and Greek | not run |
+| Linux | Tarball runs on a second musl host, if distributed | not run |
