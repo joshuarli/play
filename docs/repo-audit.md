@@ -49,7 +49,7 @@ This audit does not replace the owner's manual checklist for visual quality, aud
 
 Recorded 2026-11-01 for the musl build.
 
-- **Layout:** `docker/linux/Dockerfile` (pinned image), `scripts/{linux-container,linux-check,build-deps-linux,build-linux,audit-linux,release-linux,measure-linux}.sh`, `tests/wayland.py`, `tests/fixtures/hashes-linux.json`, and `.github/workflows/linux.yml`. The restored mpv Linux files are byte-identical to the v0.41.0 pin.
+- **Layout:** `docker/linux/Dockerfile` (pinned image), `scripts/{linux-container,linux-check,build-deps-linux,build-linux,audit-linux,release-linux,measure-linux}.sh`, `tests/wayland.py`, and `.github/workflows/linux.yml`. The restored mpv Linux files are byte-identical to the v0.41.0 pin.
 - **Network:** `audit-linux.sh` finds no `getaddrinfo`, `connect`, TLS, or curl import or library string, exactly one `file` protocol, and no network scheme. Rust `std` brought `getaddrinfo` and `connect` in until the link used `--gc-sections`.
 - **Dynamic set:** nine `NEEDED` entries (six, plus libva, libva-drm, and libva-wayland for VA-API), no RPATH or RUNPATH, every entry resolves, and no `/work/` or checkout path appears in the binary. The audit found and the build now fixes leaked paths in mpv's configuration banner, FFmpeg's configuration string, fontconfig's template directory, a libplacebo `__FILE__`, and Rust panic locations.
 - **Unsafe:** unchanged and still confined to `rust/player-ffi` and `rust/player-audio`. The Linux build adds no `unsafe`.

@@ -401,10 +401,6 @@ def gate_fixtures(results, args):
                   str(manifest.get("generator")))
     generated = json.loads((FIXTURES / "manifest.json").read_text())
     linux = sys.platform.startswith("linux")
-    linux_hashes = {}
-    if linux:
-        linux_hashes = json.loads(
-            (ROOT / "tests" / "fixtures" / "hashes-linux.json").read_text())
 
     def structure(entry):
         return {key: value for key, value in (entry or {}).items()
@@ -420,12 +416,6 @@ def gate_fixtures(results, args):
                   generated.get("generator") == manifest.get("generator") and not drift,
                   f"drift in: {', '.join(drift[:8])}; "
                   "review, then run tests/fixtures/gen.sh --write-manifest")
-    if linux:
-        recorded = {name: {"sha256": entry["sha256"], "bytes": entry["bytes"]}
-                    for name, entry in generated_entries.items()}
-        results.check("fixtures: generated hashes match hashes-linux.json",
-                      recorded == linux_hashes,
-                      "run tests/fixtures/gen.sh --write-linux-hashes after reviewing the drift")
     entries = tracked_entries
     missing = []
     hash_errors = []
@@ -436,14 +426,15 @@ def gate_fixtures(results, args):
             missing.append(name)
             continue
         seen.add(path)
-        expected = linux_hashes[name]["sha256"] if linux else entry.get("sha256")
-        digest = hashlib.sha256(path.read_bytes()).hexdigest()
-        if digest != expected:
-            hash_errors.append(name)
+        if not linux:
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            if digest != entry.get("sha256"):
+                hash_errors.append(name)
     results.check("fixtures: all manifest files exist", not missing,
                   f"missing: {', '.join(missing[:5])}")
-    results.check(f"fixtures: {len(seen)} file hashes", not hash_errors,
-                  f"mismatch: {', '.join(hash_errors[:5])}")
+    if not linux:
+        results.check(f"fixtures: {len(seen)} file hashes", not hash_errors,
+                      f"mismatch: {', '.join(hash_errors[:5])}")
 
 
 def gate_play(results, args):

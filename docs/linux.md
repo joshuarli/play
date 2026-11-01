@@ -48,4 +48,4 @@ The VA driver comes from the host, the same way the Vulkan ICD does: `mesa-va-ga
 
 ## Fixtures
 
-`tests/fixtures/gen.sh` generates the 27-file corpus with the image's FFmpeg 9.0.2 (Alpine `ffmpeg`, fixed by the image digest). Stream structure matches `tests/fixtures/manifest.json` exactly, but the encoder builds differ from the macOS Homebrew ones, so the bytes differ for 21 fixtures. `tests/fixtures/hashes-linux.json` records the Linux hashes; the gate compares structure against the tracked manifest and bytes against that file. After an intended encoder change, review the drift and run `tests/fixtures/gen.sh --write-linux-hashes`.
+`tests/fixtures/gen.sh` generates the 27-file corpus with the image's FFmpeg 9.0.2. Stream structure matches `tests/fixtures/manifest.json` exactly. The external encoders choose threads and SIMD paths from the host at run time, so their bytes differ from the macOS Homebrew ones and between Linux hosts; the gate compares structure only on Linux. Byte hashes are checked on macOS against the tracked manifest. After an intended structural change, review the drift and run `tests/fixtures/gen.sh --write-manifest`.
