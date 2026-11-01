@@ -11,6 +11,8 @@ scripts/build-deps.sh
 scripts/release.sh
 ```
 
+`make install` builds the app and copies it to `~/Applications/Player.app`.
+
 The app is `dist/Player.app`. Open it from Finder, or run a file directly:
 
 ```sh

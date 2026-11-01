@@ -9,6 +9,10 @@ scripts/build-deps.sh
 scripts/release.sh
 ```
 
+`make install` builds the same app and copies it to `~/Applications/Player.app`.
+Pass another location with `PREFIX`, such as `make install PREFIX=/Applications`,
+or stage a package root with `DESTDIR`. `make uninstall` removes that copy.
+
 The app is `dist/Player.app`. Open it from Finder, or run a file directly:
 
 ```sh

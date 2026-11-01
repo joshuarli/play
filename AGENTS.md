@@ -9,6 +9,7 @@ Player is a local-only macOS media player: the mpv v0.41.0 playback pipeline, a 
 - `scripts/audit.sh` runs the FFmpeg manifest, build-surface, and local-only audits.
 - `scripts/build-deps.sh` builds the pinned release dependency closure under `.work/deps/release`.
 - `scripts/release.sh` builds and bundles `dist/Player.app`.
+- `make install` runs that build and copies the app to `~/Applications`.
 - `scripts/measure.sh final` checks the release budgets.
 - `cargo test --manifest-path rust/Cargo.toml` runs the Rust tests.
 
