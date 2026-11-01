@@ -77,16 +77,6 @@ Next: 20
 - **Effort:** S
 - **Design:** none
 
-### PLAY-16 · P3 · The Lua FFI drops event, panic, and join failures without diagnostics
-
-- **Area:** Errors
-- **Where:** `rust/player-ffi/src/lua.rs:736-747`, `:765`, `:837`
-- **Problem:** A node-conversion error or a non-map event is discarded, so the script silently stops receiving that event. `let _ = self.thread.join()` ignores a panic in the pump thread, after which the script runs with no events. The `Err(_)` arm returns `-1` without `callbacks.log`, so a panic inside `player_ffi_lua_run` looks like a load failure with no cause.
-- **Recommendation:** log the dropped conversion error, the join error, and the panic payload at `MSGL_ERR`, naming the event and the script.
-- **Fix with:** error-model
-- **Effort:** S
-- **Design:** none
-
 ### PLAY-17 · P3 · The audio bridge does not contain panics on reset/destroy and loses error categories
 
 - **Area:** Errors

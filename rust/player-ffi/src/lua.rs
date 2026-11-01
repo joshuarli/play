@@ -26,6 +26,7 @@ const MPV_EVENT_NONE: c_int = 0;
 const MPV_EVENT_SHUTDOWN: c_int = 1;
 
 const MSGL_ERR: c_int = 1;
+const MSGL_WARN: c_int = 2;
 
 const MAX_NODE_DEPTH: usize = 64;
 
@@ -700,19 +701,38 @@ fn event_from_native(value: NativeValue) -> Option<ScriptEvent> {
     name.map(|name| ScriptEvent { name, fields })
 }
 
+struct SendCallbacks(PlayerLuaCallbacks);
+
+impl SendCallbacks {
+    fn get(&self) -> PlayerLuaCallbacks {
+        self.0
+    }
+}
+
+// SAFETY: the event pump is joined before the C script thread frees the
+// callback context, and the pump only reads the function pointer and context.
+unsafe impl Send for SendCallbacks {}
+
 struct EventPump {
     stop: Arc<AtomicBool>,
     client: ClientPtr,
+    callbacks: PlayerLuaCallbacks,
     thread: JoinHandle<()>,
 }
 
 impl EventPump {
-    fn spawn(client: ClientPtr, sender: ScriptEventSender) -> Result<Self, String> {
+    fn spawn(
+        client: ClientPtr,
+        sender: ScriptEventSender,
+        callbacks: PlayerLuaCallbacks,
+    ) -> Result<Self, String> {
         let stop = Arc::new(AtomicBool::new(false));
         let thread_stop = stop.clone();
+        let thread_callbacks = SendCallbacks(callbacks);
         let thread = thread::Builder::new()
             .name("lua-events".to_owned())
             .spawn(move || {
+                let callbacks = thread_callbacks.get();
                 loop {
                     if thread_stop.load(Ordering::SeqCst) {
                         break;
@@ -737,11 +757,24 @@ impl EventPump {
                         let converted = unsafe { node_to_native(&node, 0) };
                         // SAFETY: node is owned by this call and must be released.
                         unsafe { mpv_free_node_contents(&mut node) };
-                        if let Ok(value) = converted
-                            && let Some(event) = event_from_native(value)
-                            && sender.post(event).is_err()
-                        {
-                            break;
+                        match converted {
+                            Ok(value) => match event_from_native(value) {
+                                Some(event) => {
+                                    if sender.post(event).is_err() {
+                                        break;
+                                    }
+                                }
+                                None => log_message(
+                                    &callbacks,
+                                    MSGL_WARN,
+                                    "dropping a Lua event with no event name",
+                                ),
+                            },
+                            Err(error) => log_message(
+                                &callbacks,
+                                MSGL_ERR,
+                                &format!("cannot convert a Lua event: {error}"),
+                            ),
                         }
                     }
                     if shutdown {
@@ -753,6 +786,7 @@ impl EventPump {
         Ok(Self {
             stop,
             client,
+            callbacks,
             thread,
         })
     }
@@ -761,7 +795,9 @@ impl EventPump {
         self.stop.store(true, Ordering::SeqCst);
         // SAFETY: client is a valid mpv handle until the script returns to C.
         unsafe { mpv_wakeup(self.client.0) };
-        let _ = self.thread.join();
+        if self.thread.join().is_err() {
+            log_message(&self.callbacks, MSGL_ERR, "Lua event pump panicked");
+        }
     }
 }
 
@@ -818,7 +854,11 @@ pub unsafe extern "C" fn player_ffi_lua_run(
             backend,
         )
         .map_err(|error| error.to_string())?;
-        let pump = EventPump::spawn(ClientPtr(client.cast::<MpvHandle>()), host.event_sender())?;
+        let pump = EventPump::spawn(
+            ClientPtr(client.cast::<MpvHandle>()),
+            host.event_sender(),
+            callbacks_copy,
+        )?;
         let result = host.wait().map_err(|error| error.to_string());
         pump.stop();
         result
@@ -826,15 +866,34 @@ pub unsafe extern "C" fn player_ffi_lua_run(
     match result {
         Ok(Ok(())) => 0,
         Ok(Err(error)) => {
-            if let Some(log) = callbacks_copy.log {
-                let message = CString::new(error.replace('\0', " ")).unwrap_or_default();
-                // SAFETY: callbacks and ctx are valid until the C script thread returns.
-                unsafe { log(callbacks_copy.ctx, MSGL_ERR, message.as_ptr()) };
-            }
+            log_message(&callbacks_copy, MSGL_ERR, &error);
             -1
         }
-        Err(_) => -1,
+        Err(payload) => {
+            let message = if let Some(text) = payload.downcast_ref::<&str>() {
+                (*text).to_owned()
+            } else if let Some(text) = payload.downcast_ref::<String>() {
+                text.clone()
+            } else {
+                "panic in the Lua host".to_owned()
+            };
+            log_message(
+                &callbacks_copy,
+                MSGL_ERR,
+                &format!("Lua host panic: {message}"),
+            );
+            -1
+        }
     }
+}
+
+fn log_message(callbacks: &PlayerLuaCallbacks, level: c_int, message: &str) {
+    let Some(log) = callbacks.log else {
+        return;
+    };
+    let message = CString::new(message.replace('\0', " ")).unwrap_or_default();
+    // SAFETY: callbacks and ctx stay valid until the C script thread returns.
+    unsafe { log(callbacks.ctx, level, message.as_ptr()) };
 }
 
 fn builtin_source(filename: &str) -> Option<&'static str> {
