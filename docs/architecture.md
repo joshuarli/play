@@ -115,6 +115,12 @@ D4 remains: the simplified Lua OSC on `mlua` is the permanent default. Rust owns
 - `control-state` returns the Rust snapshot; `tests/run.sh state` asserts it at `pause=0/volume=100/speed=1` and again at `pause=1` after the round trip.
 - Track-list remains a C payload at the boundary, and the C client event queue still delivers events. The scalar values and change detection are Rust-owned; the payload and delivery boundary stay with the existing client API.
 
+## Local file boundary (P7.5)
+
+- `player-core::local_file::LocalFile` owns open, read, write, seek, size, and EOF for local paths with typed errors. Tests cover short reads, seeking beyond EOF, permission errors, and Unicode paths.
+- `player-ffi` exposes an opaque local-file handle. `stream/stream_file.c` is now a compact stream backend over that handle; it preserves directory detection, write support for screenshots, the `file://` conversion, and the stdin/stdout `-` fallback. The generic stream list remains `file` plus `stream_cb`; there is no network stream backend.
+- `stream/stream.c` still owns the read buffer and stream-callback registration; the filesystem work is Rust-owned.
+
 ## Open work
 
 - P1.4 added the FFmpeg manifest gate over the frozen allowlist.
@@ -128,5 +134,5 @@ D4 remains: the simplified Lua OSC on `mlua` is the permanent default. Rust owns
 - P4.1 added `player-core`/`player-ffi`, built both static libraries, and linked/called `player_ffi_abi_version` from the player.
 - P4.2 moved the input classifier to `player-core::input`; the C boundary delegates through `player_ffi_classify_input` with typed results.
 - P4.3 documented the FFI invariants and added the C bridge test.
-- P7.4 moved the scalar control state and change detection into Rust; P7.5 moves the local file stream abstraction.
+- P7.5 moved the local file stream abstraction into Rust; P8 builds the release closure, optimizes it, audits it, and writes the final report.
 - P7 moves config, playlist, input, state, and local file handling into Rust; the audio bridge stays at the decode boundary.

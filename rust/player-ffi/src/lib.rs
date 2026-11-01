@@ -4,6 +4,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use player_core::input::{classify_input, InputError, InputPath};
 
 mod command;
+mod local_file;
 mod lua;
 mod playlist;
 mod state;
