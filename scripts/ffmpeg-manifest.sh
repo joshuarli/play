@@ -7,6 +7,7 @@ MANIFEST=${2:-}
 
 python3 - "$ROOT" "$MODE" "$MANIFEST" <<'PY'
 import json
+import os
 import pathlib
 import re
 import sys
@@ -16,7 +17,10 @@ MODE = sys.argv[2]
 MANIFEST_ARG = sys.argv[3]
 MANIFEST = pathlib.Path(MANIFEST_ARG) if MANIFEST_ARG else (
     ROOT / ".work" / "deps" / "ffmpeg-manifest.json")
-BUILD = ROOT / ".work" / "deps" / "ffmpeg-full" / "build"
+RELEASE_BUILD = ROOT / ".work" / "deps" / "release" / "ffmpeg" / "build"
+DEV_BUILD = ROOT / ".work" / "deps" / "ffmpeg-full" / "build"
+BUILD = pathlib.Path(os.environ["FFMPEG_BUILD"]) if os.environ.get("FFMPEG_BUILD") else (
+    RELEASE_BUILD if RELEASE_BUILD.exists() else DEV_BUILD)
 ALLOWLIST = ROOT / "scripts" / "ffmpeg-components.txt"
 COMPONENTS = BUILD / "config_components.h"
 CONFIG_MAK = BUILD / "ffbuild" / "config.mak"
@@ -53,7 +57,8 @@ def parse_allowlist():
 
 def parse_components():
     if not COMPONENTS.exists():
-        raise SystemExit(f"missing {COMPONENTS}; run scripts/build-ffmpeg.sh")
+        raise SystemExit(
+            f"missing {COMPONENTS}; run scripts/build-deps.sh or scripts/build-ffmpeg.sh")
     components = {}
     pattern = re.compile(r"^#define CONFIG_(\w+)_(DECODER|DEMUXER|PARSER|BSF|FILTER|HWACCEL|PROTOCOL|ENCODER|MUXER|DEVICE|INDEV|OUTDEV) 1$")
     for line in COMPONENTS.read_text().splitlines():
@@ -112,6 +117,11 @@ def generate():
 
 def check():
     results = []
+    try:
+        tree = BUILD.relative_to(ROOT)
+    except ValueError:
+        tree = BUILD
+    print(f"ffmpeg-audit: build tree {tree}")
 
     def case(name, ok, detail=""):
         results.append(ok)

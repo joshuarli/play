@@ -15,16 +15,6 @@ Next: 20
 - **Effort:** M
 - **Design:** none
 
-### PLAY-7 · P2 · The FFmpeg manifest audits the development tree and dependency stamps ignore changed inputs
-
-- **Area:** Build
-- **Where:** `scripts/ffmpeg-manifest.sh:19`, `scripts/build-deps.sh:8`, `:44-45`, `:266-269`, `scripts/build-ffmpeg.sh:14`, `:26`
-- **Problem:** The audit reads `.work/deps/ffmpeg-full/build`, while `scripts/build-deps.sh` builds the shipped FFmpeg at `.work/deps/release/ffmpeg/build`. Both trees exist on this host, so the gate currently checks a different install than the release. Each release component is skipped when a bare `.stamp-*` file exists; the stamps record no version or input hash. A changed allowlist or version does not force a rebuild through `scripts/release.sh`, and `docs/ffmpeg.md` previously claimed the allowlist hash did.
-- **Recommendation:** take the FFmpeg build tree as an argument and default it to the release prefix; fail when it is missing. Make every stamp carry its version and input hash, and compare both in `have`.
-- **Fix with:** single-source-of-truth
-- **Effort:** S
-- **Design:** none
-
 ### PLAY-11 · P2 · The Rust fullscreen mirror goes stale on window-initiated changes
 
 - **Area:** Data

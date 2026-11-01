@@ -16,6 +16,9 @@ export PKG_CONFIG_LIBDIR="$PKG_CONFIG_PATH"
 
 mkdir -p "$PREFIX" "$SRC" "$LOGS"
 
+INPUT_HASH=$(cat "$ROOT/scripts/build-deps.sh" "$ROOT/scripts/build-ffmpeg.sh" \
+    "$ROOT/scripts/ffmpeg-components.txt" | shasum -a 256 | awk '{print $1}')
+
 for tool in curl tar shasum cmake meson ninja pkg-config python3; do
     command -v "$tool" >/dev/null || {
         printf 'error: %s is required (development tool)\n' "$tool" >&2
@@ -41,8 +44,11 @@ extract() {
     tar -xf "$archive" -C "$(dirname "$dir")"
 }
 
-stamp() { printf 'ok\n' >"$PREFIX/.stamp-$1"; }
-have() { [ -f "$PREFIX/.stamp-$1" ]; }
+stamp() { printf '%s\n' "$INPUT_HASH" >"$PREFIX/.stamp-$1"; }
+have() {
+    [ -f "$PREFIX/.stamp-$1" ] &&
+        [ "$(cat "$PREFIX/.stamp-$1")" = "$INPUT_HASH" ]
+}
 
 run_log() {
     local name=$1
