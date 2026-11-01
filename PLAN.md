@@ -3,13 +3,13 @@
 ## Status
 
 - **Goal:** A compact, dependable, local-only macOS ARM64 media player: mpv's proven playback pipeline, a minimal pinned FFmpeg, no network backend, and a Rust-owned control plane with the OSC running on `mlua`.
-- **Last accepted revision:** *(record after the P8.1 commit)*. P0.1–P1.4 and P2.1–P8.1 have run.
-- **Accepted:** P0.1–P1.4, P2.1–P8.1. **Red:** none. **Parked:** none.
-- **Next slice:** P8.2 — measure and optimize the release.
-- **Resume prompt:** `Read PLAN.md and execute P8.2. Continue in item order; stop only at a hard stop or when P8 is complete.`
-- **First command:** `scripts/measure.sh release; scripts/measure.sh`.
+- **Last accepted revision:** `acf2fea` (P8.2). P0.1–P1.4 and P2.1–P8.2 have run.
+- **Accepted:** P0.1–P1.4, P2.1–P8.2. **Red:** none. **Parked:** none.
+- **Next slice:** P8.3 — final closure verification and evidence.
+- **Resume prompt:** `Read PLAN.md and execute P8.3. Continue in item order; stop only at a hard stop or when P8 is complete.`
+- **First command:** `scripts/release.sh && tests/run.sh suite`.
 - **Test mode:** headless (`--vo=null --ao=null`); GUI and renderer checks are owner-run.
-- **Scope:** P8.1 built the pinned release closure and app; P8.2 measures and optimizes it.
+- **Scope:** P8.2 measured and shrank the release app; P8.3 runs the final closure verification and evidence.
 
 This file is the campaign log as well as the plan. Update **Status** after every accepted slice. Git history holds the past; do not append dated checkpoints, handoffs, or a second status register.
 
