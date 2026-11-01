@@ -24,4 +24,6 @@ The release app is assembled from the pinned sources in `scripts/build-deps.sh`.
 | Symphonia (vendored) | `b6336209` | MPL-2.0 |
 | Rust crates | `Cargo.lock` | MIT/Apache-2.0/MPL-2.0/Zlib/Unicode-3.0 |
 
+The Linux build restores `video/out/wayland_common.c`, `video/out/wayland_common.h`, `video/out/vulkan/context_wayland.c`, `audio/out/ao_alsa.c`, `osdep/als-linux.c`, `osdep/timer-linux.c`, and `osdep/language-posix.c` byte-identical to mpv v0.41.0; their GPL-2.0-or-later headers are unchanged.
+
 `cargo audit` reports no RustSec vulnerabilities for the 58 locked crates. The release audit checked `cargo metadata` license fields. The set is MIT OR Apache-2.0, MPL-2.0, MIT, Apache-2.0 OR MIT, Zlib OR Apache-2.0 OR MIT, Unlicense OR MIT, and (MIT OR Apache-2.0) AND Unicode-3.0. Symphonia's MPL-2.0 notice is preserved under `vendor/symphonia`; mpv, FFmpeg, libass, and libplacebo notices and source obligations remain with the repository and pinned sources.

@@ -27,14 +27,16 @@ if [ -d "$BUILD_DIR" ]; then
         -Dcplayer=true -Dlibmpv=false -Dgpl=true \
         -Dtests=false -Dfuzzers=false -Dbuild-date=false \
         -Dwayland=enabled -Dvulkan=enabled -Dalsa=enabled \
-        -Dgl=disabled -Dx11=disabled -Ddrm=disabled 2>&1 ||
+        -Dgl=disabled -Dx11=disabled -Ddrm=disabled \
+        -Ddmabuf-wayland=disabled 2>&1 ||
         fail "meson reconfigure failed; see output above"
 else
     meson setup "$BUILD_DIR" "$ROOT" \
         -Dcplayer=true -Dlibmpv=false -Dgpl=true \
         -Dtests=false -Dfuzzers=false -Dbuild-date=false \
         -Dwayland=enabled -Dvulkan=enabled -Dalsa=enabled \
-        -Dgl=disabled -Dx11=disabled -Ddrm=disabled 2>&1 ||
+        -Dgl=disabled -Dx11=disabled -Ddrm=disabled \
+        -Ddmabuf-wayland=disabled 2>&1 ||
         fail "meson setup failed; see output above"
 fi
 
