@@ -1682,11 +1682,16 @@ major = client_h_define.split('|')[0].split('<<')[0].strip('() ')
 minor = client_h_define.split('|')[1].strip('() ')
 client_api_version = major + '.' + minor + '.0'
 
-libmpv = library('mpv', sources, dependencies: dependencies, gnu_symbol_visibility: 'hidden',
-                 include_directories: [incdir_public, incdir_player_audio],
-                 link_args: cc.get_supported_link_arguments(['-Wl,-Bsymbolic']),
-                 version: client_api_version, install: get_option('libmpv'),
-                 build_by_default: get_option('libmpv'))
+libmpv = []
+libmpv_objects = []
+if get_option('libmpv')
+    libmpv = library('mpv', sources, dependencies: dependencies, gnu_symbol_visibility: 'hidden',
+                     include_directories: [incdir_public, incdir_player_audio],
+                     link_args: cc.get_supported_link_arguments(['-Wl,-Bsymbolic']),
+                     version: client_api_version, install: true,
+                     build_by_default: true)
+    libmpv_objects = libmpv.extract_all_objects(recursive: true)
+endif
 
 
 if get_option('libmpv')
@@ -1732,8 +1737,15 @@ if get_option('cplayer')
                  rename: 'mpv.svg')
     install_data('etc/mpv-symbolic.svg', install_dir: join_paths(hicolor_dir, 'symbolic', 'apps'))
 
-    mpv = executable('mpv', main_fn_source, objects: libmpv.extract_all_objects(recursive: true), dependencies: dependencies,
-                     win_subsystem: get_option('win32-subsystem'), install: true)
+    if get_option('libmpv')
+        mpv = executable('mpv', main_fn_source, objects: libmpv_objects,
+                         dependencies: dependencies,
+                         win_subsystem: get_option('win32-subsystem'), install: true)
+    else
+        mpv = executable('mpv', main_fn_source + sources, dependencies: dependencies,
+                         include_directories: [incdir_public, incdir_player_audio],
+                         win_subsystem: get_option('win32-subsystem'), install: true)
+    endif
 
     if win32
         if get_option('win32-subsystem') != 'console'

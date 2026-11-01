@@ -29,6 +29,10 @@ The embedded Lua modules are reduced to `defaults.lua`, `assdraw.lua`, `options.
 
 The stream list contains `stream_file` and `stream_cb` only; the demuxer list contains the local directory, Matroska, lavf, playlist, and timeline demuxers. `--list-protocols` reports `file://` only. Network, wrapper, disc, capture, and remote-playlist modules and their option tables are removed; `docs/scope.md` records the retained local utilities and remaining debt.
 
+## Target surface (P2.5)
+
+When `libmpv` is disabled, the sources compile directly into the `mpv` executable; no shared `libmpv` target or dylib is produced. The build gate asserts that no shared-library target exists, no `libmpv` dylib remains, and `otool -L` does not reference `libmpv`. The macOS playback path is the explicit top-level source set; inherited optional-feature conditionals are disabled and outside the built path.
+
 ## Open work
 
 - P1.4 added the FFmpeg manifest gate over the frozen allowlist.
@@ -36,6 +40,7 @@ The stream list contains `stream_file` and `stream_cb` only; the demuxer list co
 - P2.2 restricted the input surface to local files.
 - P2.3 removed the unsupported platform, UI, scripting, plugin, and filter sources; encoding/recording/lavfi and clipboard remain compiled as documented debt because the minimal FFmpeg has no encoders or muxers.
 - P2.4 reduced the user-visible CLI and config surface; the encode/lavfi/recording debt has no remaining CLI entry point.
-- P2.5 simplifies the macOS source list.
+- P2.5 removed the shared `libmpv` target from the locked build and verified the executable-only target surface.
+- P3.1 enforces the local input boundary.
 - P4.1 moves the Rust link into the normal workspace/Meson path and adds `player-core`/`player-ffi`.
 - P7 moves config, playlist, input, state, and local file handling into Rust; the audio bridge stays at the decode boundary.

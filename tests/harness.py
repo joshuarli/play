@@ -930,11 +930,27 @@ def gate_build(results, args):
     ).stdout
     bad_needles = ("curl", "bluray", "dvdnav", "cdio", "pipewire",
                    "libpulse", "libjack", "avfoundation", "libx11",
-                   "libwayland", "libsdl", "libssl", "libcrypto")
+                   "libwayland", "libsdl", "libssl", "libcrypto", "libmpv")
     bad_libraries = [line.strip() for line in otool.splitlines()
                      if any(needle in line.lower() for needle in bad_needles)]
     results.check("build: no unsupported libraries", not bad_libraries,
                   "; ".join(bad_libraries[:3]))
+
+    targets_proc = subprocess.run(
+        ["meson", "introspect", "build", "--targets"], cwd=str(ROOT),
+        capture_output=True, text=True, timeout=60,
+    )
+    try:
+        targets = json.loads(targets_proc.stdout) if targets_proc.returncode == 0 else []
+    except json.JSONDecodeError:
+        targets = []
+    shared = [target.get("name") for target in targets
+              if target.get("type") == "shared library"]
+    results.check("build: no shared library target", not shared,
+                  ", ".join(str(name) for name in shared))
+    stray = sorted((ROOT / "build").glob("libmpv*.dylib"))
+    results.check("build: no stray libmpv dylib", not stray,
+                  ", ".join(path.name for path in stray))
 
 
 def gate_baseline_docs(results, args):
