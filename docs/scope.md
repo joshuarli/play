@@ -1,72 +1,59 @@
 # Scope
 
-The player is local-only. It opens filesystem paths and local playlist files; it does not implement network protocols, remote playlists, capture, or disc access.
+Player opens local filesystem paths and local playlist files. It does not implement network protocols, remote playlists, capture, optical discs, or remote metadata.
 
-## Retained
+## Input
 
-- `stream_file`: `file` and the empty protocol, plus stdin/stdout.
-- `stream_cb`: the internal client API stream callback.
-- `stream_memory`: internal use only for local subtitle charset conversion; it is not registered as a protocol.
-- `demux_lavf`: FFmpeg demuxing for local containers.
-- `demux_mkv`, `demux_mkv_timeline`: local Matroska and ordered chapters.
-- `demux_playlist`: local M3U/M3U8/PLS files. URL entries are not rejected until P3.1.
-- `demux_timeline`: the generic timeline demuxer used by MKV ordered chapters.
-- `demux/cue.c`: embedded CUE metadata parsing.
-- `demux/demux_lavf.c` retains its local file/subtitle charset conversion path.
+- Ordinary paths, including relative and absolute paths, spaces, `:`, Unicode, symlinks, and mounted volumes.
+- Local playlists in M3U, M3U8, and PLS form. A network URL in a playlist is rejected while the local entries continue.
+- External audio and subtitle files beside a local file.
+- `file://` from drag-and-drop when it resolves to an existing local path. The CLI, IPC `loadfile`, playlist entries, and external files reject `file://`.
 
-## Removed in P2.2
+`player-core::input::classify_input` rejects every other `scheme://` URL and the protocol wrappers `data:`, `lavfi:`, `edl:`, `memory:`, `fd:`, `fdclose:`, `av:`, `avdevice:`, `mf:`, `null:`, `slice:`, `appending:`, `mpv:`, `ffmpeg:`, and `lavf:`. A mounted network volume is an ordinary filesystem path; the player makes no network connection of its own.
 
-- Stream modules: cookies, AVDevice, Blu-ray, CDDA, concat, DVB, DVDNAV, EDL, libavformat/lavf, libarchive, image-file (`mf`), `mpv`, null, and slice.
-- Stream wrappers/protocols: `av://`, `avdevice://`, `memory://`, `hex://`, `null://`, `mf://`, `edl://`, `appending://`, `slice://`, `fd://`, `fdclose://`, `mpv://`, `ffmpeg://`, and `lavf://`.
-- Demuxers: disc, external CUE (`demux_cue`), EDL, libarchive, image-file, `mpv`, null, and raw audio/video.
-- `player/lua/ytdl_hook.lua` and the stream-lavf, raw-demuxer, disc, and capture option tables.
+Two boundary limits remain. `--playlist=FILE` and `loadlist FILE` hand the playlist path to the stream layer without the classifier, so `file://` is accepted there and only a network scheme fails closed. Startup parsing and the classifier take UTF-8, so a non-UTF-8 argument is rejected with `command line argument is not UTF-8`; the path API is narrower than upstream mpv's byte-transparent one.
 
-## Boundary status
+## Retained modules
 
-`build/mpv --list-protocols` contains only `file://`. The protocol handlers for network and wrapper inputs are gone; P3.1 adds the path-shaped rejection boundary and the tests that exercise it. `demux_playlist` still parses local playlist entries, and a URL entry is rejected when P3.1 lands.
+- `stream_file`: `file`, including stdin and stdout, and the write path used by screenshots.
+- `stream_cb`: the internal client API callback. No external caller registers a protocol.
+- `stream_memory`: internal character-set conversion for subtitles. It is not registered as a protocol.
+- `demux_lavf`: FFmpeg demuxing for the allowlisted local containers.
+- `demux_mkv` and `demux_mkv_timeline`: local Matroska and ordered chapters.
+- `demux_playlist`: local M3U, M3U8, and PLS files.
+- `demux_timeline`: the generic timeline demuxer used by ordered chapters.
+- `demux/cue.c`: embedded CUE metadata in local containers.
+- `demux_lavf.c`: the local file and subtitle character-set conversion path.
 
-## Removed in P2.3
+## Removed
 
-- Platform backends: Windows, Linux, and Android audio outputs, video outputs, window systems, GL/OpenGL, Vulkan display/X11/Wayland/Windows contexts, and their supporting sources.
-- Video outputs: image, tct, kitty, sixel, caca, X11, XV, Wayland, DRM, SDL, VA-API, VDPAU, Direct3D, MediaCodec, and the GL `vo_gpu`.
-- Scripting/plugins: MuJS JavaScript, VapourSynth, C plugins, Touch Bar, and Media Player integration.
-- Unused built-in Lua modules: `auto_profiles`, `commands`, `console`, `context_menu`, `fzy`, `positioning`, `stats` (the six retained modules are unchanged).
-- Filter entry points for lavfi/VapourSynth/VA-API/VDPAU/D3D11/fingerprint/AC3 encode; the built-in filter registry now contains only the local filters.
-- macOS GL/libmpv-GL sources that were only used by removed paths; the used clipboard property/command bridge remains.
+- Network and wrapper streams, including HTTP, HTTPS, FTP, SFTP, SSH, RTSP, RTMP, HLS, DASH, SMB, libavformat, AVDevice, Blu-ray, DVD, CDDA, DVB, EDL, memory, `fd`, `slice`, `appending`, `mpv`, `ffmpeg`, `lavf`, `hex`, `null`, and the image-file reader.
+- Disc, external CUE, EDL, libarchive, image-file, `mpv`, null, and raw audio or video demuxers.
+- The yt-dlp hook and the option tables for stream-lavf, raw demuxers, discs, and capture.
+- Windows, Linux, and Android audio outputs, video outputs, window systems, GL and OpenGL, Vulkan display backends, and their supporting sources.
+- Video outputs that are not `gpu-next`, including image, terminal, X11, Wayland, DRM, SDL, VA-API, VDPAU, Direct3D, and MediaCodec.
+- JavaScript, VapourSynth, C plugins, Touch Bar, and Media Player integration.
+- Built-in Lua modules that the player no longer loads: `auto_profiles`, `commands`, `console`, `context_menu`, `fzy`, `positioning`, and `stats`.
+- Filter entry points for lavfi, VapourSynth, VA-API, VDPAU, D3D11, fingerprint, and AC-3 encoding.
+- Playlist shuffle and loop commands and options. A-B loop remains.
 
-## Retained as technical debt
+## CLI
 
-- Encoding, stream recording, and the `f_lavfi` graph remain compiled but are unreachable in the shipped configuration: the minimal FFmpeg build has no encoders or muxers. P2.4 removes their CLI surface, and P8 audits the remaining source.
-- Clipboard remains because the clipboard property/commands and the macOS app bridge still reference it.
+Supported: `player FILE...`, `--fullscreen` and `--fs`, `--start`, `--audio-file` and `--audio-files`, `--sub-file` and `--sub-files`, `--version`, `--help`, and the playback, track, and OSD controls used by the OSC and local playback.
 
-## CLI surface (P2.4)
+Removed: `--ytdl*`, `--hls-bitrate`, `--lavfi-complex`, `--stream-dump`, `--stretch-dvd-subs`, the encoding group (`--o`, `--of`, `--ovc`, `--oac`, their option tables, `--orawts`, and metadata flags), the Windows window and capture group, and options for deleted Lua overlay modules. `--http-header-fields` and the other network groups were removed with the network modules.
 
-Supported: `player FILE...`, `--fullscreen`/`--fs`, `--start`, `--audio-file`/`--audio-files`, `--sub-file`/`--sub-files`, `--version`, `--help`, and the playback/track/OSD controls used by the OSC and local playback.
+## Compiled but not reachable
 
-Removed: `--ytdl*`, `--hls-bitrate`, `--lavfi-complex`, `--stream-dump`, `--stretch-dvd-subs`, the encoding group (`--o`, `--of`, `--ovc`, `--oac`, their `*opts`, `--orawts`, and metadata flags), the Windows window/capture group, and the options for deleted Lua overlay modules. `--http-header-fields` and the other network groups were already absent after P2.2. The encode suboption table is now empty, so the retained encode implementation has no CLI entry point.
+- Encoding, stream recording, and the `f_lavfi` filter graph remain compiled. The release FFmpeg has no encoders or muxers, and the CLI has no entry point for them.
+- The C `subprocess` command and the `.run` script backend remain compiled and reachable from an explicit script or an IPC client. They are not reachable from the built-in OSC. `select.lua`, which loads by default, uses both.
+- The clipboard property, the clipboard command, and the macOS clipboard bridge remain compiled and reachable. The default `Ctrl+v` binding pastes clipboard text as a local file operand.
+- The cplugin loader is compiled out; `HAVE_CPLUGINS` is not defined in the release configuration.
 
-## Local-only boundary (P3.1)
+## Remaining debt
 
-`mp_input_is_local_path` is the single input classifier. It accepts ordinary local paths, including paths with spaces, Unicode, `:`, relative components, symlinks, and mounted network volumes (the player itself makes no network connection). It rejects every `scheme://` URL and the `data:`, `lavfi:`, `edl:`, `memory:`, `fd:`, `fdclose:`, `av:`, `avdevice:`, `mf:`, `null:`, `slice:`, `appending:`, `mpv:`, `ffmpeg:`, `lavf:`, and known network prefixes. `file://` is converted only from drag-and-drop when it resolves to an existing path; the CLI, IPC loadfile, playlists, and external files reject it.
-
-The boundary is applied at startup and CLI playlist insertion, IPC `loadfile`, M3U/PLS/TXT playlist entries, external audio/subtitle files, and drag-and-drop. A remote playlist entry is skipped with an error while the local entries continue; a remote subtitle is rejected while the main file plays.
-
-Automatic user config and scripts are disabled by default (`load_config=false`, `auto_load_scripts=false`); the built-in OSC remains. The sandbox gate uses `(version 1)(allow default)(deny network*)`; this host requires the explicit default allow to execute the player under `sandbox-exec`.
-
-## Boundary audit (P3.2)
-
-`tests/local_only.py` carries the URL matrix. The local-only gate also creates a hostile temporary `HOME` with `mpv.conf`, `input.conf`, and a nonexistent script; playback succeeds without loading them. `scripts/audit.sh` runs the FFmpeg audit, build gate, and local-only gate, then rechecks `--list-protocols` and `otool -L` for network protocols and stray linked libraries.
-
-## Remaining technical debt
-
-- `stream_memory` remains as an internal helper for charset conversion; it has no protocol registration.
-- `demux_timeline` and the CUE parser remain for local MKV ordered chapters and embedded CUE metadata.
-- `demux_lavf` keeps m3u8/HLS extension heuristics, but the FFmpeg HLS demuxer is not built.
-- The P2.3 source list still contains dead platform conditionals; P2.5 simplified the reachable build surface and left the conditionals documented.
-- The C `subprocess` command, `.run` script backend, and disabled cplugin loader remain reachable only by trusted scripts; they are not part of the built-in OSC or local-file path.
-
-
-## Removed in P7.2
-
-- Playlist shuffle/unshuffle commands and state.
-- `--shuffle`, `--loop-playlist`, `--loop-file`, and `--loop` options and the remaining-file-loops property. A-B loop remains.
+- The UTF-8-only path API and the classifier bypass in `--playlist` and `loadlist`.
+- The command checker rejects some valid mpv forms (`aid auto`, `seek 1:30`) that the C parser still accepts.
+- The Rust fullscreen mirror is not updated when the window changes fullscreen.
+- The Lua event queue is unbounded and script completion has no timeout.
+- Clipboard support is live although the release report previously described the player as having none. Decide whether to keep it or remove it.

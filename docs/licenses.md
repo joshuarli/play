@@ -1,6 +1,6 @@
-# Release licenses (P8.1)
+# Release licenses
 
-The release app is assembled from the pinned sources in `scripts/build-deps.sh`. Build tools (CMake, Meson, Ninja, Python, glad2, Jinja2, MarkupSafe) are not shipped. P8.4 completes the audit against the final bundle and the Rust crate graph.
+The release app is assembled from the pinned sources in `scripts/build-deps.sh`. Build tools (CMake, Meson, Ninja, Python, glad2, Jinja2, MarkupSafe) are not shipped.
 
 | Component | Version | License |
 | --- | --- | --- |
@@ -20,8 +20,8 @@ The release app is assembled from the pinned sources in `scripts/build-deps.sh`.
 | HarfBuzz | 15.0.0 | MIT |
 | MoltenVK (binary) | 1.4.2 | Apache-2.0 |
 | Lua (vendored by mlua) | 5.2.4 | MIT |
-| `player-release` Rust cdylib | campaign | MPL-2.0 |
+| `player-release` Rust cdylib | this repository | MPL-2.0 |
 | Symphonia (vendored) | `b6336209` | MPL-2.0 |
 | Rust crates | `Cargo.lock` | MIT/Apache-2.0/MPL-2.0/Zlib/Unicode-3.0 |
 
-`cargo audit` reports no RustSec vulnerabilities for the 58 locked crates. P8.4 audited `cargo metadata` license fields; the set is MIT OR Apache-2.0, MPL-2.0, MIT, Apache-2.0 OR MIT, Zlib OR Apache-2.0 OR MIT, Unlicense OR MIT, and (MIT OR Apache-2.0) AND Unicode-3.0. Symphonia's MPL-2.0 notice is preserved under `vendor/symphonia`; mpv, FFmpeg, libass, and libplacebo notices and source obligations remain with the repository and pinned sources.
+`cargo audit` reports no RustSec vulnerabilities for the 58 locked crates. The release audit checked `cargo metadata` license fields. The set is MIT OR Apache-2.0, MPL-2.0, MIT, Apache-2.0 OR MIT, Zlib OR Apache-2.0 OR MIT, Unlicense OR MIT, and (MIT OR Apache-2.0) AND Unicode-3.0. Symphonia's MPL-2.0 notice is preserved under `vendor/symphonia`; mpv, FFmpeg, libass, and libplacebo notices and source obligations remain with the repository and pinned sources.

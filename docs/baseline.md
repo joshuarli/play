@@ -1,10 +1,12 @@
 # Baseline
 
-Imported mpv **v0.41.0** at upstream commit `41f6a645068483470267271e1d09966ca3b9f413`, with full history, as an unrelated-histories merge.
+This records the P0 baseline. The current state is in `docs/status.md`.
 
-FFmpeg pin: **n9.0.2** at upstream commit `ce8f11b9fac4cd7ccfb41ca7c01bc17f5cda8cc3` (built and linked in P1.1).
+Imported mpv **v0.41.0** at upstream commit `41f6a645068483470267271e1d09966ca3b9f413`.
 
-Upstream mpv's `DOCS/` directory is relocated to `doc/` because macOS is case-insensitive and the campaign's `docs/` cannot coexist with it. Local references were updated; inherited `.github` workflows still reference `DOCS/` and are not run by this campaign.
+FFmpeg pin: **n9.0.2** at upstream commit `ce8f11b9fac4cd7ccfb41ca7c01bc17f5cda8cc3`.
+
+Upstream mpv's `DOCS/` directory is relocated to `doc/` because macOS is case-insensitive and the repository's `docs/` cannot coexist with it. Local references were updated; inherited `.github` workflows still reference `DOCS/` and are not run.
 
 ## Upstream pins
 
@@ -13,7 +15,7 @@ Upstream mpv's `DOCS/` directory is relocated to `doc/` because macOS is case-in
 | mpv | v0.41.0 | `41f6a645068483470267271e1d09966ca3b9f413` |
 | FFmpeg | n9.0.2 | `ce8f11b9fac4cd7ccfb41ca7c01bc17f5cda8cc3` |
 
-The mpv fork is GPL-2.0-or-later. Upstream history is preserved. No push or distribution is part of this campaign.
+The mpv fork is GPL-2.0-or-later. The repository history was later consolidated to the `campaign-base` root commit; the pins above are the provenance. The checks do not push or distribute.
 
 ## Dependencies
 
@@ -33,17 +35,17 @@ Pinned Homebrew development dependencies:
 | ninja | 1.13.2 |
 | pkgconf | 3.0.10 |
 
-Lua **5.2.4** is built from the official tarball (SHA-256 `b9e2e4aad6789b3b63a056d442f7b39f0ecfca3ae0f1fc0ae4e9614401b69f4b`) into `.work/deps/lua52` as a static `liblua.a` with `lua52.pc`.
+The P0 baseline built Lua **5.2.4** from the official tarball (SHA-256 `b9e2e4aad6789b3b63a056d442f7b39f0ecfca3ae0f1fc0ae4e9614401b69f4b`) into `.work/deps/lua52` as a static `liblua.a` with `lua52.pc`. The current build uses the Lua 5.2.4 vendored by `mlua`.
 
 ## Build
 
-Host: macOS 27.0.1, Apple Silicon arm64, Xcode 27.1, macOS SDK 27.0, Swift 6.4, Meson 1.12.1, Ninja 1.13.2, pkgconf 3.0.10, Python 3.15, Rust nightly `1.100.0` (toolchain pinned in `rust-toolchain.toml`; Rust is not linked until P4).
+Host: macOS 27.0.1, Apple Silicon arm64, Xcode 27.1, macOS SDK 27.0, Swift 6.4, Meson 1.12.1, Ninja 1.13.2, pkgconf 3.0.10, Python 3.15, Rust nightly `1.100.0` (toolchain pinned in `rust-toolchain.toml`).
 
-`scripts/dev-deps.sh` checks and installs the pinned Homebrew packages, then builds Lua. `scripts/build.sh` sets `PKG_CONFIG_PATH` and configures:
+`scripts/dev-deps.sh` checks and installs the pinned Homebrew packages. `scripts/build.sh` sets `PKG_CONFIG_PATH` and configures:
 
 ```sh
 meson setup build . --buildtype=release \
-  -Dcplayer=true -Dlibmpv=false -Dgpl=true -Dlua=lua52 \
+  -Dcplayer=true -Dlibmpv=false -Dgpl=true \
   -Dcocoa=enabled -Dswift-build=enabled -Dcoreaudio=enabled \
   -Dvulkan=enabled -Dvideotoolbox-pl=enabled \
   -Dgl=disabled -Dgl-cocoa=disabled -Dvideotoolbox-gl=disabled -Dmacos-cocoa-cb=disabled \
@@ -60,7 +62,7 @@ meson setup build . --buildtype=release \
 
 ## Binary
 
-`scripts/measure.sh baseline` recorded revision `bda16d3a5dbd` on 2026-10-31 (pre-consolidation; see D16). The player binary is unchanged by the later documentation commit.
+`scripts/measure.sh baseline` recorded revision `bda16d3a5dbd` on 2026-10-31, before the history consolidation. The player binary is unchanged by the later documentation commit.
 
 | Property | Value |
 |---|---|
@@ -101,7 +103,7 @@ Closure attribution (unique files, symlinks resolved):
 | Vulkan loader | 0.65 MiB | 1 |
 | libass | 0.22 MiB | 1 |
 
-The P0 baseline linked Lua 5.2.4 from the source build and no Rust code. P5.5 replaced that with the vendored Lua 5.2.4 inside `mlua` and the Rust host; the version is unchanged. The build still emits `build/libmpv.2.dylib` even with `-Dlibmpv=false`; the `mpv` executable does not link it. P2.5 excludes it from the release closure.
+The P0 baseline linked Lua 5.2.4 from the source build and no Rust code. The current build uses the vendored Lua 5.2.4 inside `mlua` and the Rust host; the version is unchanged. The build still emits `build/libmpv.2.dylib` even with `-Dlibmpv=false`; the `mpv` executable does not link it. The release closure excludes it.
 
 ## Features
 
@@ -111,7 +113,7 @@ Disabled: external libmpv, GL and its Cocoa/VideoToolbox backends, JavaScript, l
 
 ## Protocols
 
-`build/mpv --list-protocols` reports 60 entries and 58 unique schemes. Twenty-one network schemes remain: `dav`, `davs`, `ftp`, `gopher`, `gophers`, `http`, `https`, `ipfs`, `ipns`, `mms`, `mmsh`, `mmst`, `rtmp`, `rtp`, `rtsp`, `srtp`, `tcp`, `tls`, `udp`, `webdav`, `webdavs`. P1.1/P1.2 remove network protocols; P3.1 enforces the local-only boundary.
+`build/mpv --list-protocols` reports 60 entries and 58 unique schemes. Twenty-one network schemes remained: `dav`, `davs`, `ftp`, `gopher`, `gophers`, `http`, `https`, `ipfs`, `ipns`, `mms`, `mmsh`, `mmst`, `rtmp`, `rtp`, `rtsp`, `srtp`, `tcp`, `tls`, `udp`, `webdav`, `webdavs`. The release build removes them and enforces the local-only boundary; see `docs/scope.md`.
 
 ## Performance
 
@@ -150,7 +152,7 @@ Thirty-second steady-state playback, GPU rendering cost, and visual motion/fulls
 - dav1d 1.5.4: BSD-2-Clause; notice.
 - Lua 5.2.4: MIT; notice.
 
-P8.3 audits the final release closure and preserves the required notices and source obligations.
+The release audit checks the final closure and preserves the required notices and source obligations.
 
 ## Known limitations
 
@@ -160,8 +162,8 @@ P8.3 audits the final release closure and preserves the required notices and sou
 - `-Dlibmpv=false` still produces `libmpv.2.dylib`; it is not linked and must be excluded from the release.
 - No `timeout` binary is available; the harness uses IPC and process timeouts, terminating at 2 s and killing at 5 s.
 - There is no CI in this repo; gates are local commands in `tests/run.sh` and `scripts/audit.sh`.
-- Network protocols remain in the stock build; P1–P3 remove them and gate the result.
-- FFmpeg n9.0.2's native AV1 decoder is hardware-only; P1.2 uses libdav1d for software AV1.
+- The stock build had network protocols; the release build does not.
+- FFmpeg n9.0.2's native AV1 decoder is hardware-only; the release uses libdav1d for software AV1.
 - External ASS subtitles require the `ass` demuxer; the MP4 decoder name is `movtext`, not `mov_text`.
 - The baseline is measured headless; `gpu-next` rendering, 30 s steady state, real audio audibility, HDR/10-bit color, subtitle shaping, Retina scaling, and motion smoothness are owner-run.
 
@@ -187,7 +189,7 @@ P0.3:
 - `tests/run.sh fixtures` regenerates the corpus and verifies 27 file hashes.
 - `tests/run.sh play h264` passes headless.
 - `tests/run.sh audio` passes with D7.
-- `tests/run.sh suite` reports 169 passed, 0 failed.
+- `tests/run.sh suite` reported 169 passed, 0 failed at the P0.3 baseline.
 
 P0.4:
 

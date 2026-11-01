@@ -1,228 +1,51 @@
-![mpv logo](https://raw.githubusercontent.com/mpv-player/mpv.io/master/source/images/mpv-logo-128.png)
+# Player
 
-# mpv
+Player is a local-only media player for macOS on Apple Silicon. It uses the mpv v0.41.0 playback pipeline, a pinned FFmpeg n9.0.2, and a Rust-owned control plane. It plays local video, audio, subtitles, and playlists. It does not open network streams.
 
-> **Campaign fork:** this tree is a local-only macOS ARM64 build with a Rust-owned control plane, a minimal pinned FFmpeg, and the simplified Lua OSC. The release app is `dist/Player.app`. It accepts local files only; there is no network, encoding, recording, lavfi, or clipboard support.
->
-> Build: `scripts/build-deps.sh` then `scripts/release.sh`. Verify: `tests/run.sh suite`, `scripts/audit.sh`, `scripts/measure.sh final`.
->
-> Documentation: [install](docs/install.md), [status](docs/status.md), [final report](docs/final-report.md), [jank audit](docs/jank-audit.md), [resume](docs/resume.md), [architecture](docs/architecture.md), [metrics](docs/metrics.md).
+## Install and run
 
+Build the pinned dependency closure and the app:
 
-* [External links](#external-links)
-* [Overview](#overview)
-* [System requirements](#system-requirements)
-* [Downloads](#downloads)
-* [Changelog](#changelog)
-* [Compilation](#compilation)
-* [Release cycle](#release-cycle)
-* [Bug reports](#bug-reports)
-* [Contributing](#contributing)
-* [License](#license)
-* [Contact](#contact)
+```sh
+scripts/build-deps.sh
+scripts/release.sh
+```
 
+The app is `dist/Player.app`. Open it from Finder, or run a file directly:
 
-## External links
+```sh
+dist/Player.app/Contents/MacOS/player FILE
+```
 
+The bundle carries its own dylibs, Vulkan loader, MoltenVK, and the Rust cdylib. It does not use Homebrew at runtime. It is ad-hoc signed and not notarized; do not distribute the build without a signing identity.
 
-* [Wiki](https://github.com/mpv-player/mpv/wiki)
-* [User Scripts](https://github.com/mpv-player/mpv/wiki/User-Scripts)
-* [FAQ][FAQ]
-* [Manual](https://mpv.io/manual/master/)
+## Input
 
+- Local filesystem paths, including spaces, Unicode, `:`, relative paths, symlinks, and mounted volumes.
+- Local playlists (M3U, M3U8, PLS) and external audio or subtitle files.
+- Network URLs are rejected before the stream layer with `Refusing non-local input`. The player makes no network connection.
 
-## Overview
+The player does not read `mpv.conf`, `input.conf`, or scripts from user directories. Pass options on the command line and load scripts explicitly with `--script=FILE`.
 
+## Controls
 
-**mpv** is a free (as in freedom) media player for the command line. It supports
-a wide variety of media file formats, audio and video codecs, and subtitle types.
+The on-screen controls provide play and pause, seek, volume and mute, fullscreen, and track selection. The macOS menu provides the same playback controls, file opening, screenshots, and window sizing. Clipboard paste of a local path is available from the default key bindings.
 
-There is a [FAQ][FAQ].
+## Requirements
 
-Releases can be found on the [release list][releases].
+macOS 27 on Apple Silicon. Building needs the Xcode command-line tools, Meson, Ninja, pkg-config, CMake, Python 3, curl, and `shasum`.
 
-## System requirements
+## Help and development
 
-- A not too ancient Linux (usually, only the latest releases of distributions
-  are actively supported), Windows 10 1607 or later, or macOS 10.15 or later.
-- A somewhat capable CPU. Hardware decoding might help if the CPU is too slow to
-  decode video in realtime, but must be explicitly enabled with the `--hwdec`
-  option.
-- A not too crappy GPU. mpv's focus is not on power-efficient playback on
-  embedded or integrated GPUs (for example, hardware decoding is not even
-  enabled by default). Low power GPUs may cause issues like tearing, stutter,
-  etc. On such GPUs, it's recommended to use `--profile=fast` for smooth playback.
-  The main video output uses shaders for video rendering and scaling,
-  rather than GPU fixed function hardware. On Windows, you might want to make
-  sure the graphics drivers are current. In some cases, ancient fallback video
-  output methods can help (such as `--vo=xv` on Linux), but this use is not
-  recommended or supported.
+- [Install and run](docs/install.md)
+- [Current status](docs/status.md)
+- [Architecture](docs/architecture.md)
+- [Scope and retained code](docs/scope.md)
+- [Metrics](docs/metrics.md)
+- [Release report](docs/final-report.md)
 
-mpv does not go out of its way to break on older hardware or old, unsupported
-operating systems, but development is not done with them in mind. Keeping
-compatibility with such setups is not guaranteed. If things work, consider it
-a happy accident.
-
-## Downloads
-
-
-For semi-official builds and third-party packages please see
-[mpv.io/installation](https://mpv.io/installation/).
-
-## Changelog
-
-
-There is no complete changelog; however, changes to the player core interface
-are listed in the [interface changelog][interface-changes].
-
-Changes to the C API are documented in the [client API changelog][api-changes].
-
-The [release list][releases] has a summary of most of the important changes
-on every release.
-
-Changes to the default key bindings are indicated in
-[restore-old-bindings.conf][restore-old-bindings].
-
-Changes to the default OSC bindings are indicated in
-[restore-osc-bindings.conf][restore-osc-bindings].
-
-## Compilation
-
-
-Compiling with full features requires development files for several
-external libraries. Mpv requires [meson](https://mesonbuild.com/index.html)
-to build. Meson can be obtained from your distro or PyPI.
-
-After creating your build directory (e.g. `meson setup build`), you can view a list
-of all the build options via `meson configure build`. You could also just simply
-look at the `meson_options.txt` file. Logs are stored in `meson-logs` within
-your build directory.
-
-Example:
-
-    meson setup build
-    meson compile -C build
-    meson install -C build
-
-For libplacebo, meson can use a git check out as a subproject for a convenient
-way to compile mpv if a sufficient libplacebo version is not easily available
-in the build environment. It will be statically linked with mpv. Example:
-
-    mkdir -p subprojects
-    git clone https://code.videolan.org/videolan/libplacebo.git --depth=1 --recursive subprojects/libplacebo
-
-Essential dependencies (incomplete list):
-
-- gcc or clang
-- X development headers (xlib, xrandr, xext, xscrnsaver, xpresent, libvdpau,
-  libGL, GLX, EGL, xv, ...)
-- Audio output development headers (libasound/ALSA, pulseaudio)
-- FFmpeg libraries (libavutil libavcodec libavformat libswscale libavfilter
-  and either libswresample or libavresample)
-- libplacebo
-- zlib
-- iconv (normally provided by the system libc)
-- libass (OSD, OSC, text subtitles)
-- Lua (optional, required for the OSC pseudo-GUI and youtube-dl integration)
-- libjpeg (optional, used for screenshots only)
-- uchardet (optional, for subtitle charset detection)
-- nvdec and vaapi libraries for hardware decoding on Linux (optional)
-
-Libass dependencies (when building libass):
-
-- gcc or clang, nasm on x86 and x86_64
-- fribidi, freetype, fontconfig development headers (for libass)
-- harfbuzz (required for correct rendering of combining characters, particularly
-  for correct rendering of non-English text on macOS, and Arabic/Indic scripts on
-  any platform)
-
-FFmpeg dependencies (when building FFmpeg):
-
-- gcc or clang, nasm on x86 and x86_64
-- OpenSSL or GnuTLS (have to be explicitly enabled when compiling FFmpeg)
-- libx264/libmp3lame/libfdk-aac if you want to use encoding (have to be
-  explicitly enabled when compiling FFmpeg)
-- For native DASH playback, FFmpeg needs to be built with --enable-libxml2
-  (although there are security implications, and DASH support has lots of bugs).
-- AV1 decoding support requires dav1d.
-- For good nvidia support on Linux, make sure nv-codec-headers is installed
-  and can be found by configure.
-
-Most of the above libraries are available in suitable versions on normal
-Linux distributions. For ease of compiling the latest git master of everything,
-you may wish to use the separately available build wrapper ([mpv-build][mpv-build])
-which first compiles FFmpeg libraries and libass, and then compiles the player
-statically linked against those.
-
-If you want to build a Windows binary, see [Windows compilation][windows_compilation].
-
-
-## Release cycle
-
-Once or twice a year, a release is cut off from the current development state
-and is assigned a 0.X.0 version number. No further maintenance is done, except
-in the event of security issues.
-
-The goal of releases is to make Linux distributions happy. Linux distributions
-are also expected to apply their own patches in case of bugs.
-
-Releases other than the latest release are unsupported and unmaintained.
-
-See the [release policy document][release-policy] for more information.
-
-## Bug reports
-
-
-Please use the [issue tracker][issue-tracker] provided by GitHub to send us bug
-reports or feature requests. Follow the template's instructions or the issue
-will likely be ignored or closed as invalid.
-
-Questions can be asked in the [discussions][discussions] or on IRC (see
-[Contact](#Contact) below).
-
-## Contributing
-
-
-Please read [contribute.md][contribute.md].
-
-For small changes you can just send us pull requests through GitHub. For bigger
-changes come and talk to us on IRC before you start working on them. It will
-make code review easier for both parties later on.
-
-You can check [the wiki](https://github.com/mpv-player/mpv/wiki/Stuff-to-do)
-or the [issue tracker](https://github.com/mpv-player/mpv/issues?q=is%3Aopen+is%3Aissue+label%3Ameta%3Afeature-request)
-for ideas on what you could contribute with.
+Development build: `scripts/build.sh`. Tests: `tests/run.sh suite`. Audit: `scripts/audit.sh`. See [AGENTS.md](AGENTS.md) for the repository map.
 
 ## License
 
-GPLv2 "or later" by default, LGPLv2.1 "or later" with `-Dgpl=false`.
-See [details.](https://github.com/mpv-player/mpv/blob/master/Copyright)
-
-## History
-
-This software is based on the MPlayer project. Before mpv existed as a project,
-the code base was briefly developed under the mplayer2 project. For details,
-see the [FAQ][FAQ].
-
-## Contact
-
-
-Most activity happens on the IRC channel and the GitHub issue tracker.
-
-- **GitHub issue tracker**: [issue tracker][issue-tracker] (report bugs here)
-- **Discussions**: [discussions][discussions]
-- **User IRC Channel**: `#mpv` on `irc.libera.chat`
-- **Developer IRC Channel**: `#mpv-devel` on `irc.libera.chat`
-
-[FAQ]: https://github.com/mpv-player/mpv/wiki/FAQ
-[releases]: https://github.com/mpv-player/mpv/releases
-[mpv-build]: https://github.com/mpv-player/mpv-build
-[issue-tracker]:  https://github.com/mpv-player/mpv/issues
-[discussions]: https://github.com/mpv-player/mpv/discussions
-[release-policy]: https://github.com/mpv-player/mpv/blob/master/DOCS/release-policy.md
-[windows_compilation]: https://github.com/mpv-player/mpv/blob/master/DOCS/compile-windows.md
-[interface-changes]: https://github.com/mpv-player/mpv/blob/master/DOCS/interface-changes.rst
-[api-changes]: https://github.com/mpv-player/mpv/blob/master/DOCS/client-api-changes.rst
-[restore-old-bindings]: https://github.com/mpv-player/mpv/blob/master/etc/restore-old-bindings.conf
-[restore-osc-bindings]: https://github.com/mpv-player/mpv/blob/master/etc/restore-osc-bindings.conf
-[contribute.md]: https://github.com/mpv-player/mpv/blob/master/DOCS/contribute.md
+GPL-2.0-or-later. mpv and the bundled components keep their licenses; see [licenses](docs/licenses.md). This fork is not affiliated with the mpv project.

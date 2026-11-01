@@ -1,41 +1,30 @@
 # Status
 
-## Campaign
+Player is a local-only macOS media player. The release artifact is `dist/Player.app`.
 
-The campaign is complete through P8.4. The final report, install/resume material, architecture/provenance, and license audit are in place.
+## Current state
 
-| Slice | State | Evidence |
-|---|---|---|
-| P0.1–P1.4 | accepted | baseline, minimal FFmpeg, Rust audio bridge |
-| P2.1–P2.3 | accepted | scoped build, deleted features, minimal closure |
-| P3.1–P3.3 | accepted | Rust playlist, FFI handles, startup config |
-| P4.1–P4.3 | accepted | typed CLI, local-only boundary, C/Rust contract |
-| P5.1–P5.5 | accepted | mlua host, FFI backend, single interpreter, OSC |
-| P6.1–P6.3 | accepted | compact OSC, attribution, release baseline |
-| P7.1–P7.5 | accepted | input, playlist, commands, state, local file |
-| P8.1 | accepted | pinned closure and `dist/Player.app` |
-| P8.2 | accepted | 26.8 MB app / 9.64 MB executable |
-| P8.3 | accepted | 292-case suite, audit, final budget gate |
-| P8.4 | complete | final report/install/resume |
+- The last release measurement is at `7a8958b`. Changes since then are documentation.
+- `tests/run.sh suite`: 292 passed, 0 failed. The run includes the release gate.
+- `scripts/audit.sh`: ok.
+- `scripts/measure.sh final`: all published budgets pass.
+- App: 26,807,168 B; executable 9,640,432 B; framework closure 17,166,736 B in 13 files.
+- One `file` protocol and one Lua interpreter.
 
-## Final evidence
+## Limits
 
-- `tests/run.sh suite`: **292 passed, 0 failed** (includes `release`).
-- `scripts/audit.sh`: **ok** (FFmpeg manifest, build, local-only, protocol list, linked libs, one interpreter, `cargo audit`).
-- `scripts/measure.sh final`: **final: ok** (all P8 budgets).
-- `scripts/measure.sh compare`: **compare: ok**.
-- Release app: `dist/Player.app`; executable 9,640,432 B; framework closure 16.37 MiB in 13 files; total 26,807,168 B.
-- Final metrics: cold 162.11 ms, warm 115.73 ms, first frame 220.07 ms, idle RSS 84.78 MB, 1080p RSS 216.88 MB, 1080p CPU 0.23 s, 4K CPU 0.55 s, seek 3.21 ms, no underruns, no frame drops, one `file` protocol, one Lua interpreter.
+- Local files only. No network protocol, TLS, CA bundle, or remote resource load.
+- GUI, HDR and 10-bit color, subtitle shaping, Retina scaling, audio audibility, real mouse and drag, and signing or notarization are owner-run. See `docs/manual-checklist.md`.
+- Clipboard commands are compiled and reachable. Encoding, recording, and the lavfi filter graph are compiled but unreachable because the release FFmpeg has no encoders or muxers.
+- The `subprocess` command and the `.run` script backend are reachable from explicit scripts and IPC. `select.lua`, which loads by default, uses both. The built-in OSC does not.
+- The current bundle omits `MPVBUNDLE` from `Info.plist`, so the Cocoa layer runs it as an accessory app without a menu bar. `TODO.md` tracks the fix.
+- Follow-on: A/V scheduler, general demux and decode orchestration, renderer integration, and Linux.
 
-## Debt and limits
+## Evidence
 
-- Local files only. No network protocol, encode/record/lavfi, or clipboard.
-- GUI, HDR/10-bit color, subtitle shaping/positioning, Retina, actual audio, real mouse/drag, and signing/notarization are owner-run (`docs/manual-checklist.md`).
-- The jank audit records open user-facing items; none were fixed in P8.3.
-- Follow-on work: A/V scheduler, general demux/decode orchestration, renderer integration, Linux.
-
-## Resume
-
-`Read PLAN.md and verify the final state. The campaign is complete; stop at a documented limitation or an owner decision.`
+- `docs/final-report.md`: release outcome, provenance, and limits.
+- `docs/metrics.md`: measurement history and budget results.
+- `docs/repo-audit.md`: security, license, and complexity audit.
+- `TODO.md`: open defects and their fixes.
 
 First command: `tests/run.sh suite && scripts/audit.sh`.

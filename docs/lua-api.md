@@ -20,14 +20,14 @@ regenerates **Call sites**, and fails when:
 - Only the six files above are in scope. Other retained C bindings and Lua
   modules are not part of this closure.
 - **Provider** names where the symbol comes from: `host` is the native Rust C
-  ABI that replaced the bindings in the removed `player/lua.c`; `defaults.lua`,
-  `assdraw.lua`, `options.lua`, and `input.lua` are the unchanged built-in
-  module files; `data` marks conversion sentinels and internal state.
+  ABI that replaced the deleted C host; `defaults.lua`, `assdraw.lua`,
+  `options.lua`, and `input.lua` are the unchanged built-in module files; `data`
+  marks conversion sentinels and internal state.
 - **Scope** is the port target: `required` is needed by the OSC closure
-  (`osc.lua`, `defaults.lua`, `assdraw.lua`, `options.lua`, and `mp.msg`) by
-  P5.4; `built-in` is needed only when `select.lua` and `input.lua` load by
-  P5.5; `none` is defined or referenced but never called by a retained script,
-  so the unchanged Lua definition is enough; `data` marks required table
+  (`osc.lua`, `defaults.lua`, `assdraw.lua`, `options.lua`, and `mp.msg`);
+  `built-in` is needed only when `select.lua` and `input.lua` load; `none` is
+  defined or referenced but never called by a retained script, so the
+  unchanged Lua definition is enough; `data` marks required table
   constants and state.
 - **Call sites** count every reference, including definitions and assignments
   in `defaults.lua`. A function defined there therefore has a site even when no

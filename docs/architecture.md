@@ -1,179 +1,72 @@
 # Architecture
 
-## Audio decode boundary (P1.2)
+Player is one process: the retained mpv playback pipeline in C, a Rust control plane behind a C ABI, and one Lua 5.2 interpreter for the on-screen controls. It opens local files only.
 
-- **Demuxing:** FFmpeg (`demux_lavf`) remains the only demuxer. It produces encoded audio and video packets and the per-stream codec parameters. Keeping one demuxer preserves mpv's existing timestamp, seek, and A/V scheduling behavior.
-- **Video decode:** FFmpeg decodes video through `vd_lavc`, including the VideoToolbox hardware path.
-- **Audio decode:** Symphonia, vendored at `vendor/symphonia` (commit `b6336209bb40d57e4ed71079cf7f7fc6c4626aae`, MPL-2.0), decodes AAC, ALAC, FLAC, MP3, Opus, PCM, and Vorbis.
-- **Bridge:** `rust/player-audio` is a Rust staticlib. `audio/decode/ad_symphonia.c` maps `mp_codec_params` to `struct player_audio_params`, and the Rust side creates a Symphonia `AudioDecoder` from `AudioCodecParameters`. The C ABI is in `rust/player-audio/include/player_audio.h`.
-- **Data flow:** the demuxer packet bytes and timestamps go to `player_audio_decode`; Symphonia returns interleaved f32 PCM in a handle-owned buffer; the C filter copies it into an `mp_aframe` (`AF_FORMAT_FLOAT`) and writes it to the decoder output pin. The buffer is valid until the next decode or destroy call.
-- **Selection:** `mp_decoder_entry` carries a driver id. `audio_decoder_list()` registers Symphonia first and libavcodec second. P1.2 used libavcodec as a fallback while the bridge matured; P1.3 removed the FFmpeg audio decoders, so Symphonia is the only audio decoder in the final link.
-- **Extradata:** mpv copies subtitle extradata into `mp_codec_params.extradata`; for audio and video the original `lav_codecpar` holds it. `ad_symphonia.c` prefers `codec->extradata` and falls back to `codec->lav_codecpar`.
-- **Lifetime and errors:** the Rust handle is owned by the C filter and destroyed on filter destroy. Every FFI entry point catches panics and writes a bounded error string. No Rust unwind crosses the C boundary. Decode errors fail the audio filter and are logged.
-- **Build:** `scripts/build.sh` builds `rust/Cargo.toml -p player-audio` with `CARGO_TARGET_DIR=.work/deps/player-audio/target`, then passes `-Dplayer-audio-lib=<staticlib>` to Meson. Meson links the archive through `declare_dependency(link_args: ...)`. P4.1 replaces this temporary option with the workspace's Meson/Cargo integration.
-- **Not changed:** mpv's A/V scheduler, seek pipeline, audio filters, CoreAudio output, and demuxer. Symphonia does not demux; a second demuxer would need a separate synchronization design and is follow-on work.
+## Player shape
 
-## License boundary
+- **C:** playback loop, demux and decode pipeline, filters, subtitles, video output (`gpu-next` over libplacebo, Vulkan, and MoltenVK), CoreAudio, Cocoa platform glue, client event delivery, track-list payloads, and execution of the supported commands.
+- **Rust:** startup configuration, playlist ownership, command validation, scalar playback state and change detection, local file I/O, the Symphonia audio bridge, and the Lua host.
+- **Lua:** the built-in on-screen controls and any script the user loads explicitly. The interpreter is vendored Lua 5.2.4 through `mlua`.
 
-Symphonia is MPL-2.0. mpv remains GPL-2.0-or-later. Symphonia's source and license are preserved in `vendor/symphonia`. The release must carry the MPL notice and source availability; `docs/licenses.md` records the inventory and P8.3 audits it.
+The release app links the Rust plane as one `libplayer_release.dylib`. The development build links `player-ffi` and `player-audio` as static libraries.
 
-## Feature surface (P2.1)
+## Input boundary
 
-`scripts/build.sh` sets all 94 Meson feature options explicitly. Enabled features are `cocoa`, `coreaudio`, `vulkan`, `videotoolbox-pl`, `swift-build`, `iconv`, `zlib`, and the four macOS SDK feature checks. Every other feature option is `disabled`, including all non-macOS audio/video outputs, GL/EGL, X11, Wayland, DRM, VAAPI, VDPAU, SDL, capture, disc, JavaScript, VapourSynth, plugins, and shader compilers that are only used on Windows.
+`player-core::input::classify_input` is the single policy for input strings. It accepts ordinary local paths, including paths with spaces, Unicode, `:`, relative components, symlinks, and mounted volumes. It rejects every `scheme://` URL, the known protocol wrappers (`data:`, `lavfi:`, `edl:`, `memory:`, `fd:`, `av:`, `mf:`, and the rest), and network prefixes. `file://` is converted only when the caller passes `allow_file_uri`; drag-and-drop does this for an existing local path before queueing `loadfile`.
 
-`tests/run.sh build` parses `meson.options` and `meson configure build` and fails if any feature outside that enabled set is not `disabled`, or if an expected feature is not `enabled`. It also rejects unsupported linked libraries.
+The classifier is called at startup, IPC and script `loadfile`, playlist entries, and external audio or subtitle files. Two limits are open:
 
-The embedded Lua modules are `defaults.lua`, `assdraw.lua`, `options.lua`, `input.lua`, `select.lua`, and `osc.lua`. P2.1 reduced the set; P5.5 removed the `.inc` generation and the C `player/lua.c` host, so the Rust host embeds these six files and `scripting.c` only routes the backend. `ytdl_hook`, `stats`, `console`, `auto_profiles`, `positioning`, `commands`, `context_menu`, and `fzy` are not embedded or loaded.
+- `--playlist=FILE` and `loadlist FILE` reach the stream layer directly. The stream layer accepts `file://` and fails closed on network schemes, but the classifier is not applied to the playlist path itself.
+- Startup parsing rejects a non-UTF-8 argument before the classifier runs. The classifier and the local-file FFI take UTF-8, so they are narrower than upstream mpv's byte-transparent paths. macOS paths are Unicode in normal use.
 
-## Input surface (P2.2)
+The stream layer registers `file` and the internal client callback only. FFmpeg is configured with `--disable-network` and a `file`-only protocol allowlist. Network protocols, TLS, and a CA bundle are not built.
 
-The stream list contains `stream_file` and `stream_cb` only; the demuxer list contains the local directory, Matroska, lavf, playlist, and timeline demuxers. `--list-protocols` reports `file://` only. Network, wrapper, disc, capture, and remote-playlist modules and their option tables are removed; `docs/scope.md` records the retained local utilities and remaining debt.
+## Playback pipeline
 
-## Target surface (P2.5)
+FFmpeg demuxes every container and decodes video. VideoToolbox is the hardware path for H.264 and HEVC. Symphonia decodes AAC, ALAC, FLAC, MP3, Opus, PCM, and Vorbis from packets supplied by the FFmpeg demuxer. `libswresample` converts and resamples audio. The renderer is `vo=gpu-next` over libplacebo and Vulkan through MoltenVK; there is no usable macOS OpenGL context in mpv v0.41.0.
 
-When `libmpv` is disabled, the sources compile directly into the `mpv` executable; no shared `libmpv` target or dylib is produced. The build gate asserts that no shared-library target exists, no `libmpv` dylib remains, and `otool -L` does not reference `libmpv`. The macOS playback path is the explicit top-level source set; inherited optional-feature conditionals are disabled and outside the built path.
+`audio/out/ao_coreaudio.c` skips the `kAudioOutputUnitProperty_ChannelMap` call. macOS 27 rejects the upstream channel-layout value with error -50; the audio unit's default mapping plays mono, stereo, and 5.1. Revisit this when upstream fixes the property, and keep the regression check.
 
-## FFI boundary (P4.3)
+## Rust control plane
 
-- Opaque handles: `player-audio` decoders are created by `player_audio_create()` and destroyed by `player_audio_destroy()`; the C caller owns the handle and must not use it after destruction. No Rust-owned pointer escapes.
-- Strings and errors: `player_ffi_classify_input()` writes a NUL-terminated path or error into caller-provided buffers. It never returns Rust-owned memory, and `BUFFER_TOO_SMALL` is a typed result.
-- Typed errors: `PLAYER_FFI_INPUT_REJECTED` distinguishes a policy rejection from `PLAYER_FFI_INPUT_INVALID` (empty or malformed) and `PLAYER_FFI_INPUT_BUFFER_TOO_SMALL`.
-- Panics: exported functions catch unwinding before returning; no Rust panic crosses the C boundary. `player_ffi_panic_for_test()` exercises that path.
-- Threading: `player-audio` decoder handles are not thread-safe; the caller serializes access. There are no shared mutable globals in the FFI.
-- Callbacks: none are exposed yet. Future registration must be paired with explicit unregister/cleanup and must not run after the owning handle is destroyed.
+- **Startup:** `player-core::config` parses the supported command line into a typed `StartupConfig`. `player/main.c` applies the fields and sends only the remaining engine options to the C parser. `--version`, `--help`, and unknown-option failures stay in C.
+- **Playlist:** `player-core::playlist` owns order, IDs, the current entry, insertion, removal, and next and previous. `player-ffi` maps C `playlist_entry` pointers to Rust IDs. C owns the entry payloads and their talloc lifetime.
+- **Commands:** `player-core::command` validates the supported vocabulary before the C parser builds an `mp_cmd`. The checker is narrower than the C option grammar: it rejects `set aid auto` and `seek 1:30`, and node commands do not pass through it.
+- **State:** `player-core::state::PlaybackState` owns pause, fullscreen, mute, volume, speed, time-pos, duration, and EOF, with a change sequence. C property getters read the Rust store and C reports facts through the FFI. The fullscreen value written by the macOS window path through `m_config_cache_write_opt` does not reach the Rust store.
+- **Local file:** `player-core::local_file::LocalFile` owns open, read, write, seek, size, and EOF with typed errors. `stream/stream_file.c` is the stream backend over that handle.
 
-## Script host (P5.1)
+## FFI contract
 
-- **Interpreter:** `rust/player-lua` owns the Lua state through `mlua` 0.12.2, pinned with only `lua52` and `vendored`; the vendored source is Lua 5.2.4, the same version as the C host. No async, serde, or Tokio features are enabled.
-- **Libraries:** the interpreter opens mlua's safe standard-library set. That includes `io`, `os`, and `package`, which `select.lua`, `options.lua`, and `defaults.lua` use. The `debug` library and C-module loading are not enabled.
-- **Link state:** P5.5 deleted `player/lua.c`; the vendored interpreter in `player-lua` is the only Lua implementation linked into `build/mpv`.
+- Handles are opaque. The C caller owns each handle and must not use it after destruction.
+- Strings and errors use caller-provided buffers. `BUFFER_TOO_SMALL` is a distinct result.
+- Errors are typed where the ABI defines an enum. The command check returns an error string and `-1`; the audio create call returns `NULL` and loses its error category.
+- No Rust unwind may cross the ABI. `player-ffi` wraps the boundary entry points in `catch_unwind`; the state, playlist, and local-file entry points currently rely on their code not panicking. `player-audio` wraps create and decode but not reset and destroy.
+- The audio decoder handle is not thread-safe. The caller serializes access. There are no shared mutable globals.
+- The Lua backend and the audio bridge are the only Rust code with `unsafe`; every block states its safety argument.
 
-## Script host core (P5.3)
+## Script host
 
-- **Thread and events:** `rust/player-lua` runs one interpreter per script on a dedicated thread. `ScriptHost::spawn` owns the thread and one ordered event queue. `raw_wait_event` blocks on that queue with the next timer deadline, so timers do not busy-wait. `stop` posts a shutdown event and waits at most 2 s.
-- **`mp` table:** the host registers the native primitives: `log`, property get/set/del/observe, `command`/`commandv`/`command_native`, `request_event`/`raw_wait_event`, `get_time`, `format_time`, `find_config_file`, and `input_set_section_mouse_area`. It also creates the `mp.utils` module table. The unchanged `defaults.lua` supplies the Lua-level helpers, timers, bindings, and OSD overlay objects; `docs/lua-api.md` is the authoritative closure.
-- **Values:** `NativeValue` mirrors the native node formats. Arrays and maps keep the `mp.ARRAY`/`mp.MAP` sentinels, and map entries are sorted so command nodes are deterministic.
-- **Errors:** every callback catches Rust panics and turns them into Lua errors; a script error ends the thread with a typed `HostError`. `player-lua` contains no `unsafe`.
-- **Trust:** the built-in OSC is trusted application code. Explicitly loaded scripts are trusted code: the host adds no network or subprocess capability and is not a sandbox. The player command set remains the capability boundary.
-- **Integration:** the safe `PlayerBackend` trait is the C-boundary seam; P5.4 adapted it to the player and P5.5 removed the C host.
+- **Interpreter:** `rust/player-lua` owns one Lua state per script through `mlua` 0.12.2 with `lua52` and `vendored`. The only interpreter in the process is the vendored Lua 5.2.4.
+- **Libraries:** the interpreter opens `io`, `os`, and `package`, which the built-in modules use. It does not open `debug`. The host is not a sandbox: scripts can open files, run processes with `os.execute`, and send the full mpv command table, including `subprocess` and `run`. Explicitly loaded scripts are trusted code.
+- **Built-in modules:** `defaults.lua`, `assdraw.lua`, `options.lua`, `input.lua`, `select.lua`, and `osc.lua`. `select.lua` is loaded by default and contains process execution and URL-opening bindings; the OSC does not call it.
+- **Threading:** each script gets a thread and an event pump. `raw_wait_event` blocks on an ordered queue until the next timer deadline. The queue is unbounded, and the production wait on script completion has no timeout; both are open defects.
+- **OSC:** one bottom bar with play and pause, seek, elapsed and duration, volume and mute, fullscreen, and optional track selectors. It publishes `user-data/osc/areas`, `user-data/osc/margins`, and `user-data/osc/visibility`, and registers the `osc-message`, `osc-visibility`, `osc-show`, and `osc-hide` messages.
 
-## Lua host integration (P5.4)
+## Release and dependencies
 
-- **Backend:** `player/lua_host.c` defines the `mp_scripting_lua` backend. It passes the script's `mpv_handle`, name, filename, path, and C helpers (log, `find_config_file`/free, input mouse area) to `player_ffi_lua_run`.
-- **Client bridge:** `player-ffi` implements `PlayerBackend` over the public client API for commands, properties, observation, event requests, time formatting, and native node conversion. A per-script pump thread is the only caller of `mpv_wait_event`; commands and properties run on the Lua thread. The pump forwards ordered `ScriptEvent`s to the host queue.
-- **Module order:** the host loads `defaults.lua`, then `mp.assdraw`, `mp.input`, and `mp.options`, then the script source. `@osc.lua` and `@select.lua` resolve to the embedded sources; the upstream OSC is unchanged.
-- **Link:** the external Lua library is no longer linked. The vendored Lua 5.2.4 in `mlua` is the only interpreter in `build/mpv`, and `nm` shows one `luaL_newstate`.
+`scripts/build-deps.sh` builds Vulkan-Headers and Loader, dav1d, FreeType, FriBiDi, HarfBuzz, shaderc, libplacebo, libass, and FFmpeg from pinned sources, and fetches the checksum-pinned MoltenVK binary. `scripts/release.sh` builds the Rust cdylib, configures mpv against the release prefix, and calls `scripts/bundle.py` to copy the non-system closure into `Player.app/Contents/Frameworks`, rewrite install names to `@rpath`, add the executable rpath, bundle MoltenVK and its ICD manifest, write `Info.plist`, and ad-hoc sign the app.
 
-## Single Lua host (P5.5)
+`player/main.c` sets `VK_DRIVER_FILES` and `VK_ICD_FILENAMES` to the bundled ICD before renderer initialization. No Homebrew path is linked into the release.
 
-- `player/lua.c`, `player/lua/meson.build`, the external Lua dependency, and the Meson `lua` option are gone. `player/lua_host.c`, `player-ffi`, and `player-lua` are the only Lua path.
-- The six `.lua` files remain as the embedded source of the built-in modules; there is no `.inc` generation and no second interpreter.
-- `mp.utils` host functions are implemented in `player-lua` (`split_path`, `readdir`, `file_info`, `parse_json`, `format_json`), closing the audit's host and built-in scopes. The Lua-level `mp.utils` helpers in `defaults.lua` are unchanged.
-- The interpreter is vendored Lua 5.2.4 through `mlua`; no external `liblua` is linked. `nm` reports one `luaL_newstate`, and `otool -L` has no Lua dylib.
-- `tests/run.sh build` checks for one interpreter; `scripts/audit.sh` checks for C host source remnants, no linked Lua dylib, and one interpreter symbol.
+The bundle must set `MPVBUNDLE=true` in `Info.plist`; the Cocoa layer uses that value to choose the regular activation policy, the Dock icon, and the menu bar. The current bundler omits the key.
 
-## Simplified OSC (P6.1)
+## Provenance
 
-- `player/lua/osc.lua` is one bottom bar: play/pause, seek bar with elapsed/duration, volume/mute, fullscreen, and optional audio/subtitle selectors. It has one layout and no context menus, window controls, touch handling, chapter/playlist/title elements, or compatibility branches.
-- Auto-hide and pointer-move reveal remain. The OSC ticks at 20 Hz while visible, scales from the OSD dimensions for Retina, and falls back to a 1280x720 canvas when headless.
-- It publishes `user-data/osc/areas` (hitboxes), `user-data/osc/margins`, and `user-data/osc/visibility`. Messages are `osc-message`, `osc-visibility`, `osc-show`, and `osc-hide`; named bindings are `play-pause`, `seek-forward`, `seek-backward`, `toggle-fullscreen`, and `toggle-osc` (key `o`).
-- Size: 466 lines, down from 2977. The P6.1 metrics row records startup and first-frame timings; `tests/osc-input` drives the hitboxes and named bindings.
+- mpv v0.41.0 at `41f6a645068483470267271e1d09966ca3b9f413`.
+- FFmpeg n9.0.2 at `ce8f11b9fac4cd7ccfb41ca7c01bc17f5cda8cc3`.
+- Symphonia at `b6336209bb40d57e4ed71079cf7f7fc6c4626aae`, MPL-2.0, vendored under `vendor/symphonia`.
+- The repository history was consolidated to the `campaign-base` root commit. Upstream mpv and Symphonia histories are not retained; the pins above are the provenance.
 
-## OSC decision (P6.2)
+## Follow-on
 
-D4 remains: the simplified Lua OSC on `mlua` is the permanent default. Rust owns the player core, not the overlay UI, and there is no second UI implementation.
-
-- **Attribution:** `osc.lua` is 466 lines and 14,479 B. `libplayer_ffi.a` is a 20,951,920 B archive that includes Rust `std`, so it is not a linked-size figure; the vendored Lua 5.2.4 archive is 319,008 B. The stripped executable is 13,990,240 B. Per-symbol attribution is unreliable because macOS `nm -S` reports zero symbol sizes.
-- **Startup:** nine interleaved first-frame runs gave medians of 169.23 ms default, 164.91 ms with the OSC disabled, and 169.60 ms with both built-in scripts disabled. The differences are within the observed spread.
-- **Follow-on threshold:** Lua + mlua + OSC above 10% of the final distributable footprint (2.01 MiB at the current 20.06 MiB closure) or above 50 ms of cold startup. P8 evaluates this on the final closure; a breach opens a follow-on, not an in-campaign rewrite.
-
-## Typed startup configuration (P7.1)
-
-- `player-core::config` parses the supported startup surface into `StartupConfig`: positional files, `--fullscreen`/`--fs`, `--start` (absolute, relative, percent, chapter, or none), and `--audio-file(s)`/`--sub-file(s)` path operations. Unknown options pass through.
-- `player-ffi::startup` exposes `player_ffi_startup_parse` with a callback sink. `player/main.c` applies the typed fields directly to `MPOpts`/`MPContext` (fullscreen, `play_start`, path lists, playlist entries) and sends only the remaining engine/test flags to `m_config_parse_mp_command_line`.
-- `--version`, `--help`, engine options, and removed-option failures stay in the C option frontend; there is no second dynamic-option framework. The option table remains for help and runtime properties.
-- The local-only boundary still classifies paths at load; the startup parser only classifies argv shape.
-
-## Rust playlist ownership (P7.2)
-
-- `player-core::playlist` owns the entry order, IDs, current entry, completed/started flags, insertion, removal, clear, move, and next/previous. Entries are identified by a `u64`; the pure list is unit-tested.
-- `player-ffi` exposes an opaque `player_playlist` handle that maps Rust IDs to the C `playlist_entry` pointers. `common/playlist.c` is now a thin C shim: entry payloads (filename, title, params, flags) and their talloc lifetime stay at the C boundary, while the C list arrays and current/index fields are gone. Callers use `playlist_get_current`, `playlist_entry_count`, `playlist_entry_from_index`, and the other accessors.
-- `playlist_transfer_entries`/`playlist_transfer_entries_to` move entries into the destination, assign new IDs, and steal the talloc ownership and playlist-path strings; `playlist_parse_file` uses the same path.
-- Shuffle/unshuffle and the `--shuffle`, `--loop-playlist`, `--loop-file`, `playlist-shuffle`, and `playlist-unshuffle` surfaces are removed. A-B loop remains.
-- Local-only rejection is unchanged; URL entries are rejected at the boundary.
-
-## Typed command boundary (P7.3)
-
-- `player-core::command` owns the supported command vocabulary and argument validation: pause/fullscreen/mute toggles and sets, seek modes, frame-step, volume/speed add and set, stop/quit, loadfile modes, playlist next/previous, screenshot, subtitle add, and audio/subtitle/video track selection.
-- `player-ffi` exposes `player_ffi_command_check_strv` and `player_ffi_command_check_str`. `input/cmd.c` runs the checker before the existing parser builds an `mp_cmd`: supported commands are type-checked, unsupported commands pass through, and malformed supported commands are rejected with a typed message. Multi-command strings and `;` lists stay with the C parser.
-- Execution remains at the C playback boundary (`player/command.c`), so the stringly Lua/IPC edge is unchanged. The typed set excludes the removed shuffle/loop paths.
-
-## Rust control state (P7.4)
-
-- `player-core::state::PlaybackState` owns the scalar control-plane state: pause, fullscreen, mute, volume, speed, time-pos, duration, and EOF, with a change sequence. The pure store is unit-tested.
-- C creates one state handle per `MPContext`. Option changes, the playloop time update, demuxer duration changes, and EOF report facts through the FFI. The property getters for these fields read the Rust store, and the option-change callback uses the Rust change result to decide whether to notify.
-- `control-state` returns the Rust snapshot; `tests/run.sh state` asserts it at `pause=0/volume=100/speed=1` and again at `pause=1` after the round trip.
-- Track-list remains a C payload at the boundary, and the C client event queue still delivers events. The scalar values and change detection are Rust-owned; the payload and delivery boundary stay with the existing client API.
-
-## Local file boundary (P7.5)
-
-- `player-core::local_file::LocalFile` owns open, read, write, seek, size, and EOF for local paths with typed errors. Tests cover short reads, seeking beyond EOF, permission errors, and Unicode paths.
-- `player-ffi` exposes an opaque local-file handle. `stream/stream_file.c` is now a compact stream backend over that handle; it preserves directory detection, write support for screenshots, the `file://` conversion, and the stdin/stdout `-` fallback. The generic stream list remains `file` plus `stream_cb`; there is no network stream backend.
-- `stream/stream.c` still owns the read buffer and stream-callback registration; the filesystem work is Rust-owned.
-
-## Release closure (P8.1)
-
-- `scripts/build-deps.sh` builds the release closure from pinned sources into `.work/deps/release`: Vulkan-Headers/Loader 1.4.363.0, dav1d 1.5.4, FreeType 2.15.0, FriBiDi 1.0.17, HarfBuzz 15.0.0, shaderc 2026.4 (glslang, SPIRV-Headers, SPIRV-Tools pinned), libplacebo 7.387.0, libass 0.17.5, FFmpeg 9.0.2, and the checksum-pinned MoltenVK 1.4.2 binary. Homebrew supplies build tools only; no Homebrew dylib is linked.
-- `scripts/release.sh` builds the Rust release libraries, configures mpv with `PKG_CONFIG_LIBDIR` restricted to the release prefix, and calls `scripts/bundle.py`. The bundler copies the recursive non-system closure into `Player.app/Contents/Frameworks`, rewrites every install name to `@rpath`, adds the executable rpath, bundles MoltenVK and its ICD manifest, writes `Info.plist`, and ad-hoc signs the app.
-- `player/main.c` sets `VK_DRIVER_FILES` and `VK_ICD_FILENAMES` to the bundled MoltenVK manifest before renderer initialization, unless either is already set.
-- `tests/run.sh release` checks the app, the closure (no Homebrew or build paths), the expected dylibs, the ICD, the rpath, playback of the h264 fixture, and the ad-hoc signature.
-
-## Release link shape (P8.2)
-
-- The release app links one Rust cdylib, `libplayer_release.dylib` (MPL-2.0), which carries the `player-ffi` and `player-audio` symbols. The cdylib is built with `-undefined dynamic_lookup`; the mpv executable exports its C symbols with `-export_dynamic`. The bundler preserves those exports by stripping with `strip -x` (a full strip removes them).
-- This moved the Rust control plane out of the executable: the executable is 9.64 MB and the distributable is 26.8 MB. Plain LTO was rejected because the two Rust staticlibs duplicate std symbols at link time; `opt-level = "s"` increased the executable and was reverted. Shaderc is built `MinSizeRel`.
-- The dev and FFI test builds keep the staticlibs; only the release app uses the cdylib.
-
-## Ownership boundaries (final)
-
-- **C:** playback loop, demux/decode pipeline, filters, subtitles, video output (`gpu-next`/libplacebo/Vulkan), CoreAudio, Cocoa/platform glue, client API event delivery, track-list payloads, and execution of the supported command vocabulary.
-- **Rust:** typed startup/config, playlist, input/command validation, scalar control state and change detection, local file I/O, the Lua host, and the Symphonia audio bridge.
-- **FFI:** opaque handles and typed errors in `player-ffi`; `player-release` is the release-only cdylib. No duplicate ownership of player state; C reports facts in and reads facts out at the boundary.
-
-## Renderer and audio integration
-
-The renderer is `vo=gpu-next` over libplacebo and Vulkan/MoltenVK; `gl`, `gl-cocoa`, `videotoolbox-gl`, and `macos-cocoa-cb` are disabled. The release bundles MoltenVK and its ICD and points the loader at it before renderer initialization. VideoToolbox is the hardware decoder path. CoreAudio is the only audio output; the D7 ChannelMap deviation remains. Symphonia decodes AAC, ALAC, FLAC, MP3, Opus, PCM, and Vorbis; FFmpeg demuxes and decodes video; `libswresample` converts and resamples.
-
-## Migration sequence
-
-P4 established the Rust workspace and FFI contract; P5 replaced the C Lua host with mlua and the Rust script host; P6 simplified the OSC and measured it; P7 moved startup, playlist, input/commands, state/events, and local file I/O; P8 built the pinned closure, the app, and the final audit. The C host, external Lua, and superseded static link shape are deleted or retained only as dev build paths.
-
-## Remaining C and dependencies
-
-216 retained C files and 137,228 C/H lines implement the playback pipeline and platform glue. The dependency inventory is in `docs/final-report.md`; the release closure is 13 files. FFmpeg is minimal, static inside the executable, with dav1d as the only external codec library. libass is built with CoreText and without fontconfig; shaderc, glslang, SPIRV-Tools, FreeType, FriBiDi, and HarfBuzz are source-built and bundled.
-
-## Provenance and divergence
-
-Pins: mpv v0.41.0 at `41f6a645068483470267271e1d09966ca3b9f413`; FFmpeg n9.0.2 at `ce8f11b9fac4cd7ccfb41ca7c01bc17f5cda8cc3`. D7 skips the broken CoreAudio ChannelMap. D16 consolidated history to `campaign-base`; upstream histories are not retained. Removed surfaces are listed in `docs/scope.md`. There is no network backend, TLS stack, CA bundle, encoding, recording, lavfi, or clipboard support.
-
-## Final verification
-
-`tests/run.sh suite` reports 292 passed; `scripts/audit.sh` is ok; `scripts/measure.sh final` and `compare` pass the P8 budgets. The app is 26.8 MB with a 9.64 MB executable and a 16.37 MiB closure. See `docs/status.md`, `docs/metrics.md`, and `docs/final-report.md`.
-
-## Follow-on boundary
-
-A/V scheduler, general demux/decode orchestration, renderer integration (7.6–7.8), and Linux remain follow-on work. The jank audit keeps user-facing packaging items open; no network capability returns without a new owner decision.
-
-- P1.4 added the FFmpeg manifest gate over the frozen allowlist.
-- P2.1 locked the Meson feature surface and reduced the embedded Lua modules.
-- P2.2 restricted the input surface to local files.
-- P2.3 removed the unsupported platform, UI, scripting, plugin, and filter sources; encoding/recording/lavfi and clipboard remain compiled as documented debt because the minimal FFmpeg has no encoders or muxers.
-- P2.4 reduced the user-visible CLI and config surface; the encode/lavfi/recording debt has no remaining CLI entry point.
-- P2.5 removed the shared `libmpv` target from the locked build and verified the executable-only target surface.
-- P3.1 enforces the local input boundary at CLI, IPC, playlists, external files, and drag-and-drop; automatic user config/scripts are disabled by default.
-- P3.2 locked the boundary with the URL/playlist/hostile-config tests and `scripts/audit.sh`.
-- P4.1 added `player-core`/`player-ffi`, built both static libraries, and linked/called `player_ffi_abi_version` from the player.
-- P4.2 moved the input classifier to `player-core::input`; the C boundary delegates through `player_ffi_classify_input` with typed results.
-- P4.3 documented the FFI invariants and added the C bridge test.
-- P8.1 built the pinned release closure and app bundle; P8.2 measures and optimizes it.
-- P7 moves config, playlist, input, state, and local file handling into Rust; the audio bridge stays at the decode boundary.
+The A/V scheduler, general demux and decode orchestration beyond the Symphonia audio bridge, renderer integration, and Linux remain outside this scope. A network capability, a second Lua interpreter, or automatic user config and scripts would need an explicit decision.

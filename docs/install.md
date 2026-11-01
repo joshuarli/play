@@ -2,38 +2,42 @@
 
 ## Release app
 
-Build with:
+Build the pinned dependency closure and the app:
 
-```
+```sh
 scripts/build-deps.sh
 scripts/release.sh
 ```
 
-The app is `dist/Player.app`. Open it from Finder or run:
+The app is `dist/Player.app`. Open it from Finder, or run a file directly:
 
-```
+```sh
 dist/Player.app/Contents/MacOS/player FILE
 ```
 
-The bundle carries its own pinned dylibs, Vulkan loader, MoltenVK, and the Rust cdylib. It does not use Homebrew at runtime. It is ad-hoc signed, not notarized; the local build is not quarantined. If you copy it from another machine, use macOS's normal Gatekeeper handling and do not distribution-sign it without the owner's signing identity.
+The bundle carries its own pinned dylibs, Vulkan loader, MoltenVK, and the Rust cdylib. It does not use Homebrew at runtime. It is ad-hoc signed and not notarized. Do not distribute the build without a signing identity.
+
+The current bundle omits the `MPVBUNDLE` key in `Info.plist`, so macOS runs it as an accessory app without a menu bar. Launching it with a file argument still plays. The bundle fix is tracked in `TODO.md`.
 
 ## Local-only contract
 
-`file://` and local paths are supported. Network URLs are rejected before the stream layer, with `Refusing non-local input`. The fork does not include network protocols, TLS, a CA bundle, encode/record/lavfi, or clipboard support.
+Local paths are supported. Drag-and-drop converts a `file://` URL for an existing path; the CLI, IPC `loadfile`, playlists, and external files reject `file://`. Network URLs are rejected before the stream layer with `Refusing non-local input`. The player does not include network protocols, TLS, or a CA bundle.
+
+Clipboard commands are compiled and reachable. Encoding, recording, and the lavfi filter graph are compiled but have no reachable path in the release build.
 
 ## Development
 
-```
+```sh
 scripts/build.sh
 tests/run.sh suite
 ```
 
-The development build is `build/mpv`; scratch files live under `.work/`. `scripts/release.sh` is the only supported way to produce the app; do not hand-assemble `Contents/Frameworks`.
+The development build is `build/mpv`; scratch files live under `.work/`. `scripts/release.sh` is the only supported way to produce the app. Do not hand-assemble `Contents/Frameworks`.
 
 ## Owner checks
 
-```
+```sh
 scripts/manual-checklist.sh --fixture-dir .work/fixtures --release
 ```
 
-Record results in `docs/manual-checklist.md`. Visual quality, real audio, real mouse/drag, HDR/Retina, and signing/notarization are not automated gates. See `docs/jank-audit.md` for open user-facing items.
+Record results in `docs/manual-checklist.md`. Visual quality, real audio, real mouse and drag, HDR and Retina, and signing or notarization are not automated gates. `TODO.md` lists open user-facing defects.
