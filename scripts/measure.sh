@@ -323,6 +323,20 @@ def closure():
     }
 
 
+def script_host_attribution():
+    osc = ROOT / "player" / "lua" / "osc.lua"
+    ffi = ROOT / ".work" / "deps" / "player-audio" / "target" / "release" / "libplayer_ffi.a"
+    lua_archives = sorted((ROOT / ".work" / "deps" / "player-audio" / "target" / "release" / "build").glob(
+        "mlua-sys/*/out/lib/liblua5.2.a"))
+    lines = len(osc.read_text().splitlines()) if osc.exists() else 0
+    return {
+        "osc_bytes": osc.stat().st_size if osc.exists() else 0,
+        "osc_lines": lines,
+        "ffi_archive_bytes": ffi.stat().st_size if ffi.exists() else 0,
+        "lua_archive_bytes": lua_archives[0].stat().st_size if lua_archives else 0,
+    }
+
+
 def stripped_sizes():
     target = TMP / "mpv-stripped"
     shutil.copy2(MPV, target)
@@ -425,6 +439,10 @@ if MODE == "size":
     print(f"closure: {mb(closure_data['bytes'])} MiB in {closure_data['files']} files")
     for component, value in closure_data["by_component"].items():
         print(f"  {component}: {mb(value['bytes'])} MiB / {value['files']} files")
+    host = script_host_attribution()
+    print("script host: osc.lua {osc_bytes} B / {osc_lines} lines; "
+          "player-ffi archive {ffi_archive_bytes} B; vendored Lua archive "
+          "{lua_archive_bytes} B (archives, not linked size)".format(**host))
     raise SystemExit(0)
 startup = startup_times()
 first_frame = first_frame_ms(fixtures["1080p"])

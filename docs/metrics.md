@@ -10,3 +10,19 @@ Automated playback is headless (`--vo=null --ao=null`); GUI and renderer checks 
 | 2026-11-01 | ee06243e8cc4 | p6.1 | 16466080 | 13990240 | 21037712 | 17 | 66.18 | 63.17 | 148.24 | 79.03 | 210.61 | 0.18 | 0.45 | 0.68 | 3.1 | 1 | headless; 3 s clips; GUI owner-run; osc.lua 466 lines |
 
 OSC (P6.1): `player/lua/osc.lua` is 466 lines, down from 2977. The p6.1 row records the resulting startup and first-frame timings; the OSC redraws at 20 Hz while visible.
+
+## Script host attribution (P6.2)
+
+Measured at `ee06243` on 2026-11-01 with `scripts/measure.sh size` and nine interleaved first-frame runs.
+
+| Item | Value |
+|---|---|
+| `osc.lua` | 466 lines, 14,479 B |
+| `libplayer_ffi.a` archive | 20,951,920 B |
+| vendored Lua 5.2.4 archive | 319,008 B |
+| `build/mpv` stripped | 13,990,240 B |
+| closure | 20.06 MiB in 17 files |
+
+First-frame medians (9 interleaved runs, `--frames=1 --untimed --hwdec=no` on the 1080p measure fixture): default 169.23 ms; `--osc=no` 164.91 ms; `--osc=no --load-select=no` 169.60 ms. The differences are within the run-to-run spread (158.74-215.92 ms), so no isolated host cost above noise was measurable; the 50 ms threshold is not implicated.
+
+Per-symbol linked attribution is unavailable on this host: macOS `nm -S` reports zero symbol sizes, and archive sizes include Rust `std` and are not linked-size contributions. Do not treat the archive numbers as the host's package footprint.

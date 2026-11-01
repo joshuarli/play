@@ -79,6 +79,14 @@ When `libmpv` is disabled, the sources compile directly into the `mpv` executabl
 - It publishes `user-data/osc/areas` (hitboxes), `user-data/osc/margins`, and `user-data/osc/visibility`. Messages are `osc-message`, `osc-visibility`, `osc-show`, and `osc-hide`; named bindings are `play-pause`, `seek-forward`, `seek-backward`, `toggle-fullscreen`, and `toggle-osc` (key `o`).
 - Size: 466 lines, down from 2977. The P6.1 metrics row records startup and first-frame timings; `tests/osc-input` drives the hitboxes and named bindings.
 
+## OSC decision (P6.2)
+
+D4 remains: the simplified Lua OSC on `mlua` is the permanent default. Rust owns the player core, not the overlay UI, and there is no second UI implementation.
+
+- **Attribution:** `osc.lua` is 466 lines and 14,479 B. `libplayer_ffi.a` is a 20,951,920 B archive that includes Rust `std`, so it is not a linked-size figure; the vendored Lua 5.2.4 archive is 319,008 B. The stripped executable is 13,990,240 B. Per-symbol attribution is unreliable because macOS `nm -S` reports zero symbol sizes.
+- **Startup:** nine interleaved first-frame runs gave medians of 169.23 ms default, 164.91 ms with the OSC disabled, and 169.60 ms with both built-in scripts disabled. The differences are within the observed spread.
+- **Follow-on threshold:** Lua + mlua + OSC above 10% of the final distributable footprint (2.01 MiB at the current 20.06 MiB closure) or above 50 ms of cold startup. P8 evaluates this on the final closure; a breach opens a follow-on, not an in-campaign rewrite.
+
 ## Open work
 
 - P1.4 added the FFmpeg manifest gate over the frozen allowlist.
@@ -92,5 +100,5 @@ When `libmpv` is disabled, the sources compile directly into the `mpv` executabl
 - P4.1 added `player-core`/`player-ffi`, built both static libraries, and linked/called `player_ffi_abi_version` from the player.
 - P4.2 moved the input classifier to `player-core::input`; the C boundary delegates through `player_ffi_classify_input` with typed results.
 - P4.3 documented the FFI invariants and added the C bridge test.
-- P6.1 replaced the upstream OSC with the compact bottom bar and added the binding-level `osc-input` gate; P6.2 records the decision and measurements.
+- P6.2 recorded D4 and the OSC attribution; P7 moves config, playlist, input, state, and local file handling into Rust.
 - P7 moves config, playlist, input, state, and local file handling into Rust; the audio bridge stays at the decode boundary.

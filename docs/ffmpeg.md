@@ -80,4 +80,4 @@ Current result: 19 passed, 0 failed. A temporary manifest with `http` added to t
 
 ## Next
 
-P6.1 replaced the 2977-line upstream OSC with a 466-line bottom bar and added the binding-level `osc-input` gate. P6.2 records the OSC decision and measurements.
+P6.2 recorded D4 and the OSC attribution: the compact Lua OSC stays the permanent default, and the P8 measurement owns the follow-on threshold. P7.1 adds typed startup configuration.
