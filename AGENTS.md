@@ -1,6 +1,6 @@
 # Repository guide
 
-Player is a local-only media player built on the mpv v0.41.0 playback pipeline, a minimal pinned FFmpeg n9.0.2, and a Rust-owned control plane. The macOS release artifact is `dist/Player.app`; the Linux x86-64 musl gpu-next build is the active campaign (`PLAN.md`).
+Player is a local-only media player built on the mpv v0.41.0 playback pipeline, a minimal pinned FFmpeg n9.0.2, and a Rust-owned control plane. The macOS release artifact is `dist/Player.app`; the Linux x86-64 musl artifact is `dist/player-x86_64-linux-musl.tar.gz`.
 
 ## Commands
 
@@ -11,6 +11,7 @@ Player is a local-only media player built on the mpv v0.41.0 playback pipeline, 
 - `scripts/release.sh` builds and bundles `dist/Player.app`.
 - `make install` runs that build and copies the app to `~/Applications`.
 - `scripts/measure.sh final` checks the release budgets.
+- `make linux` builds the Linux dependency prefix and tarball in the pinned Alpine image; `scripts/linux-container.sh COMMAND` runs any command there, such as `tests/run.sh suite` or `scripts/audit-linux.sh`.
 - `cargo test --manifest-path rust/Cargo.toml` runs the Rust tests.
 
 ## Invariants
@@ -26,6 +27,7 @@ Player is a local-only media player built on the mpv v0.41.0 playback pipeline, 
 ## Documents
 
 - `docs/install.md`: build, run, and owner checks.
+- `docs/linux.md`: Linux runtime set, container, headless gates, ALSA, fixtures.
 - `docs/architecture.md`: ownership boundaries, FFI, script host, renderer, release closure.
 - `docs/scope.md`: retained and removed input surfaces, CLI, local-only boundary, debt.
 - `docs/ffmpeg.md`: FFmpeg pin, allowlist, manifest gate.
@@ -37,4 +39,4 @@ Player is a local-only media player built on the mpv v0.41.0 playback pipeline, 
 - `docs/manual-checklist.md`: owner-run visual and audio checks.
 - `docs/lua-api.md`: generated Lua API audit.
 - `docs/repo-audit.md`: dated security, license, and complexity evidence.
-- `PLAN.md`: Linux x86-64 musl gpu-next campaign.
+- `PLAN.md`: Linux x86-64 musl gpu-next campaign record.

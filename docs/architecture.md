@@ -75,7 +75,7 @@ Linux x86-64 musl uses the same pipeline, Rust plane, and Lua host as macOS. The
 
 Files restored from the mpv v0.41.0 pin (`41f6a645068483470267271e1d09966ca3b9f413`) with headers intact: `video/out/wayland_common.c`, `video/out/wayland_common.h`, `video/out/vulkan/context_wayland.c`, `audio/out/ao_alsa.c`, `osdep/als-linux.c`, `osdep/language-posix.c`, and `osdep/timer-linux.c`. `audio/out/ao.c` registers `alsa` under `HAVE_ALSA`.
 
-`scripts/build-linux.sh` builds against Alpine system libraries and disables `libavdevice`; the local-only player has no capture devices. Remaining gaps against the target in `PLAN.md`: system FFmpeg and libplacebo are linked dynamically (18 `NEEDED` entries against the allowed set of six), the FFmpeg allowlist is not applied, and no Linux gate, audit, CI job, or release artifact exists yet. `scripts/measure-linux.sh baseline` records the starting point in `docs/metrics.md`.
+`scripts/build-linux.sh` links the static prefix from `scripts/build-deps-linux.sh` and disables `libavdevice`; the local-only player has no capture devices. The Rust bridges link as one `libplayer_release.a` built with `--crate-type staticlib`, so the binary has one Rust runtime. The executable needs only musl, `libvulkan.so.1`, `libwayland-client.so.0`, `libwayland-cursor.so.0`, `libxkbcommon.so.0`, and `libasound.so.2`, and `scripts/audit-linux.sh` enforces that set. Remaining Linux gaps: fractional scale, FIFO pacing, real input, and audible output are owner-run (`docs/manual-checklist.md`); there is no hardware decode, no glibc build, and no system-font fallback beyond fontconfig and the installed fonts.
 
 ## Provenance
 

@@ -32,8 +32,8 @@ The local-only gate creates a hostile temporary `HOME` with `mpv.conf`, `input.c
 - Network and wrapper streams, including HTTP, HTTPS, FTP, SFTP, SSH, RTSP, RTMP, HLS, DASH, SMB, libavformat, AVDevice, Blu-ray, DVD, CDDA, DVB, EDL, memory, `fd`, `slice`, `appending`, `mpv`, `ffmpeg`, `lavf`, `hex`, `null`, and the image-file reader.
 - Disc, external CUE, EDL, libarchive, image-file, `mpv`, null, and raw audio or video demuxers.
 - The yt-dlp hook and the option tables for stream-lavf, raw demuxers, discs, and capture.
-- Windows, Linux, and Android audio outputs, video outputs, window systems, GL and OpenGL, Vulkan display backends, and their supporting sources.
-- Video outputs that are not `gpu-next`, including image, terminal, X11, Wayland, DRM, SDL, VA-API, VDPAU, Direct3D, and MediaCodec.
+- Windows and Android audio outputs, video outputs, and window systems; GL and OpenGL; and all Linux audio outputs other than ALSA and window systems other than Wayland.
+- Video outputs that are not `gpu-next`, including image, terminal, X11, DRM, SDL, VA-API, VDPAU, Direct3D, and MediaCodec.
 - JavaScript, VapourSynth, C plugins, Touch Bar, and Media Player integration.
 - Built-in Lua modules that the player no longer loads: `auto_profiles`, `commands`, `console`, `context_menu`, `fzy`, `positioning`, and `stats`.
 - Filter entry points for lavfi, VapourSynth, VA-API, VDPAU, D3D11, fingerprint, and AC-3 encoding.

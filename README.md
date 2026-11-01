@@ -1,6 +1,6 @@
 # Player
 
-Player is a local-only media player for macOS on Apple Silicon. It uses the mpv v0.41.0 playback pipeline, a pinned FFmpeg n9.0.2, and a Rust-owned control plane. It plays local video, audio, subtitles, and playlists. It does not open network streams.
+Player is a local-only media player for macOS on Apple Silicon and for Linux x86-64 on musl. It uses the mpv v0.41.0 playback pipeline, a pinned FFmpeg n9.0.2, and a Rust-owned control plane. It plays local video, audio, subtitles, and playlists. It does not open network streams.
 
 ## Install and run
 
@@ -21,6 +21,8 @@ dist/Player.app/Contents/MacOS/player FILE
 
 The bundle carries its own dylibs, Vulkan loader, MoltenVK, and the Rust cdylib. It does not use Homebrew at runtime. It is ad-hoc signed and not notarized; do not distribute the build without a signing identity.
 
+On Linux, `make linux` builds `dist/player-x86_64-linux-musl.tar.gz` in a pinned Alpine container, and `make install` copies `player` to `~/.local/bin`. The executable is mostly static and needs only musl, the Vulkan loader, Wayland, xkbcommon, and ALSA at run time; see [Linux](docs/linux.md).
+
 ## Input
 
 - Local filesystem paths, including spaces, Unicode, `:`, relative paths, symlinks, and mounted volumes.
@@ -37,16 +39,19 @@ The on-screen controls provide play and pause, seek, volume and mute, fullscreen
 
 macOS 27 on Apple Silicon. Building needs the Xcode command-line tools, Meson, Ninja, pkg-config, CMake, Python 3, curl, and `shasum`.
 
+Linux x86-64 on musl (Alpine or similar) with a Vulkan driver, a Wayland compositor, and ALSA. Building needs Docker; the toolchain lives in the pinned image. glibc systems cannot run the Linux build.
+
 ## Help and development
 
 - [Install and run](docs/install.md)
+- [Linux](docs/linux.md)
 - [Current status](docs/status.md)
 - [Architecture](docs/architecture.md)
 - [Scope and retained code](docs/scope.md)
 - [Metrics](docs/metrics.md)
 - [Release report](docs/final-report.md)
 
-Development build: `scripts/build.sh`. Tests: `tests/run.sh suite`. Audit: `scripts/audit.sh`. See [AGENTS.md](AGENTS.md) for the repository map.
+Development build: `scripts/build.sh` on macOS, `scripts/linux-container.sh scripts/build-linux.sh` on Linux. Tests: `tests/run.sh suite` (`scripts/linux-container.sh tests/run.sh suite` on Linux). Audit: `scripts/audit.sh` on macOS, `scripts/audit-linux.sh` on Linux. See [AGENTS.md](AGENTS.md) for the repository map.
 
 ## License
 

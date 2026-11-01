@@ -1,6 +1,6 @@
 # Status
 
-Player is a local-only media player. The macOS release artifact is `dist/Player.app`.
+Player is a local-only media player. The macOS release artifact is `dist/Player.app`; the Linux x86-64 musl artifact is `dist/player-x86_64-linux-musl.tar.gz`.
 
 ## Current state
 
@@ -17,9 +17,15 @@ Player is a local-only media player. The macOS release artifact is `dist/Player.
 - GUI, HDR and 10-bit color, subtitle shaping, Retina scaling, audio audibility, real mouse and drag, and signing or notarization are owner-run. See `docs/manual-checklist.md`.
 - Clipboard commands are compiled and reachable. Encoding, recording, and the lavfi filter graph are compiled but unreachable because the release FFmpeg has no encoders or muxers.
 - The `subprocess` command and the `.run` script backend are reachable from explicit scripts and IPC. No built-in module uses them.
-- Follow-on: A/V scheduler, general demux and decode orchestration, and renderer integration. Linux x86-64 musl gpu-next is the active campaign (`PLAN.md`).
-- Linux L0.1: `scripts/linux-check.sh` exits 1 on Alpine x86_64; `meson setup build-linux` stops at the missing Linux source set (`osdep/language-posix.c` first).
-- Linux L0.3: `scripts/build-linux.sh` builds `build-linux/mpv` on Alpine x86_64 against system libraries; `--vo=help` lists `gpu-next`, `--gpu-context=help` lists `waylandvk`, `--ao=help` lists `alsa`. Dynamic link to system FFmpeg and libplacebo is interim until L1.
+- Follow-on: A/V scheduler, general demux and decode orchestration, and renderer integration.
+- Linux: glibc, aarch64, X11, hardware decode, and a real-GPU, real-compositor, and real-ALSA check are outside the automated gates. The headless gate uses lavapipe with `--gpu-sw` and `mailbox` swap because headless Weston never releases FIFO buffers.
+
+## Linux
+
+- `scripts/linux-container.sh tests/run.sh suite`: passes on Alpine x86_64, including `linux-gpu-next` under headless Weston with lavapipe, `linux-audio` on the ALSA null PCM, `linux-local-only` under `unshare -rn`, and `linux-audit`.
+- `scripts/audit-linux.sh`: ok. `dist/player` needs exactly six libraries: musl, Vulkan, Wayland client and cursor, xkbcommon, and ALSA.
+- Fixtures regenerate deterministically with Alpine's FFmpeg 9.0.2; their hashes differ from macOS (`tests/fixtures/hashes-linux.json`).
+- Measurements are in `docs/metrics.md`; the runtime set, headless gates, and fixtures are in `docs/linux.md`.
 
 ## Evidence
 
