@@ -30,7 +30,7 @@ The Linux build adds these components, linked statically by `scripts/build-deps-
 | --- | --- | --- |
 | zlib | 1.3.2 | Zlib |
 | expat | 2.9.0 | MIT |
-| fontconfig | 2.16.0 | HPND-sell-variant |
+| fontconfig | 2.18.1 | HPND-sell-variant |
 
 The musl runtime libraries come from the Alpine image and are not shipped: musl 1.2.6-r6 (MIT), vulkan-loader 1.4.360-r0 (Apache-2.0), wayland-libs-client and wayland-libs-cursor 1.26.0-r0 (MIT), libxkbcommon 1.13.2-r0 (MIT), and alsa-lib 1.2.16.1-r0 (LGPL-2.1-or-later).
 

@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / ".work" / "fixtures"
 TMP = ROOT / ".work" / "tmp"
 MANIFEST_PATH = ROOT / "tests" / "fixtures" / "manifest.json"
-MPV = ROOT / "build" / "mpv"
+MPV = ROOT / ("build-linux" if sys.platform.startswith("linux") else "build") / "mpv"
 
 
 class Failure(Exception):

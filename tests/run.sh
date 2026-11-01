@@ -11,6 +11,9 @@ case "${1:-}" in
     linux-audit|linux-mostly-static)
         exec "$ROOT/scripts/audit-linux.sh"
         ;;
+    linux-gpu-next)
+        exec python3 "$ROOT/tests/wayland.py"
+        ;;
     *)
         exec python3 "$ROOT/tests/harness.py" "$@"
         ;;

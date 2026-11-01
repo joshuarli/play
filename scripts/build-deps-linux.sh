@@ -79,7 +79,7 @@ DAV1D_VERSION=1.5.4
 FREETYPE_VERSION=2.15.0
 FRIBIDI_VERSION=1.0.17
 HARFBUZZ_VERSION=15.0.0
-FONTCONFIG_VERSION=2.16.0
+FONTCONFIG_VERSION=2.18.1
 SHADERC_VERSION=2026.4
 GLSLANG_REV=e1b562a8bed273a02f30b59b66a5d499793cede5
 SPIRV_HEADERS_REV=04fd3caa1e8267e4d95c806cad901181728e1006
@@ -168,8 +168,8 @@ fi
 
 if ! have fontconfig; then
     FC="fontconfig-$FONTCONFIG_VERSION.tar.xz"
-    fetch "https://www.freedesktop.org/software/fontconfig/release/$FC" \
-        6a33dc555cc9ba8b10caf7695878ef134eeb36d0af366041f639b1da9b6ed220 "$SRC/$FC"
+    fetch "https://gitlab.freedesktop.org/api/v4/projects/890/packages/generic/fontconfig/$FONTCONFIG_VERSION/$FC" \
+        2300f3dbfa7253b3a44f4feecdbc8dfa45dde5dc2cfb71fceaf31f394cb41031 "$SRC/$FC"
     extract "$SRC/$FC" "$SRC/fontconfig-$FONTCONFIG_VERSION"
     fc="$SRC/fontconfig-$FONTCONFIG_VERSION"
     run_log fontconfig meson setup "$fc/build" "$fc" --prefix="$PREFIX" --libdir=lib \
