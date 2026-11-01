@@ -5,12 +5,46 @@ Automated playback is headless (`--vo=null --ao=null`); GUI and renderer checks 
 
 OSC (P6.1): `player/lua/osc.lua` is 466 lines, down from 2977. The p6.1 row records the resulting startup and first-frame timings; the OSC redraws at 20 Hz while visible.
 
-## Release footprint (P8.2)
+## Optimization history (P8.2)
 
 Measured at `acf2fea` on 2026-11-01 with `scripts/measure.sh release p8.2`. The "before" column is the same release bundle before stripping and before thinning MoltenVK; the "after" column is the shipped bundle.
 
 
-The release measurement: cold 60.50 ms, warm 60.25 ms, first frame 143.38 ms, idle RSS 85.33 MB, 1080p RSS 217.14 MB, 1080p CPU 0.16 s, 4K CPU 0.42 s, seek 1.73 ms, exit 3.11 ms. No audio underruns and no frame drops. The timings are within the spread of the P6.1 dev row; the only evidence-named optimization was disk footprint. `strip -x` and `lipo -thin arm64` are applied by `scripts/bundle.py` before signing; no source-level optimization was attempted.
+The P8.2 measurement: cold 60.50 ms, warm 60.25 ms, first frame 143.38 ms, idle RSS 85.33 MB, 1080p RSS 217.14 MB, 1080p CPU 0.16 s, 4K CPU 0.42 s, seek 1.73 ms, exit 3.11 ms. No underruns or frame drops. `strip -x` and `lipo -thin arm64` produced this bundle. The final link shape in P8.3 moves the Rust plane to a cdylib and is smaller; see below.
+
+## Final release (P8.3)
+
+Measured at `7a8958b` on 2026-11-01 with `scripts/measure.sh final` (median of three playback runs). The host was loaded during the run; absolute timings are evidence, not a product promise.
+
+| Metric | Value |
+|---|---:|
+| `Player.app` total | 26,807,168 B |
+| executable | 9,640,432 B |
+| framework closure | 17,166,736 B / 13 files |
+| cold startup | 162.11 ms |
+| warm startup | 115.73 ms |
+| first frame 1080p | 220.07 ms |
+| idle RSS | 84.78 MB |
+| 1080p RSS / CPU | 216.88 MB / 0.23 s |
+| 4K CPU | 0.55 s |
+| seek / exit | 3.21 ms / 4.24 ms |
+| audio underruns / frame drops | 0 / 0 |
+| protocols | 1 (`file`) |
+| Lua interpreters | 1 |
+
+| P8 budget | Actual | Result |
+|---|---:|---|
+| Distributable ≤ 29,542,136 B | 26,807,168 B | pass |
+| Executable ≤ 10,000,000 B | 9,640,432 B | pass |
+| First frame ≤ 1 s | 220.07 ms | pass |
+| 1080p CPU ≤ 0.231 s | 0.23 s | pass |
+| 1080p RSS ≤ 300 MB | 216.88 MB | pass |
+| Seek ≤ 250 ms | 3.21 ms | pass |
+| Frame drops | 0 | pass |
+| Network schemes | 0 | pass |
+| Duplicate Lua interpreters | 0 | pass |
+
+The executable size win comes from linking the Rust FFI/audio plane as `libplayer_release.dylib` and shaderc `MinSizeRel`; plain LTO was rejected because the two staticlibs duplicate Rust std symbols, and `opt-level = "s"` increased the executable. See `docs/final-report.md`.
 
 ## Script host attribution (P6.2)
 
@@ -43,4 +77,4 @@ Per-symbol linked attribution is unavailable on this host: macOS `nm -S` reports
 | closure | 20.06 MiB in 17 files |
 | 2026-11-01 | acf2fea2c172 | p8.2 | 13998112 | 13998112 | 16998336 | 12 | 60.5 | 60.25 | 143.38 | 85.33 | 217.14 | 0.16 | 0.42 | 1.73 | 3.11 | 1 | headless; 3 s clips; GUI owner-run |
 | 2026-11-01 | 8e393464c387 | final | 13998112 | 13998112 | 16998336 | 12 | 62.94 | 63.02 | 148.39 | 85.38 | 217.41 | 0.17 | 0.43 | 1.85 | 3.0 | 1 | headless; 3 s clips; GUI owner-run |
-| 2026-11-01 | e93cf47ccc37 | final | 9640432 | 9640432 | 17166736 | 13 | 103.38 | 102.44 | 207.01 | 84.72 | 213.45 | 0.25 | 0.64 | 2.78 | 5.28 | 1 | headless; 3 s clips; GUI owner-run |
+| 2026-11-01 | 7a8958b9757a | final | 9640432 | 9640432 | 17166736 | 13 | 162.11 | 115.73 | 220.07 | 84.78 | 216.88 | 0.23 | 0.55 | 3.21 | 4.24 | 1 | headless; 3 s clips; GUI owner-run |
