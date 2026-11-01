@@ -8,7 +8,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import harness  # noqa: E402
-from harness import (FIXTURES, Failure, Mpv, Results, ROOT, TMP, fixture_entry,  # noqa: E402
+from harness import (Failure, Mpv, Results, ROOT, TMP, fixture_entry,  # noqa: E402
                      fixture_path, subtitle_args, tail)
 
 ICD_DIR = Path("/usr/share/vulkan/icd.d")
@@ -57,10 +57,7 @@ class Compositor:
 
 
 def fixture_1080p():
-    path = FIXTURES / "measure" / "1080p.mp4"
-    if not path.exists():
-        raise Failure(f"missing {path}; run scripts/measure-linux.sh baseline")
-    return path
+    return harness.measure_fixture("1080p", 1920, 1080)
 
 
 def gate_linux_gpu_next(results, args):

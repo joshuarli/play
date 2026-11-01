@@ -286,6 +286,25 @@ class Mpv:
         return False
 
 
+def measure_fixture(label, width, height):
+    path = ROOT / ".work" / "measure" / f"{label}.mp4"
+    if path.exists():
+        return path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    ffmpeg = ["ffmpeg"] if shutil.which("ffmpeg") else [str(ROOT / "scripts/linux-container.sh"), "ffmpeg"]
+    target = path if ffmpeg[0] == "ffmpeg" else path.relative_to(ROOT)
+    proc = subprocess.run(ffmpeg + [
+        "-hide_banner", "-loglevel", "error", "-y", "-bitexact",
+        "-f", "lavfi", "-i", f"testsrc2=size={width}x{height}:rate=24:duration=3",
+        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
+        "-pix_fmt", "yuv420p", "-an",
+        "-x264-params", "keyint=24:min-keyint=24:scenecut=0", str(target),
+    ], capture_output=True, text=True, timeout=300)
+    if proc.returncode != 0:
+        raise Failure(f"failed to generate {path}:\n{proc.stderr}")
+    return path
+
+
 def load_manifest():
     if not MANIFEST_PATH.exists():
         raise Failure("fixture manifest missing; run tests/run.sh fixtures")
@@ -1628,6 +1647,50 @@ def gate_release(results, args):
                   tail((proc.stdout + proc.stderr).splitlines(), 20))
 
 
+def gate_linux_rust_link(results, args):
+    nm = subprocess.run(["nm", "-g", str(MPV)], capture_output=True, text=True,
+                        timeout=30).stdout
+    results.check("linux-rust-link: bridge symbols",
+                  "player_ffi_abi_version" in nm and "player_audio_create" in nm,
+                  "symbol missing")
+    proc = subprocess.run(
+        ["cargo", "test", "--manifest-path", str(ROOT / "rust" / "Cargo.toml"),
+         "--target", "x86_64-unknown-linux-musl"],
+        cwd=str(ROOT), capture_output=True, text=True, timeout=600,
+        env={**os.environ, "CARGO_TARGET_DIR": str(ROOT / ".work/deps/player-linux/target")},
+    )
+    results.check("linux-rust-link: cargo test", proc.returncode == 0,
+                  tail((proc.stdout + proc.stderr).splitlines(), 20))
+    with Mpv(["--vo=null", "--ao=null", "--hwdec=no"]) as mpv:
+        mpv.load(fixture_path(fixture_entry("h264")))
+        mpv.wait_event("file-loaded", timeout=10)
+        mpv.wait_property(
+            "time-pos", lambda value: isinstance(value, (int, float)) and value > 0,
+            timeout=10,
+        )
+        results.check("linux-rust-link: playback", True)
+    results.check("linux-rust-link: exit", mpv.returncode == 0, f"exit {mpv.returncode}")
+
+
+def run_script_gate(results, name, command):
+    proc = subprocess.run(command, cwd=str(ROOT), capture_output=True, text=True, timeout=900)
+    results.check(name, proc.returncode == 0,
+                  tail((proc.stdout + proc.stderr).splitlines(), 20))
+
+
+def gate_linux_gpu_next(results, args):
+    run_script_gate(results, "linux-gpu-next", [sys.executable, str(ROOT / "tests" / "wayland.py")])
+
+
+def gate_linux_audit(results, args):
+    run_script_gate(results, "linux-audit", [str(ROOT / "scripts" / "audit-linux.sh")])
+
+
+def gate_linux_osc(results, args):
+    gate_osc(results, args)
+    gate_osc_input(results, args)
+
+
 GATES = {
     "fixtures": gate_fixtures,
     "play": gate_play,
@@ -1635,6 +1698,13 @@ GATES = {
     "corpus": gate_corpus,
     "audio": gate_audio,
     "linux-audio": gate_linux_audio,
+    "linux-corpus": gate_corpus,
+    "linux-local-only": gate_local_only,
+    "linux-osc": gate_linux_osc,
+    "linux-gpu-next": gate_linux_gpu_next,
+    "linux-audit": gate_linux_audit,
+    "linux-mostly-static": gate_linux_audit,
+    "linux-rust-link": gate_linux_rust_link,
     "hwdec": gate_hwdec,
     "seek": gate_seek,
     "local-paths": gate_local_paths,
@@ -1664,6 +1734,13 @@ SUITE = [
 ]
 
 
+LINUX_SUITE = [
+    "linux-corpus", "linux-audio", "linux-gpu-next", "linux-local-only", "linux-osc",
+    "linux-mostly-static", "local-paths", "seek", "input", "playlist", "cli", "state",
+    "failures", "lua-host", "lua-api-audit", "linux-rust-link",
+]
+
+
 def run_gate(name, rest, results):
     handler = GATES.get(name)
     if handler is None:
@@ -1687,7 +1764,7 @@ def main(argv):
     rest = argv[2:]
     results = Results()
     if gate == "suite":
-        for name in SUITE:
+        for name in LINUX_SUITE if sys.platform.startswith("linux") else SUITE:
             run_gate(name, rest, results)
     else:
         run_gate(gate, rest, results)

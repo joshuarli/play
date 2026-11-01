@@ -29,7 +29,6 @@ MODE = sys.argv[2]
 LABEL = sys.argv[3]
 RUNS = 7
 MPV = ROOT / ("dist/player" if MODE == "final" else "build-linux/mpv")
-MEASURE_DIR = ROOT / ".work" / "fixtures" / "measure"
 TMP = ROOT / ".work" / "tmp"
 METRICS = ROOT / "docs" / "metrics.md"
 SECTION = "## Linux"
@@ -42,7 +41,6 @@ HEADER = [
 if not MPV.exists():
     raise SystemExit(f"missing player: {MPV}")
 TMP.mkdir(parents=True, exist_ok=True)
-MEASURE_DIR.mkdir(parents=True, exist_ok=True)
 sys.path.insert(0, str(ROOT / "tests"))
 import harness  # noqa: E402
 harness.MPV = MPV
@@ -60,25 +58,6 @@ def median(values):
 
 def spread(values):
     return round(max(values) - min(values), 2)
-
-
-def fixture(label, width, height):
-    path = MEASURE_DIR / f"{label}.mp4"
-    if path.exists():
-        return path
-    ffmpeg = ["ffmpeg"] if run(["which", "ffmpeg"]).returncode == 0 else \
-        [str(ROOT / "scripts/linux-container.sh"), "ffmpeg"]
-    proc = run(ffmpeg + [
-        "-hide_banner", "-loglevel", "error", "-y", "-bitexact",
-        "-f", "lavfi", "-i", f"testsrc2=size={width}x{height}:rate=24:duration=3",
-        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
-        "-pix_fmt", "yuv420p", "-an",
-        "-x264-params", "keyint=24:min-keyint=24:scenecut=0",
-        str(path.relative_to(ROOT) if ffmpeg[0] != "ffmpeg" else path),
-    ], timeout=300)
-    if proc.returncode != 0:
-        raise SystemExit(f"failed to generate {path}:\n{proc.stderr}")
-    return path
 
 
 def child_usage(command):
@@ -185,7 +164,7 @@ def revision():
     return head + ("-dirty" if dirty else "")
 
 
-p1080 = fixture("1080p", 1920, 1080)
+p1080 = harness.measure_fixture("1080p", 1920, 1080)
 cold, warm = startup(True), startup(False)
 frame = first_frame(p1080)
 usage = [child_usage([str(MPV), "--no-config", "--vo=null", "--ao=null",
