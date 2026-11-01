@@ -5,7 +5,11 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 MODE=${1:-}
 LABEL=${2:-}
 if [ -z "$LABEL" ]; then
-    [ "$MODE" = "release" ] && LABEL=release || LABEL=baseline
+    case "$MODE" in
+        release) LABEL=release ;;
+        final) LABEL=final ;;
+        *) LABEL=baseline ;;
+    esac
 fi
 cd "$ROOT"
 
@@ -16,11 +20,6 @@ case "$MODE" in
         exit 2
         ;;
 esac
-
-if [ "$MODE" = "final" ] || [ "$MODE" = "compare" ]; then
-    printf 'error: %s is implemented in P8\n' "$MODE" >&2
-    exit 2
-fi
 
 python3 - "$ROOT" "$MODE" "$LABEL" <<'PY'
 import datetime
@@ -37,10 +36,40 @@ from pathlib import Path
 ROOT = Path(sys.argv[1])
 MODE = sys.argv[2]
 LABEL = sys.argv[3]
-MPV = ROOT / ("dist/Player.app/Contents/MacOS/player" if MODE == "release"
-             else "build/mpv")
-BUILD_DIR = "build-release" if MODE == "release" else "build"
+TMP = ROOT / ".work" / "tmp"
+MPV = ROOT / ("dist/Player.app/Contents/MacOS/player"
+             if MODE in ("release", "final") else "build/mpv")
+BUILD_DIR = "build-release" if MODE in ("release", "final") else "build"
 FRAMEWORKS = ROOT / "dist/Player.app/Contents/Frameworks"
+if MODE == "compare":
+    import json as _json
+    paths = {
+        "p8.2": TMP / "measure-p8.2.json",
+        "final": TMP / "measure-final.json",
+    }
+    values = {}
+    for name, path in paths.items():
+        if not path.exists():
+            raise SystemExit(f"missing {path}; run scripts/measure.sh release p8.2 and scripts/measure.sh final")
+        values[name] = _json.loads(path.read_text())
+    before, after = values["p8.2"], values["final"]
+    print("metric                 p8.2        final       delta")
+    for key, getter in (
+        ("startup warm ms", lambda v: v["startup"]["warm_ms"]),
+        ("first frame ms", lambda v: v["first_frame_1080p_ms"]),
+        ("idle RSS MB", lambda v: v["idle_rss_mb"]),
+        ("1080p RSS MB", lambda v: v["playback"]["1080p"]["rss_mb"]),
+        ("1080p CPU s", lambda v: v["playback"]["1080p"]["cpu_s"]),
+        ("4K CPU s", lambda v: v["playback"]["4k"]["cpu_s"]),
+        ("seek ms", lambda v: v["seek_ms"]),
+        ("closure B", lambda v: v["closure"]["bytes"]),
+    ):
+        old, new = getter(before), getter(after)
+        delta = new - old
+        print(f"{key:20} {old:>10} {new:>10} {delta:>10.2f}")
+    raise SystemExit(0)
+
+
 MEASURE_DIR = ROOT / ".work" / "fixtures" / "measure"
 TMP = ROOT / ".work" / "tmp"
 METRICS = ROOT / "docs" / "metrics.md"
@@ -316,7 +345,7 @@ def release_closure():
 
 
 def closure():
-    if MODE == "release":
+    if MODE in ("release", "final"):
         return release_closure()
     direct = direct_libraries()
     queue = list(direct)
@@ -599,4 +628,23 @@ print(f"protocols: {proto['listed']} listed, {proto['unique']} unique; "
       f"network {len(proto['network'])}")
 print(f"hwdec ffmpeg videotoolbox: {hw['ffmpeg_videotoolbox']}; "
       f"mpv headless playback: {hw['mpv_headless_playback']}")
+
+if MODE == "final":
+    checks = [
+        ("one local protocol", proto["listed"] == 1 and not proto["network"]),
+        ("no audio underruns", underruns == 0),
+        ("no frame drops", drops == 0),
+        ("closure under 64 MiB", closure_data["bytes"] < 64 * 1024 * 1024),
+        ("warm startup under 500 ms", startup["warm_ms"] < 500),
+        ("first frame under 1000 ms", first_frame < 1000),
+        ("1080p CPU under 3 s", playback["1080p"]["cpu_s"] < 3),
+        ("idle RSS under 512 MB", idle < 512),
+        ("1080p RSS under 1024 MB", playback["1080p"]["rss_mb"] < 1024),
+    ]
+    failed = [name for name, ok in checks if not ok]
+    for name, ok in checks:
+        print(("PASS" if ok else "FAIL") + " final: " + name)
+    if failed:
+        raise SystemExit("final: failed " + ", ".join(failed))
+    print("final: ok")
 PY
