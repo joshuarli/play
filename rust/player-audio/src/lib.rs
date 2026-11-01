@@ -287,11 +287,13 @@ mod tests {
             bytes.extend_from_slice(&sample.to_le_bytes());
         }
         let mut err = [0i8; 128];
-        // SAFETY: The params and error buffer are valid for the call.
+        let mut code = -1;
+        // SAFETY: The params, error buffer, and status are valid for the call.
         let decoder = unsafe {
-            player_audio_create(&pcm_s16le_params(), err.as_mut_ptr(), err.len())
+            player_audio_create(&pcm_s16le_params(), err.as_mut_ptr(), err.len(), &mut code)
         };
         assert!(!decoder.is_null());
+        assert_eq!(code, 0);
         let mut output: *const f32 = ptr::null();
         let mut frames = 0u32;
         let mut channels = 0u32;
@@ -330,10 +332,12 @@ mod tests {
         let mut params = pcm_s16le_params();
         params.codec = 99;
         let mut err = [0i8; 128];
-        // SAFETY: The params and error buffer are valid for the call.
+        let mut code = 0;
+        // SAFETY: The params, error buffer, and status are valid for the call.
         let decoder = unsafe {
-            player_audio_create(&params, err.as_mut_ptr(), err.len())
+            player_audio_create(&params, err.as_mut_ptr(), err.len(), &mut code)
         };
         assert!(decoder.is_null());
+        assert_eq!(code, ERR_UNSUPPORTED);
     }
 }
