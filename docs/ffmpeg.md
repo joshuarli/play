@@ -80,4 +80,4 @@ Current result: 19 passed, 0 failed. A temporary manifest with `http` added to t
 
 ## Next
 
-P5.3 added the Rust Lua host core: one script thread, an ordered event queue, the native `mp` primitives over the approved Lua helpers, bounded shutdown, and panic containment. P5.4 loads the upstream OSC through it.
+P5.4 made the Rust host the production Lua backend: the unmodified OSC loads through `player_ffi_lua_run`, a per-script pump forwards ordered events, and the external Lua library is no longer linked. P5.5 deletes the C host and completes the utility surface.

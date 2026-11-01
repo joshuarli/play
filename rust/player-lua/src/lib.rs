@@ -5,7 +5,7 @@ pub mod host;
 pub mod value;
 
 pub use backend::{CommandRequest, PlayerBackend, PropertyFormat, ScriptEvent};
-pub use host::{HostError, ScriptHost};
+pub use host::{HostError, ScriptEventSender, ScriptHost, ScriptModule};
 pub use value::{NativeValue, Sentinels};
 
 pub fn new_interpreter() -> Result<Lua> {

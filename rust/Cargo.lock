@@ -211,6 +211,7 @@ name = "player-ffi"
 version = "0.1.0"
 dependencies = [
  "player-core",
+ "player-lua",
 ]
 
 [[package]]

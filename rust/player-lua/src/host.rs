@@ -51,6 +51,31 @@ struct HostState<B: PlayerBackend> {
     script_name: String,
 }
 
+pub struct ScriptModule {
+    pub name: String,
+    pub source: String,
+}
+
+impl ScriptModule {
+    pub fn new(name: impl Into<String>, source: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            source: source.into(),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct ScriptEventSender {
+    events: Sender<ScriptEvent>,
+}
+
+impl ScriptEventSender {
+    pub fn post(&self, event: ScriptEvent) -> Result<(), HostError> {
+        self.events.send(event).map_err(|_| HostError::PostClosed)
+    }
+}
+
 pub struct ScriptHost {
     events: Sender<ScriptEvent>,
     done: Receiver<Result<(), HostError>>,
@@ -65,6 +90,16 @@ impl ScriptHost {
         source: impl Into<String>,
         backend: B,
     ) -> Result<Self, HostError> {
+        Self::spawn_with_modules(name, chunk_name, source, Vec::new(), backend)
+    }
+
+    pub fn spawn_with_modules<B: PlayerBackend>(
+        name: impl Into<String>,
+        chunk_name: impl Into<String>,
+        source: impl Into<String>,
+        modules: Vec<ScriptModule>,
+        backend: B,
+    ) -> Result<Self, HostError> {
         let name = name.into();
         let chunk_name = chunk_name.into();
         let source = source.into();
@@ -74,7 +109,7 @@ impl ScriptHost {
             .name(format!("lua:{name}"))
             .spawn(move || {
                 let result = catch_unwind(AssertUnwindSafe(|| {
-                    run_script(&name, &chunk_name, &source, backend, event_rx)
+                    run_script(&name, &chunk_name, &source, modules, backend, event_rx)
                 }))
                 .unwrap_or_else(|payload| Err(HostError::Panic(panic_message(&payload))));
                 let _ = done_tx.send(result);
@@ -88,8 +123,48 @@ impl ScriptHost {
         })
     }
 
+    pub fn event_sender(&self) -> ScriptEventSender {
+        ScriptEventSender {
+            events: self.events.clone(),
+        }
+    }
+
     pub fn post_event(&self, event: ScriptEvent) -> Result<(), HostError> {
         self.events.send(event).map_err(|_| HostError::PostClosed)
+    }
+
+    pub fn wait(&mut self) -> Result<(), HostError> {
+        if self.stopped {
+            return Ok(());
+        }
+        let result = self.done.recv().map_err(|_| {
+            HostError::Thread("script thread exited without a result".into())
+        })?;
+        self.stopped = true;
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+        result
+    }
+
+    pub fn wait_timeout(&mut self, timeout: Duration) -> Result<(), HostError> {
+        if self.stopped {
+            return Ok(());
+        }
+        let result = match self.done.recv_timeout(timeout) {
+            Ok(result) => result,
+            Err(RecvTimeoutError::Timeout) => return Err(HostError::ShutdownTimeout),
+            Err(RecvTimeoutError::Disconnected) => {
+                return Err(HostError::Thread(
+                    "script thread exited without a result".into(),
+                ))
+            }
+        };
+        self.stopped = true;
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+        result
     }
 
     pub fn stop(&mut self) -> Result<(), HostError> {
@@ -126,6 +201,7 @@ fn run_script<B: PlayerBackend>(
     name: &str,
     chunk_name: &str,
     source: &str,
+    modules: Vec<ScriptModule>,
     backend: B,
     events: Receiver<ScriptEvent>,
 ) -> Result<(), HostError> {
@@ -140,10 +216,45 @@ fn run_script<B: PlayerBackend>(
     }));
     register_mp(&lua, &state)?;
 
-    lua.load(DEFAULTS)
+    let defaults: Value = lua
+        .load(DEFAULTS)
         .set_name("@mp.defaults")
-        .exec()
+        .eval()
         .map_err(|error| HostError::Lua(error.to_string()))?;
+    let package: Table = lua
+        .globals()
+        .get("package")
+        .map_err(|error| HostError::Lua(error.to_string()))?;
+    let loaded: Table = package
+        .get("loaded")
+        .map_err(|error| HostError::Lua(error.to_string()))?;
+    loaded
+        .set(
+            "mp.defaults",
+            if defaults.is_nil() {
+                Value::Boolean(true)
+            } else {
+                defaults
+            },
+        )
+        .map_err(|error| HostError::Lua(error.to_string()))?;
+    for module in modules {
+        let value: Value = lua
+            .load(&module.source)
+            .set_name(format!("@{}", module.name))
+            .eval()
+            .map_err(|error| HostError::Lua(format!("{}: {error}", module.name)))?;
+        loaded
+            .set(
+                module.name,
+                if value.is_nil() {
+                    Value::Boolean(true)
+                } else {
+                    value
+                },
+            )
+            .map_err(|error| HostError::Lua(error.to_string()))?;
+    }
     lua.load(source)
         .set_name(chunk_name)
         .exec()
@@ -274,7 +385,7 @@ fn register_properties<B: PlayerBackend>(
 ) -> Result<(), HostError> {
     for (name, format, osd) in [
         ("get_property", PropertyFormat::String, false),
-        ("get_property_osd", PropertyFormat::String, true),
+        ("get_property_osd", PropertyFormat::OsdString, true),
         ("get_property_bool", PropertyFormat::Bool, false),
         ("get_property_number", PropertyFormat::Number, false),
         ("get_property_native", PropertyFormat::Native, false),
@@ -867,7 +978,7 @@ mod tests {
                 return Err(format!("property '{name}' not found"));
             };
             match format {
-                PropertyFormat::String => match value {
+                PropertyFormat::String | PropertyFormat::OsdString => match value {
                     NativeValue::String(_) => Ok(value.clone()),
                     NativeValue::Bool(value) => Ok(NativeValue::String(
                         if *value { "yes" } else { "no" }.to_owned(),
@@ -916,7 +1027,7 @@ mod tests {
             Ok(())
         }
 
-        fn unobserve_property(&mut self, id: u64) -> u32 {
+        fn unobserve_property(&mut self, id: u64) -> i32 {
             self.recorded.lock().unwrap().unobserved.push(id);
             1
         }

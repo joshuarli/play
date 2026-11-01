@@ -13,6 +13,7 @@ pub enum PropertyFormat {
     Native,
     Bool,
     String,
+    OsdString,
     Number,
 }
 
@@ -52,7 +53,7 @@ pub trait PlayerBackend: Send + 'static {
         name: &str,
         format: PropertyFormat,
     ) -> Result<(), String>;
-    fn unobserve_property(&mut self, id: u64) -> u32;
+    fn unobserve_property(&mut self, id: u64) -> i32;
     fn request_event(&mut self, name: &str, enable: bool) -> bool;
     fn find_config_file(&mut self, name: &str) -> Option<String>;
     fn format_time(&mut self, seconds: f64, format: &str) -> Result<String, String>;

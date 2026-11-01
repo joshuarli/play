@@ -3,6 +3,8 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use player_core::input::{classify_input, InputError, InputPath};
 
+mod lua;
+
 pub const PLAYER_FFI_INPUT_LOCAL: i32 = 0;
 pub const PLAYER_FFI_INPUT_REJECTED: i32 = 1;
 pub const PLAYER_FFI_INPUT_INVALID: i32 = 2;
@@ -13,6 +15,10 @@ pub extern "C" fn player_ffi_abi_version() -> u32 {
     player_core::abi_version()
 }
 
+/// # Safety
+///
+/// `path` must be a valid NUL-terminated string, and each output buffer must
+/// have the capacity passed to the function.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn player_ffi_classify_input(
     path: *const c_char,

@@ -16,6 +16,7 @@ pub enum NativeValue {
     String(String),
     Array(Vec<NativeValue>),
     Map(Vec<(String, NativeValue)>),
+    Unknown,
 }
 
 impl NativeValue {
@@ -66,6 +67,11 @@ impl NativeValue {
                 }
                 Ok(Value::Table(table))
             }
+            NativeValue::Unknown => {
+                let table = lua.create_table()?;
+                table.set_metatable(Some(sentinels.unknown.clone()))?;
+                Ok(Value::Table(table))
+            }
         }
     }
 }
@@ -74,6 +80,10 @@ fn table_from_lua(_lua: &Lua, table: Table, sentinels: &Sentinels) -> Result<Nat
     let tag = table
         .metatable()
         .and_then(|meta| meta.raw_get::<Option<String>>("type").ok().flatten());
+
+    if tag.as_deref() == Some("UNKNOWN_TYPE") {
+        return Ok(NativeValue::Unknown);
+    }
 
     let mut length = 0usize;
     loop {
@@ -132,6 +142,7 @@ mod tests {
         let map = lua.create_table().unwrap();
         map.set("type", "MAP").unwrap();
         let unknown = lua.create_table().unwrap();
+        unknown.set("type", "UNKNOWN_TYPE").unwrap();
         Sentinels { unknown, array, map }
     }
 
@@ -145,6 +156,7 @@ mod tests {
             NativeValue::Int(42),
             NativeValue::Double(1.5),
             NativeValue::String("text".into()),
+            NativeValue::Unknown,
         ] {
             let lua_value = value.to_lua(&lua, &sentinels).unwrap();
             assert_eq!(

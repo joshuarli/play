@@ -815,6 +815,16 @@ def gate_osc(results, args):
             timeout=10,
         )
         mpv.set_property("pause", True)
+        margins = mpv.get_property("user-data/osc/margins")
+        results.check("osc: timer/property path",
+                      isinstance(margins, dict) and {"l", "t", "r", "b"} <= set(margins),
+                      str(margins))
+        before = mpv.get_property("user-data/osc/visibility")
+        mpv.command("script-message-to", "osc", "osc-visibility", "cycle")
+        time.sleep(0.2)
+        after = mpv.get_property("user-data/osc/visibility")
+        results.check("osc: script message", after != before and after is not None,
+                      f"{before} -> {after}")
         bindings = mpv.get_property("input-bindings")
         osc = [binding for binding in bindings if binding.get("owner") == "osc"]
         results.check("osc: bindings registered", bool(osc), f"count {len(osc)}")
@@ -1128,7 +1138,8 @@ def gate_ffi(results, args):
     proc = subprocess.run(
         ["cc", "-std=c11", "-Wall", "-Wextra",
          "-I", str(ROOT / "rust" / "player-ffi" / "include"),
-         str(ROOT / "tests" / "ffi_test.c"), str(ffi_lib), "-o", str(binary)],
+         str(ROOT / "tests" / "ffi_test.c"), str(ffi_lib),
+         "-Wl,-undefined,dynamic_lookup", "-o", str(binary)],
         cwd=str(ROOT), capture_output=True, text=True, timeout=120,
     )
     results.check("ffi: compile", proc.returncode == 0,

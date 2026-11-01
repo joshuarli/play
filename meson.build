@@ -667,8 +667,7 @@ endif
 features += {'lua': lua.found()}
 lua_version = lua.name()
 if features['lua']
-    dependencies += lua
-    sources += files('player/lua.c')
+    sources += files('player/lua_host.c')
 endif
 if not features['lua'] and lua_opt == 'enabled'
      error('Lua enabled but no suitable Lua version could be found!')

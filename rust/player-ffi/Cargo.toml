@@ -9,3 +9,4 @@ crate-type = ["staticlib"]
 
 [dependencies]
 player-core = { path = "../player-core" }
+player-lua = { path = "../player-lua" }
