@@ -8,6 +8,7 @@ docker build -q -t "$IMAGE" -f "$ROOT/docker/linux/Dockerfile" "$ROOT/docker/lin
 
 mkdir -p "$ROOT/.work/home"
 exec docker run --rm --init \
+    --security-opt seccomp=unconfined \
     --user "$(id -u):$(id -g)" \
     -e HOME=/work/.work/home \
     -e CARGO_HOME=/work/.work/home/cargo \

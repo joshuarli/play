@@ -907,11 +907,23 @@ def gate_local_only(results, args):
                   "volume=100" in hostile_output and "volume=42" not in hostile_output,
                   f"exit {proc.returncode}: {hostile_output.strip()}")
 
-    sandbox = shutil.which("sandbox-exec")
-    if sandbox:
+    if sys.platform.startswith("linux"):
+        isolate = ["unshare", "-rn"]
+        probe = subprocess.run(
+            [*isolate, "cat", "/proc/net/dev"],
+            capture_output=True, text=True, timeout=30,
+        )
+        interfaces = [line.split(":")[0].strip() for line in probe.stdout.splitlines()[2:]]
+        results.check("local-only network namespace isolated",
+                      probe.returncode == 0 and interfaces == ["lo"],
+                      f"exit {probe.returncode}: {probe.stdout.strip()} {probe.stderr.strip()}")
+    else:
+        sandbox = shutil.which("sandbox-exec")
+        isolate = [sandbox, "-p", "(version 1)(allow default)(deny network*)"] if sandbox else None
+    if isolate:
         proc = subprocess.run(
-            [sandbox, "-p", "(version 1)(allow default)(deny network*)", str(MPV),
-             "--no-config", "--vo=null", "--ao=null", "--frames=1", str(h264)],
+            [*isolate, str(MPV), "--no-config", "--vo=null", "--ao=null", "--frames=1",
+             str(h264)],
             cwd=str(ROOT), capture_output=True, text=True, timeout=30,
         )
         results.check("local-only sandbox playback", proc.returncode == 0,
