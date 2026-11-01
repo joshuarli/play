@@ -3,7 +3,7 @@
 ## Status
 
 - **Goal:** A compact, dependable, local-only macOS ARM64 media player: mpv's proven playback pipeline, a minimal pinned FFmpeg, no network backend, and a Rust-owned control plane with the OSC running on `mlua`.
-- **Last accepted revision:** `f1cb7e0` (P8.3); P8.4 is the final documentation commit on top.
+- **Last accepted revision:** `e9594af` (P8.4). The campaign is complete.
 - **Accepted:** P0.1–P1.4, P2.1–P8.4. **Red:** none. **Parked:** none.
 - **Next slice:** none. The campaign is complete.
 - **Resume prompt:** `Read PLAN.md and verify the final state. The campaign is complete; stop at a documented limitation or an owner decision.`
