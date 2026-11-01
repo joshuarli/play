@@ -103,13 +103,13 @@ Cold start, warm start, first frame, and seek are **perf gate deferred: host bus
 
 ### Known limits
 
-- musl systems only. A glibc system cannot load the Vulkan, Wayland, xkbcommon, and ALSA libraries; a glibc build is a separate artifact.
+- musl systems only. A glibc system cannot load the Vulkan, Wayland, xkbcommon, and ALSA libraries. glibc is explicitly out of scope.
 - No hardware video decode, X11, OpenGL, or DRM.
 - The headless gate uses lavapipe with `--gpu-sw=yes` and `--vulkan-swap-mode=mailbox`. FIFO pacing, fractional scale, real pointer and keyboard input, GPU output, and ALSA hardware are owner-run (`docs/manual-checklist.md`).
 - Linux fixtures differ byte-for-byte from the macOS ones (`tests/fixtures/hashes-linux.json`); their structure is identical.
 - `.github/workflows/linux.yml` has not run: nothing was pushed. The unprivileged user namespace the local-only gate needs may be blocked on a CI runner.
 - The macOS suite was not re-run from the Linux host after the shared harness changed; the macOS paths are unchanged branches of `sys.platform` checks, the `macos/` allowlist prefix, and the platform split in `build-ffmpeg.sh`.
-- Follow-on: a glibc build, aarch64 Linux, VA-API decode, and HDR output.
+- Follow-on: aarch64 Linux, VA-API decode, and HDR output.
 
 ### Reproduction
 

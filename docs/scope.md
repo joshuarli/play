@@ -29,6 +29,8 @@ The local-only gate creates a hostile temporary `HOME` with `mpv.conf`, `input.c
 
 ## Removed
 
+- glibc Linux. The Linux build targets x86-64 musl only, and glibc is explicitly out of scope.
+
 - Network and wrapper streams, including HTTP, HTTPS, FTP, SFTP, SSH, RTSP, RTMP, HLS, DASH, SMB, libavformat, AVDevice, Blu-ray, DVD, CDDA, DVB, EDL, memory, `fd`, `slice`, `appending`, `mpv`, `ffmpeg`, `lavf`, `hex`, `null`, and the image-file reader.
 - Disc, external CUE, EDL, libarchive, image-file, `mpv`, null, and raw audio or video demuxers.
 - The yt-dlp hook and the option tables for stream-lavf, raw demuxers, discs, and capture.

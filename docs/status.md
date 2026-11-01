@@ -18,7 +18,7 @@ Player is a local-only media player. The macOS release artifact is `dist/Player.
 - Clipboard commands are compiled and reachable. Encoding, recording, and the lavfi filter graph are compiled but unreachable because the release FFmpeg has no encoders or muxers.
 - The `subprocess` command and the `.run` script backend are reachable from explicit scripts and IPC. No built-in module uses them.
 - Follow-on: A/V scheduler, general demux and decode orchestration, and renderer integration.
-- Linux: glibc, aarch64, X11, hardware decode, and a real-GPU, real-compositor, and real-ALSA check are outside the automated gates. The headless gate uses lavapipe with `--gpu-sw` and `mailbox` swap because headless Weston never releases FIFO buffers.
+- Linux: glibc is explicitly out of scope. aarch64, X11, hardware decode, and a real-GPU, real-compositor, and real-ALSA check are outside the automated gates. The headless gate uses lavapipe with `--gpu-sw` and `mailbox` swap because headless Weston never releases FIFO buffers.
 
 ## Linux
 

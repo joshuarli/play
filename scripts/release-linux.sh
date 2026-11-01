@@ -33,7 +33,8 @@ $runtime_packages
 It also needs a Vulkan driver for your GPU (for example mesa-vulkan-layers
 and mesa-vulkan-intel, mesa-vulkan-ati, or mesa-vulkan-swrast), a Wayland
 compositor, and fontconfig with a font such as font-dejavu for subtitles.
-It does not load a user config or scripts. glibc systems cannot run it.
+It does not load a user config or scripts. glibc systems cannot run it, and glibc
+support is out of scope.
 
 Run:  ./player FILE
 Verify the download with:  sha256sum -c $NAME.tar.gz.sha256

@@ -52,7 +52,7 @@ Three whole designs were considered before the sequence was written:
 
 - **A — mostly static musl `gpu-next` (chosen).** It keeps the macOS renderer, static-links every non-graphics library, and takes the Vulkan loader, Wayland, xkbcommon, and ALSA from the musl host. It runs on musl systems with the listed packages and gives up the fully static artifact.
 - **B — fully static musl `wlshm`.** It runs on any Linux with a Wayland compositor, but it cannot load a GPU driver and has no GPU, HDR, or hardware decode. The owner prefers `gpu-next`, so this loses.
-- **C — mostly static glibc `gpu-next`.** It runs on mainstream glibc distributions, but it changes the libc and the build host. It is a separate artifact and is not this campaign.
+- **C — mostly static glibc `gpu-next`.** It runs on mainstream glibc distributions, but it changes the libc and the build host. glibc is explicitly out of scope for this project.
 
 ### Prescribed
 
@@ -100,7 +100,7 @@ The Rust plane is portable. `player-core`, `player-ffi`, `player-lua`, and `play
 
 ### Constraints
 
-- A musl binary cannot load the glibc `libvulkan`, Wayland, xkbcommon, or ALSA libraries on Ubuntu or Fedora. The artifact targets musl systems; a glibc build is a separate follow-on.
+- A musl binary cannot load the glibc `libvulkan`, Wayland, xkbcommon, or ALSA libraries on Ubuntu or Fedora. The artifact targets musl systems; glibc is explicitly out of scope.
 - The Vulkan loader loads the ICD with `dlopen`. The ICD is a musl Mesa driver, such as lavapipe in CI or the host GPU driver on an Alpine desktop.
 - `gpu-next` needs a Vulkan context and libplacebo. `--gpu-context=waylandvk` requires `wayland_common.c` and `vulkan/context_wayland.c`; both are missing from the tree.
 - The C++ runtime used by shaderc, glslang, and SPIRV-Tools is not in LD1. Link it statically or the `NEEDED` check fails.
@@ -357,16 +357,15 @@ Park the item on `park/<item>` with the exact cause and a retry condition when: 
 - A second platform with a mostly static musl binary and a tarball release.
 - A second VO (`gpu-next` over Vulkan/Wayland) and AO (`alsa`) on Linux.
 - The dynamic library set is limited to musl libc, Vulkan, Wayland, xkbcommon, and ALSA.
-- The artifact runs on musl systems only; glibc distributions are a separate follow-on.
+- The artifact runs on musl systems only; glibc is explicitly out of scope, not deferred.
 - The local-only rejection boundary is unchanged.
 
 ### Non-goals
 
-glibc builds, aarch64 Linux, X11, Wayland dmabuf, OpenGL/EGL rendering, VA-API, DRM/KMS, hardware video decode, PulseAudio, PipeWire, JACK, SDL, Flatpak, Snap, AppImage, distro packages, systemd integration, desktop portals, a Rust OSC, universal binaries, notarization, and upstream feature parity.
+glibc builds (explicitly out of scope, not deferred), aarch64 Linux, X11, Wayland dmabuf, OpenGL/EGL rendering, VA-API, DRM/KMS, hardware video decode, PulseAudio, PipeWire, JACK, SDL, Flatpak, Snap, AppImage, distro packages, systemd integration, desktop portals, a Rust OSC, universal binaries, notarization, and upstream feature parity.
 
 ### Follow-on (not scheduled)
 
-- A mostly static glibc `gpu-next` build for mainstream distributions.
 - A fully static musl `wlshm` build as a portable software fallback.
 - aarch64 Linux and additional musl architectures.
 - VA-API hardware decode and HDR output after the GPU path is stable.

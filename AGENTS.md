@@ -16,6 +16,7 @@ Player is a local-only media player built on the mpv v0.41.0 playback pipeline, 
 
 ## Invariants
 
+- Linux is x86-64 musl only. glibc is explicitly out of scope; do not add a glibc build or fallback.
 - Local input only. Network schemes, TLS, and network protocols are not built. The classifier is `rust/player-core/src/input.rs`.
 - The player does not auto-load user config or scripts. Explicit scripts are trusted code with the full command table, including `subprocess` and `run`.
 - One Lua implementation: the vendored Lua 5.2 in `rust/player-lua`.
