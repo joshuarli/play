@@ -158,10 +158,19 @@ def first_frame_ms(path):
 
 
 def playback_metrics(path):
-    return measure_time_l([
-        str(MPV), "--no-config", "--vo=null", "--ao=null", "--hwdec=no",
-        "--msg-level=all=error", str(path),
-    ])
+    runs = [
+        measure_time_l([
+            str(MPV), "--no-config", "--vo=null", "--ao=null", "--hwdec=no",
+            "--msg-level=all=error", str(path),
+        ])
+        for _ in range(3)
+    ]
+    return {
+        "exit": int(median([run["exit"] for run in runs])),
+        "real_s": round(median([run["real_s"] for run in runs]), 3),
+        "cpu_s": round(median([run["cpu_s"] for run in runs]), 3),
+        "rss_mb": round(median([run["rss_mb"] for run in runs]), 2),
+    }
 
 
 def idle_rss():
@@ -462,7 +471,7 @@ def lua_interpreters():
         if not path.exists():
             continue
         text = run(["nm", str(path)], timeout=30).stdout
-        count += len(re.findall(r"\bluaL_newstate\b", text))
+        count += text.count("luaL_newstate")
     return count
 
 

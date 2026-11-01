@@ -43,3 +43,4 @@ Per-symbol linked attribution is unavailable on this host: macOS `nm -S` reports
 | closure | 20.06 MiB in 17 files |
 | 2026-11-01 | acf2fea2c172 | p8.2 | 13998112 | 13998112 | 16998336 | 12 | 60.5 | 60.25 | 143.38 | 85.33 | 217.14 | 0.16 | 0.42 | 1.73 | 3.11 | 1 | headless; 3 s clips; GUI owner-run |
 | 2026-11-01 | 8e393464c387 | final | 13998112 | 13998112 | 16998336 | 12 | 62.94 | 63.02 | 148.39 | 85.38 | 217.41 | 0.17 | 0.43 | 1.85 | 3.0 | 1 | headless; 3 s clips; GUI owner-run |
+| 2026-11-01 | e93cf47ccc37 | final | 9640432 | 9640432 | 17166736 | 13 | 103.38 | 102.44 | 207.01 | 84.72 | 213.45 | 0.25 | 0.64 | 2.78 | 5.28 | 1 | headless; 3 s clips; GUI owner-run |
