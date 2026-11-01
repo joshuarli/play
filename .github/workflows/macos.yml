@@ -1,0 +1,87 @@
+name: Build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref_name != 'main' && github.ref || github.run_id }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash -euo pipefail {0}
+
+env:
+  HOMEBREW_NO_AUTO_UPDATE: 1
+  HOMEBREW_NO_INSTALL_CLEANUP: 1
+  ARTIFACT: Player-aarch64-apple-darwin.zip
+
+jobs:
+  macos:
+    name: macOS arm64
+    runs-on: xcode-27
+    timeout-minutes: 90
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_27.1.app
+
+      - name: Check toolchain
+        run: |
+          xcodebuild -version
+          rustc --version
+          cargo --version
+
+      - name: Install build tools
+        run: brew install meson ninja pkgconf cmake
+
+      - name: Cache dependencies
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            .work/deps/release
+            .work/deps/player-audio/target
+          key: player-macos-deps-${{ hashFiles('scripts/build-deps.sh', 'scripts/build-ffmpeg.sh', 'scripts/ffmpeg-components.txt', 'rust/Cargo.lock', 'rust-toolchain.toml') }}
+          restore-keys: |
+            player-macos-deps-
+
+      - name: Build release app
+        run: scripts/release.sh
+
+      - name: Verify app
+        run: |
+          app=dist/Player.app
+          test -x "$app/Contents/MacOS/player"
+          test "$(lipo -archs "$app/Contents/MacOS/player")" = arm64
+          "$app/Contents/MacOS/player" --version > version.txt
+          grep -q '^mpv ' version.txt
+          codesign --verify --deep --strict "$app"
+          {
+            otool -L "$app/Contents/MacOS/player"
+            find "$app/Contents/Frameworks" -name '*.dylib' -exec otool -L {} +
+          } | tee otool.txt
+          if grep -q /opt/homebrew otool.txt; then
+            echo "Homebrew dependency in bundle" >&2
+            exit 1
+          fi
+
+      - name: Package app
+        run: |
+          rm -f "$ARTIFACT"
+          ditto -c -k --keepParent dist/Player.app "$ARTIFACT"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: Player-aarch64-apple-darwin
+          path: ${{ env.ARTIFACT }}
+          if-no-files-found: error
