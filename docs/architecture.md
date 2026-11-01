@@ -72,6 +72,13 @@ When `libmpv` is disabled, the sources compile directly into the `mpv` executabl
 - The interpreter is vendored Lua 5.2.4 through `mlua`; no external `liblua` is linked. `nm` reports one `luaL_newstate`, and `otool -L` has no Lua dylib.
 - `tests/run.sh build` checks for one interpreter; `scripts/audit.sh` checks for C host source remnants, no linked Lua dylib, and one interpreter symbol.
 
+## Simplified OSC (P6.1)
+
+- `player/lua/osc.lua` is one bottom bar: play/pause, seek bar with elapsed/duration, volume/mute, fullscreen, and optional audio/subtitle selectors. It has one layout and no context menus, window controls, touch handling, chapter/playlist/title elements, or compatibility branches.
+- Auto-hide and pointer-move reveal remain. The OSC ticks at 20 Hz while visible, scales from the OSD dimensions for Retina, and falls back to a 1280x720 canvas when headless.
+- It publishes `user-data/osc/areas` (hitboxes), `user-data/osc/margins`, and `user-data/osc/visibility`. Messages are `osc-message`, `osc-visibility`, `osc-show`, and `osc-hide`; named bindings are `play-pause`, `seek-forward`, `seek-backward`, `toggle-fullscreen`, and `toggle-osc` (key `o`).
+- Size: 466 lines, down from 2977. The P6.1 metrics row records startup and first-frame timings; `tests/osc-input` drives the hitboxes and named bindings.
+
 ## Open work
 
 - P1.4 added the FFmpeg manifest gate over the frozen allowlist.
@@ -85,5 +92,5 @@ When `libmpv` is disabled, the sources compile directly into the `mpv` executabl
 - P4.1 added `player-core`/`player-ffi`, built both static libraries, and linked/called `player_ffi_abi_version` from the player.
 - P4.2 moved the input classifier to `player-core::input`; the C boundary delegates through `player_ffi_classify_input` with typed results.
 - P4.3 documented the FFI invariants and added the C bridge test.
-- P5.5 removed the C host, the external Lua dependency, and the Meson Lua option; the Rust host and vendored Lua are the only implementation.
+- P6.1 replaced the upstream OSC with the compact bottom bar and added the binding-level `osc-input` gate; P6.2 records the decision and measurements.
 - P7 moves config, playlist, input, state, and local file handling into Rust; the audio bridge stays at the decode boundary.

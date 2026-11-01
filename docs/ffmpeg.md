@@ -80,4 +80,4 @@ Current result: 19 passed, 0 failed. A temporary manifest with `http` added to t
 
 ## Next
 
-P5.5 removed the C Lua host, the external Lua dependency, and the Meson Lua option. The Rust host, its `mp.utils` surface, and vendored Lua 5.2.4 are the only implementation. P6.1 simplifies the OSC.
+P6.1 replaced the 2977-line upstream OSC with a 466-line bottom bar and added the binding-level `osc-input` gate. P6.2 records the OSC decision and measurements.

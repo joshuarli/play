@@ -841,6 +841,11 @@ def gate_osc(results, args):
     results.check("osc: exit", mpv.returncode == 0, f"exit {mpv.returncode}")
 
 
+def gate_osc_input(results, args):
+    from osc_input import gate_osc_input as run_osc_input
+    run_osc_input(results, Mpv, fixture_entry, fixture_path)
+
+
 def gate_input(results, args):
     entry = fixture_entry("h264")
     with Mpv(["--vo=null", "--ao=null"]) as mpv:
@@ -1355,6 +1360,7 @@ GATES = {
     "local-paths": gate_local_paths,
     "local-only": gate_local_only,
     "osc": gate_osc,
+    "osc-input": gate_osc_input,
     "input": gate_input,
     "playlist": gate_playlist,
     "state": gate_state,
@@ -1370,7 +1376,7 @@ GATES = {
 
 SUITE = [
     "fixtures", "corpus", "audio", "hwdec", "seek", "local-paths",
-    "local-only", "osc", "input", "playlist", "cli", "state", "failures",
+    "local-only", "osc", "osc-input", "input", "playlist", "cli", "state", "failures",
     "rust-link", "ffi",
     "lua-host",
     "lua-api-audit",

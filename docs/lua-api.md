@@ -67,7 +67,6 @@ regenerates **Call sites**, and fails when:
 | `mp.command_native_async` | defaults.lua | none | Run a native command asynchronously; no retained caller. |
 | `mp.commandv` | host | required | Run a command from positional string arguments. |
 | `mp.create_osd_overlay` | defaults.lua | required | Create a persistent OSD overlay object. |
-| `mp.del_property` | host | required | Remove a property or user-data entry. |
 | `mp.disable_key_bindings` | defaults.lua | required | Disable a key-binding section. |
 | `mp.dispatch_events` | defaults.lua | required | Run the script event loop, timers, and idle callbacks. |
 | `mp.enable_key_bindings` | defaults.lua | required | Enable the section created by set_key_bindings. |
@@ -83,7 +82,6 @@ regenerates **Call sites**, and fails when:
 | `mp.get_property_bool` | host | required | Read a property as a boolean. |
 | `mp.get_property_native` | host | required | Read a property and convert its native value to Lua. |
 | `mp.get_property_number` | host | required | Read a property as a number. |
-| `mp.get_property_osd` | host | required | Read a property in its OSD-formatted form. |
 | `mp.get_script_name` | defaults.lua | required | Return mp.script_name. |
 | `mp.get_time` | host | required | Return monotonic time in seconds. |
 | `mp.input.select` | input.lua | built-in | Request a console selection UI; the console module is removed. |
@@ -98,7 +96,6 @@ regenerates **Call sites**, and fails when:
 | `mp.msg.debug` | defaults.lua | required | Log at debug level. |
 | `mp.msg.error` | defaults.lua | required | Log at error level. |
 | `mp.msg.info` | defaults.lua | built-in | Log at info level. |
-| `mp.msg.trace` | defaults.lua | required | Log at trace level. |
 | `mp.msg.verbose` | defaults.lua | required | Log at verbose level. |
 | `mp.msg.warn` | defaults.lua | required | Log at warning level. |
 | `mp.observe_property` | defaults.lua | required | Register a callback for property changes. |
@@ -122,7 +119,6 @@ regenerates **Call sites**, and fails when:
 | `mp.set_osd_ass` | defaults.lua | none | Legacy set_osd_ass overlay update; no retained caller. |
 | `mp.set_property` | host | required | Set a property from a string value. |
 | `mp.set_property_native` | host | required | Set a property from a Lua value converted to a native node. |
-| `mp.set_property_number` | host | required | Set a numeric property. |
 | `mp.unobserve_property` | defaults.lua | required | Remove property callbacks by function. |
 | `mp.unregister_event` | defaults.lua | none | Remove an event handler; no retained caller. |
 | `mp.unregister_idle` | defaults.lua | none | Remove an idle callback; no retained caller. |
@@ -161,35 +157,33 @@ regenerates **Call sites**, and fails when:
 | `mp.abort_async_command` | 1 | `defaults.lua:654` |
 | `mp.add_forced_key_binding` | 1 | `defaults.lua:258` |
 | `mp.add_hook` | 1 | `defaults.lua:616` |
-| `mp.add_key_binding` | 20 | `defaults.lua:254`, `select.lua:42`, `select.lua:125`, `select.lua:183`, `select.lua:187`, `select.lua:192`, `select.lua:197`, `select.lua:207`, `select.lua:232`, `select.lua:257`, `select.lua:384`, `select.lua:439`, `select.lua:497`, `select.lua:553`, `select.lua:599`, `select.lua:673`, `select.lua:677`, `select.lua:681`, `select.lua:685`, `osc.lua:2882` |
+| `mp.add_key_binding` | 24 | `defaults.lua:254`, `select.lua:42`, `select.lua:125`, `select.lua:183`, `select.lua:187`, `select.lua:192`, `select.lua:197`, `select.lua:207`, `select.lua:232`, `select.lua:257`, `select.lua:384`, `select.lua:439`, `select.lua:497`, `select.lua:553`, `select.lua:599`, `select.lua:673`, `select.lua:677`, `select.lua:681`, `select.lua:685`, `osc.lua:431`, `osc.lua:434`, `osc.lua:437`, `osc.lua:440`, `osc.lua:443` |
 | `mp.add_periodic_timer` | 2 | `defaults.lua:275`, `defaults.lua:280` |
-| `mp.add_timeout` | 4 | `defaults.lua:274`, `defaults.lua:633`, `osc.lua:575`, `osc.lua:2533` |
-| `mp.assdraw.ass_new` | 6 | `osc.lua:674`, `osc.lua:685`, `osc.lua:837`, `osc.lua:864`, `osc.lua:2544`, `osc.lua:2580` |
+| `mp.add_timeout` | 4 | `defaults.lua:274`, `defaults.lua:633`, `osc.lua:243`, `osc.lua:270` |
+| `mp.assdraw.ass_new` | 1 | `osc.lua:170` |
 | `mp.cancel_timer` | 1 | `defaults.lua:304` |
-| `mp.command` | 7 | `select.lua:580`, `select.lua:747`, `osc.lua:1805`, `osc.lua:1816`, `osc.lua:2703`, `osc.lua:2711`, `osc.lua:2719` |
-| `mp.command_native` | 10 | `defaults.lua:685`, `defaults.lua:689`, `defaults.lua:807`, `select.lua:270`, `select.lua:440`, `select.lua:659`, `osc.lua:1238`, `osc.lua:1240`, `osc.lua:1876`, `osc.lua:1878` |
+| `mp.command` | 2 | `select.lua:580`, `select.lua:747` |
+| `mp.command_native` | 6 | `defaults.lua:685`, `defaults.lua:689`, `defaults.lua:807`, `select.lua:270`, `select.lua:440`, `select.lua:659` |
 | `mp.command_native_async` | 1 | `defaults.lua:627` |
-| `mp.commandv` | 31 | `defaults.lua:32`, `defaults.lua:39`, `defaults.lua:43`, `defaults.lua:580`, `defaults.lua:819`, `input.lua:40`, `input.lua:55`, `input.lua:64`, `input.lua:68`, `input.lua:76`, `input.lua:81`, `select.lua:77`, `select.lua:379`, `select.lua:483`, `select.lua:548`, `select.lua:625`, `select.lua:647`, `osc.lua:1187`, `osc.lua:1196`, `osc.lua:1211`, `osc.lua:1213`, `osc.lua:1930`, `osc.lua:1932`, `osc.lua:1934`, `osc.lua:1942`, `osc.lua:1944`, `osc.lua:1946`, `osc.lua:2056`, `osc.lua:2063`, `osc.lua:2089`, `osc.lua:2091` |
-| `mp.create_osd_overlay` | 3 | `defaults.lua:664`, `defaults.lua:700`, `osc.lua:262` |
-| `mp.del_property` | 1 | `osc.lua:2641` |
-| `mp.disable_key_bindings` | 10 | `defaults.lua:129`, `osc.lua:2374`, `osc.lua:2375`, `osc.lua:2472`, `osc.lua:2491`, `osc.lua:2511`, `osc.lua:2606`, `osc.lua:2607`, `osc.lua:2843`, `osc.lua:2844` |
+| `mp.commandv` | 30 | `defaults.lua:32`, `defaults.lua:39`, `defaults.lua:43`, `defaults.lua:580`, `defaults.lua:819`, `input.lua:40`, `input.lua:55`, `input.lua:64`, `input.lua:68`, `input.lua:76`, `input.lua:81`, `select.lua:77`, `select.lua:379`, `select.lua:483`, `select.lua:548`, `select.lua:625`, `select.lua:647`, `osc.lua:322`, `osc.lua:357`, `osc.lua:359`, `osc.lua:361`, `osc.lua:363`, `osc.lua:365`, `osc.lua:385`, `osc.lua:387`, `osc.lua:435`, `osc.lua:438`, `osc.lua:441`, `osc.lua:444`, `osc.lua:453` |
+| `mp.create_osd_overlay` | 3 | `defaults.lua:664`, `defaults.lua:700`, `osc.lua:45` |
+| `mp.disable_key_bindings` | 1 | `defaults.lua:129` |
 | `mp.dispatch_events` | 2 | `defaults.lua:515`, `defaults.lua:531` |
-| `mp.enable_key_bindings` | 8 | `defaults.lua:125`, `osc.lua:2360`, `osc.lua:2361`, `osc.lua:2470`, `osc.lua:2489`, `osc.lua:2509`, `osc.lua:2787`, `osc.lua:2793` |
+| `mp.enable_key_bindings` | 3 | `defaults.lua:125`, `osc.lua:457`, `osc.lua:458` |
 | `mp.find_config_file` | 3 | `options.lua:54`, `options.lua:58`, `select.lua:656` |
 | `mp.flush_keybindings` | 2 | `defaults.lua:143`, `defaults.lua:570` |
-| `mp.format_time` | 2 | `select.lua:204`, `osc.lua:2018` |
-| `mp.get_mouse_pos` | 2 | `defaults.lua:46`, `osc.lua:353` |
+| `mp.format_time` | 2 | `select.lua:204`, `osc.lua:54` |
+| `mp.get_mouse_pos` | 5 | `defaults.lua:46`, `osc.lua:327`, `osc.lua:349`, `osc.lua:373`, `osc.lua:382` |
 | `mp.get_next_timeout` | 2 | `defaults.lua:332`, `defaults.lua:551` |
 | `mp.get_opt` | 1 | `defaults.lua:19` |
 | `mp.get_osd_margins` | 1 | `defaults.lua:718` |
-| `mp.get_osd_size` | 5 | `defaults.lua:713`, `osc.lua:332`, `osc.lua:1828`, `osc.lua:2383`, `osc.lua:2569` |
-| `mp.get_property` | 17 | `defaults.lua:778`, `select.lua:46`, `select.lua:276`, `select.lua:390`, `select.lua:441`, `select.lua:498`, `select.lua:603`, `select.lua:637`, `select.lua:690`, `select.lua:716`, `select.lua:725`, `osc.lua:206`, `osc.lua:1867`, `osc.lua:1918`, `osc.lua:1995`, `osc.lua:2836`, `osc.lua:2868` |
-| `mp.get_property_bool` | 2 | `select.lua:651`, `osc.lua:1910` |
-| `mp.get_property_native` | 38 | `defaults.lua:20`, `defaults.lua:47`, `defaults.lua:714`, `defaults.lua:719`, `options.lua:129`, `select.lua:30`, `select.lua:37`, `select.lua:45`, `select.lua:49`, `select.lua:128`, `select.lua:143`, `select.lua:155`, `select.lua:157`, `select.lua:209`, `select.lua:216`, `select.lua:218`, `select.lua:233`, `select.lua:241`, `select.lua:258`, `select.lua:292`, `select.lua:293`, `select.lua:294`, `select.lua:375`, `select.lua:385`, `select.lua:444`, `select.lua:529`, `select.lua:556`, `select.lua:588`, `select.lua:607`, `select.lua:624`, `select.lua:694`, `select.lua:715`, `select.lua:718`, `osc.lua:618`, `osc.lua:1839`, `osc.lua:1914`, `osc.lua:2002`, `osc.lua:2161` |
-| `mp.get_property_number` | 17 | `defaults.lua:782`, `osc.lua:547`, `osc.lua:824`, `osc.lua:1863`, `osc.lua:1865`, `osc.lua:1866`, `osc.lua:1971`, `osc.lua:1981`, `osc.lua:2000`, `osc.lua:2013`, `osc.lua:2015`, `osc.lua:2027`, `osc.lua:2113`, `osc.lua:2160`, `osc.lua:2653`, `osc.lua:2960`, `osc.lua:2971` |
-| `mp.get_property_osd` | 4 | `osc.lua:2100`, `osc.lua:2102`, `osc.lua:2126`, `osc.lua:2128` |
+| `mp.get_osd_size` | 2 | `defaults.lua:713`, `osc.lua:58` |
+| `mp.get_property` | 13 | `defaults.lua:778`, `select.lua:46`, `select.lua:276`, `select.lua:390`, `select.lua:441`, `select.lua:498`, `select.lua:603`, `select.lua:637`, `select.lua:690`, `select.lua:716`, `select.lua:725`, `osc.lua:72`, `osc.lua:73` |
+| `mp.get_property_bool` | 1 | `select.lua:651` |
+| `mp.get_property_native` | 37 | `defaults.lua:20`, `defaults.lua:47`, `defaults.lua:714`, `defaults.lua:719`, `options.lua:129`, `select.lua:30`, `select.lua:37`, `select.lua:45`, `select.lua:49`, `select.lua:128`, `select.lua:143`, `select.lua:155`, `select.lua:157`, `select.lua:209`, `select.lua:216`, `select.lua:218`, `select.lua:233`, `select.lua:241`, `select.lua:258`, `select.lua:292`, `select.lua:293`, `select.lua:294`, `select.lua:375`, `select.lua:385`, `select.lua:444`, `select.lua:529`, `select.lua:556`, `select.lua:588`, `select.lua:607`, `select.lua:624`, `select.lua:694`, `select.lua:715`, `select.lua:718`, `osc.lua:66`, `osc.lua:67`, `osc.lua:68`, `osc.lua:76` |
+| `mp.get_property_number` | 4 | `defaults.lua:782`, `osc.lua:69`, `osc.lua:70`, `osc.lua:71` |
 | `mp.get_script_name` | 3 | `defaults.lua:15`, `options.lua:48`, `input.lua:56` |
-| `mp.get_time` | 12 | `defaults.lua:296`, `defaults.lua:312`, `defaults.lua:337`, `defaults.lua:351`, `osc.lua:343`, `osc.lua:514`, `osc.lua:579`, `osc.lua:2211`, `osc.lua:2268`, `osc.lua:2385`, `osc.lua:2622`, `osc.lua:2629` |
+| `mp.get_time` | 4 | `defaults.lua:296`, `defaults.lua:312`, `defaults.lua:337`, `defaults.lua:351` |
 | `mp.input.select` | 12 | `select.lua:72`, `select.lua:139`, `select.lua:173`, `select.lua:222`, `select.lua:247`, `select.lua:368`, `select.lua:406`, `select.lua:478`, `select.lua:544`, `select.lua:576`, `select.lua:620`, `select.lua:742` |
 | `mp.input.terminate` | 1 | `select.lua:750` |
 | `mp.input_define_section` | 3 | `defaults.lua:28`, `defaults.lua:122`, `defaults.lua:172` |
@@ -199,15 +193,14 @@ regenerates **Call sites**, and fails when:
 | `mp.keep_running` | 3 | `defaults.lua:420`, `defaults.lua:423`, `defaults.lua:539` |
 | `mp.log` | 8 | `defaults.lua:490`, `defaults.lua:491`, `defaults.lua:492`, `defaults.lua:493`, `defaults.lua:494`, `defaults.lua:495`, `defaults.lua:496`, `defaults.lua:497` |
 | `mp.msg` | 2 | `defaults.lua:489`, `defaults.lua:503` |
-| `mp.msg.debug` | 4 | `options.lua:50`, `options.lua:56`, `options.lua:66`, `osc.lua:1824` |
-| `mp.msg.error` | 8 | `defaults.lua:535`, `defaults.lua:590`, `options.lua:11`, `options.lua:18`, `options.lua:88`, `options.lua:118`, `select.lua:36`, `osc.lua:1126` |
+| `mp.msg.debug` | 3 | `options.lua:50`, `options.lua:56`, `options.lua:66` |
+| `mp.msg.error` | 7 | `defaults.lua:535`, `defaults.lua:590`, `options.lua:11`, `options.lua:18`, `options.lua:88`, `options.lua:118`, `select.lua:36` |
 | `mp.msg.info` | 2 | `defaults.lua:500`, `select.lua:630` |
-| `mp.msg.trace` | 5 | `osc.lua:604`, `osc.lua:2209`, `osc.lua:2227`, `osc.lua:2382`, `osc.lua:2568` |
 | `mp.msg.verbose` | 1 | `options.lua:69` |
-| `mp.msg.warn` | 19 | `options.lua:60`, `options.lua:83`, `options.lua:114`, `select.lua:29`, `select.lua:421`, `select.lua:457`, `osc.lua:2691`, `osc.lua:2699`, `osc.lua:2707`, `osc.lua:2715`, `osc.lua:2829`, `osc.lua:2889`, `osc.lua:2896`, `osc.lua:2906`, `osc.lua:2913`, `osc.lua:2921`, `osc.lua:2927`, `osc.lua:2941`, `osc.lua:2947` |
-| `mp.observe_property` | 22 | `defaults.lua:396`, `options.lua:135`, `osc.lua:2658`, `osc.lua:2677`, `osc.lua:2678`, `osc.lua:2679`, `osc.lua:2680`, `osc.lua:2722`, `osc.lua:2727`, `osc.lua:2731`, `osc.lua:2735`, `osc.lua:2739`, `osc.lua:2744`, `osc.lua:2745`, `osc.lua:2746`, `osc.lua:2747`, `osc.lua:2748`, `osc.lua:2749`, `osc.lua:2750`, `osc.lua:2751`, `osc.lua:2756`, `osc.lua:2757` |
-| `mp.options.read_options` | 1 | `osc.lua:2955` |
-| `mp.osd_message` | 7 | `defaults.lua:574`, `select.lua:31`, `select.lua:38`, `select.lua:491`, `osc.lua:2695`, `osc.lua:2837`, `osc.lua:2869` |
+| `mp.msg.warn` | 6 | `options.lua:60`, `options.lua:83`, `options.lua:114`, `select.lua:29`, `select.lua:421`, `select.lua:457` |
+| `mp.observe_property` | 10 | `defaults.lua:396`, `options.lua:135`, `osc.lua:392`, `osc.lua:393`, `osc.lua:397`, `osc.lua:398`, `osc.lua:399`, `osc.lua:400`, `osc.lua:401`, `osc.lua:405` |
+| `mp.options.read_options` | 1 | `osc.lua:13` |
+| `mp.osd_message` | 6 | `defaults.lua:574`, `select.lua:31`, `select.lua:38`, `select.lua:491`, `osc.lua:309`, `osc.lua:425` |
 | `mp.raw_abort_async_command` | 1 | `defaults.lua:656` |
 | `mp.raw_command_native_async` | 1 | `defaults.lua:631` |
 | `mp.raw_hook_add` | 1 | `defaults.lua:621` |
@@ -215,19 +208,18 @@ regenerates **Call sites**, and fails when:
 | `mp.raw_observe_property` | 1 | `defaults.lua:400` |
 | `mp.raw_unobserve_property` | 1 | `defaults.lua:407` |
 | `mp.raw_wait_event` | 1 | `defaults.lua:506` |
-| `mp.register_event` | 8 | `defaults.lua:428`, `defaults.lua:465`, `defaults.lua:466`, `defaults.lua:467`, `defaults.lua:601`, `defaults.lua:641`, `osc.lua:2675`, `osc.lua:2676` |
+| `mp.register_event` | 9 | `defaults.lua:428`, `defaults.lua:465`, `defaults.lua:466`, `defaults.lua:467`, `defaults.lua:601`, `defaults.lua:641`, `osc.lua:410`, `osc.lua:416`, `osc.lua:420` |
 | `mp.register_idle` | 2 | `defaults.lua:472`, `defaults.lua:570` |
-| `mp.register_script_message` | 12 | `defaults.lua:251`, `defaults.lua:376`, `defaults.lua:487`, `input.lua:34`, `osc.lua:2689`, `osc.lua:2697`, `osc.lua:2705`, `osc.lua:2713`, `osc.lua:2875`, `osc.lua:2876`, `osc.lua:2877`, `osc.lua:2884` |
+| `mp.register_script_message` | 8 | `defaults.lua:251`, `defaults.lua:376`, `defaults.lua:487`, `input.lua:34`, `osc.lua:424`, `osc.lua:427`, `osc.lua:428`, `osc.lua:429` |
 | `mp.remove_key_binding` | 1 | `defaults.lua:262` |
 | `mp.request_event` | 2 | `defaults.lua:435`, `defaults.lua:458` |
 | `mp.script_name` | 6 | `defaults.lua:16`, `defaults.lua:73`, `defaults.lua:117`, `defaults.lua:153`, `defaults.lua:156`, `defaults.lua:242` |
-| `mp.set_key_bindings` | 5 | `defaults.lua:89`, `osc.lua:2760`, `osc.lua:2764`, `osc.lua:2771`, `osc.lua:2789` |
-| `mp.set_mouse_area` | 2 | `defaults.lua:133`, `osc.lua:362` |
+| `mp.set_key_bindings` | 3 | `defaults.lua:89`, `osc.lua:447`, `osc.lua:451` |
+| `mp.set_mouse_area` | 2 | `defaults.lua:133`, `osc.lua:139` |
 | `mp.set_osd_ass` | 1 | `defaults.lua:698` |
-| `mp.set_property` | 8 | `select.lua:145`, `select.lua:178`, `select.lua:227`, `select.lua:252`, `select.lua:411`, `select.lua:604`, `select.lua:611`, `osc.lua:2081` |
-| `mp.set_property_native` | 3 | `osc.lua:566`, `osc.lua:2834`, `osc.lua:2866` |
-| `mp.set_property_number` | 2 | `osc.lua:524`, `osc.lua:557` |
-| `mp.unobserve_property` | 2 | `defaults.lua:403`, `osc.lua:2660` |
+| `mp.set_property` | 7 | `select.lua:145`, `select.lua:178`, `select.lua:227`, `select.lua:252`, `select.lua:411`, `select.lua:604`, `select.lua:611` |
+| `mp.set_property_native` | 4 | `osc.lua:132`, `osc.lua:133`, `osc.lua:303`, `osc.lua:461` |
+| `mp.unobserve_property` | 1 | `defaults.lua:403` |
 | `mp.unregister_event` | 1 | `defaults.lua:438` |
 | `mp.unregister_idle` | 1 | `defaults.lua:476` |
 | `mp.unregister_script_message` | 3 | `defaults.lua:266`, `defaults.lua:380`, `input.lua:47` |
