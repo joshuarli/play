@@ -14,9 +14,8 @@ The release app links the Rust plane as one `libplayer_release.dylib`. The devel
 
 `player-core::input::classify_input` is the single policy for input strings. It accepts ordinary local paths, including paths with spaces, Unicode, `:`, relative components, symlinks, and mounted volumes. It rejects every `scheme://` URL, the known protocol wrappers (`data:`, `lavfi:`, `edl:`, `memory:`, `fd:`, `av:`, `mf:`, and the rest), and network prefixes. `file://` is converted only when the caller passes `allow_file_uri`; drag-and-drop does this for an existing local path before queueing `loadfile`.
 
-The classifier is called at startup, IPC and script `loadfile`, playlist entries, and external audio or subtitle files. Two limits are open:
+The classifier is called at startup, IPC and script `loadfile`, `--playlist` and `loadlist` paths, playlist entries, and external audio or subtitle files. One limit is open:
 
-- `--playlist=FILE` and `loadlist FILE` reach the stream layer directly. The stream layer accepts `file://` and fails closed on network schemes, but the classifier is not applied to the playlist path itself.
 - Startup parsing rejects a non-UTF-8 argument before the classifier runs. The classifier and the local-file FFI take UTF-8, so they are narrower than upstream mpv's byte-transparent paths. macOS paths are Unicode in normal use.
 
 The stream layer registers `file` and the internal client callback only. FFmpeg is configured with `--disable-network` and a `file`-only protocol allowlist. Network protocols, TLS, and a CA bundle are not built.

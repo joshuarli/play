@@ -348,6 +348,17 @@ static void startup_add_file(void *p, const char *path)
     playlist_append_file(ctx->mpctx->playlist, path);
 }
 
+static int startup_add_playlist(void *p, const char *path)
+{
+    struct startup_ctx *ctx = p;
+    struct playlist *pl = playlist_parse_file(path, NULL, ctx->mpctx->global);
+    if (!pl)
+        return -1;
+    playlist_transfer_entries(ctx->mpctx->playlist, pl);
+    talloc_free(pl);
+    return 0;
+}
+
 static void startup_set_fullscreen(void *p, int value)
 {
     struct startup_ctx *ctx = p;
@@ -413,6 +424,7 @@ static int mp_parse_startup(struct MPContext *mpctx, char **options)
     const struct player_startup_sink sink = {
         .ctx = &ctx,
         .add_file = startup_add_file,
+        .add_playlist = startup_add_playlist,
         .set_fullscreen = startup_set_fullscreen,
         .set_start = startup_set_start,
         .append_path = startup_append_path,

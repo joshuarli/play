@@ -189,22 +189,6 @@ int m_config_parse_mp_command_line(m_config_t *config, struct playlist *files,
                 continue;
             }
 
-            if (bstrcmp0(p.arg, "playlist") == 0) {
-                // append the playlist to the local args
-                char *param0 = bstrdup0(NULL, p.param);
-                struct playlist *pl = playlist_parse_file(param0, NULL, global);
-                if (!pl) {
-                    MP_FATAL(config, "Error reading playlist '%.*s'\n",
-                             BSTR_P(p.param));
-                    talloc_free(param0);
-                    goto err_out;
-                }
-                playlist_transfer_entries(files, pl);
-                talloc_free(param0);
-                talloc_free(pl);
-                continue;
-            }
-
             if (mode == LOCAL) {
                 MP_TARRAY_APPEND(NULL, local_params, local_params_count,
                                  (struct playlist_param) {p.arg, p.param});

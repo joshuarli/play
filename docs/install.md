@@ -19,7 +19,7 @@ The bundle carries its own pinned dylibs, Vulkan loader, MoltenVK, and the Rust 
 
 ## Local-only contract
 
-Local paths are supported. Drag-and-drop converts a `file://` URL for an existing path; the CLI, IPC `loadfile`, playlists, and external files reject `file://`. Network URLs are rejected before the stream layer with `Refusing non-local input`. The player does not include network protocols, TLS, or a CA bundle.
+Local paths are supported. Drag-and-drop converts a `file://` URL for an existing path; the CLI, `--playlist`, `loadlist`, IPC `loadfile`, playlists, and external files reject `file://`. Network URLs are rejected before the stream layer with `Refusing non-local input`. The player does not include network protocols, TLS, or a CA bundle.
 
 Clipboard commands are compiled and reachable. Encoding, recording, and the lavfi filter graph are compiled but have no reachable path in the release build.
 

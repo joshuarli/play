@@ -2,13 +2,14 @@ use std::ffi::{c_char, c_int, c_void, CStr, CString};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::ptr;
 
-use player_core::config::{parse_startup, PathListOp, StartTime};
+use player_core::config::{parse_startup, PathListOp, StartTime, StartupOp};
 
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct PlayerStartupSink {
     pub ctx: *mut c_void,
     pub add_file: Option<unsafe extern "C" fn(*mut c_void, *const c_char)>,
+    pub add_playlist: Option<unsafe extern "C" fn(*mut c_void, *const c_char) -> c_int>,
     pub set_fullscreen: Option<unsafe extern "C" fn(*mut c_void, c_int)>,
     pub set_start: Option<unsafe extern "C" fn(*mut c_void, c_int, f64)>,
     pub append_path: Option<unsafe extern "C" fn(*mut c_void, c_int, *const c_char)>,
@@ -36,6 +37,7 @@ pub unsafe extern "C" fn player_ffi_startup_parse(
         // SAFETY: sink is non-null and points to a valid callback table for the call.
         let sink = unsafe { *sink };
         if sink.add_file.is_none()
+            || sink.add_playlist.is_none()
             || sink.set_fullscreen.is_none()
             || sink.set_start.is_none()
             || sink.append_path.is_none()
@@ -57,39 +59,8 @@ pub unsafe extern "C" fn player_ffi_startup_parse(
                 .map_err(|_| "command line argument is not UTF-8".to_owned())?;
             args.push(text.to_owned());
         }
-        let parsed = parse_startup(&args).map_err(|error| error.to_string())?;
-        for file in &parsed.config.files {
-            let file = c_string(file)?;
-            let callback = sink
-                .add_file
-                .ok_or_else(|| "startup sink is incomplete".to_owned())?;
-            // SAFETY: the callback and ctx come from the caller and are valid for the call.
-            unsafe { callback(sink.ctx, file.as_ptr()) };
-        }
-        if let Some(fullscreen) = parsed.config.fullscreen {
-            let callback = sink
-                .set_fullscreen
-                .ok_or_else(|| "startup sink is incomplete".to_owned())?;
-            // SAFETY: the callback and ctx come from the caller and are valid for the call.
-            unsafe { callback(sink.ctx, if fullscreen { 1 } else { 0 }) };
-        }
-        if let Some(start) = &parsed.config.start {
-            let (kind, position) = start_time_parts(start);
-            let callback = sink
-                .set_start
-                .ok_or_else(|| "startup sink is incomplete".to_owned())?;
-            // SAFETY: the callback and ctx come from the caller and are valid for the call.
-            unsafe { callback(sink.ctx, kind, position) };
-        }
-        apply_path_ops(&sink, false, &parsed.config.audio_ops)?;
-        apply_path_ops(&sink, true, &parsed.config.sub_ops)?;
-        for argument in &parsed.remaining {
-            let argument = c_string(argument)?;
-            let callback = sink
-                .add_remaining
-                .ok_or_else(|| "startup sink is incomplete".to_owned())?;
-            // SAFETY: the callback and ctx come from the caller and are valid for the call.
-            unsafe { callback(sink.ctx, argument.as_ptr()) };
+        for operation in parse_startup(&args).map_err(|error| error.to_string())? {
+            apply_operation(&sink, operation)?;
         }
         Ok(())
     }));
@@ -108,48 +79,67 @@ pub unsafe extern "C" fn player_ffi_startup_parse(
     }
 }
 
-fn apply_path_ops(
-    sink: &PlayerStartupSink,
-    is_sub: bool,
-    ops: &[PathListOp],
-) -> Result<(), String> {
-    for op in ops {
-        match op {
-            PathListOp::Append(path) => {
-                let path = c_string(path)?;
-                let callback = sink
-                    .append_path
-                    .ok_or_else(|| "startup sink is incomplete".to_owned())?;
-                // SAFETY: the callback and ctx come from the caller and are valid for the call.
-                unsafe {
-                    callback(
-                        sink.ctx,
-                        if is_sub { 1 } else { 0 },
-                        path.as_ptr(),
-                    )
-                };
+const INCOMPLETE_SINK: &str = "startup sink is incomplete";
+
+fn apply_operation(sink: &PlayerStartupSink, operation: StartupOp) -> Result<(), String> {
+    match operation {
+        StartupOp::AddFile(path) => {
+            let path = c_string(&path)?;
+            let callback = sink.add_file.ok_or(INCOMPLETE_SINK)?;
+            // SAFETY: the callback and ctx come from the caller and are valid for the call.
+            unsafe { callback(sink.ctx, path.as_ptr()) };
+        }
+        StartupOp::AddPlaylist(path) => {
+            let c_path = c_string(&path)?;
+            let callback = sink.add_playlist.ok_or(INCOMPLETE_SINK)?;
+            // SAFETY: the callback and ctx come from the caller and are valid for the call.
+            if unsafe { callback(sink.ctx, c_path.as_ptr()) } < 0 {
+                return Err(format!("cannot read playlist '{path}'"));
             }
-            PathListOp::Set(paths) => {
-                let strings = paths
-                    .iter()
-                    .map(|path| c_string(path))
-                    .collect::<Result<Vec<_>, _>>()?;
-                let pointers: Vec<*const c_char> =
-                    strings.iter().map(|path| path.as_ptr()).collect();
-                let callback = sink
-                    .set_paths
-                    .ok_or_else(|| "startup sink is incomplete".to_owned())?;
-                // SAFETY: the callback and ctx come from the caller; the string array and
-                // pointers stay alive for the call.
-                unsafe {
-                    callback(
-                        sink.ctx,
-                        if is_sub { 1 } else { 0 },
-                        pointers.as_ptr(),
-                        pointers.len(),
-                    )
-                };
-            }
+        }
+        StartupOp::SetFullscreen(fullscreen) => {
+            let callback = sink.set_fullscreen.ok_or(INCOMPLETE_SINK)?;
+            // SAFETY: the callback and ctx come from the caller and are valid for the call.
+            unsafe { callback(sink.ctx, c_int::from(fullscreen)) };
+        }
+        StartupOp::SetStart(start) => {
+            let (kind, position) = start_time_parts(&start);
+            let callback = sink.set_start.ok_or(INCOMPLETE_SINK)?;
+            // SAFETY: the callback and ctx come from the caller and are valid for the call.
+            unsafe { callback(sink.ctx, kind, position) };
+        }
+        StartupOp::AudioFiles(op) => apply_path_op(sink, false, &op)?,
+        StartupOp::SubFiles(op) => apply_path_op(sink, true, &op)?,
+        StartupOp::Forward(argument) => {
+            let argument = c_string(&argument)?;
+            let callback = sink.add_remaining.ok_or(INCOMPLETE_SINK)?;
+            // SAFETY: the callback and ctx come from the caller and are valid for the call.
+            unsafe { callback(sink.ctx, argument.as_ptr()) };
+        }
+    }
+    Ok(())
+}
+
+fn apply_path_op(sink: &PlayerStartupSink, is_sub: bool, op: &PathListOp) -> Result<(), String> {
+    match op {
+        PathListOp::Append(path) => {
+            let path = c_string(path)?;
+            let callback = sink.append_path.ok_or(INCOMPLETE_SINK)?;
+            // SAFETY: the callback and ctx come from the caller and are valid for the call.
+            unsafe { callback(sink.ctx, c_int::from(is_sub), path.as_ptr()) };
+        }
+        PathListOp::Set(paths) => {
+            let strings = paths
+                .iter()
+                .map(|path| c_string(path))
+                .collect::<Result<Vec<_>, _>>()?;
+            let pointers: Vec<*const c_char> = strings.iter().map(|path| path.as_ptr()).collect();
+            let callback = sink.set_paths.ok_or(INCOMPLETE_SINK)?;
+            // SAFETY: the callback and ctx come from the caller; the string array and
+            // pointers stay alive for the call.
+            unsafe {
+                callback(sink.ctx, c_int::from(is_sub), pointers.as_ptr(), pointers.len())
+            };
         }
     }
     Ok(())

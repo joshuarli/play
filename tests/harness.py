@@ -496,6 +496,37 @@ def gate_cli(results, args):
         results.check("cli: FILE...", True)
     results.check("cli: FILE... exit", mpv.returncode == 0, f"exit {mpv.returncode}")
 
+    last = fixture_path(fixture_entry("audio-mono"))
+    TMP.mkdir(parents=True, exist_ok=True)
+    list_path = TMP / f"startup-{os.getpid()}.m3u"
+    list_path.write_text(f"{second}\n")
+    try:
+        with Mpv(["--vo=null", "--ao=null", str(path), f"--playlist={list_path}",
+                  str(last)]) as mpv:
+            mpv.wait_property("playlist-count", lambda value: value == 3, timeout=10)
+            names = [Path(item["filename"]).name for item in mpv.get_property("playlist")]
+            results.check("cli: --playlist keeps argument order",
+                          names == [path.name, second.name, last.name], str(names))
+        results.check("cli: --playlist exit", mpv.returncode == 0,
+                      f"exit {mpv.returncode}")
+
+        proc = run(["--vo=null", "--ao=null", f"--playlist=file://{list_path}"])
+        results.check("cli: --playlist rejects file://",
+                      proc.returncode != 0
+                      and "Refusing non-local playlist" in proc.stdout + proc.stderr,
+                      f"exit {proc.returncode}: {(proc.stdout + proc.stderr).strip()}")
+
+        with Mpv(["--vo=null", "--ao=null"]) as mpv:
+            try:
+                mpv.command("loadlist", f"file://{list_path}")
+                rejected = False
+            except Failure:
+                rejected = True
+            results.check("cli: loadlist rejects file://",
+                          rejected and mpv.get_property("playlist-count") == 0)
+    finally:
+        list_path.unlink(missing_ok=True)
+
 
 def corpus_case(results, name, entry):
     path = fixture_path(entry)

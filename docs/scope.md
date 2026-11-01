@@ -7,11 +7,11 @@ Player opens local filesystem paths and local playlist files. It does not implem
 - Ordinary paths, including relative and absolute paths, spaces, `:`, Unicode, symlinks, and mounted volumes.
 - Local playlists in M3U, M3U8, and PLS form. A network URL in a playlist is rejected while the local entries continue.
 - External audio and subtitle files beside a local file.
-- `file://` from drag-and-drop when it resolves to an existing local path. The CLI, IPC `loadfile`, playlist entries, and external files reject `file://`.
+- `file://` from drag-and-drop when it resolves to an existing local path. The CLI, `--playlist`, `loadlist`, IPC `loadfile`, playlist entries, and external files reject `file://`.
 
 `player-core::input::classify_input` rejects every other `scheme://` URL and the protocol wrappers `data:`, `lavfi:`, `edl:`, `memory:`, `fd:`, `fdclose:`, `av:`, `avdevice:`, `mf:`, `null:`, `slice:`, `appending:`, `mpv:`, `ffmpeg:`, and `lavf:`. A mounted network volume is an ordinary filesystem path; the player makes no network connection of its own. The network scheme set is `scripts/network-schemes.txt`; the manifest, measure, audit, and protocol-list gates read it.
 
-Two boundary limits remain. `--playlist=FILE` and `loadlist FILE` hand the playlist path to the stream layer without the classifier, so `file://` is accepted there and only a network scheme fails closed. Startup parsing and the classifier take UTF-8, so a non-UTF-8 argument is rejected with `command line argument is not UTF-8`; the path API is narrower than upstream mpv's byte-transparent one.
+One boundary limit remains. Startup parsing and the classifier take UTF-8, so a non-UTF-8 argument is rejected with `command line argument is not UTF-8`; the path API is narrower than upstream mpv's byte-transparent one.
 
 The local-only gate creates a hostile temporary `HOME` with `mpv.conf`, `input.conf`, and a nonexistent script. Playback succeeds without loading them, and a positive control asserts that the config's `volume=42` did not take effect.
 
@@ -54,6 +54,6 @@ Removed: `--ytdl*`, `--hls-bitrate`, `--lavfi-complex`, `--stream-dump`, `--stre
 
 ## Remaining debt
 
-- The UTF-8-only path API and the classifier bypass in `--playlist` and `loadlist`.
+- The UTF-8-only path API.
 - The Rust fullscreen mirror is not updated when the window changes fullscreen.
 - Clipboard support is live although the release report previously described the player as having none. Decide whether to keep it or remove it.

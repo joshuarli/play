@@ -15,19 +15,15 @@ pub enum PathListOp {
     Append(String),
 }
 
-#[derive(Debug, Default, Clone, PartialEq)]
-pub struct StartupConfig {
-    pub files: Vec<String>,
-    pub fullscreen: Option<bool>,
-    pub start: Option<StartTime>,
-    pub audio_ops: Vec<PathListOp>,
-    pub sub_ops: Vec<PathListOp>,
-}
-
 #[derive(Debug, Clone, PartialEq)]
-pub struct ParsedCommandLine {
-    pub config: StartupConfig,
-    pub remaining: Vec<String>,
+pub enum StartupOp {
+    AddFile(String),
+    AddPlaylist(String),
+    SetFullscreen(bool),
+    SetStart(StartTime),
+    AudioFiles(PathListOp),
+    SubFiles(PathListOp),
+    Forward(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,15 +51,12 @@ impl fmt::Display for ConfigError {
 
 impl std::error::Error for ConfigError {}
 
-pub fn parse_startup(args: &[String]) -> Result<ParsedCommandLine, ConfigError> {
-    let mut parsed = ParsedCommandLine {
-        config: StartupConfig::default(),
-        remaining: Vec::new(),
-    };
+pub fn parse_startup(args: &[String]) -> Result<Vec<StartupOp>, ConfigError> {
+    let mut operations = Vec::with_capacity(args.len());
     let mut positional_only = false;
     for arg in args {
         if positional_only {
-            parsed.config.files.push(arg.clone());
+            operations.push(StartupOp::AddFile(arg.clone()));
             continue;
         }
         if arg == "--" {
@@ -74,49 +67,42 @@ pub fn parse_startup(args: &[String]) -> Result<ParsedCommandLine, ConfigError> 
             return Err(ConfigError::Unsupported(arg.clone()));
         }
         if arg == "-" || !arg.starts_with('-') {
-            parsed.config.files.push(arg.clone());
+            operations.push(StartupOp::AddFile(arg.clone()));
             continue;
         }
         let (name, value) = split_option(arg);
-        match name {
-            "--fullscreen" | "--fs" => {
-                parsed.config.fullscreen = Some(parse_bool(name, value)?);
-            }
+        let operation = match name {
+            "--fullscreen" | "--fs" => StartupOp::SetFullscreen(parse_bool(name, value)?),
             "--no-fullscreen" | "--no-fs" => {
-                if value.is_some() {
-                    return Err(ConfigError::InvalidValue(
-                        name.to_owned(),
-                        value.unwrap_or_default().to_owned(),
-                    ));
+                if let Some(value) = value {
+                    return Err(ConfigError::InvalidValue(name.to_owned(), value.to_owned()));
                 }
-                parsed.config.fullscreen = Some(false);
+                StartupOp::SetFullscreen(false)
             }
             "--start" => {
-                let value = value.ok_or_else(|| {
-                    ConfigError::MissingValue("--start".to_owned())
-                })?;
-                parsed.config.start = Some(parse_start_time(value)?);
+                let value = value.ok_or_else(|| ConfigError::MissingValue("--start".to_owned()))?;
+                StartupOp::SetStart(parse_start_time(value)?)
             }
+            "--playlist" => StartupOp::AddPlaylist(required_value(name, value)?.to_owned()),
             "--audio-file" => {
-                let value = required_value(name, value)?;
-                parsed.config.audio_ops.push(PathListOp::Append(value.to_owned()));
+                StartupOp::AudioFiles(PathListOp::Append(required_value(name, value)?.to_owned()))
             }
-            "--audio-files" => {
-                let value = required_value(name, value)?;
-                parsed.config.audio_ops.push(PathListOp::Set(split_path_list(name, value)?));
-            }
+            "--audio-files" => StartupOp::AudioFiles(PathListOp::Set(split_path_list(
+                name,
+                required_value(name, value)?,
+            )?)),
             "--sub-file" => {
-                let value = required_value(name, value)?;
-                parsed.config.sub_ops.push(PathListOp::Append(value.to_owned()));
+                StartupOp::SubFiles(PathListOp::Append(required_value(name, value)?.to_owned()))
             }
-            "--sub-files" => {
-                let value = required_value(name, value)?;
-                parsed.config.sub_ops.push(PathListOp::Set(split_path_list(name, value)?));
-            }
-            _ => parsed.remaining.push(arg.clone()),
-        }
+            "--sub-files" => StartupOp::SubFiles(PathListOp::Set(split_path_list(
+                name,
+                required_value(name, value)?,
+            )?)),
+            _ => StartupOp::Forward(arg.clone()),
+        };
+        operations.push(operation);
     }
-    Ok(parsed)
+    Ok(operations)
 }
 
 fn split_option(arg: &str) -> (&str, Option<&str>) {
@@ -236,8 +222,16 @@ mod tests {
         values.iter().map(|value| (*value).to_owned()).collect()
     }
 
+    fn file(value: &str) -> StartupOp {
+        StartupOp::AddFile(value.to_owned())
+    }
+
+    fn forward(value: &str) -> StartupOp {
+        StartupOp::Forward(value.to_owned())
+    }
+
     #[test]
-    fn config_parses_files_and_supported_options() {
+    fn config_keeps_files_and_supported_options_in_argument_order() {
         let parsed = parse_startup(&args(&[
             "--fullscreen",
             "one.mp4",
@@ -247,18 +241,37 @@ mod tests {
             "two.mkv",
         ]))
         .unwrap();
-        assert_eq!(parsed.config.files, vec!["one.mp4", "two.mkv"]);
-        assert_eq!(parsed.config.fullscreen, Some(true));
-        assert_eq!(parsed.config.start, Some(StartTime::Absolute(0.5)));
         assert_eq!(
-            parsed.config.audio_ops,
-            vec![PathListOp::Append("audio.m4a".to_owned())]
+            parsed,
+            vec![
+                StartupOp::SetFullscreen(true),
+                file("one.mp4"),
+                StartupOp::SetStart(StartTime::Absolute(0.5)),
+                StartupOp::AudioFiles(PathListOp::Append("audio.m4a".to_owned())),
+                StartupOp::SubFiles(PathListOp::Append("subs.srt".to_owned())),
+                file("two.mkv"),
+            ]
         );
+    }
+
+    #[test]
+    fn config_orders_playlists_with_positional_files() {
+        let parsed = parse_startup(&args(&[
+            "first.mp4",
+            "--playlist=list.m3u",
+            "last.mp4",
+        ]))
+        .unwrap();
         assert_eq!(
-            parsed.config.sub_ops,
-            vec![PathListOp::Append("subs.srt".to_owned())]
+            parsed,
+            vec![
+                file("first.mp4"),
+                StartupOp::AddPlaylist("list.m3u".to_owned()),
+                file("last.mp4"),
+            ]
         );
-        assert!(parsed.remaining.is_empty());
+        assert!(parse_startup(&args(&["--playlist"])).is_err());
+        assert!(parse_startup(&args(&["--playlist="])).is_err());
     }
 
     #[test]
@@ -267,33 +280,36 @@ mod tests {
             "--no-config", "--vo=null", "--idle=yes", "--help", "--script=x.lua",
         ]))
         .unwrap();
-        assert!(parsed.config.files.is_empty());
         assert_eq!(
-            parsed.remaining,
-            vec!["--no-config", "--vo=null", "--idle=yes", "--help", "--script=x.lua"]
+            parsed,
+            vec![
+                forward("--no-config"),
+                forward("--vo=null"),
+                forward("--idle=yes"),
+                forward("--help"),
+                forward("--script=x.lua"),
+            ]
         );
     }
 
     #[test]
     fn config_handles_positional_separator() {
         let parsed = parse_startup(&args(&["--", "-file.mp4", "--start=1"])).unwrap();
-        assert_eq!(parsed.config.files, vec!["-file.mp4", "--start=1"]);
-        assert!(parsed.config.start.is_none());
-        assert!(parsed.remaining.is_empty());
+        assert_eq!(parsed, vec![file("-file.mp4"), file("--start=1")]);
     }
 
     #[test]
     fn config_parses_booleans() {
         for (value, expected) in [
-            ("--fullscreen", Some(true)),
-            ("--fs", Some(true)),
-            ("--fullscreen=no", Some(false)),
-            ("--fs=0", Some(false)),
-            ("--no-fullscreen", Some(false)),
-            ("--no-fs", Some(false)),
+            ("--fullscreen", true),
+            ("--fs", true),
+            ("--fullscreen=no", false),
+            ("--fs=0", false),
+            ("--no-fullscreen", false),
+            ("--no-fs", false),
         ] {
             let parsed = parse_startup(&args(&[value])).unwrap();
-            assert_eq!(parsed.config.fullscreen, expected, "{value}");
+            assert_eq!(parsed, vec![StartupOp::SetFullscreen(expected)], "{value}");
         }
         assert!(parse_startup(&args(&["--fullscreen=maybe"])).is_err());
         assert!(parse_startup(&args(&["--no-fullscreen=yes"])).is_err());
@@ -311,7 +327,7 @@ mod tests {
             ("--start=#3", StartTime::Chapter(2)),
         ] {
             let parsed = parse_startup(&args(&[value])).unwrap();
-            assert_eq!(parsed.config.start, Some(expected), "{value}");
+            assert_eq!(parsed, vec![StartupOp::SetStart(expected)], "{value}");
         }
         for value in ["--start", "--start=", "--start=abc", "--start=101%",
                       "--start=#0", "--start=+x"] {
@@ -329,17 +345,18 @@ mod tests {
         ]))
         .unwrap();
         assert_eq!(
-            parsed.config.audio_ops,
+            parsed,
             vec![
-                PathListOp::Set(vec!["a.m4a".to_owned(), "b.m4a".to_owned()]),
-                PathListOp::Append("c.m4a".to_owned()),
-            ]
-        );
-        assert_eq!(
-            parsed.config.sub_ops,
-            vec![
-                PathListOp::Set(vec!["s1.srt".to_owned(), "s2.srt".to_owned()]),
-                PathListOp::Append("s3.srt".to_owned()),
+                StartupOp::AudioFiles(PathListOp::Set(vec![
+                    "a.m4a".to_owned(),
+                    "b.m4a".to_owned()
+                ])),
+                StartupOp::AudioFiles(PathListOp::Append("c.m4a".to_owned())),
+                StartupOp::SubFiles(PathListOp::Set(vec![
+                    "s1.srt".to_owned(),
+                    "s2.srt".to_owned()
+                ])),
+                StartupOp::SubFiles(PathListOp::Append("s3.srt".to_owned())),
             ]
         );
         assert!(parse_startup(&args(&["--audio-file="])).is_err());

@@ -17,16 +17,6 @@ Next: 20
 
 ## P3
 
-### PLAY-14 · P3 · Startup playlist handling bypasses the classifier and reverses option order
-
-- **Area:** Types
-- **Where:** `rust/player-ffi/src/startup.rs:60-72`, `:86-100`, `player/main.c:406-443`, `options/parse_commandline.c:192-206`, `player/command.c:6280-6293`, `common/playlist.c:316-336`, `stream/stream_file.c:156-159`
-- **Problem:** The Rust startup parser applies every positional file first and the remaining C arguments last, so `player --playlist=list.m3u extra.mp4` plays `extra.mp4` before the playlist entries. `--playlist` and `loadlist` also hand the playlist path to the stream layer without `classify_input`, so `file:///tmp/x.m3u` is accepted while the CLI and IPC reject `file://` for ordinary files. The docs state both behaviors as limits.
-- **Recommendation:** emit one ordered operation stream from the startup parser (`AddFile`, `AddPlaylist`, option operations) and apply it in order; classify the playlist path at the same boundary as every other input. Add a mixed `--playlist` and positional test plus a `file://` playlist case.
-- **Fix with:** api-surface-and-module-boundaries
-- **Effort:** M
-- **Design:** none
-
 ### PLAY-18 · P3 · Generated docs and fixtures heal their own oracles instead of failing on drift
 
 - **Area:** Tests

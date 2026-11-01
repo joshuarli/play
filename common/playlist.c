@@ -22,6 +22,7 @@
 #include "common/msg.h"
 #include "mpv_talloc.h"
 #include "options/path.h"
+#include "misc/path_utils.h"
 
 #include "demux/demux.h"
 #include "stream/stream.h"
@@ -318,6 +319,12 @@ struct playlist *playlist_parse_file(const char *file, struct mp_cancel *cancel,
 {
     struct mp_log *log = mp_log_new(NULL, global->log, "!playlist_parser");
     mp_verbose(log, "Parsing playlist file %s...\n", file);
+
+    if (!mp_input_is_local_path(file, false, NULL)) {
+        mp_err(log, "Refusing non-local playlist: %s\n", file);
+        talloc_free(log);
+        return NULL;
+    }
 
     char *path = mp_get_user_path(NULL, global, file);
     struct demuxer_params p = {
