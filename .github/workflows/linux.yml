@@ -2,13 +2,15 @@ name: Linux
 
 on:
   push:
+    branches: ['**']
   pull_request:
+  workflow_call:
   workflow_dispatch:
 
 permissions: {}
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref_name != 'main' && github.ref || github.run_id }}
+  group: linux-${{ github.ref_name != 'main' && github.ref || github.run_id }}
   cancel-in-progress: true
 
 defaults:

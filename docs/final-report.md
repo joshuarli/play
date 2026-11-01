@@ -46,6 +46,7 @@ The final measurement is at `cbb4ec2`: cold 72.01 ms, warm 72.78 ms, idle RSS 84
 - libass 0.17.5 with CoreText and no fontconfig, libplacebo 7.387.0, shaderc 2026.4 (MinSizeRel), dav1d 1.5.4, FreeType 2.15.0, FriBiDi 1.0.17, HarfBuzz 15.0.0, Vulkan-Headers and Loader 1.4.363.0, MoltenVK 1.4.2 from a checksum-pinned binary.
 - `scripts/build-deps.sh` pins source URLs and SHA-256 values. Homebrew supplies build tools, not runtime dylibs.
 - `scripts/release.sh` builds the Rust cdylib, configures against the release prefix, bundles the recursive closure, rewrites install names to `@rpath`, embeds the MoltenVK ICD, writes `Info.plist`, and ad-hoc signs the app.
+- `.github/workflows/release.yml` runs the macOS and Linux builds on a `v*` tag and publishes `Player-aarch64-apple-darwin.zip`, `player-x86_64-linux-musl.tar.gz`, and `SHA256SUMS`. The app is ad-hoc signed, not notarized.
 - `player/main.c` sets `VK_DRIVER_FILES` and `VK_ICD_FILENAMES` from the bundle before renderer initialization.
 
 ## Known limits

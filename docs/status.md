@@ -11,6 +11,12 @@ Player is a local-only media player. The macOS release artifact is `dist/Player.
 - App: 28,186,511 B; executable 9,640,096 B; framework closure 17,150,384 B in 13 files; bundled icon 1,387,652 B.
 - One `file` protocol and one Lua interpreter.
 
+## Releases
+
+- `.github/workflows/release.yml` runs on a `v*` tag: the macOS and Linux build workflows run as reusable jobs, then one job publishes `Player-aarch64-apple-darwin.zip`, `player-x86_64-linux-musl.tar.gz`, and `SHA256SUMS`.
+- `sh dl player` in `~/usr` installs the latest release on macOS and x86-64 Linux after verifying the checksum.
+- Push a `v*` tag to create the first release; none exists yet.
+
 ## Limits
 
 - Local files only. No network protocol, TLS, CA bundle, or remote resource load.

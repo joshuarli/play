@@ -4,6 +4,8 @@ Player is a local-only media player for macOS on Apple Silicon and for Linux x86
 
 ## Install and run
 
+Tagged releases publish `Player-aarch64-apple-darwin.zip` for macOS and `player-x86_64-linux-musl.tar.gz` for Linux with `SHA256SUMS`. With the `~/usr` dotfiles, `sh dl player` installs the latest release after verifying the checksum.
+
 Build the pinned dependency closure and the app:
 
 ```sh
@@ -19,7 +21,7 @@ The app is `dist/Player.app`. Open it from Finder, or run a file directly:
 dist/Player.app/Contents/MacOS/player FILE
 ```
 
-The bundle carries its own dylibs, Vulkan loader, MoltenVK, and the Rust cdylib. It does not use Homebrew at runtime. It is ad-hoc signed and not notarized; do not distribute the build without a signing identity.
+The bundle carries its own dylibs, Vulkan loader, MoltenVK, and the Rust cdylib. It does not use Homebrew at runtime. It is ad-hoc signed and not notarized; macOS may require the Finder context-menu Open on first launch, or clearing the quarantine attribute.
 
 On Linux, `make linux` builds `dist/player-x86_64-linux-musl.tar.gz` in a pinned Alpine container, and `make install` copies `player` to `~/.local/bin`. The executable is mostly static and needs only musl, the Vulkan loader, Wayland, xkbcommon, and ALSA at run time; see [Linux](docs/linux.md).
 

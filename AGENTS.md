@@ -22,7 +22,7 @@ Player is a local-only media player built on the mpv v0.41.0 playback pipeline, 
 - One Lua implementation: the vendored Lua 5.2 in `rust/player-lua`.
 - Rust owns startup configuration, playlist, command validation, scalar playback state, local file I/O, and the Lua host. C owns the playback pipeline, platform glue, and multimedia integration.
 - `unsafe` is confined to `rust/player-ffi` and `rust/player-audio`. Each block states its safety argument.
-- CI builds the macOS release on GitHub. Gates are local commands. Do not publish or notarize.
+- CI builds both release artifacts on GitHub. A `v*` tag runs `.github/workflows/release.yml`, which publishes the macOS app zip and the Linux tarball with `SHA256SUMS`. Gates are local commands. Do not notarize.
 - `TODO.md` holds open work. Delete a ticket when it is done; git history is the record.
 
 ## Documents

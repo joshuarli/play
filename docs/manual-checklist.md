@@ -19,6 +19,7 @@ Owner-run checks at each milestone and before release. Automated gates are headl
 | Interaction | Clean quit and repeated open/close | not run |
 | Platform | Other Apple Silicon Macs and older macOS versions, if distributed | not run |
 | Distribution | Signing and notarization, if distributed | not run |
+| Distribution | A tagged release verifies against `SHA256SUMS`, and `sh dl player` installs it on macOS and x86-64 Linux | not run |
 | Linux | `gpu-next` selects the GPU Vulkan device and plays with default FIFO swap on a real compositor | not run |
 | Linux | Fractional scale, fullscreen, resize, and cursor shape on sway, GNOME, or KDE | not run |
 | Linux | Keyboard and pointer input reach the OSC; click and drag seek | not run |

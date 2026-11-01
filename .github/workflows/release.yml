@@ -1,0 +1,58 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  actions: write
+  contents: write
+
+jobs:
+  macos:
+    uses: ./.github/workflows/macos.yml
+
+  linux:
+    uses: ./.github/workflows/linux.yml
+
+  publish:
+    name: Publish release
+    needs: [macos, linux]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Download artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run download "$GITHUB_RUN_ID" -R "$GITHUB_REPOSITORY" --dir dist
+
+      - name: Assemble assets
+        run: |
+          mkdir -p release
+          find dist -type f \( -name '*.zip' -o -name '*.tar.gz' \) -exec cp {} release/ \;
+          test "$(find release -maxdepth 1 -type f | wc -l)" -eq 2
+          (cd release && sha256sum Player-aarch64-apple-darwin.zip player-x86_64-linux-musl.tar.gz > SHA256SUMS)
+          cat release/SHA256SUMS
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > release-notes.md <<EOF
+          Player ${GITHUB_REF_NAME}
+
+          macOS: Player-aarch64-apple-darwin.zip contains Player.app for Apple Silicon. It is ad-hoc signed, not notarized; open it from Finder with the context menu on first launch, or clear the quarantine attribute.
+
+          Linux: player-x86_64-linux-musl.tar.gz contains the x86-64 musl binary and a README with the runtime packages.
+
+          Both archives are listed in SHA256SUMS, which must be verified before use.
+          EOF
+          if gh release view "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              gh release upload "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" release/* --clobber
+          else
+              gh release create "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" release/* \
+                  --title "$GITHUB_REF_NAME" --notes-file release-notes.md
+          fi

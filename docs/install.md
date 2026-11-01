@@ -2,6 +2,18 @@
 
 macOS builds `dist/Player.app`; Linux x86-64 on musl builds `dist/player`. Sections below cover macOS unless titled Linux.
 
+## Release artifacts
+
+A `v*` tag runs `.github/workflows/release.yml`, which builds and publishes:
+
+- `Player-aarch64-apple-darwin.zip`: `Player.app` for Apple Silicon.
+- `player-x86_64-linux-musl.tar.gz`: the Linux x86-64 musl binary and its README.
+- `SHA256SUMS`: the digests for both archives.
+
+Verify the checksum before use. On a machine with the `~/usr` dotfiles, `sh dl player` installs the latest release and verifies it: `~/Applications/Player.app` plus `~/.local/bin/player` on macOS, or `~/.local/bin/player` on Linux. Set `PLAYER_APPLICATIONS_DIR` to change the macOS location. Remove a `make install` copy with `make uninstall` before the first `dl` install.
+
+The macOS app is ad-hoc signed and not notarized. Open it from the Finder context menu on first launch, or clear the quarantine attribute. The Linux tarball README lists the runtime packages.
+
 ## Linux
 
 The build runs in the pinned Alpine edge image (`docker/linux/Dockerfile`) through `scripts/linux-container.sh`:
