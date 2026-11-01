@@ -80,4 +80,4 @@ Current result: 19 passed, 0 failed. A temporary manifest with `http` added to t
 
 ## Next
 
-P2.5 removed the shared `libmpv` target from the locked build and verified the executable-only target surface. P3.1 enforces the local input boundary.
+P3.1 enforced the local-only input boundary and disabled automatic user config/scripts. P3.2 locks the boundary with the URL, playlist, hostile-config, and audit tests.

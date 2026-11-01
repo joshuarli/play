@@ -67,6 +67,9 @@ void mp_parse_cfgfiles(struct MPContext *mpctx)
 {
     struct MPOpts *opts = mpctx->opts;
 
+    if (!opts->load_config)
+        return;
+
     mp_mk_user_dir(mpctx->global, "home", "");
 
     char *p1 = mp_get_user_path(NULL, mpctx->global, "~~home/");
@@ -434,7 +437,7 @@ exit:
 bool mp_load_playback_resume(struct MPContext *mpctx, const char *file)
 {
     bool resume = false;
-    if (!mpctx->opts->position_resume)
+    if (!mpctx->opts->load_config || !mpctx->opts->position_resume)
         return resume;
     char *fname = mp_get_playback_resume_config_filename(mpctx, file);
     if (fname && mp_path_exists(fname)) {

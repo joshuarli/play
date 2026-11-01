@@ -27,6 +27,7 @@
 
 #include "misc/thread_pool.h"
 #include "misc/thread_tools.h"
+#include "misc/path_utils.h"
 #include "osdep/io.h"
 #include "osdep/terminal.h"
 #include "osdep/threads.h"
@@ -830,6 +831,11 @@ int mp_add_external_file(struct MPContext *mpctx, char *filename,
     if (!filename || mp_cancel_test(cancel))
         return -1;
 
+    if (!mp_input_is_local_path(filename, false, NULL)) {
+        MP_ERR(mpctx, "Refusing non-local input: %s\n", filename);
+        return -1;
+    }
+
     void *unescaped_url = NULL;
     char *disp_filename = filename;
     if (mp_is_url(bstr0(disp_filename))) {
@@ -1629,6 +1635,15 @@ static void play_current_file(struct MPContext *mpctx)
     process_hooks(mpctx, "on_before_start_file");
     if (mpctx->stop_play || !mpctx->playlist->current)
         return;
+
+    if (!mp_input_is_local_path(mpctx->playlist->current->filename, false, NULL)) {
+        MP_ERR(mpctx, "Refusing non-local input: %s\n",
+               mpctx->playlist->current->filename);
+        mpctx->error_playing = MPV_ERROR_LOADING_FAILED;
+        mpctx->files_errored += 1;
+        mpctx->stop_play = PT_ERROR;
+        return;
+    }
 
     mpv_event_start_file start_event = {
         .playlist_entry_id = mpctx->playlist->current->id,

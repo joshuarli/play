@@ -17,22 +17,40 @@
 
 #include "event.h"
 #include "input.h"
+#include "mpv_talloc.h"
 #include "common/msg.h"
+#include "misc/bstr.h"
+#include "misc/path_utils.h"
 #include "player/external_files.h"
+#include "stream/stream.h"
 
 void mp_event_drop_files(struct input_ctx *ictx, int num_files, char **files,
                          enum mp_dnd_action action)
 {
+    char **paths = talloc_zero_array(NULL, char *, num_files);
+    for (int i = 0; i < num_files; i++) {
+        paths[i] = talloc_strdup(paths, files[i]);
+        if (bstr_startswith0(bstr0(files[i]), "file://")) {
+            char *filename = mp_file_url_to_filename(NULL, bstr0(files[i]));
+            if (filename && mp_path_exists(filename)) {
+                talloc_free(paths[i]);
+                paths[i] = talloc_steal(paths, filename);
+            } else {
+                talloc_free(filename);
+            }
+        }
+    }
+
     bool all_sub = true;
     for (int i = 0; i < num_files; i++)
-        all_sub &= mp_might_be_subtitle_file(files[i]);
+        all_sub &= mp_might_be_subtitle_file(paths[i]);
 
     if (all_sub) {
         for (int i = 0; i < num_files; i++) {
             const char *cmd[] = {
                 "osd-auto",
                 "sub-add",
-                files[i],
+                paths[i],
                 NULL
             };
             mp_input_run_cmd(ictx, cmd);
@@ -44,7 +62,7 @@ void mp_event_drop_files(struct input_ctx *ictx, int num_files, char **files,
             const char *cmd[] = {
                 "osd-auto",
                 "loadfile",
-                files[i],
+                paths[i],
                 /* Since we're inserting in reverse, wait til the final item
                    is added to start playing */
                 (i > 0) ? "insert-next" : "insert-next-play",
@@ -57,7 +75,7 @@ void mp_event_drop_files(struct input_ctx *ictx, int num_files, char **files,
             const char *cmd[] = {
                 "osd-auto",
                 "loadfile",
-                files[i],
+                paths[i],
                 /* Either start playing the dropped files right away
                    or add them to the end of the current playlist */
                 (i == 0 && action == DND_REPLACE) ? "replace" : "append-play",
@@ -66,6 +84,7 @@ void mp_event_drop_files(struct input_ctx *ictx, int num_files, char **files,
             mp_input_run_cmd(ictx, cmd);
         }
     }
+    talloc_free(paths);
 }
 
 int mp_event_drop_mime_data(struct input_ctx *ictx, const char *mime_type,

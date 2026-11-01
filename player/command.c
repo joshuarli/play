@@ -74,6 +74,7 @@
 #include "misc/node.h"
 #include "misc/thread_pool.h"
 #include "misc/thread_tools.h"
+#include "misc/path_utils.h"
 
 #include "osdep/io.h"
 #include "osdep/subprocess.h"
@@ -6120,6 +6121,12 @@ static void cmd_loadfile(void *p)
     int insert_at_idx = cmd->args[2].v.i;
 
     struct load_action action = get_load_action(mpctx, action_flag);
+
+    if (!mp_input_is_local_path(filename, false, NULL)) {
+        mp_cmd_msg(cmd, MSGL_ERR, "Refusing non-local input: %s\n", filename);
+        cmd->success = false;
+        return;
+    }
 
     if (action.type == LOAD_TYPE_REPLACE)
         playlist_clear(mpctx->playlist);

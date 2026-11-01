@@ -59,6 +59,11 @@ bool mp_path_isdir(const char *path);
 
 bool mp_is_url(bstr path);
 
+// Return whether path is a local input path. scheme:// URLs and protocol
+// wrappers are rejected. file:// is accepted only when allow_file_uri is set;
+// the resulting filesystem path is returned in out_path when non-NULL.
+bool mp_input_is_local_path(const char *path, bool allow_file_uri, char **out_path);
+
 bstr mp_split_proto(bstr path, bstr *out_url);
 
 void mp_mkdirp(const char *dir);

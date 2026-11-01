@@ -45,6 +45,14 @@ Supported: `player FILE...`, `--fullscreen`/`--fs`, `--start`, `--audio-file`/`-
 
 Removed: `--ytdl*`, `--hls-bitrate`, `--lavfi-complex`, `--stream-dump`, `--stretch-dvd-subs`, the encoding group (`--o`, `--of`, `--ovc`, `--oac`, their `*opts`, `--orawts`, and metadata flags), the Windows window/capture group, and the options for deleted Lua overlay modules. `--http-header-fields` and the other network groups were already absent after P2.2. The encode suboption table is now empty, so the retained encode implementation has no CLI entry point.
 
+## Local-only boundary (P3.1)
+
+`mp_input_is_local_path` is the single input classifier. It accepts ordinary local paths, including paths with spaces, Unicode, `:`, relative components, symlinks, and mounted network volumes (the player itself makes no network connection). It rejects every `scheme://` URL and the `data:`, `lavfi:`, `edl:`, `memory:`, `fd:`, `fdclose:`, `av:`, `avdevice:`, `mf:`, `null:`, `slice:`, `appending:`, `mpv:`, `ffmpeg:`, `lavf:`, and known network prefixes. `file://` is converted only from drag-and-drop when it resolves to an existing path; the CLI, IPC loadfile, playlists, and external files reject it.
+
+The boundary is applied at startup and CLI playlist insertion, IPC `loadfile`, M3U/PLS/TXT playlist entries, external audio/subtitle files, and drag-and-drop. A remote playlist entry is skipped with an error while the local entries continue; a remote subtitle is rejected while the main file plays.
+
+Automatic user config and scripts are disabled by default (`load_config=false`, `auto_load_scripts=false`); the built-in OSC remains. The sandbox gate uses `(version 1)(allow default)(deny network*)`; this host requires the explicit default allow to execute the player under `sandbox-exec`.
+
 ## Remaining technical debt
 
 - `stream_memory` remains as an internal helper for charset conversion; it has no protocol registration.

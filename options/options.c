@@ -927,7 +927,7 @@ static const struct MPOpts mp_default_opts = {
     .lua_load_osc = true,
     .lua_load_select = true,
 #endif
-    .auto_load_scripts = true,
+    .auto_load_scripts = false,
     .loop_times = 1,
     .ordered_chapters = true,
     .chapter_merge_threshold = 100,
@@ -937,7 +937,7 @@ static const struct MPOpts mp_default_opts = {
     .sync_max_video_change = 1,
     .sync_max_audio_change = 0.125,
     .sync_max_factor = 5,
-    .load_config = true,
+    .load_config = false,
     .position_resume = true,
     .watch_history_path = "~~state/watch_history.jsonl",
     .autoload_files = true,

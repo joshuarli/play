@@ -33,6 +33,7 @@
 #include "osdep/io.h"
 #include "misc/ctype.h"
 #include "misc/path_utils.h"
+#include "stream/stream.h"
 
 #if HAVE_DOS_PATHS
 #include <windows.h>
@@ -271,6 +272,48 @@ bool mp_is_url(bstr path)
             return false;
         }
     }
+    return true;
+}
+
+// Return whether path is a local input path. This is the single boundary for
+// CLI, IPC loadfile, playlists, external files, and drag-and-drop.
+bool mp_input_is_local_path(const char *path, bool allow_file_uri, char **out_path)
+{
+    if (out_path)
+        *out_path = NULL;
+    if (!path || !path[0])
+        return false;
+
+    bstr url = bstr0(path);
+    bstr proto = mp_split_proto(url, &url);
+    if (proto.len) {
+        if (allow_file_uri && bstrcasecmp0(proto, "file") == 0) {
+            char *filename = mp_file_url_to_filename(NULL, bstr0(path));
+            if (!filename)
+                return false;
+            if (out_path)
+                *out_path = filename;
+            else
+                talloc_free(filename);
+            return true;
+        }
+        return false;
+    }
+
+    static const char *const wrappers[] = {
+        "data:", "lavfi:", "edl:", "memory:", "fd:", "fdclose:",
+        "av:", "avdevice:", "mf:", "null:", "slice:", "appending:",
+        "mpv:", "ffmpeg:", "lavf:", "http:", "https:", "ftp:",
+        "sftp:", "ssh:", "rtsp:", "rtmp:", "hls:", "dash:", "smb:",
+        NULL
+    };
+    for (int n = 0; wrappers[n]; n++) {
+        if (bstr_case_startswith(url, bstr0(wrappers[n])))
+            return false;
+    }
+
+    if (out_path)
+        *out_path = bstrto0(NULL, url);
     return true;
 }
 

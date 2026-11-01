@@ -41,6 +41,7 @@ When `libmpv` is disabled, the sources compile directly into the `mpv` executabl
 - P2.3 removed the unsupported platform, UI, scripting, plugin, and filter sources; encoding/recording/lavfi and clipboard remain compiled as documented debt because the minimal FFmpeg has no encoders or muxers.
 - P2.4 reduced the user-visible CLI and config surface; the encode/lavfi/recording debt has no remaining CLI entry point.
 - P2.5 removed the shared `libmpv` target from the locked build and verified the executable-only target surface.
-- P3.1 enforces the local input boundary.
+- P3.1 enforces the local input boundary at CLI, IPC, playlists, external files, and drag-and-drop; automatic user config/scripts are disabled by default.
+- P3.2 locks the boundary with the URL/playlist/hostile-config tests and the audit script.
 - P4.1 moves the Rust link into the normal workspace/Meson path and adds `player-core`/`player-ffi`.
 - P7 moves config, playlist, input, state, and local file handling into Rust; the audio bridge stays at the decode boundary.

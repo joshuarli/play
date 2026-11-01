@@ -27,6 +27,7 @@
 #include "common/playlist.h"
 #include "misc/charset_conv.h"
 #include "misc/thread_tools.h"
+#include "misc/path_utils.h"
 #include "options/path.h"
 #include "player/core.h"
 #include "stream/stream.h"
@@ -220,6 +221,11 @@ static void pl_free_line(struct pl_parser *p, bstr line)
 static void pl_add(struct pl_parser *p, bstr entry)
 {
     char *s = bstrto0(NULL, entry);
+    if (!mp_input_is_local_path(s, false, NULL)) {
+        MP_ERR(p, "Refusing non-local playlist entry: %s\n", s);
+        talloc_free(s);
+        return;
+    }
     playlist_append_file(p->pl, s);
     talloc_free(s);
 }
@@ -282,6 +288,15 @@ ok:
             p->format = "hls";
         } else if (line_dup.len > 0 && !bstr_startswith0(line_dup, "#")) {
             char *fn = bstrto0(NULL, line_dup);
+            if (!mp_input_is_local_path(fn, false, NULL)) {
+                MP_ERR(p, "Refusing non-local playlist entry: %s\n", fn);
+                talloc_free(fn);
+                talloc_free(title);
+                title = NULL;
+                pl_free_line(p, line);
+                line = pl_get_line(p);
+                continue;
+            }
             struct playlist_entry *e = playlist_entry_new(fn);
             talloc_free(fn);
             e->title = talloc_steal(e, title);
@@ -304,21 +319,6 @@ static int parse_ref_init(struct pl_parser *p)
         return -1;
     }
     pl_free_line(p, line);
-
-    // ASF http streaming redirection - this is needed because ffmpeg http://
-    // and mmsh:// can not automatically switch automatically between each
-    // others. Both protocols use http - MMSH requires special http headers
-    // to "activate" it, and will in other cases return this playlist.
-    static const char *const mmsh_types[] = {"audio/x-ms-wax",
-        "audio/x-ms-wma", "video/x-ms-asf", "video/x-ms-afs", "video/x-ms-wmv",
-        "video/x-ms-wma", "application/x-mms-framed",
-        "application/vnd.ms.wms-hdr.asfv1", NULL};
-    bstr burl = bstr0(p->s->url);
-    if (bstr_eatstart0(&burl, "http://") && check_mimetype(p->s, mmsh_types)) {
-        MP_INFO(p, "Redirecting to mmsh://\n");
-        playlist_append_file(p->pl, talloc_asprintf(p, "mmsh://%.*s", BSTR_P(burl)));
-        return 0;
-    }
 
     while (!pl_eof(p)) {
         line = pl_get_line(p);

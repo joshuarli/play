@@ -1,0 +1,18 @@
+URL_MATRIX = [
+    ("http", "http://example.com/media.mp4"),
+    ("https", "https://example.com/media.mp4"),
+    ("ftp", "ftp://example.com/media.mp4"),
+    ("sftp", "sftp://example.com/media.mp4"),
+    ("ssh", "ssh://example.com/media.mp4"),
+    ("rtsp", "rtsp://example.com/media.mp4"),
+    ("rtmp", "rtmp://example.com/media.mp4"),
+    ("hls", "hls://example.com/media.m3u8"),
+    ("dash", "dash://example.com/media.mpd"),
+    ("smb", "smb://example.com/media.mp4"),
+    ("malformed-http", "http:/example.com/media.mp4"),
+    ("lavfi", "lavfi:color=red"),
+    ("edl", "edl://%10%media.mp4"),
+    ("memory", "memory://media"),
+    ("fd", "fd://0"),
+    ("data", "data:text/plain,hello"),
+]

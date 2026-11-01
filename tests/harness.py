@@ -13,6 +13,8 @@ import traceback
 import uuid
 from pathlib import Path
 
+from local_only import URL_MATRIX
+
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / ".work" / "fixtures"
 TMP = ROOT / ".work" / "tmp"
@@ -677,6 +679,107 @@ def gate_local_paths(results, args):
             results.check(f"local-paths {label}", False, str(exc))
 
 
+def gate_local_only(results, args):
+    def reject(label, value):
+        proc = subprocess.run(
+            [str(MPV), "--no-config", "--vo=null", "--ao=null", value],
+            cwd=str(ROOT), capture_output=True, text=True, timeout=20,
+        )
+        output = proc.stdout + proc.stderr
+        results.check(f"local-only {label}: rejected", proc.returncode != 0,
+                      f"exit {proc.returncode}: {output.strip()}")
+        results.check(f"local-only {label}: message",
+                      "Refusing non-local input" in output,
+                      output.strip())
+
+    for label, url in URL_MATRIX:
+        reject(label, url)
+
+    h264 = fixture_path(fixture_entry("h264"))
+    reject("file-uri CLI", "file://" + str(h264))
+
+    cases = [
+        ("absolute", h264, ROOT),
+        ("relative", Path(".work/fixtures/h264.mp4"), ROOT),
+        ("spaces", FIXTURES / "with space.mp4", ROOT),
+        ("unicode", FIXTURES / "naïve 日本語.mp4", ROOT),
+        ("symlink", FIXTURES / "link.mp4", ROOT),
+    ]
+    colon = TMP / "with:colon.mp4"
+    TMP.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(h264, colon)
+    cases.append(("colon", colon, ROOT))
+    mounted = Path("/System/Volumes/Data") / str(FIXTURES).lstrip("/") / "h264.mp4"
+    if mounted.exists():
+        cases.append(("mounted", mounted, ROOT))
+
+    for label, path, cwd in cases:
+        with Mpv(["--vo=null", "--ao=null"], cwd=cwd) as mpv:
+            mpv.load(path)
+            mpv.wait_event("file-loaded", timeout=10)
+            mpv.wait_property(
+                "time-pos",
+                lambda value: isinstance(value, (int, float)) and value > 0.1,
+                timeout=10,
+            )
+            results.check(f"local-only {label}: plays", True)
+        results.check(f"local-only {label}: exit", mpv.returncode == 0,
+                      f"exit {mpv.returncode}")
+
+    second = fixture_path(fixture_entry("unicode"))
+    mixed = TMP / "mixed.m3u"
+    mixed.write_text(
+        "#EXTM3U\n"
+        f"{h264}\n"
+        "http://example.com/remote.mp4\n"
+        f"{second}\n"
+    )
+    with Mpv(["--vo=null", "--ao=null"]) as mpv:
+        mpv.load(mixed)
+        mpv.wait_event("file-loaded", timeout=10)
+        mpv.wait_log(r"Refusing non-local playlist entry", timeout=10)
+        mpv.wait_log(r"Playing:.*naïve 日本語\.mp4", timeout=20)
+        results.check("local-only playlist: URL entry skipped", True)
+    results.check("local-only playlist: exit", mpv.returncode == 0,
+                  f"exit {mpv.returncode}")
+
+    with Mpv(["--vo=null", "--ao=null",
+              "--sub-file=http://example.com/remote.srt"]) as mpv:
+        mpv.load(h264)
+        mpv.wait_event("file-loaded", timeout=10)
+        mpv.wait_log(r"Refusing non-local input", timeout=10)
+        mpv.wait_property(
+            "time-pos", lambda value: isinstance(value, (int, float)) and value > 0,
+            timeout=10,
+        )
+        results.check("local-only remote subtitle: rejected, playback continues", True)
+    results.check("local-only remote subtitle: exit", mpv.returncode == 0,
+                  f"exit {mpv.returncode}")
+
+    sandbox = shutil.which("sandbox-exec")
+    if sandbox:
+        proc = subprocess.run(
+            [sandbox, "-p", "(version 1)(allow default)(deny network*)", str(MPV),
+             "--no-config", "--vo=null", "--ao=null", "--frames=1", str(h264)],
+            cwd=str(ROOT), capture_output=True, text=True, timeout=30,
+        )
+        results.check("local-only sandbox playback", proc.returncode == 0,
+                      f"exit {proc.returncode}: {(proc.stdout + proc.stderr).strip()}")
+    else:
+        results.check("local-only sandbox playback", False, "sandbox-exec missing")
+
+    proc = subprocess.run(
+        [str(MPV), "--no-config", "--list-protocols"],
+        cwd=str(ROOT), capture_output=True, text=True, timeout=20,
+    )
+    protocols = proc.stdout + proc.stderr
+    network = [word for word in ("http", "https", "ftp", "rtsp", "rtmp", "smb")
+               if word in protocols.lower()]
+    results.check("local-only protocol list",
+                  proc.returncode == 0 and "file://" in protocols and not network,
+                  protocols.strip())
+
+
 def gate_osc(results, args):
     entry = fixture_entry("h264")
     with Mpv(["--vo=null", "--ao=null"]) as mpv:
@@ -1126,6 +1229,7 @@ GATES = {
     "hwdec": gate_hwdec,
     "seek": gate_seek,
     "local-paths": gate_local_paths,
+    "local-only": gate_local_only,
     "osc": gate_osc,
     "input": gate_input,
     "playlist": gate_playlist,
@@ -1138,7 +1242,7 @@ GATES = {
 
 SUITE = [
     "fixtures", "corpus", "audio", "hwdec", "seek", "local-paths",
-    "osc", "input", "playlist", "cli", "state", "failures",
+    "local-only", "osc", "input", "playlist", "cli", "state", "failures",
 ]
 
 
