@@ -9,7 +9,7 @@ MANIFEST="$FIXTURES/manifest.json"
 FFMPEG=${FFMPEG:-ffmpeg}
 FFPROBE=${FFPROBE:-ffprobe}
 
-version=$("$FFMPEG" -version | head -1)
+version=$("$FFMPEG" -version | sed -n 1p)
 case "$version" in
     "ffmpeg version 9.0.2"*) ;;
     *)

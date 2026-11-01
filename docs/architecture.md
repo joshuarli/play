@@ -62,6 +62,21 @@ The bundler sets `MPVBUNDLE=true` in `Info.plist`; the Cocoa layer uses that val
 
 A bundle launch that exits with a load error shows one alert with the log path. A rejected `loadfile` command shows an OSD message and leaves the current file playing.
 
+## Linux
+
+Linux x86-64 musl uses the same pipeline, Rust plane, and Lua host as macOS. The platform split is explicit in Meson and `#if`:
+
+| Area | macOS | Linux |
+|---|---|---|
+| Video | `gpu-next`, Vulkan over MoltenVK, Cocoa | `gpu-next`, Vulkan, Wayland (`--gpu-context=waylandvk`) |
+| Audio | CoreAudio | ALSA |
+| Rust link | `libplayer_release.dylib` | `libplayer_ffi.a` and `libplayer_audio.a` |
+| Build | `scripts/build.sh`, `scripts/release.sh` | `scripts/build-linux.sh` |
+
+Files restored from the mpv v0.41.0 pin (`41f6a645068483470267271e1d09966ca3b9f413`) with headers intact: `video/out/wayland_common.c`, `video/out/wayland_common.h`, `video/out/vulkan/context_wayland.c`, `audio/out/ao_alsa.c`, `osdep/als-linux.c`, `osdep/language-posix.c`, and `osdep/timer-linux.c`. `audio/out/ao.c` registers `alsa` under `HAVE_ALSA`.
+
+`scripts/build-linux.sh` builds against Alpine system libraries and disables `libavdevice`; the local-only player has no capture devices. Remaining gaps against the target in `PLAN.md`: system FFmpeg and libplacebo are linked dynamically (18 `NEEDED` entries against the allowed set of six), the FFmpeg allowlist is not applied, and no Linux gate, audit, CI job, or release artifact exists yet. `scripts/measure-linux.sh baseline` records the starting point in `docs/metrics.md`.
+
 ## Provenance
 
 - mpv v0.41.0 at `41f6a645068483470267271e1d09966ca3b9f413`.
