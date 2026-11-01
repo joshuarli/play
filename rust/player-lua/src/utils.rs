@@ -6,6 +6,9 @@ use crate::value::NativeValue;
 
 const MAX_JSON_DEPTH: usize = 64;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UtilsError;
+
 pub fn split_path(path: &str) -> (String, String) {
     let trimmed = path.trim_end_matches('/');
     if trimmed.is_empty() {
@@ -21,22 +24,22 @@ pub fn split_path(path: &str) -> (String, String) {
     }
 }
 
-pub fn readdir(path: &str, filter: &str) -> Result<NativeValue, ()> {
+pub fn readdir(path: &str, filter: &str) -> Result<NativeValue, UtilsError> {
     let filter = match filter {
         "all" => Filter::All,
         "files" => Filter::Files,
         "dirs" => Filter::Dirs,
         "normal" => Filter::Normal,
-        _ => return Err(()),
+        _ => return Err(UtilsError),
     };
     let mut names = Vec::new();
     if matches!(filter, Filter::All) {
         names.push(".".to_owned());
         names.push("..".to_owned());
     }
-    let entries = fs::read_dir(path).map_err(|_| ())?;
+    let entries = fs::read_dir(path).map_err(|_| UtilsError)?;
     for entry in entries {
-        let entry = entry.map_err(|_| ())?;
+        let entry = entry.map_err(|_| UtilsError)?;
         let name = entry.file_name().to_string_lossy().into_owned();
         if name == "." || name == ".." {
             continue;
@@ -45,7 +48,7 @@ pub fn readdir(path: &str, filter: &str) -> Result<NativeValue, ()> {
             names.push(name);
             continue;
         }
-        let metadata = entry.metadata().map_err(|_| ())?;
+        let metadata = entry.metadata().map_err(|_| UtilsError)?;
         let keep = match filter {
             Filter::Files => metadata.is_file(),
             Filter::Dirs => metadata.is_dir(),
@@ -61,8 +64,8 @@ pub fn readdir(path: &str, filter: &str) -> Result<NativeValue, ()> {
     ))
 }
 
-pub fn file_info(path: &str) -> Result<NativeValue, ()> {
-    let metadata = fs::metadata(Path::new(path)).map_err(|_| ())?;
+pub fn file_info(path: &str) -> Result<NativeValue, UtilsError> {
+    let metadata = fs::metadata(Path::new(path)).map_err(|_| UtilsError)?;
     Ok(NativeValue::Map(vec![
         ("mode".to_owned(), NativeValue::Int(metadata.mode() as i64)),
         ("size".to_owned(), NativeValue::Int(metadata.size() as i64)),
@@ -81,7 +84,7 @@ enum Filter {
     Normal,
 }
 
-pub fn parse_json(text: &str, allow_trailing: bool) -> Result<(NativeValue, &str), ()> {
+pub fn parse_json(text: &str, allow_trailing: bool) -> Result<(NativeValue, &str), UtilsError> {
     let mut parser = Parser {
         bytes: text.as_bytes(),
         position: 0,
@@ -90,20 +93,20 @@ pub fn parse_json(text: &str, allow_trailing: bool) -> Result<(NativeValue, &str
     let value = parser.value(0)?;
     parser.skip_whitespace();
     if !allow_trailing && parser.position < parser.bytes.len() {
-        return Err(());
+        return Err(UtilsError);
     }
     Ok((value, &text[parser.position..]))
 }
 
-pub fn format_json(value: &NativeValue) -> Result<String, ()> {
+pub fn format_json(value: &NativeValue) -> Result<String, UtilsError> {
     let mut output = String::new();
     write_value(value, &mut output, 0)?;
     Ok(output)
 }
 
-fn write_value(value: &NativeValue, output: &mut String, depth: usize) -> Result<(), ()> {
+fn write_value(value: &NativeValue, output: &mut String, depth: usize) -> Result<(), UtilsError> {
     if depth > MAX_JSON_DEPTH {
-        return Err(());
+        return Err(UtilsError);
     }
     match value {
         NativeValue::None => output.push_str("null"),
@@ -113,7 +116,7 @@ fn write_value(value: &NativeValue, output: &mut String, depth: usize) -> Result
         NativeValue::Int(value) => output.push_str(&value.to_string()),
         NativeValue::Double(value) => {
             if !value.is_finite() {
-                return Err(());
+                return Err(UtilsError);
             }
             output.push_str(&value.to_string());
         }
@@ -140,7 +143,7 @@ fn write_value(value: &NativeValue, output: &mut String, depth: usize) -> Result
             }
             output.push('}');
         }
-        NativeValue::Unknown => return Err(()),
+        NativeValue::Unknown => return Err(UtilsError),
     }
     Ok(())
 }
@@ -171,11 +174,11 @@ struct Parser<'a> {
 }
 
 impl Parser<'_> {
-    fn value(&mut self, depth: usize) -> Result<NativeValue, ()> {
+    fn value(&mut self, depth: usize) -> Result<NativeValue, UtilsError> {
         if depth > MAX_JSON_DEPTH {
-            return Err(());
+            return Err(UtilsError);
         }
-        let byte = *self.bytes.get(self.position).ok_or(())?;
+        let byte = *self.bytes.get(self.position).ok_or(UtilsError)?;
         match byte {
             b'n' => {
                 self.literal(b"null")?;
@@ -193,29 +196,29 @@ impl Parser<'_> {
             b'[' => self.array(depth),
             b'{' => self.object(depth),
             b'-' | b'0'..=b'9' => self.number(),
-            _ => Err(()),
+            _ => Err(UtilsError),
         }
     }
 
-    fn literal(&mut self, literal: &[u8]) -> Result<(), ()> {
+    fn literal(&mut self, literal: &[u8]) -> Result<(), UtilsError> {
         if self.bytes.get(self.position..self.position + literal.len()) == Some(literal) {
             self.position += literal.len();
             Ok(())
         } else {
-            Err(())
+            Err(UtilsError)
         }
     }
 
-    fn string(&mut self) -> Result<String, ()> {
+    fn string(&mut self) -> Result<String, UtilsError> {
         self.position += 1;
         let mut output = String::new();
         loop {
-            let byte = *self.bytes.get(self.position).ok_or(())?;
+            let byte = *self.bytes.get(self.position).ok_or(UtilsError)?;
             self.position += 1;
             match byte {
                 b'"' => return Ok(output),
                 b'\\' => {
-                    let escape = *self.bytes.get(self.position).ok_or(())?;
+                    let escape = *self.bytes.get(self.position).ok_or(UtilsError)?;
                     self.position += 1;
                     match escape {
                         b'"' => output.push('"'),
@@ -232,32 +235,32 @@ impl Parser<'_> {
                                 if self.bytes.get(self.position..self.position + 2)
                                     != Some(b"\\u")
                                 {
-                                    return Err(());
+                                    return Err(UtilsError);
                                 }
                                 self.position += 2;
                                 let second = self.hex4()?;
                                 if !(0xdc00..0xe000).contains(&second) {
-                                    return Err(());
+                                    return Err(UtilsError);
                                 }
                                 let codepoint = 0x10000
                                     + ((first - 0xd800) << 10)
                                     + (second - 0xdc00);
-                                output.push(char::from_u32(codepoint).ok_or(())?);
+                                output.push(char::from_u32(codepoint).ok_or(UtilsError)?);
                             } else {
-                                output.push(char::from_u32(first).ok_or(())?);
+                                output.push(char::from_u32(first).ok_or(UtilsError)?);
                             }
                         }
-                        _ => return Err(()),
+                        _ => return Err(UtilsError),
                     }
                 }
-                byte if byte < 0x20 => return Err(()),
+                byte if byte < 0x20 => return Err(UtilsError),
                 byte if byte < 0x80 => output.push(byte as char),
                 _ => {
                     let start = self.position - 1;
-                    let length = utf8_length(byte).ok_or(())?;
+                    let length = utf8_length(byte).ok_or(UtilsError)?;
                     let end = start + length;
-                    let text = std::str::from_utf8(self.bytes.get(start..end).ok_or(())?)
-                        .map_err(|_| ())?;
+                    let text = std::str::from_utf8(self.bytes.get(start..end).ok_or(UtilsError)?)
+                        .map_err(|_| UtilsError)?;
                     output.push_str(text);
                     self.position = end;
                 }
@@ -265,23 +268,23 @@ impl Parser<'_> {
         }
     }
 
-    fn hex4(&mut self) -> Result<u32, ()> {
+    fn hex4(&mut self) -> Result<u32, UtilsError> {
         let mut value = 0u32;
         for _ in 0..4 {
-            let byte = *self.bytes.get(self.position).ok_or(())?;
+            let byte = *self.bytes.get(self.position).ok_or(UtilsError)?;
             self.position += 1;
             value = (value << 4)
                 | match byte {
                     b'0'..=b'9' => (byte - b'0') as u32,
                     b'a'..=b'f' => (byte - b'a' + 10) as u32,
                     b'A'..=b'F' => (byte - b'A' + 10) as u32,
-                    _ => return Err(()),
+                    _ => return Err(UtilsError),
                 };
         }
         Ok(value)
     }
 
-    fn number(&mut self) -> Result<NativeValue, ()> {
+    fn number(&mut self) -> Result<NativeValue, UtilsError> {
         let start = self.position;
         if self.bytes.get(self.position) == Some(&b'-') {
             self.position += 1;
@@ -291,7 +294,7 @@ impl Parser<'_> {
             self.position += 1;
         }
         if self.position == digits {
-            return Err(());
+            return Err(UtilsError);
         }
         let mut is_float = false;
         if self.bytes.get(self.position) == Some(&b'.') {
@@ -302,7 +305,7 @@ impl Parser<'_> {
                 self.position += 1;
             }
             if self.position == fraction {
-                return Err(());
+                return Err(UtilsError);
             }
         }
         if matches!(self.bytes.get(self.position), Some(b'e' | b'E')) {
@@ -316,20 +319,20 @@ impl Parser<'_> {
                 self.position += 1;
             }
             if self.position == exponent {
-                return Err(());
+                return Err(UtilsError);
             }
         }
-        let text = std::str::from_utf8(&self.bytes[start..self.position]).map_err(|_| ())?;
+        let text = std::str::from_utf8(&self.bytes[start..self.position]).map_err(|_| UtilsError)?;
         if is_float {
-            Ok(NativeValue::Double(text.parse().map_err(|_| ())?))
+            Ok(NativeValue::Double(text.parse().map_err(|_| UtilsError)?))
         } else if let Ok(value) = text.parse::<i64>() {
             Ok(NativeValue::Int(value))
         } else {
-            Ok(NativeValue::Double(text.parse().map_err(|_| ())?))
+            Ok(NativeValue::Double(text.parse().map_err(|_| UtilsError)?))
         }
     }
 
-    fn array(&mut self, depth: usize) -> Result<NativeValue, ()> {
+    fn array(&mut self, depth: usize) -> Result<NativeValue, UtilsError> {
         self.position += 1;
         self.skip_whitespace();
         let mut values = Vec::new();
@@ -349,12 +352,12 @@ impl Parser<'_> {
                     self.position += 1;
                     return Ok(NativeValue::Array(values));
                 }
-                _ => return Err(()),
+                _ => return Err(UtilsError),
             }
         }
     }
 
-    fn object(&mut self, depth: usize) -> Result<NativeValue, ()> {
+    fn object(&mut self, depth: usize) -> Result<NativeValue, UtilsError> {
         self.position += 1;
         self.skip_whitespace();
         let mut entries = Vec::new();
@@ -364,12 +367,12 @@ impl Parser<'_> {
         }
         loop {
             if self.bytes.get(self.position) != Some(&b'"') {
-                return Err(());
+                return Err(UtilsError);
             }
             let key = self.string()?;
             self.skip_whitespace();
             if self.bytes.get(self.position) != Some(&b':') {
-                return Err(());
+                return Err(UtilsError);
             }
             self.position += 1;
             self.skip_whitespace();
@@ -386,7 +389,7 @@ impl Parser<'_> {
                     entries.sort_by(|left, right| left.0.cmp(&right.0));
                     return Ok(NativeValue::Map(entries));
                 }
-                _ => return Err(()),
+                _ => return Err(UtilsError),
             }
         }
     }

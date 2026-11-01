@@ -348,7 +348,7 @@ fn register_utils(
                 let mut result = MultiValue::new();
                 match crate::utils::readdir(&path, &filter) {
                     Ok(value) => result.push_back(value.to_lua(lua, &sentinels_clone)?),
-                    Err(()) => {
+                    Err(_) => {
                         result.push_back(Value::Nil);
                         result.push_back(Value::String(lua.create_string("error")?));
                     }
@@ -371,7 +371,7 @@ fn register_utils(
                 let mut result = MultiValue::new();
                 match crate::utils::file_info(&path) {
                     Ok(value) => result.push_back(value.to_lua(lua, &sentinels_clone)?),
-                    Err(()) => {
+                    Err(_) => {
                         result.push_back(Value::Nil);
                         result.push_back(Value::String(lua.create_string("error")?));
                     }
@@ -420,7 +420,7 @@ fn register_utils(
                         result.push_back(Value::Nil);
                         result.push_back(Value::String(lua.create_string(remainder)?));
                     }
-                    Err(()) => {
+                    Err(_) => {
                         result.push_back(Value::Nil);
                         result.push_back(Value::String(lua.create_string("error")?));
                         result.push_back(Value::String(lua.create_string(&text)?));
@@ -445,7 +445,7 @@ fn register_utils(
                 let mut result = MultiValue::new();
                 match crate::utils::format_json(&value) {
                     Ok(text) => result.push_back(Value::String(lua.create_string(&text)?)),
-                    Err(()) => {
+                    Err(_) => {
                         result.push_back(Value::Nil);
                         result.push_back(Value::String(lua.create_string("error")?));
                     }
