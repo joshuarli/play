@@ -5,16 +5,6 @@ Next: 20
 
 ## P2
 
-### PLAY-5 · P2 · The Lua host has no bounded lifecycle for its event queue or shutdown
-
-- **Area:** Concurrency
-- **Where:** `rust/player-lua/src/host.rs:106`, `:136-148`, `:170-191`, `rust/player-ffi/src/lua.rs:814-825`, `player/scripting.c:89-94`
-- **Problem:** `ScriptHost` uses an unbounded `mpsc::channel`, so a script blocked in a callback accumulates every event the player posts. The production path calls `host.wait()`, which has no timeout; the documented 2 s bound exists only in `stop()`, and `stop()` detaches the thread on timeout. If the wait ever returns on that path, C frees the script client and `mp_args` while the detached thread still holds both. A non-returning script can therefore hang process exit, and the timeout branch can use freed memory.
-- **Recommendation:** use a bounded queue with an explicit drop policy (never drop shutdown or client messages), make the production wait bounded, and give one owner the job of destroying the client. Log a timeout as a script error. Add a fixture script that never returns and assert that `quit` still exits.
-- **Fix with:** lifecycle-concurrency
-- **Effort:** M
-- **Design:** none
-
 ### PLAY-12 · P2 · The 1080p CPU budget passes inside run noise and compare cannot fail a regression
 
 - **Area:** Performance

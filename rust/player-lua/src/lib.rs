@@ -2,11 +2,13 @@ use mlua::{Lua, LuaOptions, Result, StdLib};
 
 pub mod backend;
 pub mod host;
+pub mod queue;
 pub mod utils;
 pub mod value;
 
 pub use backend::{CommandRequest, PlayerBackend, PropertyFormat, ScriptEvent};
-pub use host::{HostError, ScriptEventSender, ScriptHost, ScriptModule};
+pub use host::{HostError, ScriptEventSender, ScriptHost, ScriptModule, SHUTDOWN_TIMEOUT};
+pub use queue::Posted;
 pub use value::{NativeValue, Sentinels};
 
 pub fn new_interpreter() -> Result<Lua> {

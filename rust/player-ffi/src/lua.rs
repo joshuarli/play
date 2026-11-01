@@ -3,12 +3,11 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::ptr;
 use std::slice;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use std::thread::{self, JoinHandle};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use player_lua::{
-    NativeValue, PlayerBackend, PropertyFormat, ScriptEvent, ScriptEventSender, ScriptHost,
-    ScriptModule,
+    HostError, NativeValue, PlayerBackend, PropertyFormat, ScriptEvent, ScriptHost,
+    ScriptModule, SHUTDOWN_TIMEOUT,
 };
 
 const MPV_FORMAT_NONE: c_int = 0;
@@ -29,6 +28,10 @@ const MSGL_ERR: c_int = 1;
 const MSGL_WARN: c_int = 2;
 
 const MAX_NODE_DEPTH: usize = 64;
+
+const CLIENT_CLOSED: &str = "script client is closed";
+const CLIENT_CLOSED_CODE: c_int = -1;
+const EVENT_POLL_SECONDS: f64 = 0.2;
 
 const ASSDRAW: &str = include_str!("../../../player/lua/assdraw.lua");
 const OPTIONS: &str = include_str!("../../../player/lua/options.lua");
@@ -118,7 +121,6 @@ unsafe extern "C" {
     fn mpv_event_name(event: c_int) -> *const c_char;
     fn mpv_error_string(error: c_int) -> *const c_char;
     fn mpv_wait_event(ctx: *mut MpvHandle, timeout: f64) -> *mut MpvEvent;
-    fn mpv_wakeup(ctx: *mut MpvHandle);
     fn mpv_event_to_node(dst: *mut MpvNode, event: *mut MpvEvent) -> c_int;
     fn mpv_free_node_contents(node: *mut MpvNode);
     fn mpv_free(data: *mut c_void);
@@ -134,22 +136,68 @@ impl MpvNode {
 }
 
 #[derive(Clone, Copy)]
-struct ClientPtr(*mut MpvHandle);
-
-impl ClientPtr {
-    fn ptr(self) -> *mut MpvHandle {
-        self.0
-    }
-}
-
-unsafe impl Send for ClientPtr {}
-
-struct ClientBackend {
+struct Live {
     client: *mut MpvHandle,
     callbacks: PlayerLuaCallbacks,
 }
 
-unsafe impl Send for ClientBackend {}
+// SAFETY: the handle and callback context are only used while the gate lock is
+// held, and the gate is closed before the C script thread releases them.
+unsafe impl Send for Live {}
+
+struct ClientGate {
+    closing: AtomicBool,
+    live: Mutex<Option<Live>>,
+}
+
+struct GateGuard<'a> {
+    live: Live,
+    _lock: MutexGuard<'a, Option<Live>>,
+}
+
+impl std::ops::Deref for GateGuard<'_> {
+    type Target = Live;
+
+    fn deref(&self) -> &Live {
+        &self.live
+    }
+}
+
+impl ClientGate {
+    fn open(client: *mut MpvHandle, callbacks: PlayerLuaCallbacks) -> Arc<Self> {
+        Arc::new(Self {
+            closing: AtomicBool::new(false),
+            live: Mutex::new(Some(Live { client, callbacks })),
+        })
+    }
+
+    fn enter(&self) -> Result<GateGuard<'_>, String> {
+        if self.closing.load(Ordering::SeqCst) {
+            return Err(CLIENT_CLOSED.to_owned());
+        }
+        let lock = self
+            .live
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        match *lock {
+            Some(live) => Ok(GateGuard { live, _lock: lock }),
+            None => Err(CLIENT_CLOSED.to_owned()),
+        }
+    }
+
+    fn close(&self) {
+        self.closing.store(true, Ordering::SeqCst);
+        let mut lock = self
+            .live
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *lock = None;
+    }
+}
+
+struct ClientBackend {
+    gate: Arc<ClientGate>,
+}
 
 impl ClientBackend {
     fn error(&self, code: c_int) -> String {
@@ -192,7 +240,10 @@ impl ClientBackend {
 
 impl PlayerBackend for ClientBackend {
     fn log(&mut self, level: &str, message: &str) {
-        let Some(callback) = self.callbacks.log else {
+        let Ok(live) = self.gate.enter() else {
+            return;
+        };
+        let Some(callback) = live.callbacks.log else {
             return;
         };
         let Some(level) = log_level(level) else {
@@ -201,15 +252,16 @@ impl PlayerBackend for ClientBackend {
         let message = CString::new(message.replace('\0', " ")).unwrap_or_default();
         // SAFETY: the callback and ctx come from the C caller and remain valid for the
         // script lifetime; the message pointer is valid for the call.
-        unsafe { callback(self.callbacks.ctx, level, message.as_ptr()) };
+        unsafe { callback(live.callbacks.ctx, level, message.as_ptr()) };
     }
 
     fn command(&mut self, command: player_lua::CommandRequest) -> Result<NativeValue, String> {
+        let live = self.gate.enter()?;
         match command {
             player_lua::CommandRequest::String(text) => {
                 let text = c_string(&text)?;
                 // SAFETY: client is a valid mpv handle; text is NUL-terminated.
-                let code = unsafe { mpv_command_string(self.client, text.as_ptr()) };
+                let code = unsafe { mpv_command_string(live.client, text.as_ptr()) };
                 self.check(code)?;
                 Ok(NativeValue::None)
             }
@@ -223,7 +275,7 @@ impl PlayerBackend for ClientBackend {
                 pointers.push(ptr::null());
                 // SAFETY: client is valid and pointers is a NULL-terminated string array
                 // that stays alive for the call.
-                let code = unsafe { mpv_command(self.client, pointers.as_ptr()) };
+                let code = unsafe { mpv_command(live.client, pointers.as_ptr()) };
                 self.check(code)?;
                 Ok(NativeValue::None)
             }
@@ -233,7 +285,7 @@ impl PlayerBackend for ClientBackend {
                 let mut result = MpvNode::none();
                 // SAFETY: client is valid, node is a fully initialized tree that stays
                 // alive for the call, and result is writable.
-                let code = unsafe { mpv_command_node(self.client, &mut node, &mut result) };
+                let code = unsafe { mpv_command_node(live.client, &mut node, &mut result) };
                 if code < 0 {
                     return Err(self.error(code));
                 }
@@ -248,6 +300,7 @@ impl PlayerBackend for ClientBackend {
 
     fn get_property(&mut self, name: &str, format: PropertyFormat) -> Result<NativeValue, String> {
         let name = c_string(name)?;
+        let live = self.gate.enter()?;
         match format {
             PropertyFormat::String | PropertyFormat::OsdString => {
                 let mpv_format = if format == PropertyFormat::OsdString {
@@ -259,7 +312,7 @@ impl PlayerBackend for ClientBackend {
                 // SAFETY: client and name are valid; value is writable and mpv allocates it.
                 let code = unsafe {
                     mpv_get_property(
-                        self.client,
+                        live.client,
                         name.as_ptr(),
                         mpv_format,
                         &mut value as *mut _ as *mut c_void,
@@ -287,7 +340,7 @@ impl PlayerBackend for ClientBackend {
                 // SAFETY: client and name are valid; value is writable.
                 let code = unsafe {
                     mpv_get_property(
-                        self.client,
+                        live.client,
                         name.as_ptr(),
                         MPV_FORMAT_FLAG,
                         &mut value as *mut _ as *mut c_void,
@@ -301,7 +354,7 @@ impl PlayerBackend for ClientBackend {
                 // SAFETY: client and name are valid; value is writable.
                 let code = unsafe {
                     mpv_get_property(
-                        self.client,
+                        live.client,
                         name.as_ptr(),
                         MPV_FORMAT_DOUBLE,
                         &mut value as *mut _ as *mut c_void,
@@ -315,7 +368,7 @@ impl PlayerBackend for ClientBackend {
                 // SAFETY: client and name are valid; node is writable.
                 let code = unsafe {
                     mpv_get_property(
-                        self.client,
+                        live.client,
                         name.as_ptr(),
                         MPV_FORMAT_NODE,
                         &mut node as *mut _ as *mut c_void,
@@ -335,6 +388,7 @@ impl PlayerBackend for ClientBackend {
 
     fn set_property(&mut self, name: &str, value: NativeValue) -> Result<(), String> {
         let name = c_string(name)?;
+        let live = self.gate.enter()?;
         match value {
             NativeValue::String(text) => {
                 let text = c_string(&text)?;
@@ -343,7 +397,7 @@ impl PlayerBackend for ClientBackend {
                 // to a string pointer, which stays valid for the call.
                 let code = unsafe {
                     mpv_set_property(
-                        self.client,
+                        live.client,
                         name.as_ptr(),
                         MPV_FORMAT_STRING,
                         &mut pointer as *mut _ as *mut c_void,
@@ -356,7 +410,7 @@ impl PlayerBackend for ClientBackend {
                 // SAFETY: client and name are valid; value is a valid int64.
                 let code = unsafe {
                     mpv_set_property(
-                        self.client,
+                        live.client,
                         name.as_ptr(),
                         MPV_FORMAT_INT64,
                         &mut value as *mut _ as *mut c_void,
@@ -369,7 +423,7 @@ impl PlayerBackend for ClientBackend {
                 // SAFETY: client and name are valid; value is a valid double.
                 let code = unsafe {
                     mpv_set_property(
-                        self.client,
+                        live.client,
                         name.as_ptr(),
                         MPV_FORMAT_DOUBLE,
                         &mut value as *mut _ as *mut c_void,
@@ -383,7 +437,7 @@ impl PlayerBackend for ClientBackend {
                 // SAFETY: client and name are valid; node is a complete tree for the call.
                 let code = unsafe {
                     mpv_set_property(
-                        self.client,
+                        live.client,
                         name.as_ptr(),
                         MPV_FORMAT_NODE,
                         &mut node as *mut _ as *mut c_void,
@@ -396,8 +450,9 @@ impl PlayerBackend for ClientBackend {
 
     fn del_property(&mut self, name: &str) -> Result<(), String> {
         let name = c_string(name)?;
+        let live = self.gate.enter()?;
         // SAFETY: client and name are valid.
-        let code = unsafe { mpv_del_property(self.client, name.as_ptr()) };
+        let code = unsafe { mpv_del_property(live.client, name.as_ptr()) };
         self.check(code)
     }
 
@@ -408,6 +463,7 @@ impl PlayerBackend for ClientBackend {
         format: PropertyFormat,
     ) -> Result<(), String> {
         let name = c_string(name)?;
+        let live = self.gate.enter()?;
         let format = match format {
             PropertyFormat::None => MPV_FORMAT_NONE,
             PropertyFormat::Native => MPV_FORMAT_NODE,
@@ -416,29 +472,36 @@ impl PlayerBackend for ClientBackend {
             PropertyFormat::Number => MPV_FORMAT_DOUBLE,
         };
         // SAFETY: client and name are valid.
-        let code = unsafe { mpv_observe_property(self.client, id, name.as_ptr(), format) };
+        let code = unsafe { mpv_observe_property(live.client, id, name.as_ptr(), format) };
         self.check(code)
     }
 
     fn unobserve_property(&mut self, id: u64) -> i32 {
+        let Ok(live) = self.gate.enter() else {
+            return CLIENT_CLOSED_CODE;
+        };
         // SAFETY: client is valid; id was returned by an observation call.
-        unsafe { mpv_unobserve_property(self.client, id) }
+        unsafe { mpv_unobserve_property(live.client, id) }
     }
 
     fn request_event(&mut self, name: &str, enable: bool) -> bool {
         let Some(id) = self.event_id(name) else {
             return false;
         };
+        let Ok(live) = self.gate.enter() else {
+            return false;
+        };
         // SAFETY: client is valid and id names a client event.
-        unsafe { mpv_request_event(self.client, id, enable as c_int) >= 0 }
+        unsafe { mpv_request_event(live.client, id, enable as c_int) >= 0 }
     }
 
     fn find_config_file(&mut self, name: &str) -> Option<String> {
-        let callback = self.callbacks.find_config_file?;
+        let live = self.gate.enter().ok()?;
+        let callback = live.callbacks.find_config_file?;
         let name = c_string(name).ok()?;
         // SAFETY: the callback and ctx come from the C caller and remain valid for the
         // script lifetime; name is NUL-terminated.
-        let pointer = unsafe { callback(self.callbacks.ctx, name.as_ptr()) };
+        let pointer = unsafe { callback(live.callbacks.ctx, name.as_ptr()) };
         if pointer.is_null() {
             return None;
         }
@@ -446,9 +509,9 @@ impl PlayerBackend for ClientBackend {
         let value = unsafe { CStr::from_ptr(pointer) }
             .to_string_lossy()
             .into_owned();
-        if let Some(free) = self.callbacks.free_string {
+        if let Some(free) = live.callbacks.free_string {
             // SAFETY: free_string releases exactly the pointer returned by the callback.
-            unsafe { free(self.callbacks.ctx, pointer) };
+            unsafe { free(live.callbacks.ctx, pointer) };
         }
         Some(value)
     }
@@ -465,7 +528,10 @@ impl PlayerBackend for ClientBackend {
         x1: f64,
         y1: f64,
     ) {
-        let Some(callback) = self.callbacks.input_set_section_mouse_area else {
+        let Ok(live) = self.gate.enter() else {
+            return;
+        };
+        let Some(callback) = live.callbacks.input_set_section_mouse_area else {
             return;
         };
         let section = CString::new(section.replace('\0', " ")).unwrap_or_default();
@@ -473,7 +539,7 @@ impl PlayerBackend for ClientBackend {
         // script lifetime; section is NUL-terminated.
         unsafe {
             callback(
-                self.callbacks.ctx,
+                live.callbacks.ctx,
                 section.as_ptr(),
                 x0 as c_int,
                 y0 as c_int,
@@ -701,104 +767,66 @@ fn event_from_native(value: NativeValue) -> Option<ScriptEvent> {
     name.map(|name| ScriptEvent { name, fields })
 }
 
-struct SendCallbacks(PlayerLuaCallbacks);
-
-impl SendCallbacks {
-    fn get(&self) -> PlayerLuaCallbacks {
-        self.0
-    }
-}
-
-// SAFETY: the event pump is joined before the C script thread frees the
-// callback context, and the pump only reads the function pointer and context.
-unsafe impl Send for SendCallbacks {}
-
-struct EventPump {
-    stop: Arc<AtomicBool>,
-    client: ClientPtr,
-    callbacks: PlayerLuaCallbacks,
-    thread: JoinHandle<()>,
-}
-
-impl EventPump {
-    fn spawn(
-        client: ClientPtr,
-        sender: ScriptEventSender,
-        callbacks: PlayerLuaCallbacks,
-    ) -> Result<Self, String> {
-        let stop = Arc::new(AtomicBool::new(false));
-        let thread_stop = stop.clone();
-        let thread_callbacks = SendCallbacks(callbacks);
-        let thread = thread::Builder::new()
-            .name("lua-events".to_owned())
-            .spawn(move || {
-                let callbacks = thread_callbacks.get();
-                loop {
-                    if thread_stop.load(Ordering::SeqCst) {
-                        break;
-                    }
-                    // SAFETY: client is a valid mpv handle; this is the only thread that
-                    // waits for events on it.
-                    let event = unsafe { mpv_wait_event(client.ptr(), 0.2) };
-                    if event.is_null() {
-                        continue;
-                    }
-                    // SAFETY: mpv_wait_event returned a valid event for this call.
-                    let event_id = unsafe { (*event).event_id };
-                    if event_id == MPV_EVENT_NONE {
-                        continue;
-                    }
-                    let shutdown = event_id == MPV_EVENT_SHUTDOWN;
-                    let mut node = MpvNode::none();
-                    // SAFETY: event is valid and event_to_node fills a node owned by us.
-                    let code = unsafe { mpv_event_to_node(&mut node, event) };
-                    if code >= 0 {
-                        // SAFETY: node was initialized by mpv_event_to_node.
-                        let converted = unsafe { node_to_native(&node, 0) };
-                        // SAFETY: node is owned by this call and must be released.
-                        unsafe { mpv_free_node_contents(&mut node) };
-                        match converted {
-                            Ok(value) => match event_from_native(value) {
-                                Some(event) => {
-                                    if sender.post(event).is_err() {
-                                        break;
-                                    }
-                                }
-                                None => log_message(
-                                    &callbacks,
-                                    MSGL_WARN,
-                                    "dropping a Lua event with no event name",
-                                ),
-                            },
-                            Err(error) => log_message(
-                                &callbacks,
-                                MSGL_ERR,
-                                &format!("cannot convert a Lua event: {error}"),
-                            ),
+fn pump_events(
+    client: *mut MpvHandle,
+    host: &mut ScriptHost,
+    callbacks: &PlayerLuaCallbacks,
+) -> Result<(), String> {
+    let sender = host.event_sender();
+    let outcome = loop {
+        if let Some(result) = host.poll() {
+            break result;
+        }
+        // SAFETY: client is a valid mpv handle owned by this thread, which is the only
+        // thread that waits for events on it.
+        let event = unsafe { mpv_wait_event(client, EVENT_POLL_SECONDS) };
+        if event.is_null() {
+            continue;
+        }
+        // SAFETY: mpv_wait_event returned a valid event for this call.
+        let event_id = unsafe { (*event).event_id };
+        if event_id == MPV_EVENT_NONE {
+            continue;
+        }
+        let shutdown = event_id == MPV_EVENT_SHUTDOWN;
+        let mut node = MpvNode::none();
+        // SAFETY: event is valid and event_to_node fills a node owned by us.
+        let code = unsafe { mpv_event_to_node(&mut node, event) };
+        if code >= 0 {
+            // SAFETY: node was initialized by mpv_event_to_node.
+            let converted = unsafe { node_to_native(&node, 0) };
+            // SAFETY: node is owned by this call and must be released.
+            unsafe { mpv_free_node_contents(&mut node) };
+            match converted {
+                Ok(value) => match event_from_native(value) {
+                    Some(event) => {
+                        if sender.post(event).is_err() {
+                            break host.wait_timeout(SHUTDOWN_TIMEOUT);
                         }
                     }
-                    if shutdown {
-                        break;
-                    }
-                }
-            })
-            .map_err(|error| format!("cannot start Lua event pump: {error}"))?;
-        Ok(Self {
-            stop,
-            client,
-            callbacks,
-            thread,
-        })
-    }
-
-    fn stop(self) {
-        self.stop.store(true, Ordering::SeqCst);
-        // SAFETY: client is a valid mpv handle until the script returns to C.
-        unsafe { mpv_wakeup(self.client.0) };
-        if self.thread.join().is_err() {
-            log_message(&self.callbacks, MSGL_ERR, "Lua event pump panicked");
+                    None => log_message(
+                        callbacks,
+                        MSGL_WARN,
+                        "dropping a Lua event with no event name",
+                    ),
+                },
+                Err(error) => log_message(
+                    callbacks,
+                    MSGL_ERR,
+                    &format!("cannot convert a Lua event: {error}"),
+                ),
+            }
         }
-    }
+        if shutdown {
+            break host.wait_timeout(SHUTDOWN_TIMEOUT);
+        }
+    };
+    outcome.map_err(|error| match error {
+        HostError::ShutdownTimeout => {
+            format!("script did not stop within {} s and was abandoned", SHUTDOWN_TIMEOUT.as_secs())
+        }
+        other => other.to_string(),
+    })
 }
 
 /// # Safety
@@ -842,10 +870,9 @@ pub unsafe extern "C" fn player_ffi_lua_run(
             ScriptModule::new("mp.options", OPTIONS),
             ScriptModule::new("mp.input", INPUT),
         ];
-        let backend = ClientBackend {
-            client: client.cast::<MpvHandle>(),
-            callbacks: callbacks_copy,
-        };
+        let client = client.cast::<MpvHandle>();
+        let gate = ClientGate::open(client, callbacks_copy);
+        let backend = ClientBackend { gate: gate.clone() };
         let mut host = ScriptHost::spawn_with_modules(
             name.clone(),
             format!("@{filename}"),
@@ -854,13 +881,8 @@ pub unsafe extern "C" fn player_ffi_lua_run(
             backend,
         )
         .map_err(|error| error.to_string())?;
-        let pump = EventPump::spawn(
-            ClientPtr(client.cast::<MpvHandle>()),
-            host.event_sender(),
-            callbacks_copy,
-        )?;
-        let result = host.wait().map_err(|error| error.to_string());
-        pump.stop();
+        let result = pump_events(client, &mut host, &callbacks_copy);
+        gate.close();
         result
     }));
     match result {

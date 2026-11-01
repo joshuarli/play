@@ -1355,6 +1355,48 @@ def gate_lua_host(results, args):
     )
     results.check("lua-host", proc.returncode == 0,
                   tail((proc.stdout + proc.stderr).splitlines(), 20))
+    lua_host_spinner_quit(results)
+
+
+SPINNER_SCRIPTS = {
+    "at load": "while true do end\n",
+    "in a callback": (
+        "mp.register_script_message('spin', function() while true do end end)\n"
+        "mp.set_property('user-data/spinner', 'ready')\n"
+    ),
+}
+
+
+def lua_host_spinner_quit(results):
+    TMP.mkdir(parents=True, exist_ok=True)
+    for label, source in SPINNER_SCRIPTS.items():
+        name = f"lua-host: quit with a script spinning {label}"
+        script = TMP / f"spinner-{os.getpid()}.lua"
+        script.write_text(source)
+        try:
+            with Mpv([f"--script={script}"]) as mpv:
+                if label == "in a callback":
+                    mpv.wait_property("user-data/spinner", lambda value: value == "ready")
+                    mpv.command("script-message", "spin")
+                    time.sleep(0.2)
+                started = time.monotonic()
+                mpv.command("quit")
+                try:
+                    mpv.proc.wait(timeout=8)
+                except subprocess.TimeoutExpired:
+                    results.check(name, False, "player did not exit")
+                    continue
+                elapsed = time.monotonic() - started
+                results.check(
+                    name,
+                    mpv.returncode == 0 and elapsed < 6
+                    and bool(mpv.log_matches(r"did not stop within 2 s")),
+                    f"exit {mpv.returncode} after {elapsed:.1f} s; log:\n{tail(mpv.lines)}",
+                )
+        except Failure as exc:
+            results.check(name, False, str(exc))
+        finally:
+            script.unlink(missing_ok=True)
 
 
 def gate_lua_api_audit(results, args):

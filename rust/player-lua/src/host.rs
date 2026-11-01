@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::fmt;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::rc::Rc;
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, TryRecvError};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -12,10 +12,11 @@ use mlua::{
 
 use crate::backend::{CommandRequest, PlayerBackend, PropertyFormat, ScriptEvent};
 use crate::new_interpreter;
+use crate::queue::{event_queue, EventReceiver, EventSender, Posted, Received};
 use crate::value::{NativeValue, Sentinels};
 
 const DEFAULTS: &str = include_str!("../../../player/lua/defaults.lua");
-const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
+pub const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 const MAX_WAIT_SECONDS: f64 = 86_400.0;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,7 +46,7 @@ impl std::error::Error for HostError {}
 
 struct HostState<B: PlayerBackend> {
     backend: B,
-    events: Receiver<ScriptEvent>,
+    events: EventReceiver,
     sentinels: Sentinels,
     start: Instant,
     script_name: String,
@@ -67,17 +68,17 @@ impl ScriptModule {
 
 #[derive(Clone)]
 pub struct ScriptEventSender {
-    events: Sender<ScriptEvent>,
+    events: EventSender,
 }
 
 impl ScriptEventSender {
-    pub fn post(&self, event: ScriptEvent) -> Result<(), HostError> {
-        self.events.send(event).map_err(|_| HostError::PostClosed)
+    pub fn post(&self, event: ScriptEvent) -> Result<Posted, HostError> {
+        self.events.post(event)
     }
 }
 
 pub struct ScriptHost {
-    events: Sender<ScriptEvent>,
+    events: EventSender,
     done: Receiver<Result<(), HostError>>,
     thread: Option<JoinHandle<()>>,
     stopped: bool,
@@ -103,7 +104,7 @@ impl ScriptHost {
         let name = name.into();
         let chunk_name = chunk_name.into();
         let source = source.into();
-        let (event_tx, event_rx) = mpsc::channel();
+        let (event_tx, event_rx) = event_queue();
         let (done_tx, done_rx) = mpsc::channel();
         let thread = thread::Builder::new()
             .name(format!("lua:{name}"))
@@ -129,66 +130,61 @@ impl ScriptHost {
         }
     }
 
-    pub fn post_event(&self, event: ScriptEvent) -> Result<(), HostError> {
-        self.events.send(event).map_err(|_| HostError::PostClosed)
+    pub fn post_event(&self, event: ScriptEvent) -> Result<Posted, HostError> {
+        self.events.post(event)
     }
 
-    pub fn wait(&mut self) -> Result<(), HostError> {
+    pub fn poll(&mut self) -> Option<Result<(), HostError>> {
         if self.stopped {
-            return Ok(());
+            return Some(Ok(()));
         }
-        let result = self.done.recv().map_err(|_| {
-            HostError::Thread("script thread exited without a result".into())
-        })?;
-        self.stopped = true;
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
+        match self.done.try_recv() {
+            Ok(result) => Some(self.finish(result)),
+            Err(TryRecvError::Empty) => None,
+            Err(TryRecvError::Disconnected) => Some(self.finish(Err(exited_without_result()))),
         }
-        result
     }
 
     pub fn wait_timeout(&mut self, timeout: Duration) -> Result<(), HostError> {
         if self.stopped {
             return Ok(());
         }
-        let result = match self.done.recv_timeout(timeout) {
-            Ok(result) => result,
-            Err(RecvTimeoutError::Timeout) => return Err(HostError::ShutdownTimeout),
-            Err(RecvTimeoutError::Disconnected) => {
-                return Err(HostError::Thread(
-                    "script thread exited without a result".into(),
-                ))
+        match self.done.recv_timeout(timeout) {
+            Ok(result) => self.finish(result),
+            Err(RecvTimeoutError::Timeout) => {
+                self.abandon();
+                Err(HostError::ShutdownTimeout)
             }
-        };
-        self.stopped = true;
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
+            Err(RecvTimeoutError::Disconnected) => self.finish(Err(exited_without_result())),
         }
-        result
     }
 
     pub fn stop(&mut self) -> Result<(), HostError> {
         if self.stopped {
             return Ok(());
         }
+        let _ = self.events.post(ScriptEvent::shutdown());
+        self.wait_timeout(SHUTDOWN_TIMEOUT)
+    }
+
+    fn finish(&mut self, result: Result<(), HostError>) -> Result<(), HostError> {
         self.stopped = true;
-        let _ = self.events.send(ScriptEvent::shutdown());
-        let result = match self.done.recv_timeout(SHUTDOWN_TIMEOUT) {
-            Ok(result) => result,
-            Err(RecvTimeoutError::Timeout) => Err(HostError::ShutdownTimeout),
-            Err(RecvTimeoutError::Disconnected) => Err(HostError::Thread(
-                "script thread exited without a result".into(),
-            )),
-        };
-        if !matches!(result, Err(HostError::ShutdownTimeout)) {
-            if let Some(thread) = self.thread.take() {
-                let _ = thread.join();
-            }
-        } else {
-            let _ = self.thread.take();
+        self.events.close();
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
         }
         result
     }
+
+    fn abandon(&mut self) {
+        self.stopped = true;
+        self.events.close();
+        let _ = self.thread.take();
+    }
+}
+
+fn exited_without_result() -> HostError {
+    HostError::Thread("script thread exited without a result".into())
 }
 
 impl Drop for ScriptHost {
@@ -203,7 +199,7 @@ fn run_script<B: PlayerBackend>(
     source: &str,
     modules: Vec<ScriptModule>,
     backend: B,
-    events: Receiver<ScriptEvent>,
+    events: EventReceiver,
 ) -> Result<(), HostError> {
     let lua = new_interpreter().map_err(|error| HostError::Lua(error.to_string()))?;
     let sentinels = create_sentinels(&lua).map_err(|error| HostError::Lua(error.to_string()))?;
@@ -760,7 +756,14 @@ fn register_events<B: PlayerBackend>(
                     })?,
                 };
                 let event = {
-                    let state = state_clone.borrow();
+                    let mut state = state_clone.borrow_mut();
+                    let dropped = state.events.take_dropped();
+                    if dropped > 0 {
+                        state.backend.log(
+                            "warn",
+                            &format!("dropped {dropped} events while the script was busy"),
+                        );
+                    }
                     wait_for_event(&state.events, timeout)
                 };
                 event_to_lua(lua, &sentinels_clone, &event)
@@ -867,16 +870,16 @@ fn register_events<B: PlayerBackend>(
     )
 }
 
-fn wait_for_event(events: &Receiver<ScriptEvent>, timeout: f64) -> ScriptEvent {
+fn wait_for_event(events: &EventReceiver, timeout: f64) -> ScriptEvent {
     let duration = if timeout.is_finite() && timeout > 0.0 {
         Duration::from_secs_f64(timeout.min(MAX_WAIT_SECONDS))
     } else {
         Duration::ZERO
     };
     match events.recv_timeout(duration) {
-        Ok(event) => event,
-        Err(RecvTimeoutError::Timeout) => ScriptEvent::new("none"),
-        Err(RecvTimeoutError::Disconnected) => ScriptEvent::shutdown(),
+        Received::Event(event) => event,
+        Received::Timeout => ScriptEvent::new("none"),
+        Received::Closed => ScriptEvent::shutdown(),
     }
 }
 
@@ -1541,6 +1544,31 @@ mp.commandv("record", "ready")
             }
             other => panic!("expected a script error, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn lua_host_abandons_a_script_that_never_returns() {
+        let (backend, recorded) = MockBackend::new();
+        let mut host = ScriptHost::spawn(
+            "spinner",
+            "@spinner.lua",
+            "mp.log('info', 'ready') while true do end",
+            backend,
+        )
+        .expect("spawn script host");
+        wait_for(&recorded, "ready", |recorded| {
+            !recorded.logs.is_empty()
+        });
+        host.post_event(ScriptEvent::shutdown()).expect("post shutdown");
+        let started = Instant::now();
+        let result = host.wait_timeout(Duration::from_millis(200));
+        assert_eq!(result, Err(HostError::ShutdownTimeout));
+        assert!(started.elapsed() < SHUTDOWN_TIMEOUT);
+        assert_eq!(host.stop(), Ok(()));
+        assert_eq!(
+            host.post_event(ScriptEvent::new("tick")),
+            Err(HostError::PostClosed)
+        );
     }
 
     #[test]
