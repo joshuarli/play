@@ -3,13 +3,16 @@ set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 MODE=${1:-}
-LABEL=${2:-baseline}
+LABEL=${2:-}
+if [ -z "$LABEL" ]; then
+    [ "$MODE" = "release" ] && LABEL=release || LABEL=baseline
+fi
 cd "$ROOT"
 
 case "$MODE" in
-    baseline|size|final|compare) ;;
+    baseline|size|release|final|compare) ;;
     *)
-        printf 'usage: scripts/measure.sh {baseline|size|final|compare}\n' >&2
+        printf 'usage: scripts/measure.sh {baseline|size|release|final|compare}\n' >&2
         exit 2
         ;;
 esac
@@ -34,7 +37,10 @@ from pathlib import Path
 ROOT = Path(sys.argv[1])
 MODE = sys.argv[2]
 LABEL = sys.argv[3]
-MPV = ROOT / "build" / "mpv"
+MPV = ROOT / ("dist/Player.app/Contents/MacOS/player" if MODE == "release"
+             else "build/mpv")
+BUILD_DIR = "build-release" if MODE == "release" else "build"
+FRAMEWORKS = ROOT / "dist/Player.app/Contents/Frameworks"
 MEASURE_DIR = ROOT / ".work" / "fixtures" / "measure"
 TMP = ROOT / ".work" / "tmp"
 METRICS = ROOT / "docs" / "metrics.md"
@@ -46,6 +52,8 @@ if not MPV.exists():
     raise SystemExit(f"missing player: {MPV}; run scripts/build.sh")
 
 sys.path.insert(0, str(ROOT / "tests"))
+import harness  # noqa: E402
+harness.MPV = MPV
 from harness import Mpv, Failure  # noqa: E402
 
 
@@ -274,16 +282,42 @@ def component_for(path):
         return "MoltenVK"
     if "vulkan" in lowered:
         return "Vulkan"
-    if "shaderc" in lowered or "glslang" in lowered:
+    if "shaderc" in lowered or "glslang" in lowered or "spirv" in lowered:
         return "shaderc"
     if "dav1d" in lowered:
         return "dav1d"
     if "lua" in lowered:
         return "Lua"
+    if name.startswith(("libfreetype", "libfribidi", "libharfbuzz")):
+        return "fonts/shaping"
     return "remaining external"
 
 
+def release_closure():
+    by_component = {}
+    paths = []
+    for path in sorted(FRAMEWORKS.glob("*.dylib")):
+        component = component_for(str(path))
+        entry = by_component.setdefault(component, {"bytes": 0, "files": 0})
+        size = path.stat().st_size
+        entry["bytes"] += size
+        entry["files"] += 1
+        paths.append(str(path))
+    return {
+        "direct": [],
+        "files": len(paths),
+        "bytes": sum(path.stat().st_size for path in FRAMEWORKS.glob("*.dylib")),
+        "by_component": {
+            key: {"bytes": value["bytes"], "files": value["files"]}
+            for key, value in sorted(by_component.items())
+        },
+        "paths": paths,
+    }
+
+
 def closure():
+    if MODE == "release":
+        return release_closure()
     direct = direct_libraries()
     queue = list(direct)
     molten = Path("/opt/homebrew/opt/molten-vk/lib/libMoltenVK.dylib")
@@ -377,7 +411,7 @@ def protocols():
 
 
 def features():
-    proc = run(["meson", "configure", "build"], cwd=str(ROOT), timeout=60)
+    proc = run(["meson", "configure", BUILD_DIR], cwd=str(ROOT), timeout=60)
     wanted = {
         "cplayer", "libmpv", "gpl", "lua", "cocoa", "swift-build",
         "coreaudio", "vulkan", "videotoolbox-pl", "gl", "gl-cocoa",
@@ -505,7 +539,7 @@ def metrics_row(value):
         seek=value["seek_ms"],
         exit_ms=value["exit_ms"],
         protos=value["protocols"]["listed"],
-        notes="headless; 3 s clips; GUI owner-run",
+        notes=value.get("notes", "headless; 3 s clips; GUI owner-run"),
     )
 
 

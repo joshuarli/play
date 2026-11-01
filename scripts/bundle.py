@@ -2,6 +2,7 @@
 """Assemble Player.app from the release build and its pinned dependency prefix."""
 
 import json
+import platform
 import plistlib
 import shutil
 import subprocess
@@ -80,8 +81,19 @@ def main():
     for name, source in closure.items():
         shutil.copy2(source, FRAMEWORKS / name)
 
+    subprocess.run(["strip", "-x", str(executable)], check=True)
+    for name in closure:
+        subprocess.run(["strip", "-x", str(FRAMEWORKS / name)], check=True)
+
     moltenvk = FRAMEWORKS / "libMoltenVK.dylib"
     shutil.copy2(MOLTENVK_SRC / "libMoltenVK.dylib", moltenvk)
+    thin = FRAMEWORKS / "libMoltenVK.arm64.dylib"
+    subprocess.run(
+        ["lipo", "-thin", platform.machine(), str(moltenvk), "-output", str(thin)],
+        check=True,
+    )
+    thin.replace(moltenvk)
+    subprocess.run(["strip", "-x", str(moltenvk)], check=True)
     icd = json.loads((MOLTENVK_SRC / "MoltenVK_icd.json").read_text())
     icd["ICD"]["library_path"] = "../../../Frameworks/libMoltenVK.dylib"
     (ICD_DIR / "MoltenVK_icd.json").write_text(json.dumps(icd, indent=4) + "\n")
