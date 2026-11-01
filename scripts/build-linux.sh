@@ -16,8 +16,8 @@ DIST="$ROOT/dist"
 }
 
 mkdir -p "$RUST_TARGET_DIR" "$ROOT/.work/tmp" "$DIST"
-RUSTFLAGS="--remap-path-prefix=$ROOT=." CARGO_TARGET_DIR="$RUST_TARGET_DIR" cargo build --release --target "$RUST_TRIPLE" \
-    --manifest-path "$ROOT/rust/Cargo.toml" -p player-audio -p player-ffi
+RUSTFLAGS="--remap-path-prefix=$ROOT=." CARGO_TARGET_DIR="$RUST_TARGET_DIR" cargo rustc --release --target "$RUST_TRIPLE" \
+    --manifest-path "$ROOT/rust/Cargo.toml" -p player-release --crate-type staticlib
 RUST_LIB_DIR="../.work/deps/player-linux/target/$RUST_TRIPLE/release"
 
 PKG_CONFIG_STATIC="$ROOT/.work/tmp/pkg-config-static"
@@ -31,8 +31,7 @@ export LDFLAGS="-static-libgcc -Wl,--gc-sections"
 options=(
     -Dcplayer=true -Dlibmpv=false -Dgpl=true
     -Dtests=false -Dfuzzers=false -Dbuild-date=false
-    -Dplayer-audio-lib="$RUST_LIB_DIR/libplayer_audio.a"
-    -Dplayer-ffi-lib="$RUST_LIB_DIR/libplayer_ffi.a"
+    -Dplayer-ffi-lib="$RUST_LIB_DIR/libplayer_release.a"
 )
 
 enabled_features=(alsa iconv vulkan wayland zlib)
