@@ -15,7 +15,7 @@ Player is a local-only media player. The macOS release artifact is `dist/Player.
 
 - `.github/workflows/release.yml` runs on a `v*` tag: the macOS and Linux build workflows run as reusable jobs, then one job publishes `Player-aarch64-apple-darwin.zip`, `player-x86_64-linux-musl.tar.gz`, and `SHA256SUMS`.
 - `sh dl player` in `~/usr` installs the latest release on macOS and x86-64 Linux after verifying the checksum.
-- Push a `v*` tag to create the first release; none exists yet.
+- `v0.41.0` is published on GitHub with `Player-aarch64-apple-darwin.zip`, `player-x86_64-linux-musl.tar.gz`, and `SHA256SUMS`; the macOS build, Linux build, and publish jobs all passed.
 
 ## Limits
 
@@ -30,7 +30,7 @@ Player is a local-only media player. The macOS release artifact is `dist/Player.
 
 - `scripts/linux-container.sh tests/run.sh suite`: passes on Alpine x86_64, including `linux-gpu-next` under headless Weston with lavapipe, `linux-audio` on the ALSA null PCM, `linux-local-only` under `unshare -rn`, and `linux-audit`.
 - `scripts/audit-linux.sh`: ok. `dist/player` needs exactly nine libraries: musl, Vulkan, Wayland client and cursor, xkbcommon, ALSA, and libva, libva-drm, and libva-wayland.
-- `--hwdec` defaults to `auto` on Linux and `no` on macOS. `suite` passes 297 checks with and without a GPU render node in the container.
+- `--hwdec` defaults to `auto` on Linux and `no` on macOS. `suite` passes 295 checks with and without a GPU render node in the container.
 - `tests/run.sh linux-vaapi` (needs a GPU render node, not part of `suite`): passes on an AMD Raphael iGPU for h264, hevc, vp9, and av1 with `vaapi-copy`.
 - Fixtures match the tracked stream structure; their bytes differ from macOS and between Linux hosts because the encoders select threads and SIMD paths at run time.
 - Measurements are in `docs/metrics.md`; the runtime set, headless gates, and fixtures are in `docs/linux.md`.
