@@ -20,7 +20,8 @@ MACOS = APP / "Contents/MacOS"
 FRAMEWORKS = APP / "Contents/Frameworks"
 RESOURCES = APP / "Contents/Resources"
 ICD_DIR = RESOURCES / "vulkan/icd.d"
-MOLTENVK_SRC = ROOT / ".work/tmp/release/MoltenVK/MoltenVK/dynamic/dylib/macOS"
+MOLTENVK_LIB = PREFIX / "lib/libMoltenVK.dylib"
+MOLTENVK_ICD = PREFIX / "share/vulkan/icd.d/MoltenVK_icd.json"
 
 
 def otool(path, flag):
@@ -72,8 +73,9 @@ def collect(binary):
 def main():
     if not BINARY.exists():
         raise SystemExit(f"missing release binary: {BINARY}")
-    if not (MOLTENVK_SRC / "libMoltenVK.dylib").exists():
-        raise SystemExit(f"missing MoltenVK: {MOLTENVK_SRC}")
+    for path in (MOLTENVK_LIB, MOLTENVK_ICD):
+        if not path.exists():
+            raise SystemExit(f"missing dependency {path}")
 
     if APP.exists():
         shutil.rmtree(APP)
@@ -93,7 +95,7 @@ def main():
         subprocess.run(["strip", "-x", str(FRAMEWORKS / name)], check=True)
 
     moltenvk = FRAMEWORKS / "libMoltenVK.dylib"
-    shutil.copy2(MOLTENVK_SRC / "libMoltenVK.dylib", moltenvk)
+    shutil.copy2(MOLTENVK_LIB, moltenvk)
     thin = FRAMEWORKS / "libMoltenVK.arm64.dylib"
     subprocess.run(
         ["lipo", "-thin", platform.machine(), str(moltenvk), "-output", str(thin)],
@@ -101,7 +103,7 @@ def main():
     )
     thin.replace(moltenvk)
     subprocess.run(["strip", "-x", str(moltenvk)], check=True)
-    icd = json.loads((MOLTENVK_SRC / "MoltenVK_icd.json").read_text())
+    icd = json.loads(MOLTENVK_ICD.read_text())
     icd["ICD"]["library_path"] = "../../../Frameworks/libMoltenVK.dylib"
     (ICD_DIR / "MoltenVK_icd.json").write_text(json.dumps(icd, indent=4) + "\n")
 
