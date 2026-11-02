@@ -19,7 +19,7 @@ on:
 permissions: {}
 
 concurrency:
-  group: linux-${{ github.ref_name != 'main' && github.ref || github.run_id }}
+  group: linux-${{ github.event_name == 'workflow_dispatch' && github.run_id || (github.ref_name != 'main' && github.ref || github.run_id) }}
   cancel-in-progress: true
 
 defaults:
@@ -71,7 +71,7 @@ jobs:
         run: |
           scripts/linux-container.sh tests/run.sh fixtures
           scripts/linux-container.sh python3 -c "import sys; sys.path.insert(0, 'tests'); import harness; harness.measure_fixture('1080p', 1920, 1080)"
-          scripts/linux-container.sh scripts/debug-gate-loop.sh "$REPEAT" 4
+          scripts/linux-container.sh scripts/debug-gate-loop.sh "$REPEAT" 1
 
       - name: Valgrind OSD
         if: inputs.mode == 'helgrind' || inputs.mode == 'memcheck'
