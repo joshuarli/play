@@ -102,7 +102,7 @@ class Mpv:
             pass
 
     def _connect(self):
-        deadline = time.monotonic() + 10
+        deadline = time.monotonic() + 10 * TIMEOUT_SCALE
         while time.monotonic() < deadline:
             if self.proc.poll() is not None:
                 raise Failure(
@@ -150,6 +150,7 @@ class Mpv:
                 raise Failure(f"IPC write failed: {exc}") from exc
 
     def command(self, *args, timeout=5):
+        timeout *= TIMEOUT_SCALE
         with self.write_lock:
             request_id = self.next_request_id
             self.next_request_id += 1
@@ -184,7 +185,7 @@ class Mpv:
         return self.command("loadfile", str(path), mode)
 
     def wait_until(self, predicate, timeout=10, description="condition"):
-        deadline = time.monotonic() + timeout
+        deadline = time.monotonic() + timeout * TIMEOUT_SCALE
         while time.monotonic() < deadline:
             value = predicate()
             if value:
@@ -253,11 +254,11 @@ class Mpv:
             except Failure:
                 pass
             try:
-                self.proc.wait(timeout=2)
+                self.proc.wait(timeout=2 * TIMEOUT_SCALE)
             except subprocess.TimeoutExpired:
                 self.proc.terminate()
                 try:
-                    self.proc.wait(timeout=3)
+                    self.proc.wait(timeout=3 * TIMEOUT_SCALE)
                 except subprocess.TimeoutExpired:
                     self.proc.kill()
                     self.proc.wait()
@@ -354,6 +355,7 @@ def check_no_errors(results, name, mpv):
 
 FIXTURE_ATTEMPTS = 2
 FIXTURE_TIMEOUT = 120
+TIMEOUT_SCALE = float(os.environ.get("PLAYER_TIMEOUT_SCALE", "1"))
 
 
 def run_fixture_generator(timeout):

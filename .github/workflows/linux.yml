@@ -11,6 +11,10 @@ on:
         description: 'Suite repetitions'
         required: false
         default: '1'
+      mode:
+        description: 'gates or helgrind'
+        required: false
+        default: 'gates'
 
 permissions: {}
 
@@ -55,13 +59,45 @@ jobs:
       - name: Allow unprivileged user namespaces
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
+      - name: Runner CPU
+        run: |
+          lscpu | sed -n '1,30p'
+          nproc
+
       - name: Test
+        if: inputs.mode != 'helgrind'
         env:
           REPEAT: ${{ inputs.repeat || 1 }}
         run: |
           scripts/linux-container.sh tests/run.sh fixtures
           scripts/linux-container.sh python3 -c "import sys; sys.path.insert(0, 'tests'); import harness; harness.measure_fixture('1080p', 1920, 1080)"
           scripts/linux-container.sh scripts/debug-gate-loop.sh "$REPEAT" 2
+
+      - name: Helgrind OSD
+        if: inputs.mode == 'helgrind'
+        continue-on-error: true
+        run: |
+          scripts/linux-container.sh tests/run.sh fixtures
+          chmod +x tests/debug-vg-mpv.sh
+          PLAYER_MPV=/work/tests/debug-vg-mpv.sh PLAYER_TIMEOUT_SCALE=30 \
+            scripts/linux-container.sh python3 tests/debug-helgrind.py
+
+      - name: Helgrind ta reports
+        if: inputs.mode == 'helgrind'
+        run: |
+          if [ -f .work/tmp/helgrind.log ]; then
+            echo "log lines: $(wc -l < .work/tmp/helgrind.log)"
+            grep -n -B6 -A40 'ta\.c' .work/tmp/helgrind.log | head -400 || true
+          else
+            echo "no helgrind log"
+          fi
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: inputs.mode == 'helgrind'
+        with:
+          name: helgrind
+          path: .work/tmp/helgrind.log
+          if-no-files-found: warn
 
       - name: Verify tarball
         run: |
