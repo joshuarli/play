@@ -112,6 +112,10 @@ struct priv {
 
     // Allocated DR buffers
     mp_mutex dr_lock;
+    // get_image() runs on the decoder thread, everything else on the VO
+    // thread, so the array needs a talloc parent only the decoder thread
+    // touches; sharing vo->priv corrupts its child list.
+    void *dr_buffers_ctx;
     pl_buf *dr_buffers;
     int num_dr_buffers;
 
@@ -301,7 +305,7 @@ static struct mp_image *get_image(struct vo *vo, int imgfmt, int w, int h,
     }
 
     mp_mutex_lock(&p->dr_lock);
-    MP_TARRAY_APPEND(p, p->dr_buffers, p->num_dr_buffers, buf);
+    MP_TARRAY_APPEND(p->dr_buffers_ctx, p->dr_buffers, p->num_dr_buffers, buf);
     mp_mutex_unlock(&p->dr_lock);
 
     return mpi;
@@ -2159,6 +2163,7 @@ static int preinit(struct vo *vo)
     hwdec_devices_set_loader(vo->hwdec_devs, load_hwdec_api, vo);
     ra_hwdec_ctx_init(&p->hwdec_ctx, vo->hwdec_devs, gl_opts->hwdec_interop, false);
     mp_mutex_init(&p->dr_lock);
+    p->dr_buffers_ctx = talloc_new(p);
 
     if (gl_opts->shader_cache)
         cache_init(vo, &p->shader_cache, 10 << 20, gl_opts->shader_cache_dir);
