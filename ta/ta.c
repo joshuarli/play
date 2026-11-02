@@ -15,6 +15,7 @@
 
 #include <assert.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -285,13 +286,40 @@ static void ta_dbg_add(struct ta_header *h)
     }
 }
 
+static const char *ta_dbg_name(struct ta_header *h)
+{
+    if (!h)
+        return "(null)";
+    if (h->name == &allocation_is_string)
+        return "(string)";
+    return h->name ? h->name : "(unnamed)";
+}
+
 static void ta_dbg_check_header(struct ta_header *h)
 {
     if (h) {
-        assert(h->canary == CANARY);
-        if (h->parent) {
-            assert(!h->prev);
-            assert(h->parent->child == h);
+        bool bad_canary = h->canary != CANARY;
+        bool bad_child = h->parent && (h->prev || h->parent->child != h);
+        if (bad_canary || bad_child) {
+            bool parent_ok = h->parent && h->parent->canary == CANARY;
+            fprintf(stderr,
+                    "TA-CORRUPT thread=%llu h=%p size=%zu name=%s canary=%x"
+                    " parent=%p parent_name=%s parent_canary=%x"
+                    " parent_child=%p parent_child_name=%s"
+                    " prev=%p prev_name=%s next=%p next_name=%s\n",
+                    (unsigned long long)(uintptr_t)mp_thread_current_id(),
+                    (void *)h, h->size,
+                    ta_dbg_name(h), h->canary,
+                    (void *)h->parent,
+                    parent_ok ? ta_dbg_name(h->parent) : "(corrupt)",
+                    h->parent ? h->parent->canary : 0,
+                    parent_ok ? (void *)h->parent->child : NULL,
+                    parent_ok ? ta_dbg_name(h->parent->child) : "(corrupt)",
+                    (void *)h->prev, ta_dbg_name(h->prev),
+                    h->next ? (void *)h->next : NULL,
+                    h->next ? ta_dbg_name(h->next) : "(null)");
+            fflush(stderr);
+            abort();
         }
     }
 }

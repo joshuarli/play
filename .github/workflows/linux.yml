@@ -6,6 +6,11 @@ on:
   pull_request:
   workflow_call:
   workflow_dispatch:
+    inputs:
+      repeat:
+        description: 'Suite repetitions'
+        required: false
+        default: '1'
 
 permissions: {}
 
@@ -51,7 +56,13 @@ jobs:
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
       - name: Test
-        run: scripts/linux-container.sh tests/run.sh suite
+        env:
+          REPEAT: ${{ inputs.repeat || 1 }}
+        run: |
+          for i in $(seq 1 "$REPEAT"); do
+            echo "suite run $i"
+            scripts/linux-container.sh tests/run.sh suite
+          done
 
       - name: Verify tarball
         run: |
