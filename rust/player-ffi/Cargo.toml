@@ -13,3 +13,6 @@ player-core = { path = "../player-core" }
 player-engine = { path = "../player-engine" }
 player-lua = { path = "../player-lua" }
 player-tui = { path = "../player-tui" }
+
+[build-dependencies]
+player-build = { path = "../player-build" }

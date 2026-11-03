@@ -1,5 +1,6 @@
 use crate::clock::{judge_frame, ClockMode, FrameVerdict, MasterClock};
 use crate::state::{Event, Machine, SeekResume, State};
+use std::time::Instant;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StreamKind {
@@ -277,6 +278,7 @@ where
 
         let mut have_audio = !self.demux.has_audio();
         let mut have_video = !self.demux.has_video();
+        let preroll_start = Instant::now();
         for _ in 0..SEEK_PUMP_LIMIT {
             if have_audio && have_video {
                 break;
@@ -307,6 +309,8 @@ where
             }
         }
         self.stats.seeks_completed += 1;
+        self.clock
+            .seek_rebase(target, now + preroll_start.elapsed().as_secs_f64());
         let _ = self.machine.apply(Event::SeekDone);
         if self.eof_seen && resume == SeekResume::Playing {
             let _ = self.machine.apply(Event::Eof);
@@ -339,7 +343,7 @@ where
                 let mut packet = packet;
                 packet.pts = Some(pts);
                 self.video.send(packet)?;
-                for frame in self.video.finish()? {
+                for frame in self.video.drain()? {
                     self.video_cursor = self.video_cursor.max(frame.pts);
                     if frame.pts >= target {
                         *have_video = true;

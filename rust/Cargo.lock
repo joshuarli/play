@@ -326,6 +326,7 @@ name = "player-ffi"
 version = "0.1.0"
 dependencies = [
  "player-audio",
+ "player-build",
  "player-core",
  "player-engine",
  "player-lua",

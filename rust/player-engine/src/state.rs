@@ -135,6 +135,18 @@ fn transition(state: &State, event: Event) -> Option<State> {
             SeekResume::Paused(inner) => State::Paused { resume: *inner },
         }),
         (State::Seeking { resume }, Event::Seek) => Some(State::Seeking { resume: *resume }),
+        (State::Seeking { resume }, Event::Pause) => Some(State::Seeking {
+            resume: SeekResume::Paused(match resume {
+                SeekResume::Playing => PlayResume::Playing,
+                SeekResume::Paused(inner) => *inner,
+            }),
+        }),
+        (State::Seeking { resume }, Event::Resume) => Some(State::Seeking {
+            resume: match resume {
+                SeekResume::Paused(_) => SeekResume::Playing,
+                SeekResume::Playing => SeekResume::Playing,
+            },
+        }),
         (State::Seeking { .. }, Event::Fail) => Some(State::Error),
         (State::Seeking { .. }, Event::Close) => Some(State::Closing),
 
@@ -223,6 +235,38 @@ mod tests {
                 resume: PlayResume::Playing
             }
         );
+    }
+
+    #[test]
+    fn pause_during_seek_resumes_paused() {
+        let machine = drive(&[
+            Event::Open,
+            Event::Opened,
+            Event::Buffered,
+            Event::Seek,
+            Event::Pause,
+            Event::SeekDone,
+        ]);
+        assert_eq!(
+            *machine.state(),
+            State::Paused {
+                resume: PlayResume::Playing
+            }
+        );
+    }
+
+    #[test]
+    fn resume_during_seek_resumes_playing() {
+        let machine = drive(&[
+            Event::Open,
+            Event::Opened,
+            Event::Buffered,
+            Event::Pause,
+            Event::Seek,
+            Event::Resume,
+            Event::SeekDone,
+        ]);
+        assert_eq!(*machine.state(), State::Playing);
     }
 
     #[test]

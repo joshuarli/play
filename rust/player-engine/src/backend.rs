@@ -648,6 +648,26 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        target_os = "linux",
+        ignore = "static-pie test binaries cannot call the container Vulkan loader; run with RUSTFLAGS=\"-C target-feature=-crt-static\""
+    )]
+    fn seek_video_while_paused_lands_exactly() {
+        let engine =
+            SchedulerEngine::load(&fixture("h264.mp4"), SinkKind::Null).expect("engine loads video");
+        engine.set_paused(true);
+        let paused = poll_until(&engine, StdDuration::from_secs(10), |status| status.paused);
+        assert!(paused.paused);
+        engine.seek(1.0);
+        let status = poll_until(&engine, StdDuration::from_secs(10), |status| {
+            (status.position - 1.0).abs() < 0.05
+        });
+        assert!(status.error.is_none(), "unexpected error: {:?}", status.error);
+        assert!(!status.ended, "engine ended early: {status:?}");
+        assert!((status.position - 1.0).abs() < 0.05);
+    }
+
+    #[test]
     fn seek_after_end_restarts() {
         let engine = SchedulerEngine::load(&fixture("audio-mono.wav"), SinkKind::Null).expect("engine loads");
         poll_until(&engine, StdDuration::from_secs(10), |status| status.ended);
