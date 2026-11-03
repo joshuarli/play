@@ -100,6 +100,7 @@ impl Canvas {
             if ch == '\n' {
                 break;
             }
+            let ch = if ch.is_control() { ' ' } else { ch };
             let width = ch.width().unwrap_or(1).max(1);
             if cursor + width > self.cols {
                 break;
@@ -263,6 +264,17 @@ mod tests {
         assert_eq!(truncate("abcdef", 4), "abc…");
         assert_eq!(truncate("日本語", 5), "日本…");
         assert_eq!(truncate("abc", 3), "abc");
+    }
+
+    #[test]
+    fn control_characters_cannot_reach_the_terminal() {
+        let mut canvas = Canvas::new(12, 1, (0, 0, 0));
+        canvas.put(0, 0, "ok\x1b[31mred\x07", (255, 255, 255), (0, 0, 0), false);
+        assert_eq!(canvas.cells[2].ch, ' ');
+        assert_eq!(canvas.cells[3].ch, '[');
+        assert_eq!(canvas.cells[10].ch, ' ');
+        let rendered = canvas.render();
+        assert!(!rendered.contains("ok\x1b[31mred"));
     }
 
     #[test]
