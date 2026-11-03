@@ -4,9 +4,9 @@
 
 Goal: replace the remaining mpv-derived C playback engine with a small Rust-owned engine. No loss of supported local playback. Both release artifacts keep building.
 
-- Last accepted: S6d-1 (Linux Wayland window presents swapchain frames; weston present test behind `present-gate`, dynamic rerun green). Preflight complete 2026-11-03.
-- Red: none. Workspace green on macOS and Linux container static suites; display present gate green on the dynamic rerun; build, rust-link, ffi green.
-- Next: S6d-2 (resize/fullscreen/input protocol), then S6d-3..5. Then S7.
+- Last accepted: S6d-2 (resize/fullscreen/input protocol; per-frame flush+read+dispatch pump, fullscreen roundtrip, opportunistic seat bind). Preflight complete 2026-11-03.
+- Red: none. Workspace green on macOS and Linux container static suites; display gate green on the dynamic rerun; build, rust-link, ffi green.
+- Next: S6d-3 (OSD overlay), then S6d-4..5. Then S7.
 - Ordered chapters stay open for S7 (no fixture, needs linking design).
 - Resume: read this doc and `docs/RUST-PORT.md`, then run the next open slice. If the tree moved, adapt. Never overwrite newer work.
 

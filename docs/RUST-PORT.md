@@ -7,8 +7,8 @@ Preflight doc: `campaign-rust.md`. This file is the durable resume point.
 
 S5 complete. S6c complete (engine decodes and presents video headlessly).
 S6d-1 complete (Linux Wayland window presents swapchain frames; static
-suite contains the weston test behind `present-gate`). Next: S6d-2
-(resize/fullscreen/input protocol).
+suite contains the weston test behind `present-gate`). S6d-2 complete
+(resize/fullscreen/input protocol). Next: S6d-3 (OSD overlay).
 
 ## S6c record
 
@@ -90,9 +90,30 @@ Decisions with reasons:
   player-output, player-engine, and player-display build scripts
   call; the closure stays edited in one place.
 
-Still open in S6d: resize/fullscreen/input protocol (S6d-2), OSD
-overlay (S6d-3), macOS bridge (S6d-4), VO swap and gate updates
-(S6d-5).
+## S6d-2 record
+
+`Window` owns the full per-frame pump: flush, non-blocking socket read
+(`prepare_read` + `read`), then `dispatch_pending`. The earlier
+dispatch-only poll never read the socket, so no configure or input
+event past the initial handshake could arrive; the fullscreen request
+likewise never left the socket before the flush. `set_fullscreen`
+roundtrips on weston headless both ways once the client commits
+fullscreen-sized content after the configure, which the protocol
+requires. Resize is the same configure path: any configure size change
+resizes the swapchain, and the roundtrip test pins the 320x240 to
+1024x640 transition.
+
+`drain_input` returns `InputEvent` (key code + press, pointer button +
+press, scroll axis + value, pointer motion) with raw evdev codes; the
+keymap fd is dropped unread. The seat binds opportunistically: headless
+weston advertises none, so open succeeds seatless and drain yields
+nothing. Translation helpers (`translate_key_state`,
+`translate_button_state`, `translate_axis`, `is_fullscreen`) are pure
+and unit-tested; the weston gate adds fullscreen roundtrip,
+seatless-input grace, and an fd-count stability test.
+
+Still open in S6d: OSD overlay (S6d-3), macOS bridge (S6d-4), VO swap
+and gate updates (S6d-5).
 
 ## S5 record
 

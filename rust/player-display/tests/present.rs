@@ -5,6 +5,12 @@ use player_output::{ColorSpec, PixelLayout, Plane};
 use std::process::{Child, Command};
 use std::time::{Duration, Instant};
 
+static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn serial() -> std::sync::MutexGuard<'static, ()> {
+    SERIAL.lock().unwrap_or_else(|poison| poison.into_inner())
+}
+
 struct Compositor {
     child: Child,
     socket: String,
@@ -70,6 +76,7 @@ fn gradient(width: i32, height: i32, frame: u64) -> Vec<u8> {
     ignore = "static-pie test binaries cannot start the container Vulkan/Wayland stack; run with RUSTFLAGS=\"-C target-feature=-crt-static\""
 )]
 fn wayland_window_presents_frames() {
+    let _guard = serial();
     let compositor = Compositor::start();
     unsafe {
         std::env::set_var("XDG_RUNTIME_DIR", compositor.dir.as_os_str());
@@ -104,4 +111,125 @@ fn wayland_window_presents_frames() {
     }
     assert_eq!(window.presented(), 30);
     drop(window);
+}
+
+fn open_window(title: &str, width: i32, height: i32) -> (Compositor, Window) {
+    let compositor = Compositor::start();
+    unsafe {
+        std::env::set_var("XDG_RUNTIME_DIR", compositor.dir.as_os_str());
+        std::env::set_var("WAYLAND_DISPLAY", compositor.socket());
+    }
+    let window = Window::open(title, width, height).expect("window opens on weston");
+    (compositor, window)
+}
+
+fn open_count() -> usize {
+    std::fs::read_dir("/proc/self/fd")
+        .expect("fd directory lists open descriptors")
+        .count()
+}
+
+fn present_gray(window: &mut Window, width: i32, height: i32) {
+    let rgba = vec![128u8; width as usize * height as usize * 4];
+    let planes = [Plane {
+        data: &rgba,
+        stride: width as usize * 4,
+        width,
+        height,
+    }];
+    window
+        .present_planes(
+            PixelLayout::Rgba8,
+            ColorSpec::bt709_full(),
+            &planes,
+            width,
+            height,
+        )
+        .expect("frame presents");
+    assert!(
+        !window.poll().expect("events dispatch"),
+        "compositor closed early"
+    );
+}
+
+#[test]
+#[cfg_attr(
+    target_os = "linux",
+    ignore = "static-pie test binaries cannot start the container Vulkan/Wayland stack; run with RUSTFLAGS=\"-C target-feature=-crt-static\""
+)]
+fn window_fullscreen_roundtrip() {
+    let _guard = serial();
+    let (_compositor, window) = open_window("player-fullscreen", 320, 240);
+    let mut window = window;
+    present_gray(&mut window, 320, 240);
+    assert!(!window.fullscreen());
+    let rest = (window.width(), window.height());
+    window.set_fullscreen(true);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !window.fullscreen() {
+        let (w, h) = (window.width(), window.height());
+        present_gray(&mut window, w, h);
+        assert!(Instant::now() < deadline, "compositor never acked fullscreen");
+    }
+    assert_ne!(
+        (window.width(), window.height()),
+        rest,
+        "fullscreen configure resized the swapchain"
+    );
+    let full = (window.width(), window.height());
+    present_gray(&mut window, full.0, full.1);
+    window.set_fullscreen(false);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while window.fullscreen() {
+        let (w, h) = (window.width(), window.height());
+        present_gray(&mut window, w, h);
+        assert!(Instant::now() < deadline, "compositor never left fullscreen");
+    }
+}
+
+#[test]
+#[cfg_attr(
+    target_os = "linux",
+    ignore = "static-pie test binaries cannot start the container Vulkan/Wayland stack; run with RUSTFLAGS=\"-C target-feature=-crt-static\""
+)]
+fn window_input_without_seat() {
+    let _guard = serial();
+    let (_compositor, window) = open_window("player-input", 320, 240);
+    let mut window = window;
+    assert!(
+        !window.poll().expect("events dispatch"),
+        "compositor closed early"
+    );
+    let events = window.drain_input().expect("input drains");
+    assert!(events.is_empty(), "seatless compositor sends no input");
+}
+
+#[test]
+#[cfg_attr(
+    target_os = "linux",
+    ignore = "static-pie test binaries cannot start the container Vulkan/Wayland stack; run with RUSTFLAGS=\"-C target-feature=-crt-static\""
+)]
+fn window_open_poll_drop_keeps_fds() {
+    let _guard = serial();
+    let compositor = Compositor::start();
+    let before = open_count();
+    let window = {
+        unsafe {
+            std::env::set_var("XDG_RUNTIME_DIR", compositor.dir.as_os_str());
+            std::env::set_var("WAYLAND_DISPLAY", compositor.socket());
+        }
+        Window::open("player-fds", 320, 240).expect("window opens on weston")
+    };
+    let mut window = window;
+    for _ in 0..3 {
+        assert!(
+            !window.poll().expect("events dispatch"),
+            "compositor closed early"
+        );
+        let events = window.drain_input().expect("input drains");
+        assert!(events.is_empty());
+    }
+    drop(window);
+    assert_eq!(open_count(), before, "window cycle leaks descriptors");
+    drop(compositor);
 }

@@ -2,4 +2,4 @@
 pub mod display;
 
 #[cfg(target_os = "linux")]
-pub use display::Window;
+pub use display::{InputEvent, Window};
