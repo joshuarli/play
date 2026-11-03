@@ -3,9 +3,12 @@ pub trait AudioSink {
     fn channels(&self) -> usize;
     fn rate(&self) -> u32;
     fn queued_frames(&self) -> u64;
-    fn pause(&mut self);
-    fn resume(&mut self);
-    fn flush(&mut self);
+    fn pause(&mut self) -> Result<(), String>;
+    fn resume(&mut self) -> Result<(), String>;
+    fn flush(&mut self) -> Result<(), String>;
+    fn finish(&mut self) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 pub struct NullSink {
@@ -79,15 +82,19 @@ impl AudioSink for NullSink {
         0
     }
 
-    fn pause(&mut self) {
+    fn pause(&mut self) -> Result<(), String> {
         self.paused = true;
+        Ok(())
     }
 
-    fn resume(&mut self) {
+    fn resume(&mut self) -> Result<(), String> {
         self.paused = false;
+        Ok(())
     }
 
-    fn flush(&mut self) {}
+    fn flush(&mut self) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -113,9 +120,9 @@ mod tests {
     #[test]
     fn paused_sink_refuses_writes() {
         let mut sink = NullSink::new(1, 44100);
-        sink.pause();
+        sink.pause().unwrap();
         assert!(sink.write(&[0.1]).is_err());
-        sink.resume();
+        sink.resume().unwrap();
         sink.write(&[0.1]).unwrap();
         assert_eq!(sink.frames_written(), 1);
     }
