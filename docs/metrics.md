@@ -18,6 +18,7 @@ Automated playback is headless (`--vo=null --ao=null`), so GUI and renderer beha
 | 2026-11-01 | cbb4ec27c8ea | final | 9640096 | 9640096 | 17150384 | 13 | 72.01 | 72.78 | 154.3 | 84.33 | 216.09 | 0.16 | 0.43 | 23.99 | 3.08 | 1 | headless, 3 s clips |
 | 2026-11-02 | c047192252df | final | 9707520 | 9707520 | 17334096 | 13 | 70.19 | 65.2 | 152.83 | 84.34 | 215.83 | 0.16 | 0.59 | 25.0 | 4.55 | 1 | headless, 3 s clips |
 | 2026-11-02 | 96331a98445a | final | 9707520 | 9707520 | 17334096 | 13 | 65.47 | 63.14 | 150.12 | 83.92 | 215.83 | 0.18 | 0.44 | 23.68 | 3.06 | 1 | headless, 3 s clips |
+| 2026-11-02 | d4756faa3a87-dirty | final | 9707328 | 9707328 | 17334096 | 13 | 64.93 | 61.46 | 156.77 | 83.98 | 214.08 | 0.31 | 0.63 | 30.0 | 6.4 | 1 | headless, 3 s clips |
 <!-- measure:end -->
 
 The `baseline` row is the P0 comparison point. The P8 budget is half of its unique closure size, 29,542,136 B.

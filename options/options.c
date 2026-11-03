@@ -63,7 +63,6 @@ extern const struct m_sub_options vd_lavc_conf;
 extern const struct m_sub_options ad_lavc_conf;
 extern const struct m_sub_options hwdec_conf;
 extern const struct m_sub_options input_config;
-extern const struct m_sub_options encode_config;
 extern const struct m_sub_options ra_ctx_conf;
 extern const struct m_sub_options gl_video_conf;
 extern const struct m_sub_options gl_next_conf;
@@ -839,8 +838,6 @@ static const m_option_t mp_opts[] = {
 #if HAVE_ZIMG
     {"zimg", OPT_SUBSTRUCT(zimg_opts, zimg_conf)},
 #endif
-
-    {"", OPT_SUBSTRUCT(encode_opts, encode_config)},
 
     {"play-dir", OPT_REPLACED("play-direction")},
     {0}

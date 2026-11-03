@@ -184,13 +184,25 @@ impl Canvas {
         }
     }
 
-    pub fn render(&self) -> String {
+    pub fn render(&self, skip: Option<Rect>) -> String {
         let mut out = String::with_capacity(self.cols * self.rows * 4);
         out.push_str("\x1b[?2026h");
         for y in 0..self.rows {
             let _ = write!(out, "\x1b[{};1H", y + 1);
             let mut current: Option<(Rgb, Rgb, bool)> = None;
             for x in 0..self.cols {
+                if let Some(rect) = skip {
+                    if y >= rect.y
+                        && y < rect.y + rect.h
+                        && x >= rect.x
+                        && x < rect.x + rect.w
+                    {
+                        if x == rect.x && rect.x + rect.w < self.cols {
+                            let _ = write!(out, "\x1b[{};{}H", y + 1, rect.x + rect.w + 1);
+                        }
+                        continue;
+                    }
+                }
                 let cell = &self.cells[y * self.cols + x];
                 if cell.cont {
                     continue;
@@ -273,15 +285,27 @@ mod tests {
         assert_eq!(canvas.cells[2].ch, ' ');
         assert_eq!(canvas.cells[3].ch, '[');
         assert_eq!(canvas.cells[10].ch, ' ');
-        let rendered = canvas.render();
+        let rendered = canvas.render(None);
         assert!(!rendered.contains("ok\x1b[31mred"));
+    }
+
+    #[test]
+    fn render_leaves_a_skipped_rect_untouched() {
+        let mut canvas = Canvas::new(10, 3, (0, 0, 0));
+        canvas.put(0, 1, "abcdefghij", (255, 255, 255), (0, 0, 0), false);
+        let rendered = canvas.render(Some(Rect { x: 3, y: 1, w: 4, h: 1 }));
+        assert!(rendered.contains("abc"));
+        assert!(rendered.contains("\x1b[2;8H"));
+        assert!(rendered.contains("hij"));
+        assert!(!rendered.contains('d'));
+        assert!(!rendered.contains('e'));
     }
 
     #[test]
     fn render_skips_continuation_cells() {
         let mut canvas = Canvas::new(4, 1, (0, 0, 0));
         canvas.put(0, 0, "日本", (255, 255, 255), (0, 0, 0), false);
-        let rendered = canvas.render();
+        let rendered = canvas.render(None);
         assert!(rendered.contains('日'));
         assert!(!rendered.contains("日 日"));
     }

@@ -25,7 +25,6 @@
 #include "mpv_talloc.h"
 
 #include "common/msg.h"
-#include "common/encode.h"
 #include "options/options.h"
 #include "common/common.h"
 #include "osdep/timer.h"
@@ -444,7 +443,7 @@ static int reinit_audio_filters_and_output(struct MPContext *mpctx)
     mpctx->ao_filter_fmt = out_fmt;
 
     mpctx->ao = ao_init_best(mpctx->global, ao_flags, mp_wakeup_core_cb,
-                             mpctx, mpctx->encode_lavc_ctx, out_rate,
+                             mpctx, out_rate,
                              out_format, out_channels);
 
     int ao_rate = 0;
@@ -548,8 +547,7 @@ void reinit_audio_chain(struct MPContext *mpctx)
     struct track *track = NULL;
     track = mpctx->current_track[0][STREAM_AUDIO];
     if (!track || !track->stream) {
-        if (!mpctx->encode_lavc_ctx)
-            uninit_audio_out(mpctx);
+        uninit_audio_out(mpctx);
         error_on_track(mpctx, track);
         return;
     }

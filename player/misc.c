@@ -33,7 +33,6 @@
 #include "options/m_config.h"
 #include "options/path.h"
 #include "common/common.h"
-#include "common/encode.h"
 #include "common/playlist.h"
 #include "input/input.h"
 

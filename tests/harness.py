@@ -601,7 +601,7 @@ def gate_tui(results, args):
     master = None
     try:
         proc, master, buf = pty_session(
-            ["--no-config", "--tui", "--ao=null", "--volume=0", "--pause=yes", str(path)],
+            ["--no-config", "--tui", "--ao=null", "--volume=0", "--pause=no", str(path)],
             env_extra={"PLAYER_TUI_ART": "kitty"},
             wait_for=b"Paper Satellites",
         )
@@ -614,6 +614,19 @@ def gate_tui(results, args):
                 except OSError:
                     break
         results.check("tui: kitty transfer", b"\x1b_G" in buf and b"f=24" in buf)
+        deadline = time.monotonic() + 4
+        while time.monotonic() < deadline and bytes(buf).count(b"\x1b[?2026h") < 4:
+            ready, _, _ = select.select([master], [], [], 0.1)
+            if ready:
+                try:
+                    buf.extend(os.read(master, 262144))
+                except OSError:
+                    break
+        transmits = bytes(buf).count(bytes([27]) + b"_Ga=T")
+        frames = bytes(buf).count(b"\x1b[?2026h")
+        results.check("tui: kitty image sent once across redraws",
+                      transmits == 1 and frames >= 4,
+                      f"transmits={transmits} frames={frames}")
         buf, stderr = pty_finish(proc, master, buf)
         master = None
         results.check("tui: kitty clean exit", proc.returncode == 0,

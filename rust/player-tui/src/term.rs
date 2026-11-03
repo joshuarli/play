@@ -230,8 +230,13 @@ impl Terminal {
     }
 
     pub fn draw(&mut self, canvas: &Canvas, cover: Option<&Cover>, rect: Rect) -> io::Result<()> {
+        let skip = if self.mode == ArtMode::Kitty && cover.is_some() {
+            Some(rect)
+        } else {
+            None
+        };
         let mut stdout = io::stdout().lock();
-        stdout.write_all(canvas.render().as_bytes())?;
+        stdout.write_all(canvas.render(skip).as_bytes())?;
         stdout.flush()?;
         drop(stdout);
         if self.mode == ArtMode::Kitty {

@@ -354,8 +354,6 @@ typedef struct MPOpts {
 
     struct clipboard_opts *clipboard_opts;
 
-    struct encode_opts *encode_opts;
-
     char *ipc_path;
     char *ipc_client;
 

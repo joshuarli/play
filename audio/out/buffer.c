@@ -643,29 +643,23 @@ static bool ao_play_data(struct ao *ao)
 
     int samples = 0;
     bool got_eof = false;
-    if (ao->driver->write_frames) {
-        TA_FREEP(&p->pending);
-        samples = read_buffer(ao, NULL, 1, &got_eof, false);
-        planes = (void **)&p->pending;
-    } else {
-        if (!realloc_buf(ao, space)) {
-            MP_ERR(ao, "Failed to allocate buffer.\n");
-            return false;
-        }
-        planes = (void **)mp_aframe_get_data_rw(p->temp_buf);
-        mp_assert(planes);
+    if (!realloc_buf(ao, space)) {
+        MP_ERR(ao, "Failed to allocate buffer.\n");
+        return false;
+    }
+    planes = (void **)mp_aframe_get_data_rw(p->temp_buf);
+    mp_assert(planes);
 
-        if (p->recover_pause) {
-            samples = MPCLAMP(p->prepause_state.delay * ao->samplerate, 0, space);
-            p->recover_pause = false;
-            mp_aframe_set_silence(p->temp_buf, 0, space);
-        }
+    if (p->recover_pause) {
+        samples = MPCLAMP(p->prepause_state.delay * ao->samplerate, 0, space);
+        p->recover_pause = false;
+        mp_aframe_set_silence(p->temp_buf, 0, space);
+    }
 
-        if (!samples) {
-            samples = read_buffer(ao, planes, space, &got_eof, true);
-            if (p->paused || (ao->stream_silence && !p->playing))
-                samples = space; // read_buffer() sets remainder to silent
-        }
+    if (!samples) {
+        samples = read_buffer(ao, planes, space, &got_eof, true);
+        if (p->paused || (ao->stream_silence && !p->playing))
+            samples = space; // read_buffer() sets remainder to silent
     }
 
     if (samples) {

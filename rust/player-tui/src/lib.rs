@@ -537,9 +537,9 @@ mod tests {
         let mut model = model("Paper Satellites");
         let (canvas, rect) = model.frame(136, 39, ArtMode::Blocks);
         assert_eq!((rect.w, rect.h, rect.x, rect.y), (52, 26, 42, 2));
-        assert!(canvas.render().contains("Paper Satellites"));
-        assert!(canvas.render().contains("LOCAL · FLAC"));
-        assert!(canvas.render().contains("space pause"));
+        assert!(canvas.render(None).contains("Paper Satellites"));
+        assert!(canvas.render(None).contains("LOCAL · FLAC"));
+        assert!(canvas.render(None).contains("space pause"));
     }
 
     #[test]
@@ -547,7 +547,7 @@ mod tests {
         let mut model = model("Paper Satellites");
         let (canvas, rect) = model.frame(24, 8, ArtMode::Blocks);
         assert_eq!(rect.w, 0);
-        assert!(canvas.render().contains("TERMINAL TOO SMALL"));
+        assert!(canvas.render(None).contains("TERMINAL TOO SMALL"));
     }
 
     #[test]
@@ -562,7 +562,7 @@ mod tests {
     fn long_titles_are_truncated_to_the_screen() {
         let mut model = model(&"X".repeat(200));
         let (canvas, _) = model.frame(80, 24, ArtMode::Blocks);
-        assert!(canvas.render().contains('…'));
+        assert!(canvas.render(None).contains('…'));
     }
 
     #[test]

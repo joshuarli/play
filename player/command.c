@@ -2262,15 +2262,6 @@ static int mp_property_current_tracks(void *ctx, struct m_property *prop,
 
     struct track *t = mpctx->current_track[order][type];
 
-    if (!t && mpctx->lavfi) {
-        for (int n = 0; n < mpctx->num_tracks; n++) {
-            if (mpctx->tracks[n]->type == type && mpctx->tracks[n]->selected) {
-                t = mpctx->tracks[n];
-                break;
-            }
-        }
-    }
-
     if (!t)
         return M_PROPERTY_UNAVAILABLE;
 

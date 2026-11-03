@@ -30,7 +30,6 @@
 #include "common/common.h"
 #include "options/m_property.h"
 #include "filters/f_decoder_wrapper.h"
-#include "common/encode.h"
 
 #include "osdep/terminal.h"
 #include "osdep/timer.h"
@@ -217,35 +216,25 @@ static char *get_term_status_msg(struct MPContext *mpctx)
             saddf(&line, " ct:%7.3f", mpctx->total_avsync_change);
     }
 
-    double position = get_current_pos_ratio(mpctx, true);
-    char lavcbuf[80];
-    if (encode_lavc_getstatus(mpctx->encode_lavc_ctx, lavcbuf, sizeof(lavcbuf),
-            position) >= 0)
-    {
-        // encoding stats
-        saddf(&line, " %s", lavcbuf);
-    } else {
-        // VO stats
-        if (mpctx->vo_chain) {
-            if (mpctx->display_sync_active) {
-                char *r = mp_property_expand_string(mpctx,
-                                            "${?vsync-ratio:${>vsync-ratio}}");
-                if (r[0]) {
-                    saddf(&line, " DS: %s/%"PRId64, r,
-                          vo_get_delayed_count(mpctx->video_out));
-                }
-                talloc_free(r);
+    if (mpctx->vo_chain) {
+        if (mpctx->display_sync_active) {
+            char *r = mp_property_expand_string(mpctx,
+                                        "${?vsync-ratio:${>vsync-ratio}}");
+            if (r[0]) {
+                saddf(&line, " DS: %s/%"PRId64, r,
+                      vo_get_delayed_count(mpctx->video_out));
             }
-            int64_t c = vo_get_drop_count(mpctx->video_out);
-            struct mp_decoder_wrapper *dec = mpctx->vo_chain->track
-                                        ? mpctx->vo_chain->track->dec : NULL;
-            int dropped_frames =
-                dec ? mp_decoder_wrapper_get_frames_dropped(dec) : 0;
-            if (c > 0 || dropped_frames > 0) {
-                saddf(&line, " Dropped: %"PRId64, c);
-                if (dropped_frames)
-                    saddf(&line, "/%d", dropped_frames);
-            }
+            talloc_free(r);
+        }
+        int64_t c = vo_get_drop_count(mpctx->video_out);
+        struct mp_decoder_wrapper *dec = mpctx->vo_chain->track
+                                    ? mpctx->vo_chain->track->dec : NULL;
+        int dropped_frames =
+            dec ? mp_decoder_wrapper_get_frames_dropped(dec) : 0;
+        if (c > 0 || dropped_frames > 0) {
+            saddf(&line, " Dropped: %"PRId64, c);
+            if (dropped_frames)
+                saddf(&line, "/%d", dropped_frames);
         }
     }
 

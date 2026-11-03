@@ -72,7 +72,6 @@ struct ao_device_list {
 struct ao;
 struct mpv_global;
 struct input_ctx;
-struct encode_lavc_context;
 
 struct ao_opts {
     struct m_obj_settings *audio_driver_list;
@@ -85,7 +84,6 @@ struct ao_opts {
 struct ao *ao_init_best(struct mpv_global *global,
                         int init_flags,
                         void (*wakeup_cb)(void *ctx), void *wakeup_ctx,
-                        struct encode_lavc_context *encode_lavc_ctx,
                         int samplerate, int format, struct mp_chmap channels);
 void ao_uninit(struct ao *ao);
 void ao_get_format(struct ao *ao,

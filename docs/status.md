@@ -22,7 +22,7 @@ Player is a local-only media player. The macOS release artifact is `dist/Player.
 
 - Local files only. No network protocol, TLS, CA bundle, or remote resource load.
 - GUI, HDR and 10-bit color, subtitle shaping, Retina scaling, audio audibility, real mouse and drag, and signing or notarization are owner-run. See `docs/manual-checklist.md`.
-- Clipboard commands are compiled and reachable. Encoding, recording, and the lavfi filter graph are compiled but unreachable because the release FFmpeg has no encoders or muxers.
+- Clipboard commands are compiled and reachable. Encoding, recording, and the lavfi filter graph are deleted (sources, build rows, and registrations removed).
 - The `subprocess` command and the `.run` script backend are reachable from explicit scripts and IPC. No built-in module uses them.
 - The terminal UI has no sixel output and does not load external cover files; it renders the embedded picture only. Quit, Ctrl-C, and SIGTERM/SIGHUP restore the terminal.
 - Follow-on: A/V scheduler, general demux and decode orchestration, and renderer integration.

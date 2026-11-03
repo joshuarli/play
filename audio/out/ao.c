@@ -38,7 +38,6 @@
 extern const struct ao_driver audio_out_coreaudio;
 extern const struct ao_driver audio_out_coreaudio_exclusive;
 extern const struct ao_driver audio_out_null;
-extern const struct ao_driver audio_out_lavc;
 extern const struct ao_driver audio_out_alsa;
 
 static const struct ao_driver * const audio_out_drivers[] = {
@@ -52,7 +51,6 @@ static const struct ao_driver * const audio_out_drivers[] = {
 #if HAVE_ALSA
     &audio_out_alsa,
 #endif
-    &audio_out_lavc,
 };
 
 static bool get_desc(struct m_obj_desc *dst, int index)
@@ -68,7 +66,6 @@ static bool get_desc(struct m_obj_desc *dst, int index)
         .options = ao->options,
         .options_prefix = ao->options_prefix,
         .global_opts = ao->global_opts,
-        .hidden = ao->encode,
         .p = ao,
     };
     return true;
@@ -144,7 +141,7 @@ error:
 
 static struct ao *ao_init(bool probing, struct mpv_global *global,
                           void (*wakeup_cb)(void *ctx), void *wakeup_ctx,
-                          struct encode_lavc_context *encode_lavc_ctx, int flags,
+                          int flags,
                           int samplerate, int format, struct mp_chmap channels,
                           char *dev, char *name)
 {
@@ -154,10 +151,7 @@ static struct ao *ao_init(bool probing, struct mpv_global *global,
     ao->samplerate = samplerate;
     ao->channels = channels;
     ao->format = format;
-    ao->encode_lavc_ctx = encode_lavc_ctx;
     ao->init_flags = flags;
-    if (ao->driver->encode != !!ao->encode_lavc_ctx)
-        goto fail;
 
     MP_VERBOSE(ao, "requested format: %d Hz, %s channels, %s\n",
                ao->samplerate, mp_chmap_to_str(&ao->channels),
@@ -177,7 +171,7 @@ static struct ao *ao_init(bool probing, struct mpv_global *global,
             snprintf(rdevice, sizeof(rdevice), "%s", ao->device ? ao->device : "");
             ao_uninit(ao);
             return ao_init(probing, global, wakeup_cb, wakeup_ctx,
-                           encode_lavc_ctx, flags, samplerate, format, channels,
+                           flags, samplerate, format, channels,
                            rdevice, redirect);
         }
         goto fail;
@@ -234,7 +228,6 @@ static void split_ao_device(void *tmp, char *opt, char **out_ao, char **out_dev)
 struct ao *ao_init_best(struct mpv_global *global,
                         int init_flags,
                         void (*wakeup_cb)(void *ctx), void *wakeup_ctx,
-                        struct encode_lavc_context *encode_lavc_ctx,
                         int samplerate, int format, struct mp_chmap channels)
 {
     void *tmp = talloc_new(NULL);
@@ -289,7 +282,7 @@ struct ao *ao_init_best(struct mpv_global *global,
             dev = pref_dev;
             mp_verbose(log, "Using preferred device '%s'\n", dev);
         }
-        ao = ao_init(probing, global, wakeup_cb, wakeup_ctx, encode_lavc_ctx,
+        ao = ao_init(probing, global, wakeup_cb, wakeup_ctx,
                      init_flags, samplerate, format, channels, dev, entry->name);
         if (ao)
             break;

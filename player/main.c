@@ -40,13 +40,11 @@
 
 #include "common/av_log.h"
 #include "common/codecs.h"
-#include "common/encode.h"
 #include "options/m_config.h"
 #include "options/m_config_frontend.h"
 #include "options/m_option.h"
 #include "options/m_property.h"
 #include "common/common.h"
-#include "common/encode_lavc.h"
 #include "common/msg.h"
 #include "common/msg_control.h"
 #include "common/stats.h"
@@ -149,9 +147,6 @@ void mp_update_logging(struct MPContext *mpctx, bool preinit)
 
     if (enabled && !preinit && mpctx->opts->consolecontrols)
         terminal_setup_getch(mpctx->input);
-
-    if (enabled)
-        encoder_update_log(mpctx->global);
 }
 
 void mp_print_version(struct mp_log *log, int always)
@@ -181,10 +176,6 @@ void mp_destroy(struct MPContext *mpctx)
 
     uninit_audio_out(mpctx);
     uninit_video_out(mpctx);
-
-    // If it's still set here, it's an error.
-    encode_lavc_free(mpctx->encode_lavc_ctx);
-    mpctx->encode_lavc_ctx = NULL;
 
     command_uninit(mpctx);
 
@@ -230,8 +221,6 @@ static bool handle_help_options(struct MPContext *mpctx)
         property_print_help(mpctx);
         return true;
     }
-    if (encode_lavc_showhelp(log, opts->encode_opts))
-        return true;
     return false;
 }
 
@@ -584,14 +573,6 @@ int mp_initialize(struct MPContext *mpctx, char **options)
 #endif
 
     mpctx->ipc_ctx = mp_init_ipc(mpctx->clients, mpctx->global);
-
-    if (opts->encode_opts->file && opts->encode_opts->file[0]) {
-        mpctx->encode_lavc_ctx = encode_lavc_init(mpctx->global);
-        if(!mpctx->encode_lavc_ctx) {
-            MP_INFO(mpctx, "Encoding initialization failed.\n");
-            return -1;
-        }
-    }
 
     mp_load_scripts(mpctx);
 

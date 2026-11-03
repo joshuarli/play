@@ -28,7 +28,6 @@
 #include "options/m_config.h"
 #include "options/m_option.h"
 #include "common/common.h"
-#include "common/encode.h"
 #include "options/m_property.h"
 #include "osdep/timer.h"
 
@@ -228,7 +227,6 @@ void reinit_video_chain_src(struct MPContext *mpctx, struct track *track)
         struct vo_extra ex = {
             .input_ctx = mpctx->input,
             .osd = mpctx->osd,
-            .encode_lavc_ctx = mpctx->encode_lavc_ctx,
             .wakeup_cb = mp_wakeup_core_cb,
             .wakeup_ctx = mpctx,
         };
@@ -1115,9 +1113,6 @@ void write_video(struct MPContext *mpctx)
             } else {
                 mpctx->time_frame = 0;
             }
-            // Encode mode can't honor this; it'll only delay finishing.
-            if (mpctx->encode_lavc_ctx)
-                mpctx->time_frame = 0;
         }
 
         // Wait for the VO to signal actual EOF, then exit if the frame timer
@@ -1221,10 +1216,6 @@ void write_video(struct MPContext *mpctx)
     // (NB: in theory, the 1st frame after display sync mode change uses the
     //      wrong waiting mode)
     if (!vo_is_ready_for_frame(vo, mpctx->display_sync_active ? -1 : pts))
-        return;
-
-    // In encoding mode, wait for the ao to finish initializing.
-    if (mpctx->encode_lavc_ctx && mpctx->current_track[0][STREAM_AUDIO] && !mpctx->ao)
         return;
 
     mp_assert(mpctx->num_next_frames >= 1);

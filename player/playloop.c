@@ -30,7 +30,6 @@
 
 #include "audio/out/ao.h"
 #include "common/common.h"
-#include "common/encode.h"
 #include "common/msg.h"
 #include "common/playlist.h"
 #include "common/stats.h"
@@ -270,8 +269,6 @@ void reset_playback_state(struct MPContext *mpctx)
     mpctx->paused_for_cache = false;
     mpctx->cache_buffer = 100;
     mpctx->cache_update_pts = MP_NOPTS_VALUE;
-
-    encode_lavc_discontinuity(mpctx->encode_lavc_ctx);
 
     update_internal_pause_state(mpctx);
     update_core_idle_state(mpctx);
@@ -709,7 +706,7 @@ static void handle_update_cache(struct MPContext *mpctx)
     bool force_update = false;
     struct MPOpts *opts = mpctx->opts;
 
-    if (!mpctx->demuxer || mpctx->encode_lavc_ctx) {
+    if (!mpctx->demuxer) {
         clear_underruns(mpctx);
         return;
     }
@@ -1041,7 +1038,6 @@ int handle_force_window(struct MPContext *mpctx, bool force)
         struct vo_extra ex = {
             .input_ctx = mpctx->input,
             .osd = mpctx->osd,
-            .encode_lavc_ctx = mpctx->encode_lavc_ctx,
             .wakeup_cb = mp_wakeup_core_cb,
             .wakeup_ctx = mpctx,
         };
@@ -1255,11 +1251,6 @@ static void handle_clipboard_updates(struct MPContext *mpctx)
 
 void run_playloop(struct MPContext *mpctx)
 {
-    if (encode_lavc_didfail(mpctx->encode_lavc_ctx)) {
-        mpctx->stop_play = PT_ERROR;
-        return;
-    }
-
     update_demuxer_properties(mpctx);
 
     handle_cursor_autohide(mpctx);

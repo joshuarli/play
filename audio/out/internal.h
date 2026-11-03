@@ -40,7 +40,6 @@ struct ao {
     bool driver_initialized;
     void *priv;
     struct mpv_global *global;
-    struct encode_lavc_context *encode_lavc_ctx;
     void (*wakeup_cb)(void *ctx);
     void *wakeup_ctx;
     struct mp_log *log; // Using e.g. "[ao/coreaudio]" as prefix
@@ -128,15 +127,10 @@ struct mp_pcm_state {
  *          reset       (stops the audio callback, start() restarts it)
  */
 struct ao_driver {
-    // If true, use with encoding only.
-    bool encode;
     // Name used for --ao.
     const char *name;
     // Description shown with --ao=help.
     const char *description;
-    // If true, write units of entire frames. The write() call is modified to
-    // use data==mp_aframe. Useful for encoding AO only.
-    bool write_frames;
     // Init the device using ao->format/ao->channels/ao->samplerate. If the
     // device doesn't accept these parameters, you can attempt to negotiate
     // fallback parameters, and set the ao format fields accordingly.

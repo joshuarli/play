@@ -43,7 +43,6 @@
 #include "options/options.h"
 #include "options/m_property.h"
 #include "common/common.h"
-#include "common/encode.h"
 #include "common/stats.h"
 #include "input/input.h"
 #include "misc/json.h"
@@ -51,7 +50,6 @@
 
 #include "audio/out/ao.h"
 #include "filters/f_decoder_wrapper.h"
-#include "filters/f_lavfi.h"
 #include "filters/filter_internal.h"
 #include "demux/demux.h"
 #include "stream/stream.h"
@@ -1348,135 +1346,21 @@ static void cleanup_deassociated_complex_filters(struct MPContext *mpctx)
     }
 }
 
-static void kill_outputs(struct MPContext *mpctx, struct track *track)
-{
-    if (track->vo_c || track->ao_c) {
-        MP_VERBOSE(mpctx, "deselecting track %d for lavfi-complex option\n",
-                   track->user_tid);
-        mp_switch_track(mpctx, track->type, NULL, 0);
-    }
-    mp_assert(!(track->vo_c || track->ao_c));
-}
-
 // >0: changed, 0: no change, -1: error
 static int reinit_complex_filters(struct MPContext *mpctx, bool force_uninit)
 {
+    // The lavfi-complex option is unregistered, so there is never a graph
+    // to apply; this only ever tears down filter state.
     char *graph = mpctx->opts->lavfi_complex;
     bool have_graph = graph && graph[0] && !force_uninit;
-    if (have_graph && mpctx->lavfi &&
-        strcmp(graph, mpctx->lavfi_graph) == 0 &&
-        !mp_filter_has_failed(mpctx->lavfi))
-        return 0;
     if (!mpctx->lavfi && !have_graph)
         return 0;
 
     // Deassociate the old filter pads. We leave both sources (tracks) and
     // sinks (AO/VO) "dangling", connected to neither track or filter pad.
-    // Later, we either reassociate them with new pads, or uninit them if
-    // they are still dangling. This avoids too interruptive actions like
-    // recreating the VO.
+    // Later, we uninit them if they are still dangling. This avoids too
+    // interruptive actions like recreating the VO.
     deassociate_complex_filters(mpctx);
-
-    bool success = false;
-    if (!have_graph) {
-        success = true; // normal full removal of graph
-        goto done;
-    }
-
-    struct mp_lavfi *l =
-        mp_lavfi_create_graph(mpctx->filter_root, 0, false, NULL, NULL, graph);
-    if (!l)
-        goto done;
-    mpctx->lavfi = l->f;
-    mpctx->lavfi_graph = talloc_strdup(NULL, graph);
-
-    mp_filter_set_error_handler(mpctx->lavfi, mpctx->filter_root);
-
-    for (int n = 0; n < mpctx->lavfi->num_pins; n++)
-        mp_pin_disconnect(mpctx->lavfi->pins[n]);
-
-    struct mp_pin *pad = mp_filter_get_named_pin(mpctx->lavfi, "vo");
-    if (pad && mp_pin_get_dir(pad) == MP_PIN_OUT) {
-        if (mpctx->vo_chain && mpctx->vo_chain->track)
-            kill_outputs(mpctx, mpctx->vo_chain->track);
-        if (!mpctx->vo_chain) {
-            reinit_video_chain_src(mpctx, NULL);
-            if (!mpctx->vo_chain)
-                goto done;
-        }
-        struct vo_chain *vo_c = mpctx->vo_chain;
-        mp_assert(!vo_c->track);
-        vo_c->filter_src = pad;
-        mp_pin_connect(vo_c->filter->f->pins[0], vo_c->filter_src);
-    }
-
-    pad = mp_filter_get_named_pin(mpctx->lavfi, "ao");
-    if (pad && mp_pin_get_dir(pad) == MP_PIN_OUT) {
-        if (mpctx->ao_chain && mpctx->ao_chain->track)
-            kill_outputs(mpctx, mpctx->ao_chain->track);
-        if (!mpctx->ao_chain) {
-            reinit_audio_chain_src(mpctx, NULL);
-            if (!mpctx->ao_chain)
-                goto done;
-        }
-        struct ao_chain *ao_c = mpctx->ao_chain;
-        mp_assert(!ao_c->track);
-        ao_c->filter_src = pad;
-        mp_pin_connect(ao_c->filter->f->pins[0], ao_c->filter_src);
-    }
-
-    for (int n = 0; n < mpctx->num_tracks; n++) {
-        struct track *track = mpctx->tracks[n];
-
-        char label[32];
-        char prefix;
-        switch (track->type) {
-        case STREAM_VIDEO: prefix = 'v'; break;
-        case STREAM_AUDIO: prefix = 'a'; break;
-        default: continue;
-        }
-        snprintf(label, sizeof(label), "%cid%d", prefix, track->user_tid);
-
-        pad = mp_filter_get_named_pin(mpctx->lavfi, label);
-        if (!pad)
-            continue;
-        if (mp_pin_get_dir(pad) != MP_PIN_IN)
-            continue;
-        mp_assert(!mp_pin_is_connected(pad));
-
-        mp_assert(!track->sink);
-
-        kill_outputs(mpctx, track);
-
-        track->sink = pad;
-        track->selected = true;
-
-        if (!track->dec) {
-            if (track->type == STREAM_VIDEO && !init_video_decoder(mpctx, track))
-                goto done;
-            if (track->type == STREAM_AUDIO && !init_audio_decoder(mpctx, track))
-                goto done;
-        }
-
-        mp_pin_connect(track->sink, track->dec->f->pins[0]);
-    }
-
-    // Don't allow unconnected pins. Libavfilter would make the data flow a
-    // real pain anyway.
-    for (int n = 0; n < mpctx->lavfi->num_pins; n++) {
-        struct mp_pin *pin = mpctx->lavfi->pins[n];
-        if (!mp_pin_is_connected(pin)) {
-            MP_ERR(mpctx, "Pad %s is not connected to anything.\n",
-                   mp_pin_get_name(pin));
-            goto done;
-        }
-    }
-
-    success = true;
-done:
-
-    if (!success)
-        deassociate_complex_filters(mpctx);
 
     cleanup_deassociated_complex_filters(mpctx);
 
@@ -1487,7 +1371,7 @@ done:
 
     mp_notify(mpctx, MP_EVENT_TRACKS_CHANGED, NULL);
 
-    return success ? 1 : -1;
+    return 1;
 }
 
 void update_lavfi_complex(struct MPContext *mpctx)
@@ -1798,16 +1682,7 @@ static void play_current_file(struct MPContext *mpctx)
             // One track can strictly feed at most 1 decoder
             struct track *track = mpctx->current_track[i][t];
             if (track) {
-                if (track->type != STREAM_SUB &&
-                    mpctx->encode_lavc_ctx &&
-                    !encode_lavc_stream_type_ok(mpctx->encode_lavc_ctx,
-                                                track->type))
-                {
-                    MP_WARN(mpctx, "Disabling %s (not supported by target "
-                            "format).\n", stream_type_name(track->type));
-                    mpctx->current_track[i][t] = NULL;
-                    mark_track_selection(mpctx, i, t, -2); // disable
-                } else if (track->selected) {
+                if (track->selected) {
                     MP_ERR(mpctx, "Track %d can't be selected twice.\n",
                            track->user_tid);
                     mpctx->current_track[i][t] = NULL;
@@ -1836,15 +1711,6 @@ static void play_current_file(struct MPContext *mpctx)
     reinit_video_chain(mpctx);
     reinit_audio_chain(mpctx);
     reinit_sub_all(mpctx);
-
-    if (mpctx->encode_lavc_ctx) {
-        if (mpctx->vo_chain)
-            encode_lavc_expect_stream(mpctx->encode_lavc_ctx, STREAM_VIDEO);
-        if (mpctx->ao_chain)
-            encode_lavc_expect_stream(mpctx->encode_lavc_ctx, STREAM_AUDIO);
-        encode_lavc_set_metadata(mpctx->encode_lavc_ctx,
-                                 mpctx->demuxer->metadata);
-    }
 
     if (!mpctx->vo_chain && !mpctx->ao_chain && opts->stream_auto_sel) {
         MP_FATAL(mpctx, "No video or audio streams selected.\n");
@@ -1942,7 +1808,7 @@ terminate_playback:
     uninit_audio_chain(mpctx);
     uninit_video_chain(mpctx);
     uninit_sub_all(mpctx);
-    if (!opts->gapless_audio && !mpctx->encode_lavc_ctx)
+    if (!opts->gapless_audio)
         uninit_audio_out(mpctx);
 
     mpctx->playback_initialized = false;
@@ -1959,9 +1825,6 @@ terminate_playback:
     mpctx->filtered_tags = NULL;
 
     mp_notify(mpctx, MP_EVENT_TRACKS_CHANGED, NULL);
-
-    if (encode_lavc_didfail(mpctx->encode_lavc_ctx))
-        mpctx->stop_play = PT_ERROR;
 
     if (mpctx->stop_play == PT_ERROR && !mpctx->error_playing)
         mpctx->error_playing = MPV_ERROR_GENERIC;
@@ -2097,17 +1960,6 @@ void mp_play_files(struct MPContext *mpctx)
     }
 
     cancel_open(mpctx);
-
-    if (mpctx->encode_lavc_ctx) {
-        // Make sure all streams get finished.
-        uninit_audio_out(mpctx);
-        uninit_video_out(mpctx);
-
-        if (!encode_lavc_free(mpctx->encode_lavc_ctx))
-            mpctx->files_errored += 1;
-
-        mpctx->encode_lavc_ctx = NULL;
-    }
 }
 
 // Abort current playback and set the given entry to play next.

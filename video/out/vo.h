@@ -223,7 +223,6 @@ struct mp_image_params;
 struct vo_extra {
     struct input_ctx *input_ctx;
     struct osd_state *osd;
-    struct encode_lavc_context *encode_lavc_ctx;
     void (*wakeup_cb)(void *ctx);
     void *wakeup_ctx;
 };
@@ -315,9 +314,6 @@ struct vo_vsync_info {
 };
 
 struct vo_driver {
-    // Encoding functionality, which can be invoked via --o only.
-    bool encode;
-
     // VO_CAP_* bits
     int caps;
 
@@ -474,7 +470,6 @@ struct vo {
     struct mp_hwdec_devices *hwdec_devs;
     struct input_ctx *input_ctx;
     struct osd_state *osd;
-    struct encode_lavc_context *encode_lavc_ctx;
     struct vo_internal *in;
     struct vo_extra extra;
 

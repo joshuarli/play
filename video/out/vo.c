@@ -49,14 +49,12 @@
 extern const struct vo_driver video_out_gpu_next;
 extern const struct vo_driver video_out_libmpv;
 extern const struct vo_driver video_out_null;
-extern const struct vo_driver video_out_lavc;
 
 static const struct vo_driver *const video_out_drivers[] =
 {
     &video_out_gpu_next,
     &video_out_libmpv,
     &video_out_null,
-    &video_out_lavc,
 };
 
 struct vo_internal {
@@ -136,7 +134,6 @@ static bool get_desc(struct m_obj_desc *dst, int index)
         .options = vo->options,
         .options_prefix = vo->options_prefix,
         .global_opts = vo->global_opts,
-        .hidden = vo->encode,
         .p = vo,
     };
     return true;
@@ -219,7 +216,6 @@ static struct vo *vo_create(bool probing, struct mpv_global *global,
         .log = mp_log_new(vo, log, name),
         .driver = desc.p,
         .global = global,
-        .encode_lavc_ctx = ex->encode_lavc_ctx,
         .input_ctx = ex->input_ctx,
         .osd = ex->osd,
         .monitor_par = 1,
@@ -246,8 +242,6 @@ static struct vo *vo_create(bool probing, struct mpv_global *global,
                                           update_opts, vo);
 
     mp_input_set_mouse_transform(vo->input_ctx, NULL, NULL);
-    if (vo->driver->encode != !!vo->encode_lavc_ctx)
-        goto error;
     vo->priv = m_config_group_from_desc(vo, vo->log, global, &desc, name);
     if (!vo->priv)
         goto error;
