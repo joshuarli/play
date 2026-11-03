@@ -79,6 +79,13 @@ class MacCommon: Common {
     @objc func uninit(_ vo: UnsafeMutablePointer<vo>) {
         window?.waitForAnimation()
 
+        if window?.isInFullscreen == true {
+            DispatchQueue.main.sync {
+                self.window?.toggleFullScreen(nil)
+            }
+            window?.waitForAnimation()
+        }
+
         timer?.terminate()
 
         DispatchQueue.main.sync {
