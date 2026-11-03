@@ -5,7 +5,40 @@ Preflight doc: `campaign-rust.md`. This file is the durable resume point.
 
 ## Current phase
 
-S3 complete. Next: S4 (Rust-owned video decode).
+S4 complete. Next: S5 (scheduler).
+
+## S4 record
+
+Rust owns video decode from packets to software frames. `VideoSession`
+opens any FFmpeg decoder by codec name from a probed `StreamInfo` with
+the packet timebase, rejects image codecs and dimension-less streams,
+and pumps packets to drained frames with optional seeking and monotonic
+`u64` decode ids. `VideoFrame` exposes plane slices sized by the real
+stride and transfers hardware frames to software with a pixel-format
+note. Hardware goes through `HwRequest` with a format-picking callback:
+VideoToolbox on macOS, VA-API on Linux, and software fallback on any
+init failure. Headless proof: VideoToolbox engages on this Mac (no
+window, no display needed); VA-API fast-fails before touching libva
+when no DRM render node exists, which is the same static-pie class as
+the ALSA issue and is by design headless-safe.
+
+Decisions with reasons:
+
+- Transcription over function-only access. No lavc field getters exist,
+  so the S2 precedent (hand-transcribed structs, runtime major-version
+  gate, C enum-dump as authority) extends to `AVCodecContext`,
+  `AVFrame`, hwcontext, and codec/frame functions. Hand-parsed enum
+  values were wrong more than once; the compiler plus drift tests are
+  now the rule.
+- Stride assertions tolerate CPU alignment padding. lavc aligns luma
+  stride to the host CPU preference (320 on macOS, 384 in the Linux
+  container for the same 320-wide fixture); tests assert stride at
+  least the width and exact buffer sizing, not exact stride.
+
+Verified: `player-media` 19/19 green on macOS and Linux (container);
+`tests/run.sh corpus` 109, `hwdec` 8, `failures` 8. The decoded frames
+are not wired to any renderer yet; that is S5/S6 work. Ordered-chapter
+segment linking still defers to S5.
 
 ## S3 record
 
