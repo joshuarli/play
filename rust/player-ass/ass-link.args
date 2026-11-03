@@ -1,0 +1,17 @@
+# Linux musl native closure for the libass subtitle renderer.
+# One directive per line: `arg:` prints `cargo:rustc-link-arg=`,
+# `lib:` prints `cargo:rustc-link-lib=`. `{PREFIX}` is the consuming
+# crate's ../../.work/deps/linux/lib. player-ass owns this file; the
+# engine repeats it through player-build for its own targets.
+arg:{PREFIX}/libass.a
+arg:{PREFIX}/libfribidi.a
+arg:{PREFIX}/libharfbuzz.a
+arg:{PREFIX}/libfontconfig.a
+arg:{PREFIX}/libfreetype.a
+arg:{PREFIX}/libz.a
+arg:{PREFIX}/libexpat.a
+arg:/usr/lib/libstdc++.a
+lib:dl
+lib:m
+arg:-lc
+arg:/usr/lib/gcc/x86_64-alpine-linux-musl/15.2.0/libgcc.a
