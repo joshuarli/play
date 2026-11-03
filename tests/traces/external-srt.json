@@ -1,0 +1,17 @@
+{
+ "companion": "h264-external-srt",
+ "fixture": "external-srt",
+ "role": "subtitle",
+ "sid": 1,
+ "sub-tracks": [
+  {
+   "codec": "subrip",
+   "default": false,
+   "external": true,
+   "forced": false,
+   "title": "external.srt",
+   "type": "sub"
+  }
+ ],
+ "sub-visibility": true
+}

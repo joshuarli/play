@@ -1,0 +1,11 @@
+{
+ "first": "audio-mono.wav",
+ "names": [
+  "audio-mono",
+  "audio-stereo"
+ ],
+ "playlist-count": 2,
+ "playlist-pos": 1,
+ "playlist-probe": true,
+ "second": "audio-wav.wav"
+}

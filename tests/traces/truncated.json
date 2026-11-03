@@ -1,0 +1,18 @@
+{
+ "eof-reason": "eof",
+ "event-order": [
+  "start-file",
+  "audio-reconfig",
+  "audio-reconfig",
+  "file-loaded",
+  "audio-reconfig",
+  "video-reconfig",
+  "video-reconfig",
+  "playback-restart",
+  "audio-reconfig",
+  "video-reconfig",
+  "end-file"
+ ],
+ "fixture": "truncated",
+ "role": "failure"
+}

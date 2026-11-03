@@ -1,0 +1,92 @@
+{
+ "audio-params": {
+  "channel-count": 2,
+  "channels": "stereo",
+  "format": "float",
+  "hr-channels": "stereo",
+  "samplerate": 48000
+ },
+ "chapters": [],
+ "duration": 3.0,
+ "eof-reason": "eof",
+ "error-bad-seek": "invalid parameter",
+ "error-bogus-property": "property not found",
+ "event-order": [
+  "start-file",
+  "audio-reconfig",
+  "audio-reconfig",
+  "file-loaded",
+  "video-reconfig",
+  "audio-reconfig",
+  "video-reconfig",
+  "seek",
+  "playback-restart",
+  "seek",
+  "playback-restart",
+  "audio-reconfig",
+  "video-reconfig",
+  "end-file"
+ ],
+ "fixture": "audio-cover",
+ "metadata": {
+  "album": "Low Light",
+  "artist": "Mira Vale",
+  "date": "2026",
+  "title": "Paper Satellites",
+  "track": "2/12"
+ },
+ "pause-cycle-events": [
+  true,
+  false
+ ],
+ "pause-default": false,
+ "playlist-count": 1,
+ "role": "cover",
+ "seek-pos": 1.5,
+ "seek-target": 1.5,
+ "speed-default": 1.0,
+ "tracks": [
+  {
+   "codec": "flac",
+   "default": false,
+   "external": false,
+   "forced": false,
+   "type": "audio"
+  },
+  {
+   "codec": "png",
+   "default": false,
+   "external": false,
+   "forced": false,
+   "type": "video"
+  }
+ ],
+ "video-params": {
+  "alpha": "none",
+  "aspect": 1.0,
+  "aspect-name": "Square",
+  "average-bpp": 24,
+  "chroma-location": "mpeg1/jpeg",
+  "colorlevels": "full",
+  "colormatrix": "rgb",
+  "crop-h": 64,
+  "crop-w": 64,
+  "crop-x": 0,
+  "crop-y": 0,
+  "dh": 64,
+  "dw": 64,
+  "gamma": "srgb",
+  "h": 64,
+  "light": "display",
+  "par": 1.0,
+  "pixelformat": "rgb24",
+  "primaries": "bt.709",
+  "rotate": 0,
+  "sar": 1.0,
+  "sar-name": "Square",
+  "sig-peak": 0.0,
+  "stereo-in": "mono",
+  "w": 64
+ },
+ "volume-default": 100.0
+}

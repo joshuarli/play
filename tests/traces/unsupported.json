@@ -1,0 +1,11 @@
+{
+ "eof-reason": "no-eof-event",
+ "event-order": [
+  "start-file",
+  "video-reconfig",
+  "video-reconfig",
+  "end-file"
+ ],
+ "fixture": "unsupported",
+ "role": "failure"
+}

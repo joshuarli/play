@@ -1,0 +1,50 @@
+{
+ "audio-params": {
+  "channel-count": 6,
+  "channels": "5.1",
+  "format": "float",
+  "hr-channels": "5.1",
+  "samplerate": 48000
+ },
+ "chapters": [],
+ "duration": 3.0,
+ "eof-reason": "eof",
+ "error-bad-seek": "invalid parameter",
+ "error-bogus-property": "property not found",
+ "event-order": [
+  "start-file",
+  "audio-reconfig",
+  "audio-reconfig",
+  "file-loaded",
+  "audio-reconfig",
+  "seek",
+  "playback-restart",
+  "seek",
+  "playback-restart",
+  "audio-reconfig",
+  "end-file"
+ ],
+ "fixture": "surround51",
+ "metadata": {},
+ "pause-cycle-events": [
+  true,
+  false
+ ],
+ "pause-default": false,
+ "playlist-count": 1,
+ "role": "corpus",
+ "seek-pos": 1.5,
+ "seek-target": 1.5,
+ "speed-default": 1.0,
+ "tracks": [
+  {
+   "codec": "pcm_s16le",
+   "default": false,
+   "external": false,
+   "forced": false,
+   "type": "audio"
+  }
+ ],
+ "video-params": null,
+ "volume-default": 100.0
+}

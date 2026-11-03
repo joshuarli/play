@@ -1,0 +1,9 @@
+{
+ "eof-reason": "no-eof-event",
+ "event-order": [
+  "start-file",
+  "end-file"
+ ],
+ "fixture": "corrupt",
+ "role": "failure"
+}

@@ -1,0 +1,93 @@
+{
+ "audio-params": {
+  "channel-count": 2,
+  "channels": "unknown2",
+  "format": "float",
+  "hr-channels": "empty",
+  "samplerate": 48000
+ },
+ "chapters": [],
+ "duration": 2.01,
+ "eof-reason": "eof",
+ "error-bad-seek": "invalid parameter",
+ "error-bogus-property": "property not found",
+ "event-order": [
+  "start-file",
+  "audio-reconfig",
+  "audio-reconfig",
+  "file-loaded",
+  "audio-reconfig",
+  "video-reconfig",
+  "video-reconfig",
+  "seek",
+  "playback-restart",
+  "seek",
+  "playback-restart",
+  "audio-reconfig",
+  "video-reconfig",
+  "end-file"
+ ],
+ "fixture": "vp9-webvtt",
+ "metadata": {},
+ "pause-cycle-events": [
+  true,
+  false
+ ],
+ "pause-default": false,
+ "playlist-count": 1,
+ "role": "corpus",
+ "seek-pos": 1.0,
+ "seek-target": 1.0,
+ "speed-default": 1.0,
+ "tracks": [
+  {
+   "codec": "vp9",
+   "default": false,
+   "external": false,
+   "forced": false,
+   "type": "video"
+  },
+  {
+   "codec": "opus",
+   "default": false,
+   "external": false,
+   "forced": false,
+   "type": "audio"
+  },
+  {
+   "codec": "webvtt-webm",
+   "default": false,
+   "external": false,
+   "forced": false,
+   "type": "sub"
+  }
+ ],
+ "video-params": {
+  "alpha": "none",
+  "aspect": 1.33,
+  "aspect-name": "4:3",
+  "average-bpp": 12,
+  "chroma-location": "mpeg2/4/h264",
+  "colorlevels": "limited",
+  "colormatrix": "bt.601",
+  "crop-h": 240,
+  "crop-w": 320,
+  "crop-x": 0,
+  "crop-y": 0,
+  "dh": 240,
+  "dw": 320,
+  "gamma": "bt.1886",
+  "h": 240,
+  "light": "display",
+  "par": 1.0,
+  "pixelformat": "yuv420p",
+  "primaries": "bt.709",
+  "rotate": 0,
+  "sar": 1.33,
+  "sar-name": "4:3",
+  "sig-peak": 0.0,
+  "stereo-in": "mono",
+  "w": 320
+ },
+ "volume-default": 100.0
+}

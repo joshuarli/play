@@ -1974,6 +1974,12 @@ def gate_linux_osc(results, args):
     gate_osc_input(results, args)
 
 
+def gate_traces(results, args):
+    run_script_gate(results, "traces-selftest",
+                    [sys.executable, str(ROOT / "tests" / "trace.py"), "--selftest"])
+    run_script_gate(results, "traces", [sys.executable, str(ROOT / "tests" / "trace.py"), "--check"])
+
+
 GATES = {
     "fixtures": gate_fixtures,
     "play": gate_play,
@@ -2005,6 +2011,7 @@ GATES = {
     "lua-host": gate_lua_host,
     "lua-api-audit": gate_lua_api_audit,
     "tui": gate_tui,
+    "traces": gate_traces,
     "baseline-docs": gate_baseline_docs,
     "meta": gate_meta,
     "release": gate_release,
@@ -2016,14 +2023,14 @@ SUITE = [
     "local-only", "osc", "osc-input", "input", "playlist", "cli", "state", "failures",
     "rust-link", "ffi",
     "lua-host",
-    "lua-api-audit", "tui", "release",
+    "lua-api-audit", "tui", "release", "traces",
 ]
 
 
 LINUX_SUITE = [
     "fixtures", "linux-corpus", "linux-audio", "linux-gpu-next", "linux-local-only", "linux-osc",
     "linux-mostly-static", "linux-hwdec-default", "local-paths", "seek", "input", "playlist", "cli", "state",
-    "failures", "lua-host", "lua-api-audit", "tui", "linux-rust-link",
+    "failures", "lua-host", "lua-api-audit", "tui", "linux-rust-link", "traces",
 ]
 
 
