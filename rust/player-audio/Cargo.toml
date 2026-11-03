@@ -8,6 +8,7 @@ license = "MPL-2.0"
 crate-type = ["staticlib", "rlib"]
 
 [dependencies]
+player-media = { path = "../player-media" }
 symphonia = { path = "../../vendor/symphonia/symphonia", default-features = false, features = [
     "aac",
     "alac",

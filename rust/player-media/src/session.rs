@@ -81,6 +81,8 @@ pub struct StreamInfo {
     pub sample_rate: i32,
     pub channels: i32,
     pub time_base: (i32, i32),
+    pub extradata: Vec<u8>,
+    pub channel_mask: u64,
     pub attached: bool,
     pub language: Option<String>,
     pub title: Option<String>,
@@ -302,7 +304,27 @@ impl MediaSession {
                 sample_rate: params.sample_rate,
                 // SAFETY: ch_layout is plain data set by the probe.
                 channels: unsafe { (*codecpar).ch_layout.nb_channels },
+                // SAFETY: the mask is valid when the layout order is native.
+                channel_mask: unsafe {
+                    if (*codecpar).ch_layout.order == 1 {
+                        (*codecpar).ch_layout.u.mask
+                    } else {
+                        0
+                    }
+                },
                 time_base,
+                // SAFETY: extradata is plain data set by the probe.
+                extradata: unsafe {
+                    if (*codecpar).extradata.is_null() || (*codecpar).extradata_size <= 0 {
+                        Vec::new()
+                    } else {
+                        std::slice::from_raw_parts(
+                            (*codecpar).extradata as *const u8,
+                            (*codecpar).extradata_size as usize,
+                        )
+                        .to_vec()
+                    }
+                },
                 // SAFETY: disposition is plain data set by the probe.
                 attached: unsafe { (*stream).disposition } & AV_DISPOSITION_ATTACHED_PIC != 0,
                 language,
