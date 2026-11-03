@@ -361,6 +361,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "player-swap"
+version = "0.1.0"
+dependencies = [
+ "player-audio",
+ "player-build",
+ "player-display",
+ "player-engine",
+ "player-output",
+]
+
+[[package]]
 name = "player-tui"
 version = "0.1.0"
 dependencies = [

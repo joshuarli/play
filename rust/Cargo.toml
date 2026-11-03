@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["player-audio", "player-build", "player-core", "player-display", "player-engine", "player-ffi", "player-lua", "player-media", "player-output", "player-release", "player-tui"]
+members = ["player-audio", "player-build", "player-core", "player-display", "player-engine", "player-ffi", "player-lua", "player-media", "player-output", "player-release", "player-swap", "player-tui"]
 
 [profile.release]
 codegen-units = 1

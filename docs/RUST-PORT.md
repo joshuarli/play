@@ -10,7 +10,7 @@ S6d-1 complete (Linux Wayland window presents swapchain frames; static
 suite contains the weston test behind `present-gate`). S6d-2 complete
 (resize/fullscreen/input protocol). S6d-3 complete (OSD overlay
 upload). S6d-3 complete (OSD overlay upload). S6d-4 complete (macOS
-bridge). Next: S6d-5 (VO swap).
+bridge). S6d-5 complete (VO swap). Next: S7.
 
 ## S6c record
 
@@ -162,7 +162,27 @@ wait for the enter animation to finish or macOS swallows it. No cargo
 test can satisfy the main-thread rule under libtest, so the example
 runner is the durable gate; headless CI cannot run it.
 
-Still open in S6d: VO swap and gate updates (S6d-5).
+## S6d-5 record
+
+The swap is proved by `player-swap`, a gate-only crate whose
+`swap-gate` test plays `h264.mp4` through `SchedulerEngine` and
+presents every drained `PresentedFrame` into a real weston window:
+`window.presented() == delivered > 0`, no C video code in the path.
+The test lives in its own crate because a dev-dependency on
+`player-display` poisons the engine's static-pie lib test binary at
+startup; the `present-gate` feature pattern keeps static suites green
+and the dynamic rerun
+(`-C target-feature=-crt-static ... -p player-swap --features swap-gate -- --include-ignored`)
+is the real gate. The swap binary repeats the per-crate native closure
+(ALSA, VA-API, placebo) in its own build script.
+
+C VO removal audit (delete procedure): `video/out/vo_gpu_next.c`
+stays registered in `video/out/vo.c`, is asserted by
+`tests/wayland.py` (`current-vo == gpu-next`), and remains the dev
+binary's only video path — no Rust player integration exists yet, so
+nothing is dead. Removal defers to S8 after GUI integration lands.
+
+S6 renderer integration complete.
 
 ## S5 record
 
