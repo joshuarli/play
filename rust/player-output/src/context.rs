@@ -22,8 +22,30 @@ impl Vulkan {
         if log.is_null() {
             return Err("pl_log_create failed".to_string());
         }
-        // SAFETY: NULL params select the default instance and best GPU.
-        let vk = unsafe { sys::pl_vulkan_create(log, core::ptr::null()) };
+        let params = sys::PlVulkanParams {
+            instance: core::ptr::null_mut(),
+            get_proc_addr: core::ptr::null_mut(),
+            instance_params: core::ptr::null(),
+            surface: core::ptr::null_mut(),
+            device: core::ptr::null_mut(),
+            device_name: core::ptr::null(),
+            device_uuid: [0; 16],
+            allow_software: true,
+            async_transfer: true,
+            async_compute: true,
+            queue_count: 1,
+            no_compute: false,
+            extra_queues: 0,
+            extensions: core::ptr::null(),
+            num_extensions: 0,
+            opt_extensions: core::ptr::null(),
+            num_opt_extensions: 0,
+            features: core::ptr::null(),
+            max_glsl_version: 0,
+            max_api_version: 0,
+        };
+        // SAFETY: params starts from the library defaults plus software GPUs.
+        let vk = unsafe { sys::pl_vulkan_create(log, &params) };
         if vk.is_null() {
             // SAFETY: the log was created above and is still live.
             unsafe { sys::pl_log_destroy(&mut (log as sys::PlLog)) };

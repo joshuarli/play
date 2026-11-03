@@ -21,6 +21,32 @@ pub type PlGpu = *mut c_void;
 pub type PlTex = *mut c_void;
 pub type PlFmt = *const c_void;
 pub type PlRenderer = *mut c_void;
+pub type PlTimer = *mut c_void;
+pub type PlBuf = *mut c_void;
+
+#[repr(C)]
+pub struct PlVulkanParams {
+    pub instance: *mut c_void,
+    pub get_proc_addr: *mut c_void,
+    pub instance_params: *const c_void,
+    pub surface: *mut c_void,
+    pub device: *mut c_void,
+    pub device_name: *const c_char,
+    pub device_uuid: [u8; 16],
+    pub allow_software: bool,
+    pub async_transfer: bool,
+    pub async_compute: bool,
+    pub queue_count: c_int,
+    pub no_compute: bool,
+    pub extra_queues: u32,
+    pub extensions: *const *const c_char,
+    pub num_extensions: c_int,
+    pub opt_extensions: *const *const c_char,
+    pub num_opt_extensions: c_int,
+    pub features: *const c_void,
+    pub max_glsl_version: c_int,
+    pub max_api_version: u32,
+}
 
 #[repr(C)]
 pub struct PlVulkanHead {
@@ -98,7 +124,7 @@ unsafe extern "C" {
     pub fn pl_log_create(api_ver: c_int, params: *const c_void) -> PlLog;
     pub fn pl_log_destroy(log: *mut PlLog);
 
-    pub fn pl_vulkan_create(log: PlLog, params: *const c_void) -> PlVulkan;
+    pub fn pl_vulkan_create(log: PlLog, params: *const PlVulkanParams) -> PlVulkan;
     pub fn pl_vulkan_destroy(vk: *mut PlVulkan);
 
     pub fn pl_renderer_create(log: PlLog, gpu: PlGpu) -> PlRenderer;
@@ -153,5 +179,14 @@ mod tests {
         assert_eq!(size_of::<PlRect3d>(), 24);
         assert_eq!(align_of::<PlVulkanHead>(), align_of::<*mut c_void>());
         assert_eq!(offset_of!(PlVulkanHead, gpu), 0);
+
+        assert_eq!(size_of::<PlVulkanParams>(), 128);
+        assert_eq!(offset_of!(PlVulkanParams, instance), 0);
+        assert_eq!(offset_of!(PlVulkanParams, device_uuid), 48);
+        assert_eq!(offset_of!(PlVulkanParams, allow_software), 64);
+        assert_eq!(offset_of!(PlVulkanParams, queue_count), 68);
+        assert_eq!(offset_of!(PlVulkanParams, extra_queues), 76);
+        assert_eq!(offset_of!(PlVulkanParams, features), 112);
+        assert_eq!(offset_of!(PlVulkanParams, max_api_version), 124);
     }
 }

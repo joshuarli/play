@@ -9,6 +9,8 @@ fn main() {
         println!("cargo:rustc-link-arg=/usr/lib/libvulkan.so");
         println!("cargo:rustc-link-lib=dl");
         println!("cargo:rustc-link-lib=m");
+        println!("cargo:rustc-link-arg=-lc");
+        println!("cargo:rustc-link-arg=/usr/lib/gcc/x86_64-alpine-linux-musl/15.2.0/libgcc.a");
         return;
     }
     let output = std::process::Command::new("pkg-config")
