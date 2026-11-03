@@ -4,7 +4,7 @@ Player is a local-only media player. The macOS release artifact is `dist/Player.
 
 ## Current state
 
-- The Rust port is at S7c: the engine owns scheduling, demux, decode, audio, video rendering, Lua, subtitles, OSD, and OSC composition. S7d (TUI on the engine), S7e (GUI), and S8 (legacy removal) remain.
+- The Rust port is at S7d: the engine owns scheduling, demux, decode, audio, video rendering, Lua, subtitles, OSD, OSC composition, and the TUI (including video files' audio). S7e (GUI) and S8 (legacy removal) remain.
 - `osd-fidelity` passes 10/10 on macOS and in the Linux container; `linux-gpu-next` passes 38/38 including the OSD pixel diff.
 - The app was rebuilt at `96331a9` and fully re-verified on the macOS host after the terminal UI work.
 - `tests/run.sh suite`: 315 passed, 0 failed. The run includes the release gate.

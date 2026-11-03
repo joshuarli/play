@@ -64,7 +64,9 @@ pub unsafe extern "C" fn player_audio_engine_load(
         }
     };
     let kind = if null_sink != 0 { SinkKind::Null } else { SinkKind::Default };
-    let result = catch_unwind(AssertUnwindSafe(|| SchedulerEngine::load(&path, kind)));
+    let result = catch_unwind(AssertUnwindSafe(|| {
+        SchedulerEngine::load_audio_only(&path, kind)
+    }));
     match result {
         Ok(Ok(engine)) => Box::into_raw(Box::new(engine)),
         Ok(Err(message)) => {

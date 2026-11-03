@@ -564,6 +564,53 @@ def gate_tui(results, args):
             except OSError:
                 pass
 
+    video_entry = fixture_entry("h264")
+    video_log = TMP / f"tui-video-{os.getpid()}-{uuid.uuid4().hex}.log"
+    video_log.unlink(missing_ok=True)
+    proc = None
+    master = None
+    try:
+        proc, master, buf = pty_session(
+            ["--no-config", "--tui", "--ao=null", "--volume=0", "--pause=yes",
+             f"--log-file={video_log}", fixture_path(video_entry)],
+            env_extra={"PLAYER_TUI_ART": "blocks"},
+            wait_for=b"h264",
+        )
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline and b"0:03" not in buf:
+            ready, _, _ = select.select([master], [], [], 0.1)
+            if ready:
+                try:
+                    buf.extend(os.read(master, 262144))
+                except OSError:
+                    break
+        results.check("tui: video duration from the engine", b"0:03" in buf,
+                      ANSI_RE.sub("", bytes(buf).decode("utf-8", "replace"))[-400:])
+        buf, stderr = pty_finish(proc, master, buf)
+        master = None
+        results.check("tui: video exits cleanly", proc.returncode == 0,
+                      f"exit {proc.returncode}: {stderr[-300:]}")
+        if video_log.exists():
+            text = video_log.read_text(errors="replace")
+            results.check("tui: video stays on the rust engine",
+                          "VO: [" not in text and "AO: [" not in text,
+                          text[-400:])
+            results.check("tui: video opens no GPU output", "gpu-next" not in text,
+                          text[-400:])
+        else:
+            results.check("tui: video log", False, "missing log file")
+    except Exception as exc:
+        results.check("tui: video file", False, str(exc))
+    finally:
+        if proc is not None and proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=5)
+        if master is not None:
+            try:
+                os.close(master)
+            except OSError:
+                pass
+
     not_terminal = subprocess.run(
         [str(MPV), "--no-config", "--tui", "--ao=null", str(path)],
         stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,

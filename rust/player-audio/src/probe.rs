@@ -93,9 +93,6 @@ pub unsafe extern "C" fn player_audio_probe(
         let mut audio = None;
         for stream in session.streams() {
             match stream.kind {
-                StreamKind::Video if !stream.attached => {
-                    return Ok(AudioProbeFfi::empty());
-                }
                 StreamKind::Audio if audio.is_none() => {
                     audio = Some(stream);
                 }

@@ -187,3 +187,34 @@ impl Drop for Engine {
     }
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::Engine;
+
+    fn fixture(name: &str) -> String {
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .canonicalize()
+            .expect("workspace root")
+            .join(".work/fixtures")
+            .join(name)
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    #[test]
+    fn audio_engine_advances_on_a_video_file() {
+        let engine = Engine::load(&fixture("h264.mp4"), true).expect("engine loads");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            let status = engine.snapshot().expect("snapshot reads");
+            assert!(status.error.is_none(), "unexpected error: {status:?}");
+            if status.position > 0.3 {
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline, "position stayed at {status:?}");
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
+}

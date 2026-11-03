@@ -11,6 +11,18 @@ command surface, headless osc.lua). S7c complete (libass wrapper,
 subtitle pipeline, OSD composition, pixel-diff gate). Next: S7d (TUI on
 the Rust engine), then S7e (GUI), then S8.
 
+## S7d record
+
+The TUI now runs every file the Rust engine can decode, including video
+files with audio. `SchedulerEngine::load_audio_only` opens the demux
+without a selected video stream, so no GPU context, frame channel, or
+presentation worker exists; the C ABI uses it and `player_audio_probe`
+no longer rejects a non-attached video stream. Video files therefore
+claim into the TUI and never touch the C playloop. The `tui` gate adds
+a video case: it checks the engine duration appears, no `VO:` or `AO:`
+line is logged, and no GPU output opens. Verified 18/18 on macOS and in
+the Linux container; workspace tests remain green.
+
 ## S7c record
 
 S7c-1 added `player-ass`: hand-transcribed libass handles for library,

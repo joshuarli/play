@@ -28,13 +28,23 @@ pub struct EngineDemux {
 
 impl EngineDemux {
     pub fn open(path: &str) -> Result<Self, String> {
+        Self::open_with_video(path, true)
+    }
+
+    pub fn open_audio_only(path: &str) -> Result<Self, String> {
+        Self::open_with_video(path, false)
+    }
+
+    fn open_with_video(path: &str, include_video: bool) -> Result<Self, String> {
         let session = MediaSession::open(path).map_err(|err| err.to_string())?;
         let mut audio = Vec::new();
         let mut selected_video = None;
         let mut subs = Vec::new();
         for stream in session.streams() {
             match stream.kind {
-                MediaKind::Video if !stream.attached && selected_video.is_none() => {
+                MediaKind::Video
+                    if include_video && !stream.attached && selected_video.is_none() =>
+                {
                     selected_video = Some(stream.index)
                 }
                 MediaKind::Audio => audio.push(stream.index),
@@ -330,6 +340,14 @@ pub struct SchedulerEngine {
 
 impl SchedulerEngine {
     pub fn load(path: &str, kind: SinkKind) -> Result<Self, String> {
+        Self::start(path, kind, true)
+    }
+
+    pub fn load_audio_only(path: &str, kind: SinkKind) -> Result<Self, String> {
+        Self::start(path, kind, false)
+    }
+
+    fn start(path: &str, kind: SinkKind, include_video: bool) -> Result<Self, String> {
         let (command_tx, command_rx) = mpsc::channel::<WorkerCommand>();
         let (ready_tx, ready_rx) = mpsc::channel::<Result<(), String>>();
         // Bounded: present blocks when the consumer falls behind instead of
@@ -344,7 +362,15 @@ impl SchedulerEngine {
         let worker = thread::Builder::new()
             .name("player-scheduler".to_string())
             .spawn(move || {
-                run_worker(owned_path, kind, command_rx, worker_state, ready_tx, frames_tx);
+                run_worker(
+                    owned_path,
+                    kind,
+                    include_video,
+                    command_rx,
+                    worker_state,
+                    ready_tx,
+                    frames_tx,
+                );
             })
             .map_err(|err| format!("scheduler worker failed to start: {err}"))?;
         match ready_rx.recv() {
@@ -456,6 +482,7 @@ type EngineScheduler = Scheduler<EngineDemux, EngineAudio, EngineVideo, EngineOu
 fn run_worker(
     path: String,
     kind: SinkKind,
+    include_video: bool,
     commands: mpsc::Receiver<WorkerCommand>,
     state: Arc<Mutex<EngineStatus>>,
     ready: mpsc::Sender<Result<(), String>>,
@@ -466,7 +493,11 @@ fn run_worker(
         clean: false,
     };
     let build = || -> Result<(EngineScheduler, f64, u32, u32, Library, (i32, i32)), String> {
-        let demux = EngineDemux::open(&path)?;
+        let demux = if include_video {
+            EngineDemux::open(&path)?
+        } else {
+            EngineDemux::open_audio_only(&path)?
+        };
         let info = demux
             .stream_info(demux.selected_audio())
             .ok_or_else(|| format!("{path} has no usable audio format"))?;
@@ -818,6 +849,17 @@ mod tests {
         assert!(status.error.is_none(), "unexpected error: {:?}", status.error);
         assert!((2.5..3.6).contains(&status.position), "position {}", status.position);
         assert!(status.duration > 0.0);
+    }
+
+    #[test]
+    fn audio_only_load_plays_video_files_without_presenting() {
+        let engine = SchedulerEngine::load_audio_only(&fixture("h264.mp4"), SinkKind::Null)
+            .expect("engine loads video audio");
+        let status = poll_until(&engine, StdDuration::from_secs(15), |status| status.ended);
+        assert!(status.error.is_none(), "unexpected error: {:?}", status.error);
+        assert!(status.duration > 0.0);
+        assert_eq!(status.presented, 0, "audio-only load presented video");
+        assert!(status.position > 2.0, "position {}", status.position);
     }
 
     #[test]
