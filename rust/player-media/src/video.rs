@@ -254,7 +254,7 @@ impl Drop for VideoFrame {
 }
 
 pub struct VideoSession {
-    session: MediaSession,
+    session: Option<MediaSession>,
     stream_index: usize,
     context: *mut AvCodecContext,
     wanted: *mut c_int,
@@ -272,12 +272,56 @@ impl VideoSession {
             ));
         }
         let session = MediaSession::open(path).map_err(|err| err.to_string())?;
+        Self::open_impl(Some(session), stream_index, hw)
+    }
+
+    pub fn open_shared(
+        session: &MediaSession,
+        stream_index: usize,
+        hw: HwRequest,
+    ) -> Result<Self, String> {
         let info = session
             .streams()
             .into_iter()
             .find(|stream| stream.index == stream_index && stream.kind == StreamKind::Video)
             .ok_or_else(|| format!("no video stream {stream_index}"))?;
         check_dimensions(&info)?;
+        // SAFETY: the codec parameters outlive the session.
+        let parameters = session
+            .codecpar_ptr(stream_index)
+            .ok_or_else(|| "stream parameters vanished".to_string())?;
+        Self::open_decoder(None, stream_index, &info, parameters, hw)
+    }
+
+    fn open_impl(
+        session: Option<MediaSession>,
+        stream_index: usize,
+        hw: HwRequest,
+    ) -> Result<Self, String> {
+        let info = session
+            .as_ref()
+            .ok_or_else(|| "no owned session".to_string())?
+            .streams()
+            .into_iter()
+            .find(|stream| stream.index == stream_index && stream.kind == StreamKind::Video)
+            .ok_or_else(|| format!("no video stream {stream_index}"))?;
+        check_dimensions(&info)?;
+        // SAFETY: the codec parameters outlive the session.
+        let parameters = session
+            .as_ref()
+            .expect("checked")
+            .codecpar_ptr(stream_index)
+            .ok_or_else(|| "stream parameters vanished".to_string())?;
+        Self::open_decoder(session, stream_index, &info, parameters, hw)
+    }
+
+    fn open_decoder(
+        session: Option<MediaSession>,
+        stream_index: usize,
+        info: &StreamInfo,
+        parameters: *const AvCodecParameters,
+        hw: HwRequest,
+    ) -> Result<Self, String> {
         let codec_id = codec_id_for_name(&info.codec_name)?;
         // SAFETY: codec_id names a decoder in the pinned closure.
         let codec = unsafe { avcodec_find_decoder(codec_id) };
@@ -290,7 +334,7 @@ impl VideoSession {
             return Err("avcodec_alloc_context3 failed".to_string());
         }
         let mut wanted: *mut c_int = ptr::null_mut();
-        let open = Self::configure(&session, context, stream_index, &info, hw, &mut wanted);
+        let open = Self::configure(context, parameters, info, hw, &mut wanted);
         if let Err(message) = open {
             // SAFETY: the context was allocated here and never opened.
             unsafe {
@@ -312,17 +356,12 @@ impl VideoSession {
     }
 
     fn configure(
-        session: &MediaSession,
         context: *mut AvCodecContext,
-        stream_index: usize,
+        parameters: *const AvCodecParameters,
         info: &StreamInfo,
         hw: HwRequest,
         wanted: &mut *mut c_int,
     ) -> Result<(), String> {
-        // SAFETY: the codec parameters outlive the session.
-        let parameters = session
-            .codecpar_ptr(stream_index)
-            .ok_or_else(|| "stream parameters vanished".to_string())?;
         // SAFETY: the context and parameters are live.
         if unsafe { avcodec_parameters_to_context(context, parameters) } < 0 {
             return Err("avcodec_parameters_to_context failed".to_string());
@@ -462,6 +501,8 @@ impl VideoSession {
 
     pub fn seek_seconds(&mut self, seconds: f64) -> Result<(), String> {
         self.session
+            .as_mut()
+            .ok_or_else(|| "no owned session".to_string())?
             .seek_seconds(seconds)
             .map_err(|err| err.to_string())?;
         self.reset();
@@ -469,8 +510,16 @@ impl VideoSession {
     }
 
     pub fn pump(&mut self) -> Result<PumpResult, String> {
+        if self.session.is_none() {
+            return Err("no owned session".to_string());
+        }
         loop {
-            match self.session.read_packet() {
+            let packet = self
+                .session
+                .as_mut()
+                .expect("checked")
+                .read_packet();
+            match packet {
                 Ok(packet) => {
                     if packet.stream_index != self.stream_index {
                         continue;
