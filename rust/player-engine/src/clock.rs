@@ -1,0 +1,203 @@
+pub const NOPTS: i64 = i64::MIN;
+
+pub const MAX_LATE_SECONDS: f64 = 0.1;
+
+pub fn rescale_to_seconds(timestamp: i64, numerator: i32, denominator: i32) -> Option<f64> {
+    if timestamp == NOPTS || denominator == 0 {
+        return None;
+    }
+    Some(timestamp as f64 * numerator as f64 / denominator as f64)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ClockMode {
+    AudioDriven,
+    SystemDriven,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MasterClock {
+    mode: ClockMode,
+    speed: f64,
+    device_position: f64,
+    base_position: f64,
+    base_time: f64,
+    paused_position: Option<f64>,
+    queued_latency: f64,
+}
+
+impl MasterClock {
+    pub fn new(mode: ClockMode) -> Self {
+        MasterClock {
+            mode,
+            speed: 1.0,
+            device_position: 0.0,
+            base_position: 0.0,
+            base_time: 0.0,
+            paused_position: None,
+            queued_latency: 0.0,
+        }
+    }
+
+    pub fn set_speed(&mut self, speed: f64, now: f64) {
+        let current = self.position(now);
+        self.speed = speed.max(0.0);
+        self.rebase(current, now);
+    }
+
+    pub fn speed(&self) -> f64 {
+        self.speed
+    }
+
+    pub fn observe_device(&mut self, audible_position: f64, queued_seconds: f64, now: f64) {
+        self.device_position = audible_position;
+        self.queued_latency = queued_seconds.max(0.0);
+        if self.mode == ClockMode::AudioDriven && self.paused_position.is_none() {
+            self.base_position = audible_position;
+            self.base_time = now;
+        }
+    }
+
+    pub fn set_paused(&mut self, paused: bool, now: f64) {
+        if paused {
+            self.paused_position = Some(self.position(now));
+        } else {
+            if let Some(frozen) = self.paused_position.take() {
+                self.rebase(frozen, now);
+            }
+        }
+    }
+
+    pub fn seek_rebase(&mut self, position: f64, now: f64) {
+        self.device_position = position;
+        self.rebase(position, now);
+        if self.paused_position.is_some() {
+            self.paused_position = Some(position);
+        }
+    }
+
+    pub fn position(&self, now: f64) -> f64 {
+        if let Some(frozen) = self.paused_position {
+            return frozen;
+        }
+        match self.mode {
+            ClockMode::AudioDriven => self.device_position,
+            ClockMode::SystemDriven => {
+                self.base_position + (now - self.base_time).max(0.0) * self.speed
+            }
+        }
+    }
+
+    pub fn output_latency(&self) -> f64 {
+        self.queued_latency
+    }
+
+    fn rebase(&mut self, position: f64, now: f64) {
+        self.base_position = position;
+        self.base_time = now;
+        if self.mode == ClockMode::AudioDriven {
+            self.device_position = position;
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FrameVerdict {
+    Present,
+    DropLate,
+    Wait,
+}
+
+pub fn judge_frame(presentation_time: f64, now: f64) -> FrameVerdict {
+    if presentation_time > now {
+        FrameVerdict::Wait
+    } else if now - presentation_time > MAX_LATE_SECONDS {
+        FrameVerdict::DropLate
+    } else {
+        FrameVerdict::Present
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const EPSILON: f64 = 1e-9;
+
+    fn close(a: f64, b: f64) -> bool {
+        (a - b).abs() < EPSILON
+    }
+
+    #[test]
+    fn timebase_conversion_matches_av_rescale_q() {
+        assert!(close(
+            rescale_to_seconds(90_000, 1, 90_000).unwrap(),
+            1.0
+        ));
+        assert!(close(rescale_to_seconds(1536, 1, 48000).unwrap(), 0.032));
+        assert!(close(
+            rescale_to_seconds(-90_000, 1, 90_000).unwrap(),
+            -1.0
+        ));
+        assert_eq!(rescale_to_seconds(NOPTS, 1, 90_000), None);
+        assert_eq!(rescale_to_seconds(100, 1, 0), None);
+    }
+
+    #[test]
+    fn audio_clock_follows_device_and_freezes_on_pause() {
+        let mut clock = MasterClock::new(ClockMode::AudioDriven);
+        clock.observe_device(1.0, 0.05, 100.0);
+        assert!(close(clock.position(100.5), 1.0));
+        assert!(close(clock.output_latency(), 0.05));
+        clock.set_paused(true, 100.5);
+        clock.observe_device(2.0, 0.05, 101.0);
+        assert!(close(clock.position(101.0), 1.0));
+        clock.set_paused(false, 102.0);
+        clock.observe_device(1.2, 0.05, 102.5);
+        assert!(close(clock.position(103.0), 1.2));
+    }
+
+    #[test]
+    fn system_clock_advances_with_monotonic_time_and_speed() {
+        let mut clock = MasterClock::new(ClockMode::SystemDriven);
+        assert!(close(clock.position(10.0), 10.0));
+        clock.set_speed(2.0, 10.0);
+        assert!(close(clock.position(11.0), 12.0));
+        clock.set_paused(true, 11.0);
+        assert!(close(clock.position(50.0), 12.0));
+        clock.set_paused(false, 60.0);
+        assert!(close(clock.position(61.0), 14.0));
+    }
+
+    #[test]
+    fn seek_rebases_both_modes_and_paused_state() {
+        let mut audio = MasterClock::new(ClockMode::AudioDriven);
+        audio.observe_device(30.0, 0.0, 200.0);
+        audio.seek_rebase(5.0, 200.0);
+        assert!(close(audio.position(201.0), 5.0));
+
+        let mut sys = MasterClock::new(ClockMode::SystemDriven);
+        sys.seek_rebase(5.0, 200.0);
+        assert!(close(sys.position(201.0), 6.0));
+        sys.set_paused(true, 201.0);
+        sys.seek_rebase(9.0, 202.0);
+        assert!(close(sys.position(300.0), 9.0));
+    }
+
+    #[test]
+    fn device_discontinuity_snaps_without_error() {
+        let mut clock = MasterClock::new(ClockMode::AudioDriven);
+        clock.observe_device(10.0, 0.0, 100.0);
+        clock.observe_device(45.0, 0.0, 100.1);
+        assert!(close(clock.position(100.1), 45.0));
+    }
+
+    #[test]
+    fn frame_verdicts_never_present_stale_frames() {
+        assert_eq!(judge_frame(1.05, 1.0), FrameVerdict::Wait);
+        assert_eq!(judge_frame(1.0, 1.0), FrameVerdict::Present);
+        assert_eq!(judge_frame(0.95, 1.0), FrameVerdict::Present);
+        assert_eq!(judge_frame(0.5, 1.0), FrameVerdict::DropLate);
+        assert_eq!(judge_frame(-100.0, 1.0), FrameVerdict::DropLate);
+    }
+}
