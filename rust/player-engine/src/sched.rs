@@ -1,11 +1,14 @@
 use crate::clock::{judge_frame, ClockMode, FrameVerdict, MasterClock};
 use crate::state::{Event, Machine, SeekResume, State};
+use crate::sub::EngineSub;
+use player_ass::RenderedImage;
 use std::time::Instant;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StreamKind {
     Audio,
     Video,
+    Subtitle,
 }
 
 #[derive(Clone, Debug)]
@@ -114,6 +117,9 @@ pub struct Scheduler<D, A, V, AO, VO> {
     eof_seen: bool,
     stats: Stats,
     failure: Option<String>,
+    subs: Vec<EngineSub>,
+    selected_sub: Option<usize>,
+    sub_cursor: f64,
 }
 
 impl<D, A, V, AO, VO> Scheduler<D, A, V, AO, VO>
@@ -146,6 +152,9 @@ where
             eof_seen: false,
             stats: Stats::default(),
             failure: None,
+            subs: Vec::new(),
+            selected_sub: None,
+            sub_cursor: 0.0,
         }
     }
 
@@ -163,6 +172,83 @@ where
 
     pub fn failure(&self) -> Option<&str> {
         self.failure.as_deref()
+    }
+
+    pub fn demux(&self) -> &D {
+        &self.demux
+    }
+
+    pub fn set_subs(&mut self, subs: Vec<EngineSub>) {
+        self.subs = subs;
+        self.selected_sub = None;
+        self.sub_cursor = 0.0;
+    }
+
+    pub fn subs(&self) -> &[EngineSub] {
+        &self.subs
+    }
+
+    pub fn selected_sub(&self) -> Option<usize> {
+        self.selected_sub
+    }
+
+    pub fn select_sub(&mut self, selected: Option<usize>) {
+        if selected != self.selected_sub {
+            self.selected_sub = selected.filter(|index| *index < self.subs.len());
+            if let Some(index) = self.selected_sub {
+                if let Some(sub) = self.subs.get_mut(index) {
+                    let _ = sub.reseed();
+                }
+            }
+            self.sub_cursor = 0.0;
+        }
+    }
+
+    pub fn add_sub(&mut self, sub: EngineSub) -> usize {
+        let position = self.subs.len();
+        self.subs.push(sub);
+        self.select_sub(Some(position));
+        position
+    }
+
+    pub fn set_sub_visible(&mut self, visible: bool) {
+        for sub in &mut self.subs {
+            sub.set_visible(visible);
+        }
+    }
+
+    pub fn render_subtitles(
+        &mut self,
+        width: i32,
+        height: i32,
+        par: f64,
+        now_ms: i64,
+    ) -> Result<Vec<RenderedImage>, String> {
+        match self.selected_sub {
+            Some(index) => match self.subs.get_mut(index) {
+                Some(sub) => sub.render(width, height, par, now_ms),
+                None => Ok(Vec::new()),
+            },
+            None => Ok(Vec::new()),
+        }
+    }
+
+    fn selected_sub_stream(&self) -> Option<usize> {
+        self.selected_sub
+            .and_then(|index| self.subs.get(index))
+            .and_then(|sub| sub.source().stream)
+    }
+
+    fn feed_sub(&mut self, packet: Packet) -> Result<(), String> {
+        let pts = stamp(packet.pts, &mut self.sub_cursor);
+        let duration = packet.duration.unwrap_or(0.0).max(0.0);
+        match self.selected_sub {
+            Some(index) => match self.subs.get_mut(index) {
+                Some(sub) => sub.feed(packet.stream, &packet.payload, pts, duration),
+                None => Ok(()),
+            },
+            None => Ok(()),
+        }
     }
 
     pub fn clock_position(&self, now: f64) -> f64 {
@@ -268,6 +354,14 @@ where
         self.demux.seek(target);
         self.audio.flush();
         self.video.flush();
+        if let Some(index) = self.selected_sub {
+            if let Some(sub) = self.subs.get_mut(index) {
+                if let Err(message) = sub.flush((target * 1000.0).round() as i64) {
+                    self.fail(message);
+                    return;
+                }
+            }
+        }
         self.audio_out.flush();
         self.pending_frames.clear();
         self.preroll.clear();
@@ -337,6 +431,9 @@ where
                     }
                     self.preroll.push_back(chunk);
                 }
+            }
+            StreamKind::Subtitle if self.selected_sub_stream() == Some(packet.stream) => {
+                self.feed_sub(packet)?;
             }
             StreamKind::Video => {
                 let pts = stamp(packet.pts, &mut self.video_cursor);
@@ -473,6 +570,12 @@ where
                         self.fail(message);
                         return true;
                     }
+                }
+            }
+            StreamKind::Subtitle if self.selected_sub_stream() == Some(packet.stream) => {
+                if let Err(message) = self.feed_sub(packet) {
+                    self.fail(message);
+                    return true;
                 }
             }
             _ => {}

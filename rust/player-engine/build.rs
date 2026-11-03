@@ -19,4 +19,10 @@ fn main() {
         &dir.join("../player-output/linux-link.args"),
         &dir.join("../../.work/deps/linux/lib"),
     );
+    // Same for the libass closure owned by player-ass.
+    player_build::emit_linux_closure(
+        "player-engine",
+        &dir.join("../player-ass/ass-link.args"),
+        &dir.join("../../.work/deps/linux/lib"),
+    );
 }

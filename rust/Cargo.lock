@@ -322,6 +322,7 @@ dependencies = [
 name = "player-engine"
 version = "0.1.0"
 dependencies = [
+ "player-ass",
  "player-audio",
  "player-build",
  "player-media",

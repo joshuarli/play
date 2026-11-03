@@ -1,6 +1,7 @@
 mod sys;
 
-use std::ffi::{c_char, c_int, CString};
+use std::ffi::{CString, c_char, c_int};
+use std::sync::Arc;
 
 pub struct RenderedImage {
     pub width: u32,
@@ -12,8 +13,18 @@ pub struct RenderedImage {
     pub dst_y: i32,
 }
 
-pub struct Library {
+struct Shared {
     raw: sys::AssLibraryRaw,
+}
+
+// SAFETY: a library handle is moved between threads but only used from one
+// thread at a time.
+unsafe impl Send for Shared {}
+unsafe impl Sync for Shared {}
+
+#[derive(Clone)]
+pub struct Library {
+    shared: Arc<Shared>,
 }
 
 impl Library {
@@ -30,37 +41,35 @@ impl Library {
             unsafe { sys::ass_library_done(raw) };
             return Err(format!("libass version mismatch: got {version:#x}"));
         }
-        Ok(Library { raw })
+        Ok(Library {
+            shared: Arc::new(Shared { raw }),
+        })
     }
 }
 
-// SAFETY: a library handle is moved between threads but only used from one
-// thread at a time; renderers and tracks borrow it.
-unsafe impl Send for Library {}
-
-impl Drop for Library {
+impl Drop for Shared {
     fn drop(&mut self) {
-        // SAFETY: the handle came from ass_library_init; renderers and tracks
-        // borrowing it must be dropped first.
+        // SAFETY: the handle came from ass_library_init; every renderer and
+        // track was dropped before the last Arc released it.
         unsafe { sys::ass_library_done(self.raw) };
     }
 }
 
-pub struct Renderer<'a> {
+pub struct Renderer {
     raw: sys::AssRendererRaw,
-    _library: std::marker::PhantomData<&'a Library>,
+    _library: Arc<Shared>,
 }
 
-impl<'a> Renderer<'a> {
-    pub fn new(library: &'a Library) -> Result<Self, String> {
-        // SAFETY: library is live; the renderer borrows it.
-        let raw = unsafe { sys::ass_renderer_init(library.raw) };
+impl Renderer {
+    pub fn new(library: &Library) -> Result<Self, String> {
+        // SAFETY: library is live; the renderer holds a shared reference to it.
+        let raw = unsafe { sys::ass_renderer_init(library.shared.raw) };
         if raw.is_null() {
             return Err("ass_renderer_init failed".to_owned());
         }
         let mut renderer = Renderer {
             raw,
-            _library: std::marker::PhantomData,
+            _library: Arc::clone(&library.shared),
         };
         renderer.configure()?;
         Ok(renderer)
@@ -89,12 +98,16 @@ impl<'a> Renderer<'a> {
         track: &Track,
         width: i32,
         height: i32,
+        storage: Option<(i32, i32)>,
         par: f64,
         now_ms: i64,
     ) -> Result<Vec<RenderedImage>, String> {
         // SAFETY: renderer and track are live; sizes are render parameters.
         unsafe {
             sys::ass_set_frame_size(self.raw, width, height);
+            if let Some((w, h)) = storage {
+                sys::ass_set_storage_size(self.raw, w, h);
+            }
             sys::ass_set_pixel_aspect(self.raw, par);
         }
         let mut changed = 0;
@@ -136,37 +149,39 @@ impl<'a> Renderer<'a> {
 }
 
 // SAFETY: a renderer is moved between threads but only used from one thread
-// at a time; it borrows the library.
-unsafe impl Send for Renderer<'_> {}
+// at a time; it shares library ownership.
+unsafe impl Send for Renderer {}
 
-impl Drop for Renderer<'_> {
+impl Drop for Renderer {
     fn drop(&mut self) {
         // SAFETY: the handle came from ass_renderer_init.
         unsafe { sys::ass_renderer_done(self.raw) };
     }
 }
 
-pub struct Track<'a> {
+pub struct Track {
     raw: sys::AssTrackRaw,
-    _library: std::marker::PhantomData<&'a Library>,
+    _library: Arc<Shared>,
 }
 
-impl<'a> Track<'a> {
-    pub fn new(library: &'a Library) -> Result<Self, String> {
-        // SAFETY: library is live; the track borrows it.
-        let raw = unsafe { sys::ass_new_track(library.raw) };
+impl Track {
+    pub fn new(library: &Library) -> Result<Self, String> {
+        // SAFETY: library is live; the track holds a shared reference to it.
+        let raw = unsafe { sys::ass_new_track(library.shared.raw) };
         if raw.is_null() {
             return Err("ass_new_track failed".to_owned());
         }
         Ok(Track {
             raw,
-            _library: std::marker::PhantomData,
+            _library: Arc::clone(&library.shared),
         })
     }
 
     pub fn process_data(&mut self, data: &str) -> Result<(), String> {
-        // SAFETY: the track is live and the data slice is valid for the call.
-        unsafe { sys::ass_process_data(self.raw, data.as_ptr() as *const c_char, data.len() as c_int) };
+        // SAFETY: the track is live, the &str is valid UTF-8, and the data
+        // slice is valid for the call.
+        let (data, len) = (data.as_ptr() as *const c_char, data.len() as c_int);
+        unsafe { sys::ass_process_data(self.raw, data, len) };
         Ok(())
     }
 
@@ -202,10 +217,10 @@ impl<'a> Track<'a> {
 }
 
 // SAFETY: a track is moved between threads but only used from one thread at
-// a time; it borrows the library.
-unsafe impl Send for Track<'_> {}
+// a time; it shares library ownership.
+unsafe impl Send for Track {}
 
-impl Drop for Track<'_> {
+impl Drop for Track {
     fn drop(&mut self) {
         // SAFETY: the handle came from ass_new_track.
         unsafe { sys::ass_free_track(self.raw) };
@@ -244,7 +259,7 @@ mod tests {
         let mut track = Track::new(&library).expect("track starts");
         track.process_data(HEADER).expect("header parses");
         let during = renderer
-            .render(&track, 1280, 720, 1.0, 1500)
+            .render(&track, 1280, 720, None, 1.0, 1500)
             .expect("frame renders");
         assert!(!during.is_empty(), "no bitmaps during the event");
         assert!(inked_pixels(&during) > 100, "no ink during the event");
@@ -254,11 +269,11 @@ mod tests {
             assert!(image.dst_y + image.height as i32 <= 720);
         }
         let before = renderer
-            .render(&track, 1280, 720, 1.0, 500)
+            .render(&track, 1280, 720, None, 1.0, 500)
             .expect("frame renders");
         assert!(before.is_empty(), "bitmaps before the event");
         let after = renderer
-            .render(&track, 1280, 720, 1.0, 2500)
+            .render(&track, 1280, 720, None, 1.0, 2500)
             .expect("frame renders");
         assert!(after.is_empty(), "bitmaps after the event");
     }
@@ -271,8 +286,26 @@ mod tests {
         track.process_data(HEADER).expect("header parses");
         track.flush_events();
         let during = renderer
-            .render(&track, 1280, 720, 1.0, 1500)
+            .render(&track, 1280, 720, None, 1.0, 1500)
             .expect("frame renders");
         assert!(during.is_empty(), "bitmaps survive a flush");
+    }
+
+    #[test]
+    fn chunk_feed_renders_at_packet_time() {
+        let library = Library::new().expect("library starts");
+        let mut renderer = Renderer::new(&library).expect("renderer starts");
+        let mut track = Track::new(&library).expect("track starts");
+        let header = "[Script Info]\nPlayResX: 1280\nPlayResY: 720\n";
+        track
+            .process_codec_private(header.as_bytes())
+            .expect("header parses");
+        let event = "0,0,Default,,0,0,0,,Hello";
+        track.process_chunk(event.as_bytes(), 1000, 1000);
+        let during = renderer
+            .render(&track, 1280, 720, None, 1.0, 1500)
+            .expect("frame renders");
+        assert!(!during.is_empty(), "no bitmaps for the chunk");
+        assert!(inked_pixels(&during) > 100, "no ink for the chunk");
     }
 }

@@ -1,4 +1,4 @@
-use player_engine::{video::PresentedFrame, SchedulerEngine};
+use player_engine::{video::PresentedFrame, EngineStatus, SchedulerEngine, TrackKind};
 use player_lua::{
     queue::{EventSender, Posted},
     CommandRequest, HostError, NativeValue, PlayerBackend, PropertyFormat, ScriptEvent,
@@ -14,6 +14,7 @@ pub struct EngineBackend {
     fullscreen: bool,
     display: Option<(u32, u32)>,
     mouse_areas: HashMap<String, (f64, f64, f64, f64)>,
+    sub_visible: bool,
     last_log: Option<(String, String)>,
     user_data: HashMap<String, NativeValue>,
     sections: HashMap<String, InputSection>,
@@ -51,6 +52,7 @@ impl EngineBackend {
             fullscreen: false,
             display: None,
             mouse_areas: HashMap::new(),
+            sub_visible: true,
             last_log: None,
             user_data: HashMap::new(),
             sections: HashMap::new(),
@@ -119,8 +121,10 @@ impl EngineBackend {
                     .map(|dir| dir.to_string_lossy().into_owned())
                     .unwrap_or_default(),
             )),
-            "aid" | "sid" => Ok(NativeValue::String("auto".to_owned())),
-            "track-list" => Ok(NativeValue::Array(Vec::new())),
+            "aid" => Ok(NativeValue::String("auto".to_owned())),
+            "sid" => Ok(sid_value(&status)),
+            "sub-visibility" => Ok(NativeValue::Bool(self.sub_visible)),
+            "track-list" => Ok(track_list_value(&status)),
             "mouse-pos" => Ok(NativeValue::Map(vec![
                 ("x".to_owned(), NativeValue::Double(0.0)),
                 ("y".to_owned(), NativeValue::Double(0.0)),
@@ -183,6 +187,55 @@ impl EngineBackend {
             _ => Err(format!("property '{name}' has no OSD string form")),
         }
     }
+}
+
+fn sid_value(status: &EngineStatus) -> NativeValue {
+    let subtitles: Vec<&player_engine::TrackInfo> = status
+        .tracks
+        .iter()
+        .filter(|track| track.kind == TrackKind::Subtitle)
+        .collect();
+    if subtitles.is_empty() {
+        return NativeValue::String("auto".to_owned());
+    }
+    match subtitles.iter().find(|track| track.selected) {
+        Some(track) => NativeValue::Int(track.id as i64),
+        None => NativeValue::Bool(false),
+    }
+}
+
+fn track_list_value(status: &EngineStatus) -> NativeValue {
+    NativeValue::Array(
+        status
+            .tracks
+            .iter()
+            .map(|track| {
+                let kind = match track.kind {
+                    TrackKind::Audio => "audio",
+                    TrackKind::Video => "video",
+                    TrackKind::Subtitle => "sub",
+                };
+                let mut fields = vec![
+                    ("id".to_owned(), NativeValue::Int(track.id as i64)),
+                    ("type".to_owned(), NativeValue::String(kind.to_owned())),
+                    ("src-id".to_owned(), NativeValue::Int(track.src_id as i64)),
+                    (
+                        "codec".to_owned(),
+                        NativeValue::String(track.codec.clone()),
+                    ),
+                    ("selected".to_owned(), NativeValue::Bool(track.selected)),
+                    ("external".to_owned(), NativeValue::Bool(track.external)),
+                ];
+                if let Some(language) = &track.language {
+                    fields.push(("lang".to_owned(), NativeValue::String(language.clone())));
+                }
+                if let Some(title) = &track.title {
+                    fields.push(("title".to_owned(), NativeValue::String(title.clone())));
+                }
+                NativeValue::Map(fields)
+            })
+            .collect(),
+    )
 }
 
 impl PlayerBackend for EngineBackend {
@@ -254,6 +307,13 @@ impl PlayerBackend for EngineBackend {
                 self.fullscreen = fullscreen;
                 Ok(())
             }
+            ("sub-visibility", NativeValue::Bool(visible)) => {
+                self.sub_visible = visible;
+                self.engine.set_sub_visible(visible);
+                Ok(())
+            }
+            ("sid", NativeValue::Int(id)) => self.select_sub_by_id(id),
+            ("sid", NativeValue::String(name)) => self.select_sub_by_name(&name),
             (name, value) if name.starts_with("user-data/") => {
                 self.user_data.insert(name.to_owned(), value);
                 Ok(())
@@ -416,7 +476,10 @@ impl EngineBackend {
                         Ok(NativeValue::None)
                     }
                     "audio" => Err("the Rust engine has no switchable audio tracks".to_owned()),
-                    "sub" => Err("the Rust engine has no switchable subtitle tracks".to_owned()),
+                    "sub" => {
+                        self.cycle_sub()?;
+                        Ok(NativeValue::None)
+                    }
                     _ => Err(format!("cannot cycle '{property}'")),
                 }
             }
@@ -439,6 +502,13 @@ impl EngineBackend {
                     .and_then(|(first, tail)| tail.first().map(|second| (first, second)))
                     .ok_or_else(|| "set needs a property and a value".to_owned())?;
                 self.set_from_string(property, text)?;
+                Ok(NativeValue::None)
+            }
+            "sub-add" => {
+                let path = rest
+                    .first()
+                    .ok_or_else(|| "sub-add needs a file argument".to_owned())?;
+                self.engine.add_sub(path)?;
                 Ok(NativeValue::None)
             }
             "show-text" => {
@@ -575,6 +645,65 @@ impl EngineBackend {
         }
     }
 
+    fn select_sub_by_id(&mut self, id: i64) -> Result<(), String> {
+        let tracks = self.engine.snapshot().tracks;
+        let track = tracks
+            .iter()
+            .find(|track| track.kind == TrackKind::Subtitle && track.id as i64 == id)
+            .ok_or_else(|| format!("no subtitle track {id}"))?;
+        match track.sub_index {
+            Some(index) => {
+                self.engine.select_sub(Some(index));
+                Ok(())
+            }
+            None => Err(format!("subtitle track {id} uses an unsupported codec")),
+        }
+    }
+
+    fn select_sub_by_name(&mut self, name: &str) -> Result<(), String> {
+        match name {
+            "auto" => {
+                let tracks = self.engine.snapshot().tracks;
+                let first = tracks
+                    .iter()
+                    .filter(|track| track.kind == TrackKind::Subtitle)
+                    .find_map(|track| track.sub_index);
+                self.engine.select_sub(first);
+                Ok(())
+            }
+            "no" | "off" | "none" => {
+                self.engine.select_sub(None);
+                Ok(())
+            }
+            _ => Err(format!("unknown subtitle selection '{name}'")),
+        }
+    }
+
+    fn cycle_sub(&mut self) -> Result<(), String> {
+        let tracks = self.engine.snapshot().tracks;
+        let mut order: Vec<Option<usize>> = tracks
+            .iter()
+            .filter(|track| track.kind == TrackKind::Subtitle)
+            .filter_map(|track| track.sub_index)
+            .map(Some)
+            .collect();
+        if order.is_empty() {
+            return Err("the Rust engine has no switchable subtitle tracks".to_owned());
+        }
+        order.push(None);
+        let current = tracks
+            .iter()
+            .filter(|track| track.kind == TrackKind::Subtitle && track.selected)
+            .find_map(|track| track.sub_index);
+        let position = order
+            .iter()
+            .position(|option| *option == current)
+            .unwrap_or(order.len() - 1);
+        self.engine
+            .select_sub(order[(position + 1) % order.len()]);
+        Ok(())
+    }
+
     fn expand_text(&mut self, text: &str) -> String {
         let mut expanded = String::with_capacity(text.len());
         let mut rest = text;
@@ -616,7 +745,7 @@ impl EngineBackend {
 
     fn set_from_string(&mut self, name: &str, text: &str) -> Result<(), String> {
         match name {
-            "pause" | "mute" | "fullscreen" => match text {
+            "pause" | "mute" | "fullscreen" | "sub-visibility" => match text {
                 "yes" | "true" | "1" => {
                     self.set_property(name, NativeValue::Bool(true))?;
                     Ok(())
@@ -626,6 +755,10 @@ impl EngineBackend {
                     Ok(())
                 }
                 _ => Err(format!("'{text}' is not a boolean")),
+            },
+            "sid" => match text.parse::<i64>() {
+                Ok(id) => self.select_sub_by_id(id),
+                Err(_) => self.select_sub_by_name(text),
             },
             "volume" => match text.parse::<f64>() {
                 Ok(volume) => {
@@ -862,9 +995,16 @@ mod tests {
             backend.get_property("aid", PropertyFormat::String),
             Ok(NativeValue::String("auto".to_owned()))
         );
+        poll_while(&mut backend, std::time::Duration::from_secs(5), |status| {
+            status.tracks.len() >= 1
+        });
         assert_eq!(
-            backend.get_property("track-list", PropertyFormat::Native),
-            Ok(NativeValue::Array(Vec::new()))
+            sub_ids(
+                &backend
+                    .value("track-list")
+                    .expect("track-list reads after open")
+            ),
+            vec![("audio".to_owned(), 1, true, false)]
         );
         assert_eq!(
             backend.get_property("mouse-pos", PropertyFormat::Native),
@@ -1109,6 +1249,118 @@ mod tests {
         assert!(backend.command(CommandRequest::Args(vec![])).is_err());
         assert!(backend
             .command(CommandRequest::Args(argv(&["run", "no-such-program-fixture"])))
+            .is_err());
+    }
+
+    fn sub_ids(list: &NativeValue) -> Vec<(String, i64, bool, bool)> {
+        let NativeValue::Array(entries) = list else {
+            panic!("track-list is an array");
+        };
+        entries
+            .iter()
+            .map(|entry| {
+                let NativeValue::Map(fields) = entry else {
+                    panic!("track-list entries are maps");
+                };
+                let get = |key: &str| {
+                    fields
+                        .iter()
+                        .find(|(name, _)| name == key)
+                        .map(|(_, value)| value.clone())
+                };
+                let kind = match get("type") {
+                    Some(NativeValue::String(kind)) => kind,
+                    other => panic!("track type is a string, got {other:?}"),
+                };
+                let id = match get("id") {
+                    Some(NativeValue::Int(id)) => id,
+                    other => panic!("track id is an int, got {other:?}"),
+                };
+                let selected = get("selected") == Some(NativeValue::Bool(true));
+                let external = get("external") == Some(NativeValue::Bool(true));
+                (kind, id, selected, external)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn track_list_reports_per_type_ids() {
+        let mut backend = video_backend();
+        poll_while(&mut backend, std::time::Duration::from_secs(5), |status| {
+            status.tracks.len() >= 2
+        });
+        let list = backend.value("track-list").expect("track-list reads");
+        assert_eq!(
+            sub_ids(&list),
+            vec![
+                ("audio".to_owned(), 1, true, false),
+                ("video".to_owned(), 1, true, false),
+            ]
+        );
+    }
+
+    #[test]
+    fn subtitle_surface_selects_and_toggles() {
+        let mut backend = video_backend();
+        poll_while(&mut backend, std::time::Duration::from_secs(5), |status| {
+            status.tracks.len() >= 2
+        });
+        assert!(backend
+            .command(CommandRequest::Args(argv(&[
+                "sub-add",
+                &fixture("external.srt")
+            ])))
+            .is_ok());
+        poll_while(&mut backend, std::time::Duration::from_secs(5), |status| {
+            status.tracks.len() >= 3
+        });
+        let list = backend.value("track-list").expect("track-list reads");
+        assert_eq!(
+            sub_ids(&list),
+            vec![
+                ("audio".to_owned(), 1, true, false),
+                ("video".to_owned(), 1, true, false),
+                ("sub".to_owned(), 1, true, true),
+            ]
+        );
+        assert_eq!(
+            backend.value("sid").expect("sid reads selected"),
+            NativeValue::Int(1)
+        );
+        backend
+            .set_property("sid", NativeValue::String("no".to_owned()))
+            .expect("sid no deselects");
+        poll_while(&mut backend, std::time::Duration::from_secs(5), |status| {
+            status
+                .tracks
+                .iter()
+                .all(|track| track.kind != player_engine::TrackKind::Subtitle || !track.selected)
+        });
+        assert_eq!(
+            backend.value("sid").expect("sid reads deselected"),
+            NativeValue::Bool(false)
+        );
+        backend
+            .command(CommandRequest::Args(argv(&["cycle", "sub"])))
+            .expect("cycle sub reselects");
+        poll_while(&mut backend, std::time::Duration::from_secs(5), |status| {
+            status.tracks.iter().any(|track| {
+                track.kind == player_engine::TrackKind::Subtitle && track.selected
+            })
+        });
+        assert_eq!(
+            backend.value("sid").expect("sid reads reselected"),
+            NativeValue::Int(1)
+        );
+        backend
+            .set_property("sub-visibility", NativeValue::Bool(false))
+            .expect("sub-visibility sets");
+        assert_eq!(
+            backend.value("sub-visibility").expect("sub-visibility reads"),
+            NativeValue::Bool(false)
+        );
+        assert!(backend
+            .command(CommandRequest::Args(argv(&["sub-add", "no-such-sub.srt"])))
             .is_err());
     }
 

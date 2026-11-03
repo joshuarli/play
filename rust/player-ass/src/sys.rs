@@ -4,8 +4,6 @@ pub const LIBASS_VERSION: c_int = 0x0170_5000;
 
 pub const ASS_FONTPROVIDER_AUTODETECT: c_int = 1;
 
-pub const ASS_HINTING_NONE: c_int = 0;
-
 pub type AssLibraryRaw = *mut c_void;
 pub type AssRendererRaw = *mut c_void;
 pub type AssTrackRaw = *mut c_void;
@@ -40,8 +38,6 @@ unsafe extern "C" {
     pub fn ass_set_frame_size(priv_: AssRendererRaw, w: c_int, h: c_int);
     pub fn ass_set_storage_size(priv_: AssRendererRaw, w: c_int, h: c_int);
     pub fn ass_set_pixel_aspect(priv_: AssRendererRaw, par: c_double);
-    pub fn ass_set_margins(priv_: AssRendererRaw, t: c_int, b: c_int, l: c_int, r: c_int);
-    pub fn ass_set_use_margins(priv_: AssRendererRaw, use_margins: c_int);
     pub fn ass_new_track(library: AssLibraryRaw) -> AssTrackRaw;
     pub fn ass_free_track(track: AssTrackRaw);
     pub fn ass_process_data(track: AssTrackRaw, data: *const c_char, size: c_int);
