@@ -61,14 +61,24 @@ impl Vulkan {
     }
 
     pub fn find_rgba8(&self, caps: c_int) -> Result<sys::PlFmt, String> {
+        self.find_format(sys::PL_FMT_UNORM, 4, 8, caps)
+            .ok_or_else(|| "no RGBA8 texture format".to_string())
+    }
+
+    pub fn find_format(
+        &self,
+        format_type: c_int,
+        components: c_int,
+        depth: c_int,
+        caps: c_int,
+    ) -> Option<sys::PlFmt> {
         // SAFETY: the gpu is live.
-        let fmt = unsafe {
-            sys::pl_find_fmt(self.gpu, sys::PL_FMT_UNORM, 4, 8, 8, caps)
-        };
+        let fmt = unsafe { sys::pl_find_fmt(self.gpu, format_type, components, depth, 8, caps) };
         if fmt.is_null() {
-            return Err("no RGBA8 texture format".to_string());
+            None
+        } else {
+            Some(fmt)
         }
-        Ok(fmt)
     }
 
     pub fn create_renderer(&self) -> Result<crate::Renderer, String> {
@@ -165,6 +175,17 @@ impl Vulkan {
     }
 
     pub fn upload(&self, tex: sys::PlTex, width: c_int, height: c_int, data: &[u8]) -> Result<(), String> {
+        self.upload_strided(tex, width, height, 0, data)
+    }
+
+    pub fn upload_strided(
+        &self,
+        tex: sys::PlTex,
+        width: c_int,
+        height: c_int,
+        row_pitch: usize,
+        data: &[u8],
+    ) -> Result<(), String> {
         let params = sys::PlTexTransferParams {
             tex,
             rc: sys::PlRect3d {
@@ -175,7 +196,7 @@ impl Vulkan {
                 y1: height,
                 z1: 1,
             },
-            row_pitch: 0,
+            row_pitch,
             depth_pitch: 0,
             timer: core::ptr::null_mut(),
             callback: None,

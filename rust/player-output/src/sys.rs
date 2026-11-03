@@ -25,7 +25,13 @@ pub type PlRenderer = *mut c_void;
 pub type PlTimer = *mut c_void;
 pub type PlBuf = *mut c_void;
 
+pub const PL_COLOR_SYSTEM_UNKNOWN: c_int = 0;
+pub const PL_COLOR_SYSTEM_BT_601: c_int = 1;
+pub const PL_COLOR_SYSTEM_BT_709: c_int = 2;
+pub const PL_COLOR_SYSTEM_BT_2020_NC: c_int = 4;
 pub const PL_COLOR_SYSTEM_RGB: c_int = 12;
+pub const PL_COLOR_LEVELS_UNKNOWN: c_int = 0;
+pub const PL_COLOR_LEVELS_LIMITED: c_int = 1;
 pub const PL_COLOR_LEVELS_FULL: c_int = 2;
 pub const PL_COLOR_PRIM_BT_709: c_int = 3;
 pub const PL_COLOR_TRC_SRGB: c_int = 2;
@@ -295,6 +301,10 @@ mod tests {
 
         assert_eq!(PL_COLOR_SYSTEM_RGB, 12);
         assert_eq!(PL_COLOR_LEVELS_FULL, 2);
+        assert_eq!(PL_COLOR_SYSTEM_BT_601, 1);
+        assert_eq!(PL_COLOR_SYSTEM_BT_709, 2);
+        assert_eq!(PL_COLOR_SYSTEM_BT_2020_NC, 4);
+        assert_eq!(PL_COLOR_LEVELS_LIMITED, 1);
         assert_eq!(PL_COLOR_PRIM_BT_709, 3);
         assert_eq!(PL_COLOR_TRC_SRGB, 2);
 

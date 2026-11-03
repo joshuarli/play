@@ -6,6 +6,10 @@ pub struct Renderer {
 }
 
 impl Renderer {
+    pub(crate) fn as_raw(&self) -> sys::PlRenderer {
+        self.rr
+    }
+
     pub fn new(log: sys::PlLog, gpu: sys::PlGpu) -> Result<Self, String> {
         // SAFETY: log and gpu are live.
         let rr = unsafe { sys::pl_renderer_create(log, gpu) };
