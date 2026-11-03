@@ -63,8 +63,7 @@ def norm_chapters(chapters):
     for chapter in chapters or []:
         out.append({
             "title": chapter.get("title"),
-            "start": round(float(chapter.get("start", 0)), 2),
-            "end": round(float(chapter.get("end", 0)), 2),
+            "time": round(float(chapter.get("time", 0)), 2),
         })
     return out
 
@@ -152,7 +151,7 @@ def trace_playable(name, entry):
         trace["tracks"] = [norm_track(t)
                            for t in mpv.try_get_property("track-list") or []]
         kinds = {track.get("type") for track in trace["tracks"]}
-        trace["chapters"] = norm_chapters(mpv.try_get_property("chapters"))
+        trace["chapters"] = norm_chapters(mpv.try_get_property("chapter-list"))
         trace["metadata"] = norm_metadata(mpv.try_get_property("metadata"))
         trace["playlist-count"] = mpv.try_get_property("playlist-count")
         trace["pause-default"] = mpv.try_get_property("pause")
