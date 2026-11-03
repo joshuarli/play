@@ -2,7 +2,7 @@
  "companion": "h264-external-vtt",
  "fixture": "external-vtt",
  "role": "subtitle",
- "sid": 1,
+ "sid-no": true,
  "sub-tracks": [
   {
    "codec": "webvtt",

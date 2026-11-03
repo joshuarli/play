@@ -2,7 +2,7 @@
  "companion": "h264-external-srt",
  "fixture": "external-srt",
  "role": "subtitle",
- "sid": 1,
+ "sid-no": true,
  "sub-tracks": [
   {
    "codec": "subrip",

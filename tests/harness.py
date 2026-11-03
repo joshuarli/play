@@ -1974,6 +1974,71 @@ def gate_linux_osc(results, args):
     gate_osc_input(results, args)
 
 
+def gate_dispatch(results, args):
+    bindings = ROOT / "etc" / "input.conf"
+    extra = (
+        "\nF7 cycle pause; set volume nope\n"
+        "F8 cycle pause; cycle mute\n"
+    )
+    conf = TMP / f"dispatch-input-{os.getpid()}.conf"
+    conf.write_text(bindings.read_text() + extra)
+    try:
+        with Mpv(["--vo=null", "--ao=null",
+                  f"--input-conf={conf}"]) as mpv:
+            mpv.load(fixture_path(fixture_entry("multiaudio")))
+            mpv.wait_event("file-loaded", timeout=15)
+            paused = mpv.get_property("pause")
+            muted = mpv.get_property("mute")
+            mpv.command("keypress", "F7")
+            same_pause = mpv.wait_property(
+                "pause", lambda value: value is paused, timeout=5)
+            results.check("dispatch: invalid multi rejected atomically",
+                          same_pause is paused
+                          and mpv.get_property("mute") is muted)
+            mpv.command("keypress", "F8")
+            mpv.wait_property("pause", lambda value: value is not paused,
+                              timeout=5)
+            mpv.wait_property("mute", lambda value: value is not muted,
+                              timeout=5)
+            results.check("dispatch: valid multi executes", True)
+            mpv.command("cycle", "pause")
+            mpv.command("cycle", "mute")
+            mpv.wait_property("pause", lambda value: value is paused,
+                              timeout=5)
+            check_no_errors(results, "dispatch", mpv)
+            for name, command in (
+                ("seek-nope", ["seek", "nope"]),
+                ("set-volume-missing", ["set", "volume"]),
+                ("loadfile-missing", ["loadfile"]),
+                ("cycle-missing", ["cycle"]),
+                ("bogus-command", ["bogus-command-xyz"]),
+            ):
+                try:
+                    mpv.command(*command)
+                except Failure:
+                    results.check(f"dispatch: node {name} errors", True)
+                else:
+                    results.check(f"dispatch: node {name} errors",
+                                  False, "expected an error")
+            mpv.command("show-text", "a;b")
+            results.check("dispatch: quoted semicolon passes", True)
+            aid = mpv.get_property("aid")
+            results.check("dispatch: aid reads through Rust store",
+                          isinstance(aid, int), f"got {aid!r}")
+            # Deselected tracks read back as boolean false: the node format
+            # maps the "no" choice alternative that way, same as the C engine.
+            mpv.command("set", "aid", "no")
+            mpv.wait_property("aid", lambda value: value is False, timeout=10)
+            results.check("dispatch: aid no round-trips", True)
+            mpv.command("set", "aid", "1")
+            mpv.wait_property("aid", lambda value: value == 1, timeout=10)
+            results.check("dispatch: aid set round-trips", True)
+    finally:
+        conf.unlink(missing_ok=True)
+    results.check("dispatch: exit", mpv.returncode == 0,
+                  f"exit {mpv.returncode}")
+
+
 def gate_traces(results, args):
     run_script_gate(results, "traces-selftest",
                     [sys.executable, str(ROOT / "tests" / "trace.py"), "--selftest"])
@@ -2012,6 +2077,7 @@ GATES = {
     "lua-api-audit": gate_lua_api_audit,
     "tui": gate_tui,
     "traces": gate_traces,
+    "dispatch": gate_dispatch,
     "baseline-docs": gate_baseline_docs,
     "meta": gate_meta,
     "release": gate_release,
@@ -2023,14 +2089,14 @@ SUITE = [
     "local-only", "osc", "osc-input", "input", "playlist", "cli", "state", "failures",
     "rust-link", "ffi",
     "lua-host",
-    "lua-api-audit", "tui", "release", "traces",
+    "lua-api-audit", "tui", "release", "traces", "dispatch",
 ]
 
 
 LINUX_SUITE = [
     "fixtures", "linux-corpus", "linux-audio", "linux-gpu-next", "linux-local-only", "linux-osc",
     "linux-mostly-static", "linux-hwdec-default", "local-paths", "seek", "input", "playlist", "cli", "state",
-    "failures", "lua-host", "lua-api-audit", "tui", "linux-rust-link", "traces",
+    "failures", "lua-host", "lua-api-audit", "tui", "linux-rust-link", "traces", "dispatch",
 ]
 
 

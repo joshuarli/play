@@ -16,6 +16,7 @@ value, because decode position after a seek is timing dependent.
 
 import json
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -121,6 +122,27 @@ def command_error(mpv, *args):
     return None
 
 
+def transitions(initial, values):
+    """Keep only genuine transitions from the initial value."""
+    state = initial
+    out = []
+    for value in values:
+        if value != state:
+            state = value
+            out.append(state)
+    return out
+
+
+def wait_params(mpv, name, timeout=10):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        value = mpv.try_get_property(name)
+        if value is not None:
+            return value
+        time.sleep(0.05)
+    return None
+
+
 def trace_playable(name, entry):
     trace = {"fixture": name, "role": entry.get("role")}
     with Mpv(ARGS) as mpv:
@@ -129,6 +151,7 @@ def trace_playable(name, entry):
         trace["duration"] = round_floats(mpv.try_get_property("duration"))
         trace["tracks"] = [norm_track(t)
                            for t in mpv.try_get_property("track-list") or []]
+        kinds = {track.get("type") for track in trace["tracks"]}
         trace["chapters"] = norm_chapters(mpv.try_get_property("chapters"))
         trace["metadata"] = norm_metadata(mpv.try_get_property("metadata"))
         trace["playlist-count"] = mpv.try_get_property("playlist-count")
@@ -136,36 +159,49 @@ def trace_playable(name, entry):
         trace["volume-default"] = mpv.try_get_property("volume")
         trace["speed-default"] = mpv.try_get_property("speed")
         trace["audio-params"] = round_floats(
-            mpv.try_get_property("audio-params"))
+            wait_params(mpv, "audio-params") if "audio" in kinds else None)
         trace["video-params"] = round_floats(
-            mpv.try_get_property("video-params"))
+            wait_params(mpv, "video-params") if "video" in kinds else None)
         trace["error-bogus-property"] = command_error(
             mpv, "get_property", "bogus-oracle-prop")
         trace["error-bad-seek"] = command_error(
             mpv, "seek", "not-a-number", "absolute")
-        rid = mpv.next_request_id
-        mpv.next_request_id += 1
-        mpv._send({"command": ["observe_property", rid, "pause"],
-                   "request_id": rid})
-        mpv.command("cycle", "pause")
+        observe_id = 424242
+        mpv.command("observe_property", observe_id, "pause")
+        # The observation synthesizes the current value asynchronously. Wait
+        # for it so the mark below starts past it; otherwise the False probe
+        # could match this stale synthesis instead of the real toggle.
         mpv.wait_event(
             "property-change",
-            lambda e: e.get("name") == "pause" and e.get("data") is True,
-            timeout=10)
-        mpv.command("cycle", "pause")
-        mpv.wait_event(
-            "property-change",
-            lambda e: e.get("name") == "pause" and e.get("data") is False,
+            lambda e: e.get("id") == observe_id,
             timeout=10)
         with mpv.cond:
-            pause_events = [e for e in mpv.events
+            mark = len(mpv.events)
+        mpv.command("cycle", "pause")
+        mpv.wait_until(
+            lambda: any(
+                event.get("id") == observe_id and event.get("data") is True
+                for event in mpv.events[mark:]),
+            timeout=10,
+            description="observed pause True")
+        mpv.command("cycle", "pause")
+        mpv.wait_until(
+            lambda: any(
+                event.get("id") == observe_id and event.get("data") is False
+                for event in mpv.events[mark:]),
+            timeout=10,
+            description="observed pause False")
+        mpv.command("unobserve_property", observe_id)
+        with mpv.cond:
+            pause_events = [e for e in mpv.events[mark:]
                             if e.get("event") == "property-change"
-                            and e.get("name") == "pause"]
-        values = []
-        for event in pause_events:
-            if not values or values[-1] != event.get("data"):
-                values.append(event.get("data"))
-        trace["pause-cycle-events"] = values
+                            and e.get("id") == observe_id]
+        # Keep only genuine transitions from the pre-cycle value. The engine
+        # sometimes rebroadcasts the current value or duplicates a delivery,
+        # which varies run to run on the reference itself.
+        trace["pause-cycle-events"] = transitions(
+            trace["pause-default"],
+            [event.get("data") for event in pause_events])
         duration = trace["duration"] or 0
         if duration > 1:
             target = round(duration / 2, 2)
@@ -194,7 +230,13 @@ def trace_subtitle(name, entry, companion_name, companion_entry):
         tracks = mpv.try_get_property("track-list") or []
         trace["sub-tracks"] = [norm_track(t) for t in tracks
                                if t.get("type") == "sub"]
-        trace["sid"] = mpv.try_get_property("sid")
+        # Default sid sampling races auto-resolution, so the trace drives
+        # explicit selection instead: both round-trips are deterministic.
+        mpv.command("set", "sid", "no")
+        trace["sid-no"] = mpv.wait_until(
+            lambda: mpv.try_get_property("sid") is False,
+            timeout=10,
+            description="sid deselected")
         trace["sub-visibility"] = mpv.try_get_property("sub-visibility")
     return trace
 
@@ -278,7 +320,8 @@ def compare(traces):
                                     f"{golden.get(key)!r}")
             continue
         if golden.get("role") == "subtitle":
-            for key in ("companion", "sub-tracks", "sid", "sub-visibility"):
+            for key in ("companion", "sub-tracks", "sid-no",
+                        "sub-visibility"):
                 if live.get(key) != golden.get(key):
                     problems.append(f"{name}.{key}: {live.get(key)!r} != "
                                     f"{golden.get(key)!r}")
@@ -316,6 +359,9 @@ def selftest():
     assert canon_order(["idle", "idle", "start-file", "end-file"]) == [
         "start-file", "end-file"]
     assert canon_order(["start-file"]) == ["start-file"]
+    assert transitions(False, [True, False]) == [True, False]
+    assert transitions(False, [False, True, False]) == [True, False]
+    assert transitions(False, [False, False]) == []
     print("selftest ok")
     return 0
 

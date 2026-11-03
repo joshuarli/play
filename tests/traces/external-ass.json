@@ -2,7 +2,7 @@
  "companion": "h264-external-ass",
  "fixture": "external-ass",
  "role": "subtitle",
- "sid": 1,
+ "sid-no": true,
  "sub-tracks": [
   {
    "codec": "ass",
