@@ -5,7 +5,57 @@ Preflight doc: `campaign-rust.md`. This file is the durable resume point.
 
 ## Current phase
 
-S5 complete. Next: S6 (renderer).
+S5 complete. S6c complete (engine decodes and presents video headlessly). Next: S6d (platform bridges, osc/linux-gpu-next gates).
+
+## S6c record
+
+The scheduler plays video files end to end on the Rust path with no
+C video machinery: `EngineDemux` routes the selected video stream
+alongside audio, `EngineVideo` decodes through a shared-mode
+`VideoSession` borrowed from the engine-owned demux session, and
+`EngineVideoOutput` presents due frames as RGBA through libplacebo
+into a bounded channel the GUI bridges will consume. Untagged content
+follows the mpv convention (SD 601, HD 709, limited range); HW frames
+transfer to software until the S6d import path lands. Video-only files
+stay on the C path: the engine still requires an audio stream.
+`SchedulerEngine` gains `presented` in snapshots and a `drain_frames`
+consumer; dropping the engine takes the frame receiver first so a
+worker blocked in present unblocks instead of hanging the join.
+
+Decisions with reasons:
+
+- Present-time rendering, not drain-time. Dropped-late frames never
+  reach the GPU, and eviction from the bounded pending queue keeps a
+  missed present a silent skip instead of a leak.
+- `Gpu` declares `renderer` before `vk`: struct fields drop in
+  declaration order, and destroying the renderer after its Vulkan
+  device calls through a dead dispatch table.
+- The shared Linux placebo link closure lives in
+  `rust/player-output/linux-link.args`, read by both the output and
+  the engine build scripts. Build-script link-args do not propagate
+  to dependent crates; the file removes the copy.
+
+Load-bearing bugs found by bisect, both use-after-free with the same
+shape (a live handle freed underneath its owner):
+
+- `VideoSession { session: Some(s), ..this }` copied its all-`Copy`
+  fields and ran `this`'s destructor, freeing the decode context
+  twice. Single construction through `open_impl`/`open_decoder` now;
+  `open_shared` borrows the session only for probing.
+- `Gpu { vk, renderer }` dropped the device before the renderer.
+  Field order is the drop order.
+
+Verified: workspace `cargo test` green on macOS (engine 40,
+including a 72-frame h264 end-to-end present-count and pixel-variance
+test; media 20; output 7, including YUV420 solid colors against an
+independent BT.709 reference within 6 levels); Linux container green
+(media 20, output 7, engine 40 via the dynamic-link rerun on
+lavapipe); `tests/run.sh build`, `rust-link`, `ffi` green. The
+`plays_video_through_renderer`, output frame, and output Vulkan tests
+ignore under static-pie with the documented dynamic rerun.
+
+Still open in S6: Wayland client, macOS bridge, VO swap, `osc` and
+`linux-gpu-next` gates, video-only engine files.
 
 ## S5 record
 

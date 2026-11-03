@@ -4,9 +4,9 @@
 
 Goal: replace the remaining mpv-derived C playback engine with a small Rust-owned engine. No loss of supported local playback. Both release artifacts keep building.
 
-- Last accepted: S5. Preflight complete 2026-11-03.
-- Red: none. S5 acceptance green on macOS (337) and Linux (329).
-- Next: S6 (Rust video rendering integration). Then S7.
+- Last accepted: S6c (engine video adapter; S6a-b output/Vulkan earlier). Preflight complete 2026-11-03.
+- Red: none. Workspace green on macOS (engine 40, media 20, output 7) and Linux container (engine 40, media 20, output 7, dynamic-link rerun); build, rust-link, ffi green.
+- Next: S6d (platform bridges, VO swap, osc/linux-gpu-next gates). Then S7.
 - Ordered chapters stay open for S7 (no fixture, needs linking design).
 - Resume: read this doc and `docs/RUST-PORT.md`, then run the next open slice. If the tree moved, adapt. Never overwrite newer work.
 
