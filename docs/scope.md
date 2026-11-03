@@ -38,13 +38,16 @@ The local-only gate creates a hostile temporary `HOME` with `mpv.conf`, `input.c
 - JavaScript, VapourSynth, C plugins, Touch Bar, and Media Player integration.
 - Built-in Lua modules that the player no longer loads: `auto_profiles`, `commands`, `console`, `context_menu`, `fzy`, `positioning`, and `stats`.
 - Filter entry points for lavfi, VapourSynth, VDPAU, D3D11, fingerprint, and AC-3 encoding.
+- The legacy GPU renderer (`video/out/gpu/video.c`, `video_shaders.c`, and its `osd`, `shader_cache`, `user_shaders`, and `error_diffusion` helpers) and the experimental `vf=gpu` offscreen video filter with its EGL/Vulkan backends. The shared `gl_video` option table and defaults now live in `video/out/gpu/video_conf.c` for `gpu-next`. The GPU context, resource abstraction, and hardware-decode interop stay.
+- FFmpeg audio fallback and SPDIF passthrough (`ad_lavc.c`, `ad_spdif.c`, `--ad-lavc-*`, `--audio-spdif`, and the decoder-wrapper SPDIF path). Symphonia handles supported audio decoding; the release FFmpeg has no audio decoders or muxers.
+- The `libavfilter` link dependency; nothing calls the library beyond the removed filter graph.
 - Playlist shuffle and loop commands and options. A-B loop remains.
 
 ## CLI
 
 Supported: `player FILE...`, `--tui`, `--fullscreen` and `--fs`, `--start`, `--playlist`, `--audio-file` and `--audio-files`, `--sub-file` and `--sub-files`, `--version`, `--help`, and the playback, track, and OSD controls used by the OSC and local playback. `--tui` is audio-first and keeps `vo=null`; it is not a terminal video output.
 
-Removed: `--ytdl*`, `--hls-bitrate`, `--lavfi-complex`, `--stream-dump`, `--stretch-dvd-subs`, the encoding group (`--o`, `--of`, `--ovc`, `--oac`, their option tables, `--orawts`, and metadata flags), the Windows window and capture group, and options for deleted Lua overlay modules. `--http-header-fields` and the other network groups were removed with the network modules.
+Removed: `--ytdl*`, `--hls-bitrate`, `--lavfi-complex`, `--stream-dump`, `--stretch-dvd-subs`, the encoding group (`--o`, `--of`, `--ovc`, `--oac`, their option tables, `--orawts`, and metadata flags), the Windows window and capture group, options for deleted Lua overlay modules, `--audio-spdif`, and `--ad-lavc-*`. `--http-header-fields` and the other network groups were removed with the network modules.
 
 ## Compiled but not reachable
 

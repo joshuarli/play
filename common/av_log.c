@@ -44,8 +44,6 @@
 #include <libswresample/version.h>
 #include <libswscale/swscale.h>
 #include <libswscale/version.h>
-#include <libavfilter/avfilter.h>
-#include <libavfilter/version.h>
 
 #if HAVE_LIBAVDEVICE
 #include <libavdevice/avdevice.h>
@@ -199,7 +197,6 @@ void check_library_versions(struct mp_log *log, int v)
 #if HAVE_LIBAVDEVICE
         {"libavdevice",   LIBAVDEVICE_VERSION_INT,   avdevice_version()},
 #endif
-        {"libavfilter",   LIBAVFILTER_VERSION_INT,   avfilter_version()},
         {"libavformat",   LIBAVFORMAT_VERSION_INT,   avformat_version()},
         {"libavutil",     LIBAVUTIL_VERSION_INT,     avutil_version()},
         {"libswresample", LIBSWRESAMPLE_VERSION_INT, swresample_version()},

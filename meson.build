@@ -20,7 +20,6 @@ python = find_program('python3')
 
 # ffmpeg
 libavcodec = dependency('libavcodec', version: '>= 60.31.102')
-libavfilter = dependency('libavfilter', version: '>= 9.12.100')
 libavformat = dependency('libavformat', version: '>= 60.16.100')
 libavutil = dependency('libavutil', version: '>= 58.29.100')
 libswresample = dependency('libswresample', version: '>= 4.12.100')
@@ -35,7 +34,6 @@ libass = dependency('libass', version: '>= 0.12.2')
 # static linking symbol resolution between fontconfig and libass
 dependencies = [libass,
                 libavcodec,
-                libavfilter,
                 libavformat,
                 libavutil,
                 libplacebo,
@@ -69,9 +67,7 @@ sources = files(
     'audio/chmap.c',
     'audio/chmap_avchannel.c',
     'audio/chmap_sel.c',
-    'audio/decode/ad_lavc.c',
     'audio/decode/ad_symphonia.c',
-    'audio/decode/ad_spdif.c',
     'audio/filter/af_drop.c',
     'audio/filter/af_format.c',
     'audio/filter/af_scaletempo.c',
@@ -216,16 +212,11 @@ sources = files(
     'video/out/dr_helper.c',
     'video/out/filter_kernels.c',
     'video/out/gpu/context.c',
-    'video/out/gpu/error_diffusion.c',
     'video/out/gpu/hwdec.c',
     'video/out/gpu/lcms.c',
-    'video/out/gpu/osd.c',
     'video/out/gpu/ra.c',
-    'video/out/gpu/shader_cache.c',
-    'video/out/gpu/user_shaders.c',
     'video/out/gpu/utils.c',
-    'video/out/gpu/video.c',
-    'video/out/gpu/video_shaders.c',
+    'video/out/gpu/video_conf.c',
     'video/out/vo.c',
     'video/out/vo_null.c',
     'video/out/win_state.c',
@@ -953,10 +944,6 @@ if features['egl'] or features['egl-android']
     sources += files('video/out/opengl/egl_helpers.c')
 endif
 
-if features['gl'] and features['egl']
-    sources += files('video/filter/vf_gpu_egl.c')
-endif
-
 if features['gl']
     sources += files('video/out/opengl/common.c',
                      'video/out/opengl/context.c',
@@ -983,8 +970,7 @@ if features['vulkan']
     dependencies += vulkan
     sources += files('video/out/hwdec/hwdec_vulkan.c',
                      'video/out/vulkan/context.c',
-                     'video/out/vulkan/utils.c',
-                     'video/filter/vf_gpu_vulkan.c')
+                     'video/out/vulkan/utils.c')
 endif
 
 if features['vulkan'] and features['android']
@@ -1000,10 +986,6 @@ if features['vulkan'] and features['x11']
 endif
 
 features += {'vk-khr-display': false}
-
-if features['vulkan'] or (features['gl'] and features['egl'])
-    sources += files('video/filter/vf_gpu.c')
-endif
 
 # hwaccel
 ffnvcodec = dependency('ffnvcodec', version: '>= 11.1.5.1', required: false)
