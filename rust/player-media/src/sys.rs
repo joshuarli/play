@@ -45,7 +45,13 @@ pub const AV_NUM_DATA_POINTERS: usize = 8;
 
 pub const AV_PIX_FMT_NONE: c_int = -1;
 pub const AV_PIX_FMT_YUV420P: c_int = 0;
+pub const AV_PIX_FMT_RGB24: c_int = 2;
+pub const AV_PIX_FMT_YUV422P: c_int = 4;
+pub const AV_PIX_FMT_YUV444P: c_int = 5;
+pub const AV_PIX_FMT_GRAY8: c_int = 8;
 pub const AV_PIX_FMT_NV12: c_int = 23;
+pub const AV_PIX_FMT_NV21: c_int = 24;
+pub const AV_PIX_FMT_RGBA: c_int = 26;
 pub const AV_PIX_FMT_VAAPI: c_int = 44;
 pub const AV_PIX_FMT_VIDEOTOOLBOX: c_int = 157;
 

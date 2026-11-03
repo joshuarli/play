@@ -179,7 +179,7 @@ impl VideoFrame {
     fn plane_height(&self, index: usize) -> usize {
         let height = self.height().max(0) as usize;
         match self.format() {
-            AV_PIX_FMT_YUV420P | AV_PIX_FMT_NV12 => {
+            AV_PIX_FMT_YUV420P | AV_PIX_FMT_NV12 | AV_PIX_FMT_NV21 => {
                 if index == 0 {
                     height
                 } else {
@@ -660,7 +660,13 @@ mod tests {
     #[test]
     fn pixfmt_constants_match_linked_library() {
         assert_eq!(pix_name(AV_PIX_FMT_YUV420P), "yuv420p");
+        assert_eq!(pix_name(AV_PIX_FMT_YUV422P), "yuv422p");
+        assert_eq!(pix_name(AV_PIX_FMT_YUV444P), "yuv444p");
         assert_eq!(pix_name(AV_PIX_FMT_NV12), "nv12");
+        assert_eq!(pix_name(AV_PIX_FMT_NV21), "nv21");
+        assert_eq!(pix_name(AV_PIX_FMT_RGB24), "rgb24");
+        assert_eq!(pix_name(AV_PIX_FMT_RGBA), "rgba");
+        assert_eq!(pix_name(AV_PIX_FMT_GRAY8), "gray");
         assert_eq!(pix_name(AV_PIX_FMT_VAAPI), "vaapi");
         assert_eq!(pix_name(AV_PIX_FMT_VIDEOTOOLBOX), "videotoolbox_vld");
     }
