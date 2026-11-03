@@ -294,8 +294,7 @@ pub fn composite(
     width: u32,
     height: u32,
     images: &[RenderedImage],
-) -> Result<(), String> {
-    let expected = width as usize * height as usize * 4;
+) -> Result<(), String> {    let expected = width as usize * height as usize * 4;
     if frame.len() < expected {
         return Err(format!(
             "overlay target holds {} bytes, needs {expected}",
@@ -341,9 +340,64 @@ pub fn composite(
     Ok(())
 }
 
+pub fn composite_straight(
+    frame: &mut [u8],
+    width: u32,
+    height: u32,
+    images: &[RenderedImage],
+) -> Result<(), String> {
+    let expected = width as usize * height as usize * 4;
+    if frame.len() < expected {
+        return Err(format!(
+            "overlay target holds {} bytes, needs {expected}",
+            frame.len()
+        ));
+    }
+    for image in images {
+        let source_red = ((image.color >> 24) & 0xff) as u32;
+        let source_green = ((image.color >> 16) & 0xff) as u32;
+        let source_blue = ((image.color >> 8) & 0xff) as u32;
+        let source_alpha = (0xff - (image.color & 0xff)) as u32;
+        for row in 0..image.height {
+            let target_y = image.dst_y + row as i32;
+            if target_y < 0 || target_y >= height as i32 {
+                continue;
+            }
+            for column in 0..image.width {
+                let target_x = image.dst_x + column as i32;
+                if target_x < 0 || target_x >= width as i32 {
+                    continue;
+                }
+                let coverage =
+                    image.bitmap[row as usize * image.stride + column as usize] as u32;
+                let source = source_alpha * coverage / 255;
+                if source == 0 {
+                    continue;
+                }
+                let offset = (target_y as usize * width as usize + target_x as usize) * 4;
+                let target_alpha = frame[offset + 3] as u32;
+                let target_weight = target_alpha * (255 - source) / 255;
+                let alpha = source + target_weight;
+                if alpha == 0 {
+                    continue;
+                }
+                for (channel, source_color) in
+                    [source_red, source_green, source_blue].into_iter().enumerate()
+                {
+                    let target_color = frame[offset + channel] as u32;
+                    frame[offset + channel] =
+                        ((source_color * source + target_color * target_weight) / alpha) as u8;
+                }
+                frame[offset + 3] = alpha as u8;
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{composite, OsdState};
+    use super::{composite, composite_straight, OsdState};
     use crate::engine::OsdOverlay;
     use player_ass::RenderedImage;
 
@@ -430,8 +484,27 @@ mod tests {
     }
 
     #[test]
-    fn composite_matches_mpv_blending() {
+    fn straight_composite_keeps_transparent_edges_unpremultiplied() {
         let image = RenderedImage {
+            width: 1,
+            height: 1,
+            stride: 1,
+            bitmap: vec![128],
+            color: 0x40_20_10_20,
+            dst_x: 0,
+            dst_y: 0,
+        };
+        let mut frame = vec![0, 0, 0, 0];
+        composite_straight(&mut frame, 1, 1, &[image]).expect("overlay composites");
+        let alpha = (255 - 0x20) as u32 * 128 / 255;
+        assert_eq!(frame[3] as u32, alpha);
+        assert_eq!(frame[0], 0x40);
+        assert_eq!(frame[1], 0x20);
+        assert_eq!(frame[2], 0x10);
+    }
+
+    #[test]
+    fn composite_matches_mpv_blending() {        let image = RenderedImage {
             width: 1,
             height: 1,
             stride: 1,

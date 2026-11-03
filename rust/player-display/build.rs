@@ -10,6 +10,7 @@ fn main() {
         return;
     }
     if target == "macos" {
+        println!("cargo:rerun-if-changed=bridge/metal_window.m");
         cc::Build::new()
             .file("bridge/metal_window.m")
             .flag("-fobjc-arc")

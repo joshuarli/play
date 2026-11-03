@@ -36,6 +36,7 @@ pub struct EngineBackend {
     pending_frames: Vec<PresentedFrame>,
     osd: Option<OsdState>,
     osd_error: Option<String>,
+    compose_frames: bool,
 }
 
 pub struct InputSection {
@@ -80,11 +81,35 @@ impl EngineBackend {
             pending_frames: Vec::new(),
             osd: None,
             osd_error: None,
+            compose_frames: true,
         }
     }
 
     pub fn set_display_size(&mut self, width: u32, height: u32) {
         self.display = Some((width, height));
+    }
+
+    /// Hands OSD pixels to the consumer instead of blending them into video
+    /// frames. The GUI host presents the video and the overlay separately so
+    /// libplacebo scales each at the window's pixel size.
+    pub fn set_overlay_mode(&mut self) {
+        self.compose_frames = false;
+    }
+
+    pub fn fullscreen(&self) -> bool {
+        self.fullscreen
+    }
+
+    pub fn should_quit(&self) -> bool {
+        self.quit
+    }
+
+    pub fn engine_error(&self) -> Option<String> {
+        self.engine.snapshot().error
+    }
+
+    pub fn status(&self) -> EngineStatus {
+        self.engine.snapshot()
     }
 
     pub fn mouse_area(&self, section: &str) -> Option<(f64, f64, f64, f64)> {
@@ -157,7 +182,7 @@ impl EngineBackend {
     }
 
     fn composite_frames(&mut self, status: &EngineStatus, fresh: &mut Vec<PresentedFrame>) {
-        if fresh.is_empty() {
+        if !self.compose_frames || fresh.is_empty() {
             return;
         }
         let (width, height) = self.output_size(status);
@@ -213,6 +238,30 @@ impl EngineBackend {
             message.as_deref(),
         )?;
         composite(frame, width, height, &images)
+    }
+
+    pub fn render_overlay(
+        &mut self,
+        width: u32,
+        height: u32,
+        par: f64,
+    ) -> Result<Option<Vec<u8>>, String> {
+        let status = self.engine.snapshot();
+        let message = self.visible_message();
+        let images = self.render_images(
+            &status,
+            width as i64,
+            height as i64,
+            par,
+            (status.position * 1000.0).round() as i64,
+            message.as_deref(),
+        )?;
+        if images.is_empty() {
+            return Ok(None);
+        }
+        let mut rgba = vec![0u8; width as usize * height as usize * 4];
+        crate::osd::composite_straight(&mut rgba, width, height, &images)?;
+        Ok(Some(rgba))
     }
 
     pub fn osd_error(&self) -> Option<&String> {
@@ -1248,19 +1297,16 @@ mod tests {
         backend
             .set_property("pause", NativeValue::Bool(true))
             .expect("pause sets");
-        std::thread::sleep(std::time::Duration::from_millis(100));
-        assert_eq!(
-            backend.get_property("pause", PropertyFormat::Bool),
-            Ok(NativeValue::Bool(true))
-        );
+        wait_for_property(&mut backend, "pause", |value| {
+            value == &NativeValue::Bool(true)
+        });
         backend
             .set_property("volume", NativeValue::Double(50.0))
             .expect("volume sets");
-        std::thread::sleep(std::time::Duration::from_millis(100));
-        match backend.get_property("volume", PropertyFormat::Number) {
-            Ok(NativeValue::Double(volume)) => assert!((volume - 50.0).abs() < 0.01),
-            other => panic!("unexpected volume: {other:?}"),
-        }
+        wait_for_property(&mut backend, "volume", |value| match value {
+            NativeValue::Double(volume) => (volume - 50.0).abs() < 0.01,
+            _ => false,
+        });
         assert!(backend
             .set_property("duration", NativeValue::Double(1.0))
             .is_err());
@@ -1324,12 +1370,31 @@ mod tests {
         command.iter().map(|arg| (*arg).to_owned()).collect()
     }
 
+    fn wait_for_property(
+        backend: &mut EngineBackend,
+        name: &str,
+        ready: impl Fn(&NativeValue) -> bool,
+    ) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            if let Ok(value) = backend.get_property(name, PropertyFormat::Native) {
+                if ready(&value) {
+                    return;
+                }
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "property '{name}' never reached the expected value"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
     fn poll_while(
         backend: &mut EngineBackend,
         timeout: std::time::Duration,
         done: impl Fn(player_engine::EngineStatus) -> bool,
-    ) -> player_engine::EngineStatus {
-        use player_lua::queue::event_queue;
+    ) -> player_engine::EngineStatus {        use player_lua::queue::event_queue;
         let (sender, _) = event_queue();
         let deadline = std::time::Instant::now() + timeout;
         loop {
@@ -1558,6 +1623,27 @@ mod tests {
                 vec!["visibility".to_owned(), "auto".to_owned()]
             )]
         );
+    }
+
+    #[test]
+    fn overlay_mode_delivers_video_frames() {
+        use player_lua::queue::event_queue;
+        let mut backend = video_backend();
+        backend.set_overlay_mode();
+        let (sender, _) = event_queue();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        let mut frames = 0;
+        loop {
+            backend.pump(&sender).expect("pump drains frames");
+            frames += backend.take_frames().len();
+            let status = backend.engine.snapshot();
+            if status.ended || status.error.is_some() {
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline, "timed out: {status:?}");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(frames > 0, "overlay mode delivered no video frames");
     }
 
     #[test]

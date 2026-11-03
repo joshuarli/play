@@ -306,6 +306,7 @@ pub struct EngineStatus {
     pub paused: bool,
     pub ended: bool,
     pub presented: u64,
+    pub dropped_late: u64,
     pub video_width: u32,
     pub video_height: u32,
     pub error: Option<String>,
@@ -546,6 +547,7 @@ fn run_worker(
             .map(|info| (info.width.max(0) as u32, info.height.max(0) as u32))
             .unwrap_or((0, 0));
         let mut scheduler = EngineScheduler::new(demux, audio, video, output, video_out);
+        scheduler.enable_video_preroll();
         let library = Library::new()?;
         let playres = if video_width > 0 && video_height > 0 {
             (video_width as i32, video_height as i32)
@@ -681,6 +683,7 @@ impl Worker {
         let ended = matches!(self.scheduler.state(), State::Ended | State::Error);
         let error = self.scheduler.failure().map(str::to_string);
         let presented = self.scheduler.stats().presented;
+        let dropped_late = self.scheduler.stats().dropped_late;
         let (volume, muted) = (self.volume, self.muted);
         let tracks = track_list(&self.scheduler);
         update(state, |status| {
@@ -689,6 +692,7 @@ impl Worker {
             status.ended = ended;
             status.error = error;
             status.presented = presented;
+            status.dropped_late = dropped_late;
             status.volume = volume;
             status.muted = muted;
             status.tracks = tracks;
@@ -830,6 +834,7 @@ mod tests {
     fn poll_until(engine: &SchedulerEngine, timeout: StdDuration, ready: impl Fn(&EngineStatus) -> bool) -> EngineStatus {
         let deadline = Instant::now() + timeout;
         loop {
+            let _ = engine.drain_frames();
             let status = engine.snapshot();
             if ready(&status) {
                 return status;
@@ -901,12 +906,26 @@ mod tests {
         let paused = poll_until(&engine, StdDuration::from_secs(10), |status| status.paused);
         assert!(paused.paused);
         engine.seek(1.0);
-        let status = poll_until(&engine, StdDuration::from_secs(10), |status| {
-            (status.position - 1.0).abs() < 0.05
-        });
+        let deadline = Instant::now() + StdDuration::from_secs(10);
+        let mut frames = Vec::new();
+        let status = loop {
+            frames.extend(engine.drain_frames());
+            let status = engine.snapshot();
+            if (status.position - 1.0).abs() < 0.05 && !frames.is_empty() {
+                break status;
+            }
+            assert!(Instant::now() < deadline, "timed out waiting: {status:?}");
+            thread::sleep(StdDuration::from_millis(5));
+        };
         assert!(status.error.is_none(), "unexpected error: {:?}", status.error);
         assert!(!status.ended, "engine ended early: {status:?}");
         assert!((status.position - 1.0).abs() < 0.05);
+        let frame = frames.last().expect("paused seek presented a frame");
+        assert!(
+            (frame.pts - 1.0).abs() < 0.15,
+            "paused seek presented frame {}",
+            frame.pts
+        );
     }
 
     fn pause_and_seek(engine: &SchedulerEngine, seconds: f64) {
@@ -1035,6 +1054,35 @@ mod tests {
         target_os = "linux",
         ignore = "static-pie test binaries cannot call the container Vulkan loader; run with RUSTFLAGS=\"-C target-feature=-crt-static\""
     )]
+    fn embedded_subs_prime_on_a_paused_seek_before_playback() {
+        let engine = SchedulerEngine::load(&fixture("h264-embedded-srt.mkv"), SinkKind::Null)
+            .expect("engine loads video with subs");
+        engine.set_paused(true);
+        poll_until(&engine, StdDuration::from_secs(10), |status| status.paused);
+        engine.select_sub(Some(0));
+        poll_until(&engine, StdDuration::from_secs(10), |status| {
+            status
+                .tracks
+                .iter()
+                .any(|track| track.kind == TrackKind::Subtitle && track.selected)
+        });
+        engine.seek(1.0);
+        let status = poll_until(&engine, StdDuration::from_secs(10), |status| {
+            (status.position - 1.0).abs() < 0.05
+        });
+        assert!(status.error.is_none(), "unexpected error: {:?}", status.error);
+        let images = engine
+            .render_subtitles(320, 240, 1.0, 1000)
+            .expect("subs render");
+        assert!(!images.is_empty(), "no bitmaps after a paused seek");
+        assert!(inked(&images) > 50, "no ink after a paused seek");
+    }
+
+    #[test]
+    #[cfg_attr(
+        target_os = "linux",
+        ignore = "static-pie test binaries cannot call the container Vulkan loader; run with RUSTFLAGS=\"-C target-feature=-crt-static\""
+    )]
     fn embedded_subs_render_at_cue_time() {
         let engine = SchedulerEngine::load(&fixture("h264-embedded-srt.mkv"), SinkKind::Null)
             .expect("engine loads video with subs");
@@ -1141,7 +1189,14 @@ mod tests {
             "status carries the selected video dims"
         );
         assert!(status.presented > 0, "no frames presented");
-        assert!(!frames.is_empty(), "no frames delivered");
+        assert!(
+            frames.len() > 24,
+            "only {} frames delivered; presented {} dropped {} at pos {}",
+            frames.len(),
+            status.presented,
+            status.dropped_late,
+            status.position
+        );
         for frame in &frames {
             assert_eq!((frame.width, frame.height), (320, 240));
             assert_eq!(frame.rgba.len(), 320 * 240 * 4);

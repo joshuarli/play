@@ -1347,6 +1347,11 @@ def gate_osd_fidelity(results, args):
     run_osd_fidelity(results)
 
 
+def gate_gui(results, args):
+    from gui import run as run_gui
+    run_gui(results)
+
+
 def gate_input(results, args):
     entry = fixture_entry("h264")
     with Mpv(["--vo=null", "--ao=null"]) as mpv:
@@ -1994,7 +1999,13 @@ def gate_linux_rust_link(results, args):
         ["cargo", "test", "--manifest-path", str(ROOT / "rust" / "Cargo.toml"),
          "--target", "x86_64-unknown-linux-musl"],
         cwd=str(ROOT), capture_output=True, text=True, timeout=600,
-        env={**os.environ, "CARGO_TARGET_DIR": str(ROOT / ".work/deps/player-linux/target")},
+        env={
+            **os.environ,
+            "CARGO_TARGET_DIR": str(ROOT / ".work/deps/player-linux/target"),
+            # A static-pie test binary with Wayland in NEEDED dies in the
+            # loader before any test runs; the release staticlib is unaffected.
+            "RUSTFLAGS": "-C target-feature=-crt-static",
+        },
     )
     results.check("linux-rust-link: cargo test", proc.returncode == 0,
                   tail((proc.stdout + proc.stderr).splitlines(), 20))
@@ -2122,6 +2133,7 @@ GATES = {
     "osc": gate_osc,
     "osc-input": gate_osc_input,
     "osd-fidelity": gate_osd_fidelity,
+    "gui": gate_gui,
     "input": gate_input,
     "playlist": gate_playlist,
     "state": gate_state,

@@ -512,4 +512,10 @@ unsafe extern "C" {
         value: i64,
         search_flags: c_int,
     ) -> c_int;
+    pub fn av_opt_set(
+        obj: *mut c_void,
+        name: *const c_char,
+        value: *const c_char,
+        search_flags: c_int,
+    ) -> c_int;
 }

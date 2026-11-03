@@ -527,6 +527,65 @@ mod tests {
 
     #[test]
     #[cfg_attr(target_os = "linux", ignore = "static-pie test binaries cannot call the container Vulkan loader; run with RUSTFLAGS=\"-C target-feature=-crt-static\"")]
+    fn overlay_alpha_blends_with_the_base() {
+        let (vk, renderer) = setup();
+        let base = vec![64u8; 64 * 64 * 4];
+        let planes = [Plane {
+            data: &base,
+            stride: 64 * 4,
+            width: 64,
+            height: 64,
+        }];
+        let plain = render_frame(
+            &vk,
+            &renderer,
+            PixelLayout::Rgba8,
+            ColorSpec::bt709_full(),
+            &planes,
+            64,
+            64,
+            None,
+        )
+        .expect("base renders");
+        let mut white = vec![255u8; 16 * 16 * 4];
+        for pixel in white.chunks_exact_mut(4) {
+            pixel[3] = 128;
+        }
+        let overlay = Overlay {
+            data: &white,
+            stride: 16 * 4,
+            width: 16,
+            height: 16,
+            dst: OverlayRect {
+                x0: 24.0,
+                y0: 24.0,
+                x1: 40.0,
+                y1: 40.0,
+            },
+        };
+        let covered = render_frame(
+            &vk,
+            &renderer,
+            PixelLayout::Rgba8,
+            ColorSpec::bt709_full(),
+            &planes,
+            64,
+            64,
+            Some(&overlay),
+        )
+        .expect("overlay renders");
+        let at = |bytes: &[u8], x: usize, y: usize| bytes[(y * 64 + x) * 4];
+        let before = at(&plain, 32, 32);
+        let after = at(&covered, 32, 32);
+        assert!(
+            (100..=200).contains(&after),
+            "half alpha did not blend: {before} -> {after}"
+        );
+        assert_eq!(at(&plain, 4, 4), at(&covered, 4, 4));
+    }
+
+    #[test]
+    #[cfg_attr(target_os = "linux", ignore = "static-pie test binaries cannot call the container Vulkan loader; run with RUSTFLAGS=\"-C target-feature=-crt-static\"")]
     fn rgba8_passthrough_matches_input() {
         let (vk, renderer) = setup();
         let mut input = vec![0u8; 8 * 8 * 4];

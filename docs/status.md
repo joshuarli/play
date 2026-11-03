@@ -4,10 +4,10 @@ Player is a local-only media player. The macOS release artifact is `dist/Player.
 
 ## Current state
 
-- The Rust port is at S7d: the engine owns scheduling, demux, decode, audio, video rendering, Lua, subtitles, OSD, OSC composition, and the TUI (including video files' audio). S7e (GUI) and S8 (legacy removal) remain.
-- `osd-fidelity` passes 10/10 on macOS and in the Linux container; `linux-gpu-next` passes 38/38 including the OSD pixel diff.
+- The Rust port is at S7e: the engine owns scheduling, demux, decode, audio, video rendering, Lua, subtitles, OSD, OSC composition, the TUI (including video files' audio), and the standalone Rust GUI host. S8 (legacy removal, Cargo-authoritative release) remains.
+- `osd-fidelity` passes 10/10 on macOS and in the Linux container; `gui` passes 3/3 on both; `linux-gpu-next` passes 41/41 including the OSD pixel diff and the GUI gate.
 - The app was rebuilt at `96331a9` and fully re-verified on the macOS host after the terminal UI work.
-- `tests/run.sh suite`: 315 passed, 0 failed. The run includes the release gate.
+- `tests/run.sh suite`: 341 passed, 0 failed. The run includes the release gate and the GUI gate.
 - `scripts/audit.sh`: ok.
 - `scripts/measure.sh final`: ok at `96331a9`; the host was quiet before and after the run.
 - App: 28,437,647 B on disk; executable 9,707,520 B; framework closure 17,334,096 B in 13 files; bundled icon 1,387,652 B.
@@ -32,7 +32,7 @@ Player is a local-only media player. The macOS release artifact is `dist/Player.
 
 ## Linux
 
-- `scripts/linux-container.sh tests/run.sh suite`: passes on Alpine x86_64 with 307 checks, including `linux-gpu-next` under headless Weston with lavapipe, `linux-audio` on the ALSA null PCM, `linux-local-only` under `unshare -rn`, `linux-audit`, and `tui`.
+- `scripts/linux-container.sh tests/run.sh suite`: passes on Alpine x86_64 with 333 checks, including `linux-gpu-next` (41 checks, OSD pixel diff, GUI), `linux-audio` on the ALSA null PCM, `linux-local-only` under `unshare -rn`, `linux-audit`, and `tui`.
 - `scripts/audit-linux.sh`: ok. `dist/player` needs exactly nine libraries: musl, Vulkan, Wayland client and cursor, xkbcommon, ALSA, and libva, libva-drm, and libva-wayland.
 - `--hwdec` defaults to `auto` on Linux and `no` on macOS. `suite` passes with and without a GPU render node in the container.
 - `tests/run.sh linux-vaapi` (needs a GPU render node, not part of `suite`): passes on an AMD Raphael iGPU for h264, hevc, vp9, and av1 with `vaapi-copy`.

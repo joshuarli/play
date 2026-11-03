@@ -8,8 +8,57 @@ Preflight doc: `campaign-rust.md`. This file is the durable resume point.
 S5 complete. S6 complete. S7a complete (clipboard removal, suite 337).
 S7b complete (Rust engine Lua adapter, property and event pump,
 command surface, headless osc.lua). S7c complete (libass wrapper,
-subtitle pipeline, OSD composition, pixel-diff gate). Next: S7d (TUI on
-the Rust engine), then S7e (GUI), then S8.
+subtitle pipeline, OSD composition, pixel-diff gate). S7d complete
+(TUI on the Rust engine). S7e complete (Rust GUI host, OSC overlay,
+paused-seek subtitle priming). Next: S8 (retire the legacy engine,
+Cargo becomes authoritative).
+
+## S7e record
+
+`player-gui` is a Rust GUI host built on the same `SchedulerEngine`,
+`EngineBackend`, and vendored `osc.lua` as the TUI and the OSD gate.
+It opens `MacWindow` (AppKit + CAMetalLayer) or the Wayland `Window`,
+presents decoded RGBA frames through libplacebo, and renders OSD,
+subtitles, and OSC into a transparent window-sized overlay instead of
+blending them into the video buffer. The overlay keeps OSD text at
+window pixel size while libplacebo scales the video independently.
+`EngineBackend::set_overlay_mode` disables per-frame compositing for
+this path; `render_overlay` blends libass coverage into straight-alpha
+RGBA. The sRGB overlay path was covered by a new libplacebo test that
+blends a half-alpha rectangle against a solid base.
+
+Input is native per platform: AppKit key and tracking-area events queue
+through `player-display`'s bridge, Wayland keyboard and pointer events
+arrive through the existing display pump. Both feed one action table
+(space, q/escape, f, arrows, up/down, m, o, j). The macOS menu closes
+the window cleanly, and the OSC is shown on pointer motion and hidden
+on pointer leave. `player-gui --gate` plays the h264 fixture, keeps the
+OSC visible, requires the frame to reach the end plus 24 presented
+frames and real OSC ink, then exits. It is part of `linux-gpu-next`
+(41 checks) and runs standalone on macOS; both pass.
+
+Video startup needed two scheduler fixes. Frame-threaded software
+decode held the first frame for one frame per decode thread, so the
+audio clock advanced past it and every frame was dropped as late. The
+engine now selects slice threading, which decodes in parallel without
+that delay, and prerolls video: audio chunks buffer until the first
+decoded frame, then playback presents that frame and rebases the clock
+before releasing the buffered audio. The drain path switches a
+finished audio clock to system time so the video tail plays instead of
+waiting forever. `plays_video_through_renderer` now requires more than
+24 delivered frames, which fails on the old behavior.
+
+The paused-seek gap is closed. A seek while paused primes the selected
+embedded subtitle stream by scanning from 30 seconds before the target,
+feeds cues up to the target, then re-seeks for audio/video preroll. A
+paused seek also presents the frame at the target instead of leaving
+the previous frame on screen. New tests cover both.
+
+Known gaps recorded for S8: the standalone host opens one file and has
+no playlist replacement yet; Finder open, drag-and-drop, remote command
+center, and touchbar are not wired into the Rust host; the artifact is
+still the C engine until S8. The GUI controls cover the supported
+keyboard set but not OSC mouse clicking (the OSC is display-only).
 
 ## S7d record
 
@@ -64,11 +113,10 @@ the libass link closure for its example target on Linux, and the ffi
 test links with dead-strip so unrelated engine objects do not demand
 the whole native closure.
 
-Known gap: a seek while paused flushes and retains external subtitles,
-but embedded subtitle packets between the keyframe and the target may
-not be read, so an embedded cue can stay blank until playback resumes.
-External subtitles compose correctly. This belongs to the S7e GUI
-subtitle pass.
+The paused-seek subtitle gap that S7c recorded is fixed in S7e: the
+scheduler primes the selected embedded subtitle stream from before the
+target before re-seeking for audio/video preroll. External subtitles
+already composed correctly.
 
 ## S6c record
 
@@ -470,6 +518,9 @@ Scoped deviations from `campaign-rust.md`:
 - Script host: `rust/player-lua` (mlua, Lua 5.2, vendored).
 - Terminal UI: `rust/player-tui` (renderer) with `player-ffi` routing
   audio-only files to the Rust engine and video to the C engine.
+- GUI host: `rust/player-gui` on `player-display`, `player-engine`,
+  `player-ffi`, `player-lua`, and `player-output`; native window and
+  input, OSC overlay presentation, macOS menu close.
 
 ## Remaining mpv C dependencies
 
@@ -518,8 +569,9 @@ Fixture corpus: reproducible from `tests/fixtures/gen.sh` plus
   hardware paths, audible output, HDR/color, manual-checklist owner runs:
   all on the Needs environment list, none blocking.
 - Non-UTF-8 path arguments rejected before the classifier (open, unchanged).
-- Embedded subtitle cues are not primed by a paused seek; external
-  subtitles compose. Fix with the S7e GUI subtitle pass.
+- The S7e GUI host opens one file; Finder open, drag-and-drop, playlist
+  replacement, remote command center, and touchbar stay for S8 artifact
+  integration.
 - Clipboard removal landed in S7a.
 
 ## perf-gate-ready

@@ -100,6 +100,10 @@ pub struct Stats {
 const PUMP_PACKETS_PER_STEP: usize = 8;
 const SEEK_PUMP_LIMIT: usize = 1024;
 const SEEK_PREROLL_CHUNKS: u64 = 8;
+const SUBTITLE_PRIME_WINDOW: f64 = 30.0;
+const SUBTITLE_PRIME_PACKETS: usize = 8192;
+const AUDIO_HIGH_WATER: f64 = 0.05;
+const PREROLL_AUDIO_LIMIT: f64 = 3.0;
 
 pub struct Scheduler<D, A, V, AO, VO> {
     machine: Machine,
@@ -112,6 +116,8 @@ pub struct Scheduler<D, A, V, AO, VO> {
     commands: Vec<Command>,
     pending_frames: std::collections::VecDeque<DecodedFrame>,
     preroll: std::collections::VecDeque<AudioChunk>,
+    startup_audio: std::collections::VecDeque<AudioChunk>,
+    prerolling_video: bool,
     audio_cursor: f64,
     video_cursor: f64,
     eof_seen: bool,
@@ -147,6 +153,8 @@ where
             commands: Vec::new(),
             pending_frames: std::collections::VecDeque::new(),
             preroll: std::collections::VecDeque::new(),
+            startup_audio: std::collections::VecDeque::new(),
+            prerolling_video: false,
             audio_cursor: 0.0,
             video_cursor: 0.0,
             eof_seen: false,
@@ -160,6 +168,10 @@ where
 
     pub fn send(&mut self, command: Command) {
         self.commands.push(command);
+    }
+
+    pub fn enable_video_preroll(&mut self) {
+        self.prerolling_video = self.demux.has_video();
     }
 
     pub fn state(&self) -> State {
@@ -351,7 +363,6 @@ where
             State::Seeking { resume } => resume,
             _ => SeekResume::Playing,
         };
-        self.demux.seek(target);
         self.audio.flush();
         self.video.flush();
         if let Some(index) = self.selected_sub {
@@ -362,9 +373,18 @@ where
                 }
             }
         }
+        if let Some(stream) = self.selected_sub_stream() {
+            if let Err(message) = self.prime_subtitles(stream, target) {
+                self.fail(message);
+                return;
+            }
+        }
+        self.demux.seek(target);
         self.audio_out.flush();
         self.pending_frames.clear();
         self.preroll.clear();
+        self.startup_audio.clear();
+        self.prerolling_video = false;
         self.audio_cursor = target;
         self.video_cursor = target;
         self.eof_seen = false;
@@ -406,9 +426,76 @@ where
         self.clock
             .seek_rebase(target, now + preroll_start.elapsed().as_secs_f64());
         let _ = self.machine.apply(Event::SeekDone);
+        if matches!(self.machine.state(), State::Paused { .. })
+            && let Err(message) = self.present_paused(now)
+        {
+            self.fail(message);
+            return;
+        }
         if self.eof_seen && resume == SeekResume::Playing {
             let _ = self.machine.apply(Event::Eof);
         }
+    }
+
+    fn present_paused(&mut self, now: f64) -> Result<(), String> {
+        let position = self.clock.position(now);
+        let chosen = self
+            .pending_frames
+            .iter()
+            .position(|frame| frame.pts > position + 0.001)
+            .map(|index| index.saturating_sub(1))
+            .unwrap_or_else(|| self.pending_frames.len().saturating_sub(1));
+        if self.pending_frames.is_empty() {
+            return Ok(());
+        }
+        self.pending_frames.drain(..chosen);
+        let frame = self.pending_frames.pop_front().expect("chosen frame");
+        self.video_out.present(frame.pts, frame.id)?;
+        self.stats.presented += 1;
+        Ok(())
+    }
+
+    fn startup_audio_seconds(&self) -> f64 {
+        self.startup_audio
+            .iter()
+            .map(chunk_duration)
+            .sum()
+    }
+
+    fn begin_playback(&mut self, now: f64) -> Result<(), String> {
+        self.prerolling_video = false;
+        for chunk in std::mem::take(&mut self.startup_audio) {
+            self.audio_out.push(chunk)?;
+        }
+        if let Some(frame) = self.pending_frames.pop_front() {
+            self.video_out.present(frame.pts, frame.id)?;
+            self.stats.presented += 1;
+            self.clock.seek_rebase(frame.pts, now);
+        }
+        Ok(())
+    }
+
+    fn prime_subtitles(&mut self, stream: usize, target: f64) -> Result<(), String> {
+        let start = (target - SUBTITLE_PRIME_WINDOW).max(0.0);
+        self.demux.seek(start);
+        self.sub_cursor = start;
+        let mut seen = 0usize;
+        while seen < SUBTITLE_PRIME_PACKETS {
+            match self.demux.read() {
+                DemuxEvent::Packet(packet) => {
+                    seen += 1;
+                    if packet.kind == StreamKind::Subtitle && packet.stream == stream {
+                        let pts = stamp(packet.pts, &mut self.sub_cursor);
+                        if pts > target {
+                            break;
+                        }
+                        self.feed_sub(packet)?;
+                    }
+                }
+                DemuxEvent::Eof | DemuxEvent::Error(_) => break,
+            }
+        }
+        Ok(())
     }
 
     fn route(
@@ -468,6 +555,11 @@ where
         if self.drain_preroll() {
             return;
         }
+        if !self.prerolling_video && self.audio_out.queued_seconds() >= AUDIO_HIGH_WATER {
+            self.present_due(now);
+            self.observe(now);
+            return;
+        }
         for _ in 0..PUMP_PACKETS_PER_STEP {
             let audio_before = self.stats.audio_chunks;
             let video_before = self.pending_frames.len();
@@ -514,11 +606,23 @@ where
                     return;
                 }
             }
-            if self.stats.audio_chunks != audio_before
-                || self.pending_frames.len() != video_before
+            if self.pending_frames.len() != video_before
+                || (!self.demux.has_video() && self.stats.audio_chunks != audio_before)
             {
                 break;
             }
+        }
+        if self.prerolling_video {
+            if !self.pending_frames.is_empty()
+                || self.startup_audio_seconds() >= PREROLL_AUDIO_LIMIT
+            {
+                if let Err(message) = self.begin_playback(now) {
+                    self.fail(message);
+                    return;
+                }
+            }
+            self.observe(now);
+            return;
         }
         self.present_due(now);
         self.observe(now);
@@ -538,7 +642,9 @@ where
                     Ok(chunks) => {
                         for chunk in chunks {
                             self.audio_cursor = chunk.pts + chunk_duration(&chunk);
-                            if let Err(message) = self.audio_out.push(chunk) {
+                            if self.prerolling_video {
+                                self.startup_audio.push_back(chunk);
+                            } else if let Err(message) = self.audio_out.push(chunk) {
                                 self.fail(message);
                                 return true;
                             }
@@ -633,6 +739,12 @@ where
                 self.fail(message);
                 return;
             }
+        }
+        if self.clock.is_audio_driven()
+            && self.audio_out.drained()
+            && !self.pending_frames.is_empty()
+        {
+            self.clock.use_system_time(now);
         }
         self.present_due(now);
         self.observe(now);

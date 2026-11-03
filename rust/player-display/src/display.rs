@@ -26,6 +26,7 @@ pub enum InputEvent {
     PointerButton { button: u32, pressed: bool },
     PointerAxis { vertical: bool, value: f64 },
     PointerMotion { x: f64, y: f64 },
+    PointerLeave,
 }
 
 struct App {
@@ -188,6 +189,9 @@ impl Dispatch<wl_pointer::WlPointer, ()> for App {
                     x: surface_x,
                     y: surface_y,
                 });
+            }
+            wl_pointer::Event::Leave { .. } => {
+                state.pending.push_back(InputEvent::PointerLeave);
             }
             _ => {}
         }

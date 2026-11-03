@@ -72,6 +72,17 @@ impl MasterClock {
         }
     }
 
+    pub fn use_system_time(&mut self, now: f64) {
+        let position = self.position(now);
+        self.mode = ClockMode::SystemDriven;
+        self.anchor_content = position;
+        self.anchor_ref = now;
+    }
+
+    pub fn is_audio_driven(&self) -> bool {
+        self.mode == ClockMode::AudioDriven
+    }
+
     pub fn position(&self, now: f64) -> f64 {
         if let Some(frozen) = self.paused_position {
             return frozen;
@@ -175,6 +186,15 @@ mod tests {
         sys.set_paused(true, 201.0);
         sys.seek_rebase(9.0, 202.0);
         assert!(close(sys.position(300.0), 9.0));
+    }
+
+    #[test]
+    fn system_time_tail_keeps_the_position_moving() {
+        let mut clock = MasterClock::new(ClockMode::AudioDriven);
+        clock.observe_device(3.0, 0.0, 100.0);
+        clock.use_system_time(100.0);
+        assert!(close(clock.position(100.5), 3.5));
+        assert!(!clock.is_audio_driven());
     }
 
     #[test]

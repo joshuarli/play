@@ -343,6 +343,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "player-gui"
+version = "0.1.0"
+dependencies = [
+ "player-audio",
+ "player-build",
+ "player-display",
+ "player-engine",
+ "player-ffi",
+ "player-lua",
+ "player-output",
+]
+
+[[package]]
 name = "player-lua"
 version = "0.1.0"
 dependencies = [

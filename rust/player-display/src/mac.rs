@@ -15,6 +15,16 @@ unsafe extern "C" {
     fn player_mac_window_size(handle: *mut c_void, width: *mut c_int, height: *mut c_int);
     fn player_mac_window_fullscreen(handle: *mut c_void) -> c_int;
     fn player_mac_window_set_fullscreen(handle: *mut c_void, fullscreen: c_int);
+    fn player_mac_window_next_input(
+        handle: *mut c_void,
+        kind: *mut c_int,
+        key_code: *mut c_int,
+        flags: *mut c_int,
+        pressed: *mut c_int,
+        repeat: *mut c_int,
+        x: *mut f64,
+        y: *mut f64,
+    ) -> c_int;
     fn player_mac_window_close(handle: *mut c_void);
 }
 
@@ -63,6 +73,20 @@ impl Drop for Bridge {
         // SAFETY: the handle came from open and outlives every GPU object.
         unsafe { player_mac_window_close(self.handle) };
     }
+}
+
+pub enum MacInput {
+    Key {
+        key_code: i32,
+        modifiers: u32,
+        pressed: bool,
+        repeat: bool,
+    },
+    PointerMotion {
+        x: f64,
+        y: f64,
+    },
+    PointerLeave,
 }
 
 pub struct MacWindow {
@@ -130,6 +154,47 @@ impl MacWindow {
 
     pub fn set_fullscreen(&self, fullscreen: bool) {
         self.bridge.set_fullscreen(fullscreen);
+    }
+
+    pub fn drain_input(&mut self) -> Vec<MacInput> {
+        let mut events = Vec::new();
+        loop {
+            let mut kind = 0;
+            let mut key_code = 0;
+            let mut flags = 0;
+            let mut pressed = 0;
+            let mut repeat = 0;
+            let mut x = 0.0;
+            let mut y = 0.0;
+            // SAFETY: the handle is live and the out-pointers are valid.
+            let present = unsafe {
+                player_mac_window_next_input(
+                    self.bridge.handle,
+                    &mut kind,
+                    &mut key_code,
+                    &mut flags,
+                    &mut pressed,
+                    &mut repeat,
+                    &mut x,
+                    &mut y,
+                )
+            };
+            if present == 0 {
+                break;
+            }
+            match kind {
+                0 => events.push(MacInput::Key {
+                    key_code,
+                    modifiers: flags as u32,
+                    pressed: pressed != 0,
+                    repeat: repeat != 0,
+                }),
+                1 => events.push(MacInput::PointerMotion { x, y }),
+                2 => events.push(MacInput::PointerLeave),
+                _ => {}
+            }
+        }
+        events
     }
 
     pub fn poll(&mut self) -> Result<bool, String> {

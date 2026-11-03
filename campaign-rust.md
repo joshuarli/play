@@ -4,10 +4,10 @@
 
 Goal: replace the remaining mpv-derived C playback engine with a small Rust-owned engine. No loss of supported local playback. Both release artifacts keep building.
 
-- Last accepted: S7d (TUI runs video and audio files on the Rust engine; `tui` 18/18 on macOS and the Linux container). S7c-3 (`osd-fidelity` 10/10, `linux-gpu-next` 38/38) and earlier S7 slices landed before it.
-- Red: none. Workspace green on macOS; `lua-host`, `osc`, `osc-input`, `lua-api-audit`, `ffi`, `rust-link`, `build`, `osd-fidelity`, and `tui` green; Linux container build, TUI, OSD fidelity, and `linux-gpu-next` green.
-- Next: S7e (GUI app). Then S8.
-- Open: embedded subtitle cues are not primed by a paused seek; external subtitles compose. Fix in the S7e subtitle pass. Ordered chapters stay open for S7 (no fixture, needs linking design).
+- Last accepted: S7e (Rust GUI host on the scheduler engine; `gui` gate on macOS and in the Linux container, `linux-gpu-next` 41/41). S7d (`tui` 18/18) and earlier S7 slices landed before it.
+- Red: none. Workspace green on macOS; `lua-host`, `osc`, `osc-input`, `lua-api-audit`, `ffi`, `rust-link`, `build`, `osd-fidelity`, `tui`, `audio`, `play`, and `gui` green; Linux container build, TUI, OSD fidelity, GUI, and `linux-gpu-next` green.
+- Next: S8 (remove the legacy engine, make Cargo authoritative, switch both artifacts).
+- Open: the standalone GUI host opens one file; Finder open, drag-and-drop, playlist replacement, remote command center, and touchbar belong to S8 artifact integration. Ordered chapters stay open for S7 (no fixture, needs linking design).
 - Resume: read this doc and `docs/RUST-PORT.md`, then run the next open slice. If the tree moved, adapt. Never overwrite newer work.
 
 ## Charter

@@ -8,4 +8,6 @@ pub use display::{InputEvent, Window};
 pub mod mac;
 
 #[cfg(target_os = "macos")]
+pub use mac::MacInput;
+#[cfg(target_os = "macos")]
 pub use mac::MacWindow;
