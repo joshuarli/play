@@ -81,6 +81,7 @@ class MacCommon: Common {
 
         if window?.isInFullscreen == true {
             DispatchQueue.main.sync {
+                self.window?.skipFullscreenAnimation = true
                 self.window?.toggleFullScreen(nil)
             }
             window?.waitForAnimation()

@@ -34,6 +34,7 @@ class Window: NSWindow, NSWindowDelegate {
 
     var isAnimating: Bool = false
     let animationLock: NSCondition = NSCondition()
+    var skipFullscreenAnimation: Bool = false
 
     var unfsContentFramePixel: NSRect { return convertToBacking(unfsContentFrame) }
     @objc var framePixel: NSRect { return convertToBacking(frame) }
@@ -279,6 +280,9 @@ class Window: NSWindow, NSWindowDelegate {
     }
 
     func getFsAnimationDuration(_ def: Double) -> Double {
+        if skipFullscreenAnimation {
+            return 0.0
+        }
         let duration = option.mac.macos_fs_animation_duration
         if duration < 0 {
             return def
