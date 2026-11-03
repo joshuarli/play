@@ -10,6 +10,7 @@ crate-type = ["staticlib", "rlib"]
 [dependencies]
 player-audio = { path = "../player-audio" }
 player-core = { path = "../player-core" }
+player-ass = { path = "../player-ass" }
 player-engine = { path = "../player-engine" }
 player-lua = { path = "../player-lua" }
 player-tui = { path = "../player-tui" }

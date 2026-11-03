@@ -891,7 +891,12 @@ mod tests {
         engine
             .add_sub(&fixture("external.srt"))
             .expect("srt loads");
-        let status = engine.snapshot();
+        let status = poll_until(&engine, StdDuration::from_secs(5), |status| {
+            status
+                .tracks
+                .iter()
+                .any(|track| track.kind == TrackKind::Subtitle)
+        });
         let sub = status
             .tracks
             .iter()
@@ -955,7 +960,12 @@ mod tests {
         engine
             .add_sub(&fixture("external.ass"))
             .expect("ass loads");
-        let status = engine.snapshot();
+        let status = poll_until(&engine, StdDuration::from_secs(5), |status| {
+            status
+                .tracks
+                .iter()
+                .any(|track| track.kind == TrackKind::Subtitle && track.codec == "ass" && track.selected)
+        });
         let selected: Vec<usize> = status
             .tracks
             .iter()

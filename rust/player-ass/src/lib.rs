@@ -45,6 +45,29 @@ impl Library {
             shared: Arc::new(Shared { raw }),
         })
     }
+
+    pub fn add_font(&self, name: &str, data: &[u8]) -> Result<(), String> {
+        if name.is_empty() {
+            return Err("font name is empty".to_owned());
+        }
+        if data.is_empty() {
+            return Err("embedded font is empty".to_owned());
+        }
+        let name = CString::new(name).map_err(|_| "font name contains NUL".to_owned())?;
+        let size = i32::try_from(data.len())
+            .map_err(|_| "embedded font is too large".to_owned())?;
+        // SAFETY: the library is live, the name is a valid C string, and the
+        // data slice is valid for the call; libass copies the font bytes.
+        unsafe {
+            sys::ass_add_font(
+                self.shared.raw,
+                name.as_ptr(),
+                data.as_ptr() as *const c_char,
+                size,
+            )
+        };
+        Ok(())
+    }
 }
 
 impl Drop for Shared {
@@ -88,9 +111,16 @@ impl Renderer {
                 sys::ASS_FONTPROVIDER_AUTODETECT,
                 std::ptr::null(),
                 1,
-            )
-        };
+            );
+            sys::ass_set_shaper(self.raw, sys::ASS_SHAPING_COMPLEX);
+        }
         Ok(())
+    }
+
+    pub fn clear_cache(&mut self) {
+        // SAFETY: the renderer is live; a 1x1 frame forces libass to drop
+        // glyphs cached for the previous PlayRes.
+        unsafe { sys::ass_set_frame_size(self.raw, 1, 1) };
     }
 
     pub fn render(
@@ -170,6 +200,11 @@ impl Track {
         let raw = unsafe { sys::ass_new_track(library.shared.raw) };
         if raw.is_null() {
             return Err("ass_new_track failed".to_owned());
+        }
+        // SAFETY: the track is live and the feature enum comes from the
+        // pinned libass headers; unavailable features return an error.
+        unsafe {
+            sys::ass_track_set_feature(raw, sys::ASS_FEATURE_WRAP_UNICODE, 1);
         }
         Ok(Track {
             raw,

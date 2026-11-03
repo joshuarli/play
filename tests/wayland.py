@@ -67,6 +67,7 @@ def gate_linux_gpu_next(results, args):
         window(results, compositor)
         subtitles(results, compositor)
         vaapi_without_dmabuf(results, compositor)
+        osd_fidelity(results, compositor)
         shutdown(results, compositor)
     finally:
         compositor.close()
@@ -161,6 +162,11 @@ def subtitles(results, compositor):
         for path in sorted(directory.rglob("*"), reverse=True):
             path.unlink() if not path.is_dir() or path.is_symlink() else path.rmdir()
         directory.rmdir()
+
+
+def osd_fidelity(results, compositor):
+    from osd_fidelity import run as run_osd_fidelity
+    run_osd_fidelity(results, env=compositor.env)
 
 
 def vaapi_without_dmabuf(results, compositor):

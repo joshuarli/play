@@ -1,3 +1,5 @@
+use crate::osd::{composite, OsdState};
+use player_ass::RenderedImage;
 use player_engine::{video::PresentedFrame, EngineStatus, SchedulerEngine, TrackKind};
 use player_lua::{
     queue::{EventSender, Posted},
@@ -5,6 +7,9 @@ use player_lua::{
 };
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+const DEFAULT_OSD_DURATION_MS: u64 = 1000;
 
 pub struct EngineBackend {
     engine: SchedulerEngine,
@@ -20,6 +25,7 @@ pub struct EngineBackend {
     sections: HashMap<String, InputSection>,
     overlays: HashMap<i64, OsdOverlay>,
     osd_message: Option<(String, String)>,
+    osd_message_until: Option<Instant>,
     loopback: Vec<Vec<String>>,
     to_script: Vec<(String, Vec<String>)>,
     ran: Vec<Vec<String>>,
@@ -28,6 +34,8 @@ pub struct EngineBackend {
     shutdown_sent: bool,
     quit: bool,
     pending_frames: Vec<PresentedFrame>,
+    osd: Option<OsdState>,
+    osd_error: Option<String>,
 }
 
 pub struct InputSection {
@@ -36,10 +44,13 @@ pub struct InputSection {
 }
 
 pub struct OsdOverlay {
+    pub id: i64,
     pub format: String,
     pub data: String,
     pub res_x: i64,
     pub res_y: i64,
+    pub z: i64,
+    pub hidden: bool,
 }
 
 impl EngineBackend {
@@ -58,6 +69,7 @@ impl EngineBackend {
             sections: HashMap::new(),
             overlays: HashMap::new(),
             osd_message: None,
+            osd_message_until: None,
             loopback: Vec::new(),
             to_script: Vec::new(),
             ran: Vec::new(),
@@ -66,6 +78,8 @@ impl EngineBackend {
             shutdown_sent: false,
             quit: false,
             pending_frames: Vec::new(),
+            osd: None,
+            osd_error: None,
         }
     }
 
@@ -77,8 +91,139 @@ impl EngineBackend {
         self.mouse_areas.get(section).copied()
     }
 
+    fn output_size(&self, status: &EngineStatus) -> (i64, i64) {
+        let (width, height) = self
+            .display
+            .or(if status.video_width > 0 && status.video_height > 0 {
+                Some((status.video_width, status.video_height))
+            } else {
+                None
+            })
+            .unwrap_or((0, 0));
+        (width as i64, height as i64)
+    }
+
+    fn visible_message(&mut self) -> Option<String> {
+        if let Some(until) = self.osd_message_until {
+            if Instant::now() >= until {
+                self.osd_message = None;
+                self.osd_message_until = None;
+            }
+        }
+        self.osd_message
+            .as_ref()
+            .map(|(text, _)| text.clone())
+    }
+
+    fn render_images(
+        &mut self,
+        status: &EngineStatus,
+        width: i64,
+        height: i64,
+        par: f64,
+        now_ms: i64,
+        message: Option<&str>,
+    ) -> Result<Vec<RenderedImage>, String> {
+        let mut images = Vec::new();
+        let subtitle_selected = status
+            .tracks
+            .iter()
+            .any(|track| track.kind == TrackKind::Subtitle && track.selected);
+        if subtitle_selected {
+            images.extend(self.engine.render_subtitles(
+                width as i32,
+                height as i32,
+                par,
+                now_ms,
+            )?);
+        }
+        let mut visible: Vec<&OsdOverlay> = self
+            .overlays
+            .values()
+            .filter(|overlay| {
+                overlay.format == "ass-events" && !overlay.data.is_empty() && !overlay.hidden
+            })
+            .collect();
+        if visible.is_empty() && message.is_none() {
+            return Ok(images);
+        }
+        visible.sort_by_key(|overlay| (overlay.z, overlay.id));
+        if self.osd.is_none() {
+            self.osd = Some(OsdState::new()?);
+        }
+        let osd = self.osd.as_mut().expect("overlay renderer starts");
+        images.extend(osd.render(&visible, message, width, height, par)?);
+        Ok(images)
+    }
+
+    fn composite_frames(&mut self, status: &EngineStatus, fresh: &mut Vec<PresentedFrame>) {
+        if fresh.is_empty() {
+            return;
+        }
+        let (width, height) = self.output_size(status);
+        if width < 1 || height < 1 {
+            return;
+        }
+        let message = self.visible_message();
+        let rendered = self.render_images(
+            status,
+            width,
+            height,
+            1.0,
+            (status.position * 1000.0).round() as i64,
+            message.as_deref(),
+        );
+        match rendered {
+            Ok(images) => {
+                self.osd_error = None;
+                if images.is_empty() {
+                    return;
+                }
+                for frame in fresh.iter_mut() {
+                    if frame.width as i64 != width || frame.height as i64 != height {
+                        continue;
+                    }
+                    if let Err(message) =
+                        composite(&mut frame.rgba, frame.width, frame.height, &images)
+                    {
+                        self.osd_error = Some(message);
+                        break;
+                    }
+                }
+            }
+            Err(message) => self.osd_error = Some(message),
+        }
+    }
+
+    pub fn compose(
+        &mut self,
+        frame: &mut [u8],
+        width: u32,
+        height: u32,
+        par: f64,
+    ) -> Result<(), String> {
+        let status = self.engine.snapshot();
+        let message = self.visible_message();
+        let images = self.render_images(
+            &status,
+            width as i64,
+            height as i64,
+            par,
+            (status.position * 1000.0).round() as i64,
+            message.as_deref(),
+        )?;
+        composite(frame, width, height, &images)
+    }
+
+    pub fn osd_error(&self) -> Option<&String> {
+        self.osd_error.as_ref()
+    }
+
     pub fn pump(&mut self, sender: &EventSender) -> Result<Posted, HostError> {
-        self.pending_frames.extend(self.engine.drain_frames());
+        let mut fresh = self.engine.drain_frames();
+        let status = self.engine.snapshot();
+        self.composite_frames(&status, &mut fresh);
+        self.pending_frames.extend(fresh);
         while self.pending_frames.len() > 8 {
             self.pending_frames.remove(0);
         }
@@ -516,6 +661,14 @@ impl EngineBackend {
                     .first()
                     .ok_or_else(|| "show-text needs a text argument".to_owned())?;
                 let duration = rest.get(1).cloned().unwrap_or_else(|| "-1".to_owned());
+                let milliseconds = duration.parse::<i64>().unwrap_or(-1);
+                let milliseconds = if milliseconds < 0 {
+                    DEFAULT_OSD_DURATION_MS
+                } else {
+                    milliseconds as u64
+                };
+                self.osd_message_until =
+                    Instant::now().checked_add(Duration::from_millis(milliseconds));
                 self.osd_message = Some((text.clone(), duration));
                 Ok(NativeValue::None)
             }
@@ -623,13 +776,17 @@ impl EngineBackend {
                     Some(NativeValue::Int(number)) => *number,
                     _ => 0,
                 };
+                let hidden = matches!(field("hidden"), Some(NativeValue::Bool(true)));
                 self.overlays.insert(
                     id,
                     OsdOverlay {
+                        id,
                         format,
                         data,
                         res_x: number("res_x"),
                         res_y: number("res_y"),
+                        z: number("z"),
+                        hidden,
                     },
                 );
                 Ok(NativeValue::None)
@@ -1488,6 +1645,99 @@ mod tests {
                 NativeValue::String("no-such-command".to_owned())
             )])))
             .is_err());
+    }
+
+    #[test]
+    #[cfg_attr(
+        target_os = "linux",
+        ignore = "static-pie test binaries cannot call the container Vulkan loader; run with RUSTFLAGS=\"-C target-feature=-crt-static\""
+    )]
+    fn osd_overlay_composites_into_a_frame() {
+        let mut backend = video_backend();
+        backend.set_display_size(320, 240);
+        let overlay = NativeValue::Map(vec![
+            ("name".to_owned(), NativeValue::String("osd-overlay".to_owned())),
+            ("id".to_owned(), NativeValue::Int(1)),
+            ("format".to_owned(), NativeValue::String("ass-events".to_owned())),
+            (
+                "data".to_owned(),
+                NativeValue::String("{\\an7\\pos(40,30)\\fs40\\bord0\\shad0}Hi".to_owned()),
+            ),
+            ("res_x".to_owned(), NativeValue::Int(320)),
+            ("res_y".to_owned(), NativeValue::Int(240)),
+        ]);
+        backend
+            .command(CommandRequest::Native(overlay))
+            .expect("overlay stores");
+        let mut frame = vec![0u8; 320 * 240 * 4];
+        for value in frame.iter_mut().skip(3).step_by(4) {
+            *value = 255;
+        }
+        backend
+            .compose(&mut frame, 320, 240, 1.0)
+            .expect("overlay composes");
+        assert!(frame.iter().any(|value| *value > 0), "overlay drew no ink");
+        assert_eq!(&frame[..3], &[0, 0, 0], "corner stays untouched");
+        assert!(backend.osd_error().is_none(), "osd reported an error");
+    }
+
+    #[test]
+    fn osd_message_uses_the_default_timeout() {
+        let mut backend = backend();
+        backend
+            .command(CommandRequest::String("show-text fixture".to_owned()))
+            .expect("show-text runs");
+        assert!(backend.visible_message().is_some());
+        backend.osd_message_until = Some(Instant::now() - Duration::from_millis(1));
+        assert!(backend.visible_message().is_none());
+        backend
+            .command(CommandRequest::String("show-text fixture 5000".to_owned()))
+            .expect("show-text runs");
+        assert!(backend.visible_message().is_some());
+        assert!(backend.osd_message_until.is_some());
+    }
+
+    #[test]
+    #[cfg_attr(
+        target_os = "linux",
+        ignore = "static-pie test binaries cannot call the container Vulkan loader; run with RUSTFLAGS=\"-C target-feature=-crt-static\""
+    )]
+    fn external_subtitle_composites_into_a_frame() {
+        let mut backend = video_backend();
+        backend.set_display_size(320, 240);
+        poll_while(&mut backend, std::time::Duration::from_secs(5), |status| {
+            status.tracks.len() >= 2
+        });
+        backend
+            .command(CommandRequest::Args(argv(&[
+                "sub-add",
+                &fixture("external.srt"),
+            ])))
+            .expect("subtitle adds");
+        poll_while(&mut backend, std::time::Duration::from_secs(5), |status| {
+            status
+                .tracks
+                .iter()
+                .any(|track| track.kind == TrackKind::Subtitle && track.selected)
+        });
+        backend.engine.set_paused(true);
+        backend.engine.seek(0.6);
+        poll_while(&mut backend, std::time::Duration::from_secs(5), |status| {
+            (status.position - 0.6).abs() < 0.05
+        });
+        let mut frame = vec![0u8; 320 * 240 * 4];
+        for value in frame.iter_mut().skip(3).step_by(4) {
+            *value = 255;
+        }
+        backend
+            .compose(&mut frame, 320, 240, 1.0)
+            .expect("subtitles compose");
+        let inked = frame
+            .chunks_exact(4)
+            .filter(|pixel| pixel[..3].iter().any(|value| *value > 0))
+            .count();
+        assert!(inked > 100, "subtitle drew {inked} pixels");
+        assert!(backend.osd_error().is_none(), "osd reported an error");
     }
 
     #[test]

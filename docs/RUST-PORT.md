@@ -5,12 +5,58 @@ Preflight doc: `campaign-rust.md`. This file is the durable resume point.
 
 ## Current phase
 
-S5 complete. S6c complete (engine decodes and presents video headlessly).
-S6d-1 complete (Linux Wayland window presents swapchain frames; static
-suite contains the weston test behind `present-gate`). S6d-2 complete
-(resize/fullscreen/input protocol). S6d-3 complete (OSD overlay
-upload). S6d-3 complete (OSD overlay upload). S6d-4 complete (macOS
-bridge). S6d-5 complete (VO swap). Next: S7.
+S5 complete. S6 complete. S7a complete (clipboard removal, suite 337).
+S7b complete (Rust engine Lua adapter, property and event pump,
+command surface, headless osc.lua). S7c complete (libass wrapper,
+subtitle pipeline, OSD composition, pixel-diff gate). Next: S7d (TUI on
+the Rust engine), then S7e (GUI), then S8.
+
+## S7c record
+
+S7c-1 added `player-ass`: hand-transcribed libass handles for library,
+renderer, and track with lifetime guards, a pinned-version gate, and
+bitmap render tests. S7c-2 added `EngineSub` and the subtitle track
+surface: embedded ASS/SRT/VTT and external files, cue retention across
+seeks, per-type track ids, and `sid`/`track-list`/`sub-visibility`/
+`sub-add` in the Lua adapter. S7c-3 wires libass into presentation and
+adds the fidelity gate.
+
+The OSD path reproduces mpv's `sub/osd_libass.c` styling rather than
+approximating it: embedded `osd_font.otf`, `sans-serif` through the
+fontconfig provider, complex shaper, Unicode wrap feature, PlayRes
+288x384 for OSD text and overlay res (720 default) for external
+overlays, `mp_ass_set_style` defaults, and libass's internal alignment
+encoding converted back to ASS numpad values. Blending mirrors
+`draw_ass_rgba` with the 255*255 denominator. `EngineBackend::pump`
+composites subtitles, the `show-text` message, and sorted
+`osd-overlay ass-events` data into each fresh `PresentedFrame` before it
+reaches the consumer. `show-text` uses the 1000 ms default and
+wall-clock expiry. `show-text` and OSD overlays render before external
+overlays, matching mpv's object order. The same `compose` entry point
+serves the gate.
+
+The `osd-fidelity` gate captures the C engine's `screenshot-raw` video
+and OSD images at 320x240 on a generated solid fixture, feeds the video
+buffer to the Rust example `osd_frame` (which drives the real vendored
+osc.lua through `ScriptHost` and `SharedEngine`), and diffs pixels. It
+covers the OSC bar and a plain `show-text` message. macOS uses
+`gpu-next` on MoltenVK; Linux uses headless weston with lavapipe.
+Result: 10 checks pass on both hosts; OSD coverage agrees exactly and
+the largest channel difference is 5 (anti-aliasing rounding). The gate
+also runs inside `linux-gpu-next`.
+
+The Lua native-value surface gained byte arrays so a script can call
+`screenshot-raw`; without that, the C oracle could not emit pixels
+(the dev FFmpeg allowlist has no image encoder). `player-ffi` repeats
+the libass link closure for its example target on Linux, and the ffi
+test links with dead-strip so unrelated engine objects do not demand
+the whole native closure.
+
+Known gap: a seek while paused flushes and retains external subtitles,
+but embedded subtitle packets between the keyframe and the target may
+not be read, so an embedded cue can stay blank until playback resumes.
+External subtitles compose correctly. This belongs to the S7e GUI
+subtitle pass.
 
 ## S6c record
 
@@ -406,6 +452,9 @@ Scoped deviations from `campaign-rust.md`:
 - Audio pipeline: `rust/player-audio` (Symphonia sessions, channel
   mixer, streaming resampler, clock, CoreAudio and ALSA sinks,
   threaded engine with a C ABI, metadata probe).
+- Subtitles and OSD: `rust/player-ass` (libass handles and bitmaps),
+  `rust/player-engine/src/sub.rs` (embedded and external cues), and the
+  `player-ffi` OSD composer plus Lua overlay adapter.
 - Script host: `rust/player-lua` (mlua, Lua 5.2, vendored).
 - Terminal UI: `rust/player-tui` (renderer) with `player-ffi` routing
   audio-only files to the Rust engine and video to the C engine.
@@ -457,7 +506,9 @@ Fixture corpus: reproducible from `tests/fixtures/gen.sh` plus
   hardware paths, audible output, HDR/color, manual-checklist owner runs:
   all on the Needs environment list, none blocking.
 - Non-UTF-8 path arguments rejected before the classifier (open, unchanged).
-- Clipboard removal lands in S7 (owner decision 2026-11-03).
+- Embedded subtitle cues are not primed by a paused seek; external
+  subtitles compose. Fix with the S7e GUI subtitle pass.
+- Clipboard removal landed in S7a.
 
 ## perf-gate-ready
 

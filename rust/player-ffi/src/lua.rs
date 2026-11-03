@@ -538,6 +538,8 @@ struct NodeStorage {
     node_arrays: Vec<Vec<MpvNode>>,
     key_arrays: Vec<Vec<CString>>,
     key_pointers: Vec<Vec<*mut c_char>>,
+    byte_data: Vec<Vec<u8>>,
+    byte_arrays: Vec<Box<MpvByteArray>>,
     // Box keeps each list at a stable address while the storage vectors grow.
     #[allow(clippy::vec_box)]
     lists: Vec<Box<MpvNodeList>>,
@@ -567,6 +569,27 @@ fn build_node(value: &NativeValue, storage: &mut NodeStorage) -> Result<MpvNode,
             MpvNode {
                 value: MpvNodeValue { string: pointer },
                 format: MPV_FORMAT_STRING,
+            }
+        }
+        NativeValue::Bytes(value) => {
+            storage.byte_data.push(value.clone());
+            let data = storage
+                .byte_data
+                .last_mut()
+                .expect("byte data was just stored");
+            let array = Box::new(MpvByteArray {
+                data: data.as_mut_ptr() as *mut c_void,
+                size: data.len(),
+            });
+            storage.byte_arrays.push(array);
+            let array = storage
+                .byte_arrays
+                .last_mut()
+                .expect("byte array was just stored")
+                .as_mut() as *mut MpvByteArray;
+            MpvNode {
+                value: MpvNodeValue { ba: array },
+                format: MPV_FORMAT_BYTE_ARRAY,
             }
         }
         NativeValue::Array(values) => {
@@ -711,21 +734,19 @@ unsafe fn node_to_native(node: *const MpvNode, depth: usize) -> Result<NativeVal
             // SAFETY: byte-array nodes carry a byte-array pointer or NULL.
             let array = unsafe { node.value.ba };
             if array.is_null() {
-                return Ok(NativeValue::String(String::new()));
+                return Ok(NativeValue::Bytes(Vec::new()));
             }
             // SAFETY: array points to a valid byte array for this call.
             let array = unsafe { &*array };
             if array.size == 0 {
-                return Ok(NativeValue::String(String::new()));
+                return Ok(NativeValue::Bytes(Vec::new()));
             }
             if array.data.is_null() {
                 return Err("native byte array has a null data pointer".to_owned());
             }
             // SAFETY: data points to size readable bytes.
             let bytes = unsafe { slice::from_raw_parts(array.data as *const u8, array.size) };
-            Ok(NativeValue::String(
-                String::from_utf8_lossy(bytes).into_owned(),
-            ))
+            Ok(NativeValue::Bytes(bytes.to_vec()))
         }
         _ => Ok(NativeValue::Unknown),
     }

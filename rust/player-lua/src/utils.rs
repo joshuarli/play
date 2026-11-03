@@ -121,6 +121,7 @@ fn write_value(value: &NativeValue, output: &mut String, depth: usize) -> Result
             output.push_str(&value.to_string());
         }
         NativeValue::String(value) => write_string(value, output),
+        NativeValue::Bytes(_) => return Err(UtilsError),
         NativeValue::Array(values) => {
             output.push('[');
             for (index, value) in values.iter().enumerate() {

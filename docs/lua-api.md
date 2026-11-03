@@ -142,10 +142,10 @@ checks **Call sites** against the sources, and fails when:
 | `mp.MAP.type` | 1 | `defaults.lua:13` |
 | `mp.UNKNOWN_TYPE.info` | 1 | `defaults.lua:6` |
 | `mp.UNKNOWN_TYPE.type` | 1 | `defaults.lua:7` |
-| `mp._legacy_overlay` | 3 | `defaults.lua:699`, `defaults.lua:700`, `defaults.lua:709` |
-| `mp._legacy_overlay.data` | 2 | `defaults.lua:704`, `defaults.lua:708` |
-| `mp._legacy_overlay.res_x` | 2 | `defaults.lua:702`, `defaults.lua:706` |
-| `mp._legacy_overlay.res_y` | 2 | `defaults.lua:703`, `defaults.lua:707` |
+| `mp._legacy_overlay` | 3 | `defaults.lua:701`, `defaults.lua:702`, `defaults.lua:711` |
+| `mp._legacy_overlay.data` | 2 | `defaults.lua:706`, `defaults.lua:710` |
+| `mp._legacy_overlay.res_x` | 2 | `defaults.lua:704`, `defaults.lua:708` |
+| `mp._legacy_overlay.res_y` | 2 | `defaults.lua:705`, `defaults.lua:709` |
 | `mp.abort_async_command` | 1 | `defaults.lua:654` |
 | `mp.add_forced_key_binding` | 1 | `defaults.lua:258` |
 | `mp.add_hook` | 1 | `defaults.lua:616` |
@@ -154,10 +154,10 @@ checks **Call sites** against the sources, and fails when:
 | `mp.add_timeout` | 4 | `defaults.lua:274`, `defaults.lua:633`, `osc.lua:243`, `osc.lua:270` |
 | `mp.assdraw.ass_new` | 1 | `osc.lua:170` |
 | `mp.cancel_timer` | 1 | `defaults.lua:304` |
-| `mp.command_native` | 3 | `defaults.lua:685`, `defaults.lua:689`, `defaults.lua:807` |
+| `mp.command_native` | 3 | `defaults.lua:687`, `defaults.lua:691`, `defaults.lua:809` |
 | `mp.command_native_async` | 1 | `defaults.lua:627` |
-| `mp.commandv` | 24 | `defaults.lua:32`, `defaults.lua:39`, `defaults.lua:43`, `defaults.lua:580`, `defaults.lua:819`, `input.lua:40`, `input.lua:55`, `input.lua:64`, `input.lua:68`, `input.lua:76`, `input.lua:81`, `osc.lua:322`, `osc.lua:357`, `osc.lua:359`, `osc.lua:361`, `osc.lua:363`, `osc.lua:365`, `osc.lua:385`, `osc.lua:387`, `osc.lua:435`, `osc.lua:438`, `osc.lua:441`, `osc.lua:444`, `osc.lua:453` |
-| `mp.create_osd_overlay` | 3 | `defaults.lua:664`, `defaults.lua:700`, `osc.lua:45` |
+| `mp.commandv` | 24 | `defaults.lua:32`, `defaults.lua:39`, `defaults.lua:43`, `defaults.lua:580`, `defaults.lua:821`, `input.lua:40`, `input.lua:55`, `input.lua:64`, `input.lua:68`, `input.lua:76`, `input.lua:81`, `osc.lua:322`, `osc.lua:357`, `osc.lua:359`, `osc.lua:361`, `osc.lua:363`, `osc.lua:365`, `osc.lua:385`, `osc.lua:387`, `osc.lua:435`, `osc.lua:438`, `osc.lua:441`, `osc.lua:444`, `osc.lua:453` |
+| `mp.create_osd_overlay` | 3 | `defaults.lua:664`, `defaults.lua:702`, `osc.lua:45` |
 | `mp.disable_key_bindings` | 1 | `defaults.lua:129` |
 | `mp.dispatch_events` | 2 | `defaults.lua:515`, `defaults.lua:531` |
 | `mp.enable_key_bindings` | 3 | `defaults.lua:125`, `osc.lua:457`, `osc.lua:458` |
@@ -167,11 +167,11 @@ checks **Call sites** against the sources, and fails when:
 | `mp.get_mouse_pos` | 5 | `defaults.lua:46`, `osc.lua:327`, `osc.lua:349`, `osc.lua:373`, `osc.lua:382` |
 | `mp.get_next_timeout` | 2 | `defaults.lua:332`, `defaults.lua:551` |
 | `mp.get_opt` | 1 | `defaults.lua:19` |
-| `mp.get_osd_margins` | 1 | `defaults.lua:718` |
-| `mp.get_osd_size` | 2 | `defaults.lua:713`, `osc.lua:58` |
-| `mp.get_property` | 3 | `defaults.lua:778`, `osc.lua:72`, `osc.lua:73` |
-| `mp.get_property_native` | 9 | `defaults.lua:20`, `defaults.lua:47`, `defaults.lua:714`, `defaults.lua:719`, `options.lua:129`, `osc.lua:66`, `osc.lua:67`, `osc.lua:68`, `osc.lua:76` |
-| `mp.get_property_number` | 4 | `defaults.lua:782`, `osc.lua:69`, `osc.lua:70`, `osc.lua:71` |
+| `mp.get_osd_margins` | 1 | `defaults.lua:720` |
+| `mp.get_osd_size` | 2 | `defaults.lua:715`, `osc.lua:58` |
+| `mp.get_property` | 3 | `defaults.lua:780`, `osc.lua:72`, `osc.lua:73` |
+| `mp.get_property_native` | 9 | `defaults.lua:20`, `defaults.lua:47`, `defaults.lua:716`, `defaults.lua:721`, `options.lua:129`, `osc.lua:66`, `osc.lua:67`, `osc.lua:68`, `osc.lua:76` |
+| `mp.get_property_number` | 4 | `defaults.lua:784`, `osc.lua:69`, `osc.lua:70`, `osc.lua:71` |
 | `mp.get_script_name` | 3 | `defaults.lua:15`, `options.lua:48`, `input.lua:56` |
 | `mp.get_time` | 4 | `defaults.lua:296`, `defaults.lua:312`, `defaults.lua:337`, `defaults.lua:351` |
 | `mp.input_define_section` | 3 | `defaults.lua:28`, `defaults.lua:122`, `defaults.lua:172` |
@@ -204,21 +204,21 @@ checks **Call sites** against the sources, and fails when:
 | `mp.script_name` | 6 | `defaults.lua:16`, `defaults.lua:73`, `defaults.lua:117`, `defaults.lua:153`, `defaults.lua:156`, `defaults.lua:242` |
 | `mp.set_key_bindings` | 3 | `defaults.lua:89`, `osc.lua:447`, `osc.lua:451` |
 | `mp.set_mouse_area` | 2 | `defaults.lua:133`, `osc.lua:139` |
-| `mp.set_osd_ass` | 1 | `defaults.lua:698` |
+| `mp.set_osd_ass` | 1 | `defaults.lua:700` |
 | `mp.set_property_native` | 4 | `osc.lua:132`, `osc.lua:133`, `osc.lua:303`, `osc.lua:461` |
 | `mp.unobserve_property` | 1 | `defaults.lua:403` |
 | `mp.unregister_event` | 1 | `defaults.lua:438` |
 | `mp.unregister_idle` | 1 | `defaults.lua:476` |
 | `mp.unregister_script_message` | 3 | `defaults.lua:266`, `defaults.lua:380`, `input.lua:47` |
 | `mp.use_suspend` | 2 | `defaults.lua:527`, `defaults.lua:533` |
-| `mp.utils.format_bytes_humanized` | 1 | `defaults.lua:785` |
+| `mp.utils.format_bytes_humanized` | 1 | `defaults.lua:787` |
 | `mp.utils.format_json` | 5 | `input.lua:41`, `input.lua:56`, `input.lua:68`, `input.lua:77`, `input.lua:81` |
-| `mp.utils.format_table` | 2 | `defaults.lua:725`, `defaults.lua:771` |
-| `mp.utils.getcwd` | 1 | `defaults.lua:777` |
-| `mp.utils.getpid` | 1 | `defaults.lua:781` |
+| `mp.utils.format_table` | 2 | `defaults.lua:727`, `defaults.lua:773` |
+| `mp.utils.getcwd` | 1 | `defaults.lua:779` |
+| `mp.utils.getpid` | 1 | `defaults.lua:783` |
 | `mp.utils.parse_json` | 1 | `input.lua:37` |
-| `mp.utils.subprocess` | 1 | `defaults.lua:795` |
-| `mp.utils.subprocess_detached` | 1 | `defaults.lua:818` |
-| `mp.utils.to_string` | 3 | `defaults.lua:753`, `defaults.lua:755`, `defaults.lua:761` |
+| `mp.utils.subprocess` | 1 | `defaults.lua:797` |
+| `mp.utils.subprocess_detached` | 1 | `defaults.lua:820` |
+| `mp.utils.to_string` | 3 | `defaults.lua:755`, `defaults.lua:757`, `defaults.lua:763` |
 | `mp.wait_event` | 2 | `defaults.lua:505`, `defaults.lua:561` |
 <!-- lua-api:calls-end -->

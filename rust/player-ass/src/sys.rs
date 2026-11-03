@@ -4,6 +4,10 @@ pub const LIBASS_VERSION: c_int = 0x0170_5000;
 
 pub const ASS_FONTPROVIDER_AUTODETECT: c_int = 1;
 
+pub const ASS_SHAPING_COMPLEX: c_int = 1;
+
+pub const ASS_FEATURE_WRAP_UNICODE: c_int = 2;
+
 pub type AssLibraryRaw = *mut c_void;
 pub type AssRendererRaw = *mut c_void;
 pub type AssTrackRaw = *mut c_void;
@@ -25,6 +29,12 @@ unsafe extern "C" {
     pub fn ass_library_version() -> c_int;
     pub fn ass_library_init() -> AssLibraryRaw;
     pub fn ass_library_done(priv_: AssLibraryRaw);
+    pub fn ass_add_font(
+        library: AssLibraryRaw,
+        name: *const c_char,
+        data: *const c_char,
+        size: c_int,
+    );
     pub fn ass_renderer_init(library: AssLibraryRaw) -> AssRendererRaw;
     pub fn ass_renderer_done(priv_: AssRendererRaw);
     pub fn ass_set_fonts(
@@ -35,11 +45,13 @@ unsafe extern "C" {
         config: *const c_char,
         update: c_int,
     );
+    pub fn ass_set_shaper(priv_: AssRendererRaw, level: c_int);
     pub fn ass_set_frame_size(priv_: AssRendererRaw, w: c_int, h: c_int);
     pub fn ass_set_storage_size(priv_: AssRendererRaw, w: c_int, h: c_int);
     pub fn ass_set_pixel_aspect(priv_: AssRendererRaw, par: c_double);
     pub fn ass_new_track(library: AssLibraryRaw) -> AssTrackRaw;
     pub fn ass_free_track(track: AssTrackRaw);
+    pub fn ass_track_set_feature(track: AssTrackRaw, feature: c_int, enable: c_int) -> c_int;
     pub fn ass_process_data(track: AssTrackRaw, data: *const c_char, size: c_int);
     pub fn ass_process_codec_private(track: AssTrackRaw, data: *const c_char, size: c_int);
     pub fn ass_process_chunk(

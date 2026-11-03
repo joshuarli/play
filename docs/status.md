@@ -4,6 +4,8 @@ Player is a local-only media player. The macOS release artifact is `dist/Player.
 
 ## Current state
 
+- The Rust port is at S7c: the engine owns scheduling, demux, decode, audio, video rendering, Lua, subtitles, OSD, and OSC composition. S7d (TUI on the engine), S7e (GUI), and S8 (legacy removal) remain.
+- `osd-fidelity` passes 10/10 on macOS and in the Linux container; `linux-gpu-next` passes 38/38 including the OSD pixel diff.
 - The app was rebuilt at `96331a9` and fully re-verified on the macOS host after the terminal UI work.
 - `tests/run.sh suite`: 315 passed, 0 failed. The run includes the release gate.
 - `scripts/audit.sh`: ok.
@@ -22,10 +24,10 @@ Player is a local-only media player. The macOS release artifact is `dist/Player.
 
 - Local files only. No network protocol, TLS, CA bundle, or remote resource load.
 - GUI, HDR and 10-bit color, subtitle shaping, Retina scaling, audio audibility, real mouse and drag, and signing or notarization are owner-run. See `docs/manual-checklist.md`.
-- Clipboard commands are compiled and reachable. Encoding, recording, and the lavfi filter graph are deleted (sources, build rows, and registrations removed).
+- Clipboard support is removed. Encoding, recording, and the lavfi filter graph are deleted (sources, build rows, and registrations removed).
 - The `subprocess` command and the `.run` script backend are reachable from explicit scripts and IPC. No built-in module uses them.
 - The terminal UI has no sixel output and does not load external cover files; it renders the embedded picture only. Quit, Ctrl-C, and SIGTERM/SIGHUP restore the terminal.
-- Follow-on: A/V scheduler, general demux and decode orchestration, and renderer integration.
+- Follow-on: Rust-owned TUI and GUI paths, then removal of the legacy engine.
 - Linux: glibc is explicitly out of scope. aarch64, X11, and a real-GPU, zero-copy VA-API, real-compositor, and real-ALSA check are outside the automated gates. The headless gate uses lavapipe with `--gpu-sw` and `mailbox` swap because headless Weston never releases FIFO buffers.
 
 ## Linux

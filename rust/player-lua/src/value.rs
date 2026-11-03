@@ -16,6 +16,7 @@ pub enum NativeValue {
     Int(i64),
     Double(f64),
     String(String),
+    Bytes(Vec<u8>),
     Array(Vec<NativeValue>),
     Map(Vec<(String, NativeValue)>),
     Unknown,
@@ -46,7 +47,10 @@ impl NativeValue {
                     Ok(NativeValue::Double(value))
                 }
             }
-            Value::String(value) => Ok(NativeValue::String(value.to_str()?.to_owned())),
+            Value::String(value) => match value.to_str() {
+                Ok(text) => Ok(NativeValue::String(text.to_owned())),
+                Err(_) => Ok(NativeValue::Bytes(value.as_bytes().to_vec())),
+            },
             Value::Table(table) => {
                 if depth >= MAX_VALUE_DEPTH {
                     return Err(Error::RuntimeError(format!(
@@ -69,6 +73,7 @@ impl NativeValue {
             NativeValue::Int(value) => Ok(Value::Number(*value as f64)),
             NativeValue::Double(value) => Ok(Value::Number(*value)),
             NativeValue::String(value) => Ok(Value::String(lua.create_string(value)?)),
+            NativeValue::Bytes(value) => Ok(Value::String(lua.create_string(value)?)),
             NativeValue::Array(values) => {
                 let table = lua.create_table_with_capacity(values.len(), 0)?;
                 table.set_metatable(Some(sentinels.array.clone()))?;
@@ -182,6 +187,18 @@ mod tests {
                 value
             );
         }
+    }
+
+    #[test]
+    fn byte_strings_round_trip() {
+        let lua = Lua::new();
+        let sentinels = sentinels(&lua);
+        let value = NativeValue::Bytes(vec![0, 159, 146, 150, 255]);
+        let lua_value = value.to_lua(&lua, &sentinels).unwrap();
+        assert_eq!(
+            NativeValue::from_lua(&lua, lua_value, &sentinels).unwrap(),
+            value
+        );
     }
 
     #[test]

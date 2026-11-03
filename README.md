@@ -28,7 +28,7 @@ The player does not read `mpv.conf`, `input.conf`, or scripts from user director
 
 ## Controls
 
-The on-screen controls provide play and pause, seek, volume and mute, fullscreen, and track selection. The macOS menu provides the same playback controls, file opening, screenshots, and window sizing. Clipboard paste of a local path is available from the default key bindings.
+The on-screen controls provide play and pause, seek, volume and mute, fullscreen, and track selection. The macOS menu provides the same playback controls, file opening, screenshots, and window sizing.
 
 ## Terminal UI
 

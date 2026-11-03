@@ -1295,6 +1295,11 @@ def gate_osc_input(results, args):
     run_osc_input(results, Mpv, fixture_entry, fixture_path)
 
 
+def gate_osd_fidelity(results, args):
+    from osd_fidelity import run as run_osd_fidelity
+    run_osd_fidelity(results)
+
+
 def gate_input(results, args):
     entry = fixture_entry("h264")
     with Mpv(["--vo=null", "--ao=null"]) as mpv:
@@ -1605,7 +1610,7 @@ def gate_ffi(results, args):
         ["cc", "-std=c11", "-Wall", "-Wextra",
          "-I", str(ROOT / "rust" / "player-ffi" / "include"),
          str(ROOT / "tests" / "ffi_test.c"), str(ffi_lib),
-         "-Wl,-undefined,dynamic_lookup", "-o", str(binary)],
+         "-Wl,-undefined,dynamic_lookup", "-Wl,-dead_strip", "-o", str(binary)],
         cwd=str(ROOT), capture_output=True, text=True, timeout=120,
     )
     results.check("ffi: compile", proc.returncode == 0,
@@ -2069,6 +2074,7 @@ GATES = {
     "local-only": gate_local_only,
     "osc": gate_osc,
     "osc-input": gate_osc_input,
+    "osd-fidelity": gate_osd_fidelity,
     "input": gate_input,
     "playlist": gate_playlist,
     "state": gate_state,

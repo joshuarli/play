@@ -5,11 +5,12 @@ use player_core::input::{classify_input, InputError, InputPath};
 
 mod audio;
 mod command;
-mod engine;
+pub mod engine;
 mod event;
 mod local_file;
 mod lua;
 mod mpv;
+mod osd;
 mod tui;
 mod playlist;
 mod state;

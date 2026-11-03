@@ -4,10 +4,10 @@
 
 Goal: replace the remaining mpv-derived C playback engine with a small Rust-owned engine. No loss of supported local playback. Both release artifacts keep building.
 
-- Last accepted: S7a (clipboard removal; delete protocol, suite 337 + linux-gpu-next 28 green). Preflight complete 2026-11-03.
-- Red: none. Workspace green on macOS and Linux container static suites; output, display, and swap gates green on the dynamic rerun; build, rust-link, ffi green.
-- Next: S7c-3 (OSD path + pixel-diff fidelity gate). S7b-1 (property core + pump), S7b-2 (command surface + lifecycle + osd-overlay record), S7b-3 (headless osc.lua against the engine), S7c-1 (libass wrapper crate), and S7c-2 (subtitle pipeline: engine tracks/selection/seek plus adapter sid/track-list/sub-visibility/sub-add surface) landed with mac + Linux static green and dynamic video reruns green. Then S7d-e, S8.
-- Ordered chapters stay open for S7 (no fixture, needs linking design).
+- Last accepted: S7c-3 (OSD composition against mpv's libass styling; `osd-fidelity` 10/10 on macOS and the Linux container, `linux-gpu-next` 38/38). S7a, S7b-1..3, S7c-1..2 landed earlier with mac + Linux static green and dynamic video reruns green.
+- Red: none. Workspace green on macOS (`cargo test`), `lua-host`, `osc`, `osc-input`, `lua-api-audit`, `ffi`, `rust-link`, and `build` green; Linux container static build and OSD fidelity green.
+- Next: S7d (TUI on the Rust engine). Then S7e (GUI app), S8.
+- Open: embedded subtitle cues are not primed by a paused seek; external subtitles compose. Fix in the S7e subtitle pass. Ordered chapters stay open for S7 (no fixture, needs linking design).
 - Resume: read this doc and `docs/RUST-PORT.md`, then run the next open slice. If the tree moved, adapt. Never overwrite newer work.
 
 ## Charter

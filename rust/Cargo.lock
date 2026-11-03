@@ -333,6 +333,7 @@ dependencies = [
 name = "player-ffi"
 version = "0.1.0"
 dependencies = [
+ "player-ass",
  "player-audio",
  "player-build",
  "player-core",
