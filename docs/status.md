@@ -4,12 +4,13 @@ Player is a local-only media player. The macOS release artifact is `dist/Player.
 
 ## Current state
 
-- The app was rebuilt at `cbb4ec2` and fully re-verified on the macOS host after the Linux work.
-- `tests/run.sh suite`: 303 passed, 0 failed. The run includes the release gate.
+- The app was rebuilt at `c047192` and fully re-verified on the macOS host after the terminal UI work.
+- `tests/run.sh suite`: 315 passed, 0 failed. The run includes the release gate.
 - `scripts/audit.sh`: ok.
-- `scripts/measure.sh final`: ok at `cbb4ec2`; the host was quiet before and after the run.
-- App: 28,186,511 B; executable 9,640,096 B; framework closure 17,150,384 B in 13 files; bundled icon 1,387,652 B.
+- `scripts/measure.sh final`: ok at `c047192`; the host was quiet before and after the run.
+- App: 28,437,647 B on disk; executable 9,707,520 B; framework closure 17,334,096 B in 13 files; bundled icon 1,387,652 B.
 - One `file` protocol and one Lua interpreter.
+- `--tui` plays in the terminal with centered embedded cover art. Kitty graphics are used on Ghostty, kitty, and WezTerm; other terminals use truecolor half-blocks. The TUI is audio-first and keeps `vo=null`.
 
 ## Releases
 
@@ -23,14 +24,15 @@ Player is a local-only media player. The macOS release artifact is `dist/Player.
 - GUI, HDR and 10-bit color, subtitle shaping, Retina scaling, audio audibility, real mouse and drag, and signing or notarization are owner-run. See `docs/manual-checklist.md`.
 - Clipboard commands are compiled and reachable. Encoding, recording, and the lavfi filter graph are compiled but unreachable because the release FFmpeg has no encoders or muxers.
 - The `subprocess` command and the `.run` script backend are reachable from explicit scripts and IPC. No built-in module uses them.
+- The terminal UI has no sixel output and does not load external cover files; it renders the embedded picture only. Quit, Ctrl-C, and SIGTERM/SIGHUP restore the terminal.
 - Follow-on: A/V scheduler, general demux and decode orchestration, and renderer integration.
 - Linux: glibc is explicitly out of scope. aarch64, X11, and a real-GPU, zero-copy VA-API, real-compositor, and real-ALSA check are outside the automated gates. The headless gate uses lavapipe with `--gpu-sw` and `mailbox` swap because headless Weston never releases FIFO buffers.
 
 ## Linux
 
-- `scripts/linux-container.sh tests/run.sh suite`: passes on Alpine x86_64, including `linux-gpu-next` under headless Weston with lavapipe, `linux-audio` on the ALSA null PCM, `linux-local-only` under `unshare -rn`, and `linux-audit`.
+- `scripts/linux-container.sh tests/run.sh suite`: passes on Alpine x86_64 with 307 checks, including `linux-gpu-next` under headless Weston with lavapipe, `linux-audio` on the ALSA null PCM, `linux-local-only` under `unshare -rn`, `linux-audit`, and `tui`.
 - `scripts/audit-linux.sh`: ok. `dist/player` needs exactly nine libraries: musl, Vulkan, Wayland client and cursor, xkbcommon, ALSA, and libva, libva-drm, and libva-wayland.
-- `--hwdec` defaults to `auto` on Linux and `no` on macOS. `suite` passes 295 checks with and without a GPU render node in the container.
+- `--hwdec` defaults to `auto` on Linux and `no` on macOS. `suite` passes with and without a GPU render node in the container.
 - `tests/run.sh linux-vaapi` (needs a GPU render node, not part of `suite`): passes on an AMD Raphael iGPU for h264, hevc, vp9, and av1 with `vaapi-copy`.
 - Fixtures match the tracked stream structure; their bytes differ from macOS and between Linux hosts because the encoders select threads and SIMD paths at run time.
 - Measurements are in `docs/metrics.md`; the runtime set, headless gates, and fixtures are in `docs/linux.md`.
