@@ -6,3 +6,6 @@ license = "MPL-2.0"
 
 [lib]
 crate-type = ["rlib"]
+
+[build-dependencies]
+player-build = { path = "../player-build" }

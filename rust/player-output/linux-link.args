@@ -1,8 +1,9 @@
 # Linux musl native closure for the libplacebo renderer.
 # One directive per line: `arg:` prints cargo:rustc-link-arg=,
 # `lib:` prints cargo:rustc-link-lib=. `{PREFIX}` is the consuming
-# crate's ../../.work/deps/linux/lib. Both player-output and
-# player-engine read this file; edit here and both follow.
+# crate's ../../.work/deps/linux/lib. player-output, player-engine,
+# and player-display emit it through player-build; edit here and all
+# three follow.
 arg:{PREFIX}/libplacebo.a
 arg:{PREFIX}/libshaderc_combined.a
 arg:/usr/lib/libstdc++.a

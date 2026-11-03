@@ -1,4 +1,5 @@
 use crate::sys;
+use crate::{Instance, Surface};
 use core::ffi::{c_int, c_void};
 use std::ffi::CStr;
 
@@ -10,6 +11,17 @@ pub struct Vulkan {
 
 impl Vulkan {
     pub fn create() -> Result<Self, String> {
+        Self::create_inner(core::ptr::null_mut(), 0)
+    }
+
+    pub fn create_for_surface(instance: &Instance, surface: &Surface) -> Result<Self, String> {
+        if instance.raw().is_null() || surface.raw() == 0 {
+            return Err("vulkan surface needs a live instance and surface".to_string());
+        }
+        Self::create_inner(instance.raw(), surface.raw())
+    }
+
+    fn create_inner(instance: sys::VkInstance, surface: sys::VkSurfaceKHR) -> Result<Self, String> {
         // SAFETY: pl_version returns a static string.
         let version = unsafe { CStr::from_ptr(sys::pl_version()) }
             .to_string_lossy()
@@ -23,10 +35,10 @@ impl Vulkan {
             return Err("pl_log_create failed".to_string());
         }
         let params = sys::PlVulkanParams {
-            instance: core::ptr::null_mut(),
+            instance,
             get_proc_addr: core::ptr::null_mut(),
             instance_params: core::ptr::null(),
-            surface: core::ptr::null_mut(),
+            surface,
             device: core::ptr::null_mut(),
             device_name: core::ptr::null(),
             device_uuid: [0; 16],
@@ -58,6 +70,10 @@ impl Vulkan {
 
     pub fn gpu(&self) -> sys::PlGpu {
         self.gpu
+    }
+
+    pub(crate) fn as_raw(&self) -> sys::PlVulkan {
+        self.vk
     }
 
     pub fn find_rgba8(&self, caps: c_int) -> Result<sys::PlFmt, String> {

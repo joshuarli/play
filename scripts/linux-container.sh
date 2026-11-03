@@ -18,6 +18,7 @@ exec docker run --rm --init --platform linux/amd64 \
     --user "$(id -u):$(id -g)" \
     -e HOME=/work/.work/home \
     -e CARGO_HOME=/work/.work/home/cargo \
+    -e CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=/work/docker/linux/musl-cc-wrap.sh \
     "${devices[@]+"${devices[@]}"}" \
     -v "$ROOT:/work" -w /work \
     "$IMAGE" "$@"

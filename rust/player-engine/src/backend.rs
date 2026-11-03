@@ -18,7 +18,6 @@ const PRESENTED_CHANNEL_DEPTH: usize = 4;
 pub struct EngineDemux {
     session: MediaSession,
     audio_streams: Vec<usize>,
-    video_streams: Vec<usize>,
     selected: usize,
     selected_video: Option<usize>,
     duration: f64,
@@ -28,10 +27,12 @@ impl EngineDemux {
     pub fn open(path: &str) -> Result<Self, String> {
         let session = MediaSession::open(path).map_err(|err| err.to_string())?;
         let mut audio = Vec::new();
-        let mut video = Vec::new();
+        let mut selected_video = None;
         for stream in session.streams() {
             match stream.kind {
-                MediaKind::Video if !stream.attached => video.push(stream.index),
+                MediaKind::Video if !stream.attached && selected_video.is_none() => {
+                    selected_video = Some(stream.index)
+                }
                 MediaKind::Audio => audio.push(stream.index),
                 _ => {}
             }
@@ -44,11 +45,9 @@ impl EngineDemux {
             return Err(format!("{path} has no usable audio format"));
         }
         let duration = session.duration_seconds().unwrap_or(0.0).max(0.0);
-        let selected_video = video.first().copied();
         Ok(EngineDemux {
             session,
             audio_streams: audio,
-            video_streams: video,
             selected,
             selected_video,
             duration,

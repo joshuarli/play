@@ -49,6 +49,15 @@ impl Drop for Renderer {
 }
 
 pub fn rgba_frame(tex: sys::PlTex, width: c_int, height: c_int) -> sys::PlFrame {
+    target_frame(tex, width, height, false)
+}
+
+pub fn target_frame(
+    tex: sys::PlTex,
+    width: c_int,
+    height: c_int,
+    flipped: bool,
+) -> sys::PlFrame {
     sys::PlFrame {
         num_planes: 1,
         planes: [
@@ -98,9 +107,9 @@ pub fn rgba_frame(tex: sys::PlTex, width: c_int, height: c_int) -> sys::PlFrame 
         lut_type: 0,
         crop: sys::PlRect2df {
             x0: 0.0,
-            y0: 0.0,
+            y0: if flipped { height as f32 } else { 0.0 },
             x1: width as f32,
-            y1: height as f32,
+            y1: if flipped { 0.0 } else { height as f32 },
         },
         rotation: sys::PL_ROTATION_0,
         pixel_aspect_ratio: 1.0,

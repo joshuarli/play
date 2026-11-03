@@ -1,7 +1,12 @@
 fn main() {
     let target = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     if target == "linux" {
-        emit_linux_closure();
+        let dir = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
+        player_build::emit_linux_closure(
+            "player-output",
+            &dir.join("linux-link.args"),
+            &dir.join("../../.work/deps/linux/lib"),
+        );
         return;
     }
     let output = std::process::Command::new("pkg-config")
@@ -22,28 +27,6 @@ fn main() {
             println!("cargo:rustc-link-lib=framework={framework}");
         } else {
             println!("cargo:rustc-link-arg={token}");
-        }
-    }
-}
-
-fn emit_linux_closure() {
-    let dir = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
-    let path = dir.join("linux-link.args");
-    let text = std::fs::read_to_string(&path)
-        .unwrap_or_else(|_| panic!("player-output: cannot read {}", path.display()));
-    let prefix = dir.join("../../.work/deps/linux/lib");
-    for line in text.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let body = line.replace("{PREFIX}", &prefix.display().to_string());
-        if let Some(arg) = body.strip_prefix("arg:") {
-            println!("cargo:rustc-link-arg={arg}");
-        } else if let Some(lib) = body.strip_prefix("lib:") {
-            println!("cargo:rustc-link-lib={lib}");
-        } else {
-            panic!("player-output: bad directive in linux-link.args: {line}");
         }
     }
 }

@@ -72,7 +72,7 @@ pub fn render_frame(
     }
     let target_fmt = vk.find_rgba8(sys::PL_FMT_CAP_RENDERABLE)?;
     let target = vk.create_render_target(width, height, target_fmt)?;
-    let result = render_planes(renderer, layout, color, &texs, target, width, height);
+    let result = render_planes(renderer, layout, color, &texs, target, width, height, false);
     for tex in texs {
         vk.destroy_tex(tex);
     }
@@ -80,6 +80,51 @@ pub fn render_frame(
     let bytes = vk.download(target, width, height)?;
     vk.destroy_tex(target);
     Ok(bytes)
+}
+
+pub fn render_to_target(
+    vk: &Vulkan,
+    renderer: &Renderer,
+    layout: PixelLayout,
+    color: ColorSpec,
+    planes: &[Plane<'_>],
+    target: sys::PlTex,
+    width: c_int,
+    height: c_int,
+    flipped: bool,
+) -> Result<(), String> {
+    let indexed = plane_specs(layout)?;
+    if planes.len() != indexed.len() {
+        return Err(format!(
+            "layout {layout:?} needs {} planes, got {}",
+            indexed.len(),
+            planes.len()
+        ));
+    }
+    let mut texs: Vec<sys::PlTex> = Vec::with_capacity(indexed.len());
+    for (plane, spec) in planes.iter().zip(indexed.iter()) {
+        let fmt = vk
+            .find_format(sys::PL_FMT_UNORM, spec.components, 8, sys::PL_FMT_CAP_SAMPLEABLE)
+            .ok_or_else(|| "no sampleable texture format".to_string())?;
+        let tex = vk.create_tex(plane.width, plane.height, fmt)?;
+        if vk
+            .upload_strided(tex, plane.width, plane.height, plane.stride, plane.data)
+            .is_err()
+        {
+            vk.destroy_tex(tex);
+            for done in texs {
+                vk.destroy_tex(done);
+            }
+            return Err("plane upload failed".to_string());
+        }
+        texs.push(tex);
+    }
+    let result = render_planes(renderer, layout, color, &texs, target, width, height, flipped);
+    for tex in texs {
+        vk.destroy_tex(tex);
+    }
+    result?;
+    Ok(())
 }
 
 struct PlaneSpec {
@@ -129,6 +174,7 @@ fn render_planes(
     target: sys::PlTex,
     width: c_int,
     height: c_int,
+    flipped: bool,
 ) -> Result<sys::PlTex, String> {
     let specs = plane_specs(layout)?;
     let mut frame = sys::PlFrame {
@@ -195,7 +241,7 @@ fn render_planes(
             shift_y: 0.0,
         };
     }
-    let mut target_frame = crate::rgba_frame(target, width, height);
+    let mut target_frame = crate::render::target_frame(target, width, height, flipped);
     // SAFETY: the renderer is live; infer fills defaulted metadata.
     unsafe { sys::pl_frames_infer(renderer.as_raw(), &mut frame, &mut target_frame) };
     // SAFETY: the library defaults are valid for any render.

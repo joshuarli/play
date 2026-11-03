@@ -5,7 +5,10 @@ Preflight doc: `campaign-rust.md`. This file is the durable resume point.
 
 ## Current phase
 
-S5 complete. S6c complete (engine decodes and presents video headlessly). Next: S6d (platform bridges, osc/linux-gpu-next gates).
+S5 complete. S6c complete (engine decodes and presents video headlessly).
+S6d-1 complete (Linux Wayland window presents swapchain frames; static
+suite contains the weston test behind `present-gate`). Next: S6d-2
+(resize/fullscreen/input protocol).
 
 ## S6c record
 
@@ -56,6 +59,40 @@ ignore under static-pie with the documented dynamic rerun.
 
 Still open in S6: Wayland client, macOS bridge, VO swap, `osc` and
 `linux-gpu-next` gates, video-only engine files.
+
+## S6d-1 record
+
+The Linux window presents swapchain frames on weston headless: `sys.rs`
+transcribes `VkInstance`/`VkSurfaceKHR`/`PlSwapchain` and the
+`vkCreateWaylandSurfaceKHR`/`pl_swapchain_*` externs, `context.rs` gains
+`create_for_surface` plus flipped `target_frame`, and `instance.rs` /
+`swapchain.rs` hold the `Instance`/`Surface`/`Swapchain` guards with
+GPU-first teardown order (swapchain, surface, renderer, device,
+instance, protocol). The window itself lives in the new Linux-only
+`player-display` crate (`Window::open/poll/present_planes`, xdg-shell
+with configure timeout and poll-time `pl_swapchain_resize`).
+
+Decisions with reasons:
+
+- The weston present test moves with the window and requires the
+  `present-gate` feature: a static-pie binary with
+  `libwayland-client.so.0` in NEEDED dies in the loader before any
+  constructor runs, so the static suite cannot even start it. The
+  dynamic rerun (`-C target-feature=-crt-static ... --features
+  present-gate -- --include-ignored`) stays the real gate and is
+  green. This is environmental, not engine logic; the output lib
+  suite links no Wayland and stays green statically.
+- No static Wayland archive exists in the container, so
+  `docker/linux/musl-cc-wrap.sh` maps `-lwayland-client` to the
+  shared object appended where `-Bdynamic` is in effect;
+  `scripts/linux-container.sh` wires it as the musl linker.
+- `player-build` owns the single `linux-link.args` reader that
+  player-output, player-engine, and player-display build scripts
+  call; the closure stays edited in one place.
+
+Still open in S6d: resize/fullscreen/input protocol (S6d-2), OSD
+overlay (S6d-3), macOS bridge (S6d-4), VO swap and gate updates
+(S6d-5).
 
 ## S5 record
 

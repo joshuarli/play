@@ -135,10 +135,10 @@ pub struct PlRenderParams {
 
 #[repr(C)]
 pub struct PlVulkanParams {
-    pub instance: *mut c_void,
+    pub instance: VkInstance,
     pub get_proc_addr: *mut c_void,
     pub instance_params: *const c_void,
-    pub surface: *mut c_void,
+    pub surface: VkSurfaceKHR,
     pub device: *mut c_void,
     pub device_name: *const c_char,
     pub device_uuid: [u8; 16],
@@ -163,6 +163,28 @@ pub struct PlVulkanHead {
 }
 
 pub type PlVulkan = *mut PlVulkanHead;
+
+pub type PlSwapchain = *mut c_void;
+
+pub type VkInstance = *mut c_void;
+pub type VkPhysicalDevice = *mut c_void;
+pub type VkSurfaceKHR = u64;
+pub type VkBool32 = u32;
+pub type VkFlags = u32;
+
+pub const VK_SUCCESS: c_int = 0;
+pub const VK_SUBOPTIMAL_KHR: c_int = 1000001003;
+pub const VK_ERROR_OUT_OF_DATE_KHR: c_int = -1000001004;
+
+pub const VK_STRUCTURE_TYPE_APPLICATION_INFO: c_int = 0;
+pub const VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO: c_int = 1;
+pub const VK_STRUCTURE_TYPE_WAYLAND_SURFACE_CREATE_INFO_KHR: c_int = 1000006000;
+
+pub const VK_PRESENT_MODE_IMMEDIATE_KHR: c_int = 0;
+pub const VK_PRESENT_MODE_MAILBOX_KHR: c_int = 1;
+pub const VK_PRESENT_MODE_FIFO_KHR: c_int = 2;
+
+pub const VK_API_VERSION_1_2: u32 = 4202496;
 
 #[repr(C)]
 pub struct PlHandle {
@@ -262,6 +284,86 @@ unsafe extern "C" {
         target: *const PlFrame,
         params: *const PlRenderParams,
     ) -> bool;
+
+    pub fn pl_vulkan_create_swapchain(
+        vk: PlVulkan,
+        params: *const PlVulkanSwapchainParams,
+    ) -> PlSwapchain;
+    pub fn pl_swapchain_destroy(sw: *mut PlSwapchain);
+    pub fn pl_swapchain_latency(sw: PlSwapchain) -> c_int;
+    pub fn pl_swapchain_resize(sw: PlSwapchain, width: *mut c_int, height: *mut c_int) -> bool;
+    pub fn pl_swapchain_start_frame(sw: PlSwapchain, frame: *mut PlSwapchainFrame) -> bool;
+    pub fn pl_swapchain_submit_frame(sw: PlSwapchain) -> bool;
+    pub fn pl_swapchain_swap_buffers(sw: PlSwapchain);
+
+    pub fn vkCreateInstance(
+        create_info: *const VkInstanceCreateInfo,
+        allocator: *const c_void,
+        instance: *mut VkInstance,
+    ) -> c_int;
+    pub fn vkDestroyInstance(instance: VkInstance, allocator: *const c_void);
+    pub fn vkCreateWaylandSurfaceKHR(
+        instance: VkInstance,
+        create_info: *const VkWaylandSurfaceCreateInfoKHR,
+        allocator: *const c_void,
+        surface: *mut VkSurfaceKHR,
+    ) -> c_int;
+    pub fn vkDestroySurfaceKHR(
+        instance: VkInstance,
+        surface: VkSurfaceKHR,
+        allocator: *const c_void,
+    );
+}
+
+#[repr(C)]
+pub struct VkApplicationInfo {
+    pub s_type: c_int,
+    pub next: *const c_void,
+    pub app_name: *const c_char,
+    pub app_version: u32,
+    pub engine_name: *const c_char,
+    pub engine_version: u32,
+    pub api_version: u32,
+}
+
+#[repr(C)]
+pub struct VkInstanceCreateInfo {
+    pub s_type: c_int,
+    pub next: *const c_void,
+    pub flags: VkFlags,
+    pub app_info: *const VkApplicationInfo,
+    pub layer_count: u32,
+    pub layers: *const *const c_char,
+    pub extension_count: u32,
+    pub extensions: *const *const c_char,
+}
+
+#[repr(C)]
+pub struct VkWaylandSurfaceCreateInfoKHR {
+    pub s_type: c_int,
+    pub next: *const c_void,
+    pub flags: VkFlags,
+    pub display: *mut c_void,
+    pub surface: *mut c_void,
+}
+
+#[repr(C)]
+pub struct PlVulkanSwapchainParams {
+    pub surface: VkSurfaceKHR,
+    pub present_mode: c_int,
+    pub swapchain_depth: c_int,
+    pub allow_suboptimal: bool,
+    pub disable_10bit_sdr: bool,
+    pub alpha_bits: u8,
+    pub color_bits: u8,
+}
+
+#[repr(C)]
+pub struct PlSwapchainFrame {
+    pub fbo: PlTex,
+    pub flipped: bool,
+    pub color_repr: PlColorRepr,
+    pub color_space: PlColorSpace,
 }
 
 #[cfg(test)]
@@ -318,6 +420,45 @@ mod tests {
         assert_eq!(size_of::<PlColorSpace>(), 156);
         assert_eq!(offset_of!(PlColorSpace, primaries), 0);
         assert_eq!(offset_of!(PlColorSpace, hdr), 8);
+
+        assert_eq!(size_of::<PlVulkanParams>(), 128);
+        assert_eq!(offset_of!(PlVulkanParams, instance), 0);
+        assert_eq!(offset_of!(PlVulkanParams, get_proc_addr), 8);
+        assert_eq!(offset_of!(PlVulkanParams, surface), 24);
+        assert_eq!(offset_of!(PlVulkanParams, device), 32);
+
+        assert_eq!(size_of::<PlVulkanSwapchainParams>(), 24);
+        assert_eq!(offset_of!(PlVulkanSwapchainParams, surface), 0);
+        assert_eq!(offset_of!(PlVulkanSwapchainParams, present_mode), 8);
+        assert_eq!(offset_of!(PlVulkanSwapchainParams, swapchain_depth), 12);
+        assert_eq!(offset_of!(PlVulkanSwapchainParams, allow_suboptimal), 16);
+        assert_eq!(offset_of!(PlVulkanSwapchainParams, disable_10bit_sdr), 17);
+        assert_eq!(offset_of!(PlVulkanSwapchainParams, alpha_bits), 18);
+        assert_eq!(offset_of!(PlVulkanSwapchainParams, color_bits), 19);
+
+        assert_eq!(size_of::<PlSwapchainFrame>(), 208);
+        assert_eq!(offset_of!(PlSwapchainFrame, fbo), 0);
+        assert_eq!(offset_of!(PlSwapchainFrame, flipped), 8);
+        assert_eq!(offset_of!(PlSwapchainFrame, color_repr), 16);
+        assert_eq!(offset_of!(PlSwapchainFrame, color_space), 48);
+
+        assert_eq!(size_of::<VkApplicationInfo>(), 48);
+        assert_eq!(offset_of!(VkApplicationInfo, api_version), 44);
+        assert_eq!(size_of::<VkInstanceCreateInfo>(), 64);
+        assert_eq!(offset_of!(VkInstanceCreateInfo, extensions), 56);
+        assert_eq!(size_of::<VkWaylandSurfaceCreateInfoKHR>(), 40);
+        assert_eq!(offset_of!(VkWaylandSurfaceCreateInfoKHR, surface), 32);
+
+        assert_eq!(VK_SUCCESS, 0);
+        assert_eq!(VK_SUBOPTIMAL_KHR, 1000001003);
+        assert_eq!(VK_ERROR_OUT_OF_DATE_KHR, -1000001004);
+        assert_eq!(VK_STRUCTURE_TYPE_APPLICATION_INFO, 0);
+        assert_eq!(VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO, 1);
+        assert_eq!(VK_STRUCTURE_TYPE_WAYLAND_SURFACE_CREATE_INFO_KHR, 1000006000);
+        assert_eq!(VK_PRESENT_MODE_IMMEDIATE_KHR, 0);
+        assert_eq!(VK_PRESENT_MODE_MAILBOX_KHR, 1);
+        assert_eq!(VK_PRESENT_MODE_FIFO_KHR, 2);
+        assert_eq!(VK_API_VERSION_1_2, 4202496);
         assert_eq!(size_of::<PlHdrMetadata>(), 148);
         assert_eq!(size_of::<PlIccProfile>(), 24);
 
