@@ -6,8 +6,8 @@
 //! and go out through `present_planes`.
 
 use player_output::{
-    render_to_target, ColorSpec, Instance, PixelLayout, Plane, Renderer, Surface, Swapchain,
-    Vulkan,
+    render_to_target, ColorSpec, Instance, Overlay, PixelLayout, Plane, Renderer, Surface,
+    Swapchain, Vulkan,
 };
 use std::collections::VecDeque;
 use std::os::fd::{AsRawFd, FromRawFd};
@@ -436,6 +436,7 @@ impl Window {
         planes: &[Plane<'_>],
         width: i32,
         height: i32,
+        overlay: Option<&Overlay>,
     ) -> Result<(), String> {
         let frame = self.swapchain.start_frame()?;
         if let Err(message) = render_to_target(
@@ -448,6 +449,7 @@ impl Window {
             width,
             height,
             frame.flipped,
+            overlay,
         ) {
             let _ = self.swapchain.submit();
             return Err(message);

@@ -4,9 +4,9 @@
 
 Goal: replace the remaining mpv-derived C playback engine with a small Rust-owned engine. No loss of supported local playback. Both release artifacts keep building.
 
-- Last accepted: S6d-2 (resize/fullscreen/input protocol; per-frame flush+read+dispatch pump, fullscreen roundtrip, opportunistic seat bind). Preflight complete 2026-11-03.
-- Red: none. Workspace green on macOS and Linux container static suites; display gate green on the dynamic rerun; build, rust-link, ffi green.
-- Next: S6d-3 (OSD overlay), then S6d-4..5. Then S7.
+- Last accepted: S6d-3 (OSD overlay upload primitive; libass producer stays S7). Preflight complete 2026-11-03.
+- Red: none. Workspace green on macOS and Linux container static suites; output and display gates green on the dynamic rerun; build, rust-link, ffi green.
+- Next: S6d-4 (macOS bridge), then S6d-5. Then S7.
 - Ordered chapters stay open for S7 (no fixture, needs linking design).
 - Resume: read this doc and `docs/RUST-PORT.md`, then run the next open slice. If the tree moved, adapt. Never overwrite newer work.
 
@@ -320,6 +320,7 @@ Owns: `rust/player-lua/`, subtitle paths, `rust/player-tui/`, GUI glue, clipboar
 
 - Subtitles: Rust-managed tracks and timing, narrow libass wrapper, external and embedded codec support, styling, font lookup, positioning. Correct changes after seeks and track switches.
 - Lua: keep `player-lua` and the built-in OSC unless a measurement forces replacement. Replace the mpv client API adapter with a direct Rust engine adapter. Preserve supported command, property, event, overlay, and input-binding behavior. Script shutdown never retains a freed engine handle. One Lua interpreter.
+- OSC fidelity (owner, 2026-11-04): the on-screen controller must match upstream mpv nearly exactly. Same vendored `osc.lua`/`assdraw.lua`, same libass rendering with mpv's OSD styling path and embedded `osd_font.otf` fallback, same `osd-dimensions` layout inputs. The S6d-3 overlay primitive carries the bitmaps; S7 wires `osd-overlay ass-events` through libass into it. New gate renders the same frame plus OSC on both engines and diffs pixels.
 - TUI: same Rust engine as the GUI. Keep kitty graphics, truecolor half-block fallback, cover art and metadata, keyboard controls, signal-safe terminal restoration, metadata sanitization. No second scheduler.
 - GUI: keep native platform behavior and minimal controls. No redesign.
 - Clipboard removal (owner decision 2026-11-03, delete protocol): trace every reference first, starting from `player/clipboard/`, `osdep/mac/clipboard.swift`, `osdep/mac/app_bridge_objc.h`, `player/command.c`, `player/main.c`, `player/playloop.c`, `player/core.h`, the `options/` tables, the default `Ctrl+v` binding, the IPC surface, tests, fixtures, and docs. Remove the implementation, exports, wiring, binding, tests that assert the clipboard contract, and doc mentions including `docs/scope.md`. Add no alias, shim, or fallback. Update remaining callers to the surviving behavior. After the cut, search the live tree for retired names and classify every hit as unrelated or historical.

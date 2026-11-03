@@ -101,6 +101,29 @@ pub struct PlRect2df {
     pub y1: f32,
 }
 
+pub const PL_OVERLAY_NORMAL: c_int = 0;
+pub const PL_OVERLAY_MONOCHROME: c_int = 1;
+pub const PL_OVERLAY_COORDS_SRC_FRAME: c_int = 1;
+pub const PL_OVERLAY_COORDS_DST_FRAME: c_int = 3;
+
+#[repr(C)]
+pub struct PlOverlayPart {
+    pub src: PlRect2df,
+    pub dst: PlRect2df,
+    pub color: [f32; 4],
+}
+
+#[repr(C)]
+pub struct PlOverlay {
+    pub tex: PlTex,
+    pub mode: c_int,
+    pub coords: c_int,
+    pub repr: PlColorRepr,
+    pub color: PlColorSpace,
+    pub parts: *const PlOverlayPart,
+    pub num_parts: c_int,
+}
+
 #[repr(C)]
 pub struct PlFrame {
     pub num_planes: c_int,
@@ -121,7 +144,7 @@ pub struct PlFrame {
     pub crop: PlRect2df,
     pub rotation: c_int,
     pub pixel_aspect_ratio: f32,
-    pub overlays: *const c_void,
+    pub overlays: *const PlOverlay,
     pub num_overlays: c_int,
     pub film_grain: PlFilmGrain,
     pub user_data: *mut c_void,
@@ -478,6 +501,25 @@ mod tests {
         assert_eq!(offset_of!(PlFrame, num_overlays), 520);
         assert_eq!(offset_of!(PlFrame, film_grain), 528);
         assert_eq!(offset_of!(PlFrame, user_data), 736);
+
+        assert_eq!(PL_OVERLAY_NORMAL, 0);
+        assert_eq!(PL_OVERLAY_MONOCHROME, 1);
+        assert_eq!(PL_OVERLAY_COORDS_SRC_FRAME, 1);
+        assert_eq!(PL_OVERLAY_COORDS_DST_FRAME, 3);
+
+        assert_eq!(size_of::<PlOverlayPart>(), 48);
+        assert_eq!(offset_of!(PlOverlayPart, src), 0);
+        assert_eq!(offset_of!(PlOverlayPart, dst), 16);
+        assert_eq!(offset_of!(PlOverlayPart, color), 32);
+
+        assert_eq!(size_of::<PlOverlay>(), 224);
+        assert_eq!(offset_of!(PlOverlay, tex), 0);
+        assert_eq!(offset_of!(PlOverlay, mode), 8);
+        assert_eq!(offset_of!(PlOverlay, coords), 12);
+        assert_eq!(offset_of!(PlOverlay, repr), 16);
+        assert_eq!(offset_of!(PlOverlay, color), 48);
+        assert_eq!(offset_of!(PlOverlay, parts), 208);
+        assert_eq!(offset_of!(PlOverlay, num_parts), 216);
 
         assert_eq!(size_of::<PlRenderParams>(), 288);
 

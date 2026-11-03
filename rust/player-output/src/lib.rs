@@ -6,7 +6,9 @@ mod swapchain;
 mod sys;
 
 pub use context::Vulkan;
-pub use frame::{render_frame, render_to_target, ColorSpec, PixelLayout, Plane};
+pub use frame::{
+    render_frame, render_to_target, ColorSpec, Overlay, OverlayRect, PixelLayout, Plane,
+};
 pub use instance::{Instance, Surface};
 pub use render::target_frame;
 pub use swapchain::{Swapchain, SwapFrame};

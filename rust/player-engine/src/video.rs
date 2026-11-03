@@ -287,7 +287,9 @@ impl VideoOutput for EngineVideoOutput {
                 height: *h,
             });
         }
-        let rgba = render_frame(&gpu.vk, &gpu.renderer, layout, color, &planes, width, height)?;
+        let rgba = render_frame(
+            &gpu.vk, &gpu.renderer, layout, color, &planes, width, height, None,
+        )?;
         let _ = self.sink.send(PresentedFrame {
             pts,
             id,

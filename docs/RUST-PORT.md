@@ -8,7 +8,8 @@ Preflight doc: `campaign-rust.md`. This file is the durable resume point.
 S5 complete. S6c complete (engine decodes and presents video headlessly).
 S6d-1 complete (Linux Wayland window presents swapchain frames; static
 suite contains the weston test behind `present-gate`). S6d-2 complete
-(resize/fullscreen/input protocol). Next: S6d-3 (OSD overlay).
+(resize/fullscreen/input protocol). S6d-3 complete (OSD overlay
+upload). Next: S6d-4 (macOS bridge).
 
 ## S6c record
 
@@ -112,8 +113,25 @@ nothing. Translation helpers (`translate_key_state`,
 and unit-tested; the weston gate adds fullscreen roundtrip,
 seatless-input grace, and an fd-count stability test.
 
-Still open in S6d: OSD overlay (S6d-3), macOS bridge (S6d-4), VO swap
-and gate updates (S6d-5).
+## S6d-3 record
+
+`sys.rs` transcribes `PlOverlay`/`PlOverlayPart` with the C probe
+values as the authority (identical on macOS and musl). `frame.rs`
+accepts `Option<&Overlay>` on `render_frame`/`render_to_target`: the
+RGBA bitmap uploads to a sampleable texture and composites via
+`frame.overlays` in `PL_OVERLAY_COORDS_DST_FRAME` with sRGB
+full-range styling; the decode path in `player-engine` passes `None`
+so video stays pure and OSD composites at presentation time.
+`Window::present_planes` forwards the overlay to the swapchain target.
+
+Tests: `overlay_covers_only_its_rect` renders the same base with and
+without a white box and asserts covered pixels move while two corners
+stay byte-equal; the weston gate adds `window_presents_with_overlay`.
+The bitmap producer (libass rendering of `osd-overlay ass-events`
+from upstream `osc.lua`) is S7; S6d-3 is the upload primitive only.
+
+Still open in S6d: macOS bridge (S6d-4), VO swap and gate updates
+(S6d-5).
 
 ## S5 record
 

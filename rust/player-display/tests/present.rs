@@ -105,7 +105,14 @@ fn wayland_window_presents_frames() {
             height: 240,
         }];
         window
-            .present_planes(PixelLayout::Rgba8, ColorSpec::bt709_full(), &planes, 320, 240)
+            .present_planes(
+                PixelLayout::Rgba8,
+                ColorSpec::bt709_full(),
+                &planes,
+                320,
+                240,
+                None,
+            )
             .expect("frame presents");
         assert!(!window.poll().expect("events dispatch"), "compositor closed early");
     }
@@ -144,6 +151,7 @@ fn present_gray(window: &mut Window, width: i32, height: i32) {
             &planes,
             width,
             height,
+            None,
         )
         .expect("frame presents");
     assert!(
@@ -185,6 +193,53 @@ fn window_fullscreen_roundtrip() {
         present_gray(&mut window, w, h);
         assert!(Instant::now() < deadline, "compositor never left fullscreen");
     }
+}
+
+#[test]
+#[cfg_attr(
+    target_os = "linux",
+    ignore = "static-pie test binaries cannot start the container Vulkan/Wayland stack; run with RUSTFLAGS=\"-C target-feature=-crt-static\""
+)]
+fn window_presents_with_overlay() {
+    use player_output::{Overlay, OverlayRect};
+    let _guard = serial();
+    let (_compositor, window) = open_window("player-overlay", 320, 240);
+    let mut window = window;
+    let rgba = vec![64u8; 320 * 240 * 4];
+    let planes = [Plane {
+        data: &rgba,
+        stride: 320 * 4,
+        width: 320,
+        height: 240,
+    }];
+    let white = vec![255u8; 32 * 16 * 4];
+    let overlay = Overlay {
+        data: &white,
+        stride: 32 * 4,
+        width: 32,
+        height: 16,
+        dst: OverlayRect {
+            x0: 10.0,
+            y0: 200.0,
+            x1: 42.0,
+            y1: 216.0,
+        },
+    };
+    window
+        .present_planes(
+            PixelLayout::Rgba8,
+            ColorSpec::bt709_full(),
+            &planes,
+            320,
+            240,
+            Some(&overlay),
+        )
+        .expect("frame with overlay presents");
+    assert!(
+        !window.poll().expect("events dispatch"),
+        "compositor closed early"
+    );
+    assert_eq!(window.presented(), 1);
 }
 
 #[test]
