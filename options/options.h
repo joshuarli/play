@@ -352,8 +352,6 @@ typedef struct MPOpts {
 
     struct input_opts *input_opts;
 
-    struct clipboard_opts *clipboard_opts;
-
     char *ipc_path;
     char *ipc_client;
 

@@ -180,7 +180,6 @@ struct vo_wayland_state {
 
     /* Data offer */
     struct wl_data_device_manager *devman;
-    bstr selection_text;
 
     /* Cursor */
     struct wl_cursor_theme *cursor_theme;

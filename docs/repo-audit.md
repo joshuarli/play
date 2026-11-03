@@ -28,7 +28,7 @@ Recorded 2026-11-01 at `7a8958b`.
 - **Lua:** exactly one `luaL_newstate` exists in the release path inside `libplayer_release.dylib`. The C host, external Lua library, and generated `.inc` host are deleted. The interpreter opens `io`, `os`, and `package`; it does not open `debug`.
 - **Unexpected resources:** built-in Lua modules are embedded from `player/lua/`; there is no runtime resource extraction. User config and scripts are disabled by default and the gates pass `--no-config` where they can.
 - **Subprocess and dlopen:** the retained C code contains the mpv `subprocess` command and the `.run` script backend (`load_run`). Both are reachable from an explicit script or an IPC client. No built-in module uses them. The cplugin loader is compiled out. These are local process capabilities, not a network capability.
-- **Clipboard:** the clipboard property, command, and macOS bridge are compiled and reachable. The default `Ctrl+v` binding uses them.
+- **Clipboard:** removed in S7a. No clipboard property, command, backend, bridge, binding, or Wayland selection sync remains in the tree.
 - **Dependencies:** `cargo audit` reports no RustSec vulnerabilities for the 58 locked crates.
 - **Licenses:** `docs/licenses.md` lists the shipped components. The Rust dependency graph is MIT/Apache-2.0/MPL-2.0/Zlib/Unicode-3.0; Symphonia is MPL-2.0 and its notices are preserved under `vendor/symphonia`.
 - **Signature:** the app and every bundled dylib are ad-hoc signed; `codesign --verify --deep --strict` passes. Notarization and distribution signing are owner-run.

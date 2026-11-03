@@ -445,7 +445,6 @@ char *format_file_size(int64_t size);
 #define UPDATE_SUB_EXTS         (UINT64_C(1) << 14)  // update internal list of sub exts
 #define UPDATE_VIDEO            (UINT64_C(1) << 15)  // force redraw if needed
 #define UPDATE_VO               (UINT64_C(1) << 16)  // reinit the VO
-#define UPDATE_CLIPBOARD        (UINT64_C(1) << 17)  // reinit the clipboard
 #define UPDATE_DEMUXER          (UINT64_C(1) << 18)  // invalidate --prefetch-playlist's data
 #define UPDATE_AD               (UINT64_C(1) << 19)  // reinit audio chain and decoder
 #define UPDATE_VD               (UINT64_C(1) << 20)  // reinit video chain and decoder

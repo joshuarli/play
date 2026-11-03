@@ -53,10 +53,10 @@ Removed: `--ytdl*`, `--hls-bitrate`, `--lavfi-complex`, `--stream-dump`, `--stre
 
 - The C `subprocess` command and the `.run` script backend remain compiled and reachable from an explicit script or an IPC client. They are not reachable from a built-in module.
 - Encoding, stream recording, and the `f_lavfi` filter graph are gone: sources, `meson.build` rows, and `vo`/`ao` registrations deleted (Slice 1). The release FFmpeg has no encoders or muxers, and the CLI never had an entry point for them.
-- The clipboard property, the clipboard command, and the macOS clipboard bridge remain compiled and reachable. The default `Ctrl+v` binding pastes clipboard text as a local file operand.
+- Clipboard support is removed entirely: no clipboard property, command, backend, bridge, or binding. `${clipboard/text}` expansions no longer resolve.
 - The cplugin loader is compiled out; `HAVE_CPLUGINS` is not defined in the release configuration.
 
 ## Remaining debt
 
 - The UTF-8-only path API.
-- Clipboard support is live although the release report previously described the player as having none. Decide whether to keep it or remove it.
+- Clipboard support is removed (owner decision, S7a); the audit trail is the delete itself.

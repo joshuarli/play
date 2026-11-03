@@ -32,7 +32,6 @@
 
 #include "mpv_talloc.h"
 #include "client.h"
-#include "clipboard/clipboard.h"
 #include "external_files.h"
 #include "common/av_common.h"
 #include "common/codecs.h"
@@ -4198,122 +4197,6 @@ static int mp_property_udata(void *ctx, struct m_property *prop,
     return ret;
 }
 
-static int mp_property_current_clipboard_backend(void *ctx, struct m_property *p,
-                                                 int action, void *arg)
-{
-    MPContext *mpctx = ctx;
-    return m_property_strdup_ro(action, arg, mp_clipboard_get_backend_name(mpctx->clipboard));
-}
-
-static int get_clipboard(struct MPContext *mpctx, void *arg,
-                         struct clipboard_access_params *params)
-{
-    struct clipboard_data data;
-    void *tmp = talloc_new(NULL);
-
-    int ret = mp_clipboard_get_data(mpctx->clipboard, params, &data, tmp);
-    if (ret != CLIPBOARD_SUCCESS) {
-        talloc_free(tmp);
-        return ret == CLIPBOARD_UNAVAILABLE ? M_PROPERTY_UNAVAILABLE : M_PROPERTY_ERROR;
-    }
-
-    switch (data.type) {
-    case CLIPBOARD_DATA_TEXT:
-        *(char **)arg = talloc_steal(NULL, data.u.text);
-        talloc_free(tmp);
-        return M_PROPERTY_OK;
-    default:
-        talloc_free(tmp);
-        return M_PROPERTY_NOT_IMPLEMENTED;
-    }
-}
-
-static int set_clipboard(struct MPContext *mpctx, void *arg,
-                         struct clipboard_access_params *params)
-{
-    struct clipboard_data data = {0};
-
-    switch (params->type) {
-    case CLIPBOARD_DATA_TEXT:
-        data.type = CLIPBOARD_DATA_TEXT;
-        data.u.text = *(char **)arg;
-        break;
-    default:
-        return M_PROPERTY_NOT_IMPLEMENTED;
-    }
-
-    int ret = mp_clipboard_set_data(mpctx->clipboard, params, &data);
-    if (ret == CLIPBOARD_SUCCESS)
-        return M_PROPERTY_OK;
-    return ret == CLIPBOARD_UNAVAILABLE ? M_PROPERTY_UNAVAILABLE : M_PROPERTY_ERROR;
-}
-
-static int mp_property_clipboard(void *ctx, struct m_property *prop,
-                                 int action, void *arg)
-{
-    struct MPContext *mpctx = ctx;
-    struct clipboard_access_params params = {
-        .type = CLIPBOARD_DATA_TEXT,
-        .target = CLIPBOARD_TARGET_CLIPBOARD,
-    };
-
-    switch (action) {
-    case M_PROPERTY_GET_TYPE:
-        *(struct m_option *)arg = (struct m_option){
-            .type = CONF_TYPE_NODE,
-        };
-        return M_PROPERTY_OK;
-    case M_PROPERTY_GET:
-    case M_PROPERTY_GET_NODE: {
-        struct mpv_node node;
-        node_init(&node, MPV_FORMAT_NODE_MAP, NULL);
-        char *data = NULL;
-        if (get_clipboard(mpctx, &data, &params) == M_PROPERTY_OK) {
-            node_map_add_string(&node, "text", data);
-            talloc_free(data);
-        }
-        params.target = CLIPBOARD_TARGET_PRIMARY_SELECTION;
-        data = NULL;
-        if (get_clipboard(mpctx, &data, &params) == M_PROPERTY_OK) {
-            node_map_add_string(&node, "text-primary", data);
-            talloc_free(data);
-        }
-        *(struct mpv_node *)arg = node;
-        return M_PROPERTY_OK;
-    }
-    case M_PROPERTY_KEY_ACTION: {
-        struct m_property_action_arg *act = arg;
-        const char *key = act->key;
-
-        if (!strcmp(key, "text-primary"))
-            params.target = CLIPBOARD_TARGET_PRIMARY_SELECTION;
-        else if (strcmp(key, "text"))
-            return M_PROPERTY_UNKNOWN;
-
-        switch (act->action) {
-        case M_PROPERTY_GET_TYPE:
-            switch (params.type) {
-            case CLIPBOARD_DATA_TEXT:
-                *(struct m_option *)act->arg = (struct m_option){
-                    .type = CONF_TYPE_STRING,
-                };
-                return M_PROPERTY_OK;
-            default:
-                return M_PROPERTY_UNKNOWN;
-            }
-        case M_PROPERTY_GET:
-            return get_clipboard(mpctx, act->arg, &params);
-        case M_PROPERTY_SET:
-            return set_clipboard(mpctx, act->arg, &params);
-        default:
-            return M_PROPERTY_NOT_IMPLEMENTED;
-        }
-    }
-    default:
-        return M_PROPERTY_NOT_IMPLEMENTED;
-    }
-}
-
 // Redirect a property name to another
 #define M_PROPERTY_ALIAS(name, real_property) \
     {(name), mp_property_alias, .priv = (real_property)}
@@ -4730,9 +4613,6 @@ static const struct m_property mp_properties_base[] = {
 
     {"user-data", mp_property_udata},
     {"term-size", mp_property_term_size},
-
-    {"clipboard", mp_property_clipboard},
-    {"current-clipboard-backend", mp_property_current_clipboard_backend},
 
     M_PROPERTY_ALIAS("video", "vid"),
     M_PROPERTY_ALIAS("audio", "aid"),
@@ -7982,9 +7862,6 @@ void mp_option_run_callback(struct MPContext *mpctx, struct mp_option_callback *
 
     if (flags & UPDATE_INPUT)
         mp_input_update_opts(mpctx->input);
-
-    if (flags & UPDATE_CLIPBOARD)
-        reinit_clipboard(mpctx);
 
     if (flags & UPDATE_SUB_EXTS)
         mp_update_subtitle_exts(mpctx->opts);

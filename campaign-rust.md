@@ -4,9 +4,9 @@
 
 Goal: replace the remaining mpv-derived C playback engine with a small Rust-owned engine. No loss of supported local playback. Both release artifacts keep building.
 
-- Last accepted: S6d-5 (VO swap proved by player-swap gate; C VO audit defers removal to S8). S6 complete. Preflight complete 2026-11-03.
+- Last accepted: S7a (clipboard removal; delete protocol, suite 337 + linux-gpu-next 28 green). Preflight complete 2026-11-03.
 - Red: none. Workspace green on macOS and Linux container static suites; output, display, and swap gates green on the dynamic rerun; build, rust-link, ffi green.
-- Next: S7 (subtitles, Lua, GUI, TUI, clipboard removal).
+- Next: S7b (direct Rust engine Lua adapter). Then S7c-e, S8.
 - Ordered chapters stay open for S7 (no fixture, needs linking design).
 - Resume: read this doc and `docs/RUST-PORT.md`, then run the next open slice. If the tree moved, adapt. Never overwrite newer work.
 

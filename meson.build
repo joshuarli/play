@@ -176,10 +176,6 @@ sources = files(
     'player/tui.c',
     'player/video.c',
 
-    ## clipboard
-    'player/clipboard/clipboard.c',
-    'player/clipboard/clipboard-vo.c',
-
     ## Streams
     'stream/stream.c',
     'stream/stream_cb.c',
@@ -355,8 +351,7 @@ if features['cocoa']
     path_source += files('osdep/path-mac.m')
     sources += files('osdep/language-mac.c',
                      'osdep/utils-mac.c',
-                     'osdep/mac/app_bridge.m',
-                     'player/clipboard/clipboard-mac.m')
+                     'osdep/mac/app_bridge.m',)
     main_fn_source = files('osdep/main-fn-mac.c')
 endif
 
@@ -791,10 +786,6 @@ if features['wayland']
     subdir(join_paths('video', 'out'))
 endif
 
-if features['wayland'] and features['wayland-protocols-1-39']
-    sources += files('player/clipboard/clipboard-wayland.c')
-endif
-
 features += {'memfd-create': false}
 if features['wayland']
     features += {'memfd-create': cc.has_function('memfd_create',
@@ -1184,7 +1175,6 @@ swift_sources = []
 if features['cocoa'] and features['swift']
     swift_sources += files('osdep/mac/application.swift',
                            'osdep/mac/app_hub.swift',
-                           'osdep/mac/clipboard.swift',
                            'osdep/mac/dialog.swift',
                            'osdep/mac/event_helper.swift',
                            'osdep/mac/input_helper.swift',
