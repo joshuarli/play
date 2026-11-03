@@ -75,6 +75,10 @@ impl ScriptEventSender {
     pub fn post(&self, event: ScriptEvent) -> Result<Posted, HostError> {
         self.events.post(event)
     }
+
+    pub fn sender(&self) -> EventSender {
+        self.events.clone()
+    }
 }
 
 pub struct ScriptHost {

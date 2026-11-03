@@ -4,6 +4,7 @@ use player_lua::{
     CommandRequest, HostError, NativeValue, PlayerBackend, PropertyFormat, ScriptEvent,
 };
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 pub struct EngineBackend {
     engine: SchedulerEngine,
@@ -343,6 +344,23 @@ impl EngineBackend {
         self.osd_message.as_ref()
     }
 
+    pub fn user_value(&self, name: &str) -> Option<NativeValue> {
+        self.user_data.get(name).cloned()
+    }
+
+    pub fn observed_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.observed.values().map(|(name, _)| name.clone()).collect();
+        names.sort();
+        names.dedup();
+        names
+    }
+
+    pub fn enabled_events(&self) -> Vec<String> {
+        let mut names = self.enabled_events.clone();
+        names.sort();
+        names
+    }
+
     pub fn script_outbox(&self) -> &[(String, Vec<String>)] {
         &self.to_script
     }
@@ -668,6 +686,128 @@ impl EngineBackend {
             self.shutdown_sent = true;
         }
         Ok(Posted::Queued)
+    }
+}
+
+#[derive(Clone)]
+pub struct SharedEngine {
+    shared: Arc<Mutex<EngineBackend>>,
+}
+
+impl SharedEngine {
+    pub fn new(backend: EngineBackend) -> Self {
+        SharedEngine {
+            shared: Arc::new(Mutex::new(backend)),
+        }
+    }
+
+    pub fn pump(&self, sender: &EventSender) -> Result<Posted, HostError> {
+        match self.shared.lock() {
+            Ok(mut backend) => backend.pump(sender),
+            Err(_) => Err(HostError::Thread("engine backend lock poisoned".to_owned())),
+        }
+    }
+
+    pub fn inspect<R>(&self, view: impl FnOnce(&EngineBackend) -> R) -> Option<R> {
+        self.shared.lock().ok().map(|backend| view(&backend))
+    }
+
+    pub fn mutate<R>(&self, update: impl FnOnce(&mut EngineBackend) -> R) -> Option<R> {
+        self.shared
+            .lock()
+            .ok()
+            .map(|mut backend| update(&mut backend))
+    }
+}
+
+impl PlayerBackend for SharedEngine {
+    fn log(&mut self, level: &str, message: &str) {
+        if let Ok(mut backend) = self.shared.lock() {
+            backend.log(level, message);
+        }
+    }
+
+    fn command(&mut self, command: CommandRequest) -> Result<NativeValue, String> {
+        match self.shared.lock() {
+            Ok(mut backend) => backend.command(command),
+            Err(_) => Err("engine backend lock poisoned".to_owned()),
+        }
+    }
+
+    fn get_property(
+        &mut self,
+        name: &str,
+        format: PropertyFormat,
+    ) -> Result<NativeValue, String> {
+        match self.shared.lock() {
+            Ok(mut backend) => backend.get_property(name, format),
+            Err(_) => Err("engine backend lock poisoned".to_owned()),
+        }
+    }
+
+    fn set_property(&mut self, name: &str, value: NativeValue) -> Result<(), String> {
+        match self.shared.lock() {
+            Ok(mut backend) => backend.set_property(name, value),
+            Err(_) => Err("engine backend lock poisoned".to_owned()),
+        }
+    }
+
+    fn del_property(&mut self, name: &str) -> Result<(), String> {
+        match self.shared.lock() {
+            Ok(mut backend) => backend.del_property(name),
+            Err(_) => Err("engine backend lock poisoned".to_owned()),
+        }
+    }
+
+    fn observe_property(
+        &mut self,
+        id: u64,
+        name: &str,
+        format: PropertyFormat,
+    ) -> Result<(), String> {
+        match self.shared.lock() {
+            Ok(mut backend) => backend.observe_property(id, name, format),
+            Err(_) => Err("engine backend lock poisoned".to_owned()),
+        }
+    }
+
+    fn unobserve_property(&mut self, id: u64) -> i32 {
+        self.shared
+            .lock()
+            .map(|mut backend| backend.unobserve_property(id))
+            .unwrap_or(0)
+    }
+
+    fn request_event(&mut self, name: &str, enable: bool) -> bool {
+        self.shared
+            .lock()
+            .map(|mut backend| backend.request_event(name, enable))
+            .unwrap_or(false)
+    }
+
+    fn find_config_file(&mut self, name: &str) -> Option<String> {
+        let _ = name;
+        None
+    }
+
+    fn format_time(&mut self, seconds: f64, format: &str) -> Result<String, String> {
+        match self.shared.lock() {
+            Ok(mut backend) => backend.format_time(seconds, format),
+            Err(_) => Err("engine backend lock poisoned".to_owned()),
+        }
+    }
+
+    fn input_set_section_mouse_area(
+        &mut self,
+        section: &str,
+        x0: f64,
+        y0: f64,
+        x1: f64,
+        y1: f64,
+    ) {
+        if let Ok(mut backend) = self.shared.lock() {
+            backend.input_set_section_mouse_area(section, x0, y0, x1, y1);
+        }
     }
 }
 
@@ -1188,6 +1328,246 @@ mod tests {
             }
         }
         assert!(shutdown_seen, "shutdown posted after quit");
+    }
+
+    const ASSDRAW: &str = include_str!("../../../player/lua/assdraw.lua");
+    const OPTIONS: &str = include_str!("../../../player/lua/options.lua");
+    const OSC: &str = include_str!("../../../player/lua/osc.lua");
+
+    fn drive_while(
+        shared: &SharedEngine,
+        sender: &player_lua::queue::EventSender,
+        host: &mut player_lua::ScriptHost,
+        timeout: std::time::Duration,
+        done: impl Fn() -> bool,
+    ) {
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            shared.pump(sender).expect("pump posts lifecycle");
+            if let Some(result) = host.poll() {
+                result.expect("osc stays alive");
+            }
+            if done() {
+                return;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "timed out driving osc"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
+
+    fn osc_ready(shared: &SharedEngine) -> bool {
+        shared
+            .inspect(|backend| {
+                let sections_ready = ["showhide", "input"].iter().all(|name| {
+                    backend
+                        .section(name)
+                        .map(|section| section.enabled)
+                        .unwrap_or(false)
+                });
+                let overlay_ready = backend.overlay(1).map(|overlay| {
+                    overlay.format == "ass-events"
+                        && overlay.data.contains("100%")
+                        && overlay.data.contains("00:00")
+                        && overlay.data.contains("00:0")
+                        && overlay.data.contains("mpv-osd-symbols")
+                });
+                let observed = backend.observed_names();
+                let observed_ready = [
+                    "duration",
+                    "fullscreen",
+                    "mute",
+                    "osd-dimensions",
+                    "pause",
+                    "time-pos",
+                    "track-list",
+                    "volume",
+                ]
+                .iter()
+                .all(|name| observed.iter().any(|known| known == name));
+                let enabled = backend.enabled_events();
+                let events_ready = ["file-loaded", "shutdown", "start-file"]
+                    .iter()
+                    .all(|name| enabled.iter().any(|known| known == name));
+                sections_ready
+                    && overlay_ready.unwrap_or(false)
+                    && observed_ready
+                    && events_ready
+            })
+            .unwrap_or(false)
+    }
+
+    #[test]
+    fn osc_loads_and_drives_engine_headless() {
+        use player_lua::{ScriptHost, ScriptModule};
+        let shared = SharedEngine::new(backend());
+        shared
+            .mutate(|backend| {
+                backend
+                    .set_property("pause", NativeValue::Bool(true))
+                    .expect("pause freezes the clock");
+            })
+            .expect("backend mutates");
+        let mut host = ScriptHost::spawn_with_modules(
+            "osc",
+            "@osc.lua",
+            OSC,
+            vec![
+                ScriptModule::new("mp.assdraw", ASSDRAW),
+                ScriptModule::new("mp.options", OPTIONS),
+            ],
+            shared.clone(),
+        )
+        .expect("osc spawns");
+        let sender = host.event_sender().sender();
+
+        drive_while(
+            &shared,
+            &sender,
+            &mut host,
+            std::time::Duration::from_secs(15),
+            || {
+                shared
+                    .inspect(|backend| {
+                        backend
+                            .enabled_events()
+                            .iter()
+                            .any(|name| name == "client-message")
+                    })
+                    .unwrap_or(false)
+            },
+        );
+        shared
+            .mutate(|backend| {
+                backend
+                    .command(CommandRequest::Args(argv(&["script-message", "osc-visibility", "always"])))
+                    .expect("visibility message queues");
+            })
+            .expect("backend mutates");
+
+        drive_while(
+            &shared,
+            &sender,
+            &mut host,
+            std::time::Duration::from_secs(15),
+            || osc_ready(&shared),
+        );
+
+        drive_while(
+            &shared,
+            &sender,
+            &mut host,
+            std::time::Duration::from_secs(15),
+            || {
+                shared
+                    .inspect(|backend| {
+                        backend.user_value("user-data/osc/visibility")
+                            == Some(NativeValue::String("always".to_owned()))
+                    })
+                    .unwrap_or(false)
+            },
+        );
+        std::thread::sleep(std::time::Duration::from_millis(700));
+        shared
+            .mutate(|backend| {
+                backend
+                    .command(CommandRequest::Args(argv(&["script-message", "osc-show"])))
+                    .expect("show message queues");
+            })
+            .expect("backend mutates");
+
+        drive_while(
+            &shared,
+            &sender,
+            &mut host,
+            std::time::Duration::from_secs(15),
+            || {
+                shared
+                    .inspect(|backend| {
+                        backend.overlay(1).map(|overlay| {
+                            !overlay.data.is_empty()
+                                && overlay.data.contains("00:00")
+                                && overlay.data.contains("100%")
+                        })
+                    })
+                    .unwrap_or(None)
+                    .unwrap_or(false)
+            },
+        );
+        shared
+            .mutate(|backend| {
+                backend
+                    .command(CommandRequest::Args(argv(&["script-message", "osc-visibility", "never"])))
+                    .expect("hide message queues");
+            })
+            .expect("backend inspects");
+
+        drive_while(
+            &shared,
+            &sender,
+            &mut host,
+            std::time::Duration::from_secs(15),
+            || {
+                shared
+                    .inspect(|backend| {
+                        backend.overlay(1).is_none()
+                            && backend.user_value("user-data/osc/visibility")
+                                == Some(NativeValue::String("never".to_owned()))
+                            && backend.osd_message()
+                                == Some(&(
+                                    "OSC visibility: never".to_owned(),
+                                    "-1".to_owned(),
+                                ))
+                    })
+                    .unwrap_or(false)
+            },
+        );
+        host.post_event(ScriptEvent::new("start-file"))
+            .expect("start-file posts");
+        shared
+            .mutate(|backend| {
+                backend
+                    .command(CommandRequest::Args(argv(&[
+                        "script-message",
+                        "osc-visibility",
+                        "always",
+                    ])))
+                    .expect("show message queues");
+            })
+            .expect("backend inspects");
+
+        drive_while(
+            &shared,
+            &sender,
+            &mut host,
+            std::time::Duration::from_secs(15),
+            || {
+                shared
+                    .inspect(|backend| {
+                        backend.overlay(1).map(|overlay| !overlay.data.is_empty())
+                    })
+                    .unwrap_or(None)
+                    .unwrap_or(false)
+            },
+        );
+        shared
+            .mutate(|backend| {
+                backend
+                    .command(CommandRequest::Args(argv(&["quit"])))
+                    .expect("quit runs");
+            })
+            .expect("backend inspects");
+        shared.pump(&sender).expect("pump posts shutdown");
+        host.wait_timeout(std::time::Duration::from_secs(10))
+            .expect("osc exits on shutdown");
+        assert!(
+            shared
+                .inspect(|backend| backend.overlay(1).is_none())
+                .unwrap_or(false),
+            "shutdown hides the overlay"
+        );
     }
 
     #[test]

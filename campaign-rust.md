@@ -6,7 +6,7 @@ Goal: replace the remaining mpv-derived C playback engine with a small Rust-owne
 
 - Last accepted: S7a (clipboard removal; delete protocol, suite 337 + linux-gpu-next 28 green). Preflight complete 2026-11-03.
 - Red: none. Workspace green on macOS and Linux container static suites; output, display, and swap gates green on the dynamic rerun; build, rust-link, ffi green.
-- Next: S7b-3 (headless osc.lua against the engine). S7b-1 (property core + pump) and S7b-2 (command surface + lifecycle + osd-overlay record) landed with mac + Linux static green and dynamic video reruns green. Then S7c-e, S8.
+- Next: S7c (libass OSD/subtitle rendering + pixel-diff fidelity gate). S7b-1 (property core + pump), S7b-2 (command surface + lifecycle + osd-overlay record), and S7b-3 (headless osc.lua against the engine) landed with mac + Linux static green and dynamic video reruns green. Then S7d-e, S8.
 - Ordered chapters stay open for S7 (no fixture, needs linking design).
 - Resume: read this doc and `docs/RUST-PORT.md`, then run the next open slice. If the tree moved, adapt. Never overwrite newer work.
 
