@@ -7878,10 +7878,6 @@ Video Sync
     other hand, setting a too high value can reduce responsiveness with low
     FPS value.
 
-    This option is interesting for client API users using the render API
-    because you can stop it from limiting your FPS
-    (see ``mpv_render_context_render()`` documentation).
-
     This applies only to audio timing modes (e.g. ``--video-sync=audio``). In
     other modes (``--video-sync=display-...``), video timing relies on vsync
     blocking, and this option is not used.

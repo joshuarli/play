@@ -75,11 +75,6 @@ enum mp_voctrl {
     /* private to vo_gpu */
     VOCTRL_LOAD_HWDEC_API,
 
-    // Only used internally in vo_libmpv
-    VOCTRL_PREINIT,
-    VOCTRL_UNINIT,
-    VOCTRL_RECONFIG,
-
     VOCTRL_UPDATE_WINDOW_TITLE,         // char*
     VOCTRL_UPDATE_PLAYBACK_STATE,       // struct voctrl_playback_state*
 

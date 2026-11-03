@@ -42,15 +42,6 @@ void mp_client_broadcast_event_external(struct mp_client_api *api, int event,
 // m_option.c
 void *node_get_alloc(struct mpv_node *node);
 
-// for vo_libmpv.c
-struct osd_state;
-struct mpv_render_context;
-bool mp_set_main_render_context(struct mp_client_api *client_api,
-                                struct mpv_render_context *ctx, bool active);
-struct mpv_render_context *
-mp_client_api_acquire_render_context(struct mp_client_api *ca);
-void kill_video_async(struct mp_client_api *client_api);
-
 bool mp_streamcb_lookup(struct mpv_global *g, const char *protocol,
                         void **out_user_data, mpv_stream_cb_open_ro_fn *out_fn);
 

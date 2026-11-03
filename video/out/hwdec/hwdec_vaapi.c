@@ -32,10 +32,6 @@
 #include "video/mp_image_pool.h"
 #include "video/vaapi.h"
 
-#if HAVE_VAAPI_DRM
-#include "mpv/render_gl.h"
-#endif
-
 #if HAVE_VAAPI_X11
 #include <va/va_x11.h>
 

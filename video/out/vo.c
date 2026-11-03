@@ -47,13 +47,11 @@
 #include "osdep/threads.h"
 
 extern const struct vo_driver video_out_gpu_next;
-extern const struct vo_driver video_out_libmpv;
 extern const struct vo_driver video_out_null;
 
 static const struct vo_driver *const video_out_drivers[] =
 {
     &video_out_gpu_next,
-    &video_out_libmpv,
     &video_out_null,
 };
 
@@ -116,8 +114,6 @@ struct vo_internal {
     struct stats_ctx *stats;
 };
 
-extern const struct m_sub_options gl_video_conf;
-
 static void forget_frames(struct vo *vo);
 static MP_THREAD_VOID vo_thread(void *ptr);
 
@@ -146,7 +142,6 @@ const struct m_obj_list vo_obj_list = {
     .aliases = {
         {"gl", "gpu"},
         {"opengl", "gpu"},
-        {"opengl-cb", "libmpv"},
         {0}
     },
     .allow_trailer = true,

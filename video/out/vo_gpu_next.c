@@ -44,8 +44,9 @@
 #include "placebo/utils.h"
 #include "gpu/context.h"
 #include "gpu/hwdec.h"
-#include "gpu/video.h"
-#include "gpu/video_shaders.h"
+#include "options/gl_video_opts.h"
+#include "filter_kernels.h"
+#include "gpu/lcms.h"
 #include "sub/osd.h"
 #include "gpu_next/context.h"
 

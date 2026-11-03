@@ -36,7 +36,6 @@
 #include "core.h"
 #include "client.h"
 #include "mpv/client.h"
-#include "mpv/render.h"
 #include "mpv/stream_cb.h"
 
 extern const struct mp_scripting mp_scripting_lua;
@@ -353,15 +352,6 @@ static void init_sym_table(struct mp_script_args *args, void *lib) {
     INIT_SYM(mpv_hook_add);
     INIT_SYM(mpv_hook_continue);
     INIT_SYM(mpv_get_wakeup_pipe);
-
-    INIT_SYM(mpv_render_context_create);
-    INIT_SYM(mpv_render_context_set_parameter);
-    INIT_SYM(mpv_render_context_get_info);
-    INIT_SYM(mpv_render_context_set_update_callback);
-    INIT_SYM(mpv_render_context_update);
-    INIT_SYM(mpv_render_context_render);
-    INIT_SYM(mpv_render_context_report_swap);
-    INIT_SYM(mpv_render_context_free);
 
     INIT_SYM(mpv_stream_cb_add_ro);
 

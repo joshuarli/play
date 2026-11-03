@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "m_option.h"
+#include "gl_video_opts.h"
 #include "common/common.h"
 
 typedef struct mp_vo_opts {

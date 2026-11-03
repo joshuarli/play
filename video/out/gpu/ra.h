@@ -51,13 +51,35 @@ struct ra {
 };
 
 // For passing through windowing system specific parameters and such. The
-// names are always internal (the libmpv render API uses mpv_render_param_type
-// and maps them to names internally).
+// names are always internal and mapped from caller-side parameter types.
 // For example, a name="x11" entry has a X11 display as (Display*)data.
 struct ra_native_resource {
     const char *name;
     void *data;
 };
+
+// Layout of the data behind a name="drm_params_v2" native resource entry.
+// Carries the DRM display handles a VAAPI DRM interop needs.
+typedef struct mpv_opengl_drm_params_v2 {
+    // DRM fd (int). Set to -1 if invalid.
+    int fd;
+
+    // Currently used crtc id
+    int crtc_id;
+
+    // Currently used connector id
+    int connector_id;
+
+    // Pointer to a drmModeAtomicReq pointer that is being used for the
+    // renderloop. This pointer should hold a pointer to the atomic request
+    // pointer. The atomic request pointer is usually changed at every
+    // renderloop.
+    struct _drmModeAtomicReq **atomic_request_ptr;
+
+    // DRM render node. Used for VAAPI interop.
+    // Set to -1 if invalid.
+    int render_fd;
+} mpv_opengl_drm_params_v2;
 
 // Add a ra_native_resource entry. Both name and data pointers must stay valid
 // until ra termination.

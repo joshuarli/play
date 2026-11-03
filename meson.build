@@ -219,7 +219,6 @@ sources = files(
     'video/out/gpu/error_diffusion.c',
     'video/out/gpu/hwdec.c',
     'video/out/gpu/lcms.c',
-    'video/out/gpu/libmpv_gpu.c',
     'video/out/gpu/osd.c',
     'video/out/gpu/ra.c',
     'video/out/gpu/shader_cache.c',
@@ -227,9 +226,7 @@ sources = files(
     'video/out/gpu/utils.c',
     'video/out/gpu/video.c',
     'video/out/gpu/video_shaders.c',
-    'video/out/libmpv_sw.c',
     'video/out/vo.c',
-    'video/out/vo_libmpv.c',
     'video/out/vo_null.c',
     'video/out/win_state.c',
     'video/repack.c',
@@ -964,7 +961,6 @@ if features['gl']
     sources += files('video/out/opengl/common.c',
                      'video/out/opengl/context.c',
                      'video/out/opengl/formats.c',
-                     'video/out/opengl/libmpv_gl.c',
                      'video/out/opengl/ra_gl.c',
                      'video/out/opengl/utils.c')
 elif not features['gl'] and get_option('gl').enabled()
@@ -1380,8 +1376,7 @@ if get_option('libmpv')
     pkg.generate(libmpv, version: client_api_version,
                  description: 'mpv media player client library')
 
-    headers = ['include/mpv/client.h', 'include/mpv/render.h',
-               'include/mpv/render_gl.h', 'include/mpv/stream_cb.h']
+    headers = ['include/mpv/client.h', 'include/mpv/stream_cb.h']
     install_headers(headers, subdir: 'mpv')
 
     # Allow projects to build with libmpv by cloning into ./subprojects/mpv

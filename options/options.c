@@ -33,6 +33,7 @@
 #include "options.h"
 #include "m_config.h"
 #include "m_option.h"
+#include "gl_video_opts.h"
 #include "common/common.h"
 #include "input/event.h"
 #include "stream/stream.h"
@@ -64,7 +65,6 @@ extern const struct m_sub_options ad_lavc_conf;
 extern const struct m_sub_options hwdec_conf;
 extern const struct m_sub_options input_config;
 extern const struct m_sub_options ra_ctx_conf;
-extern const struct m_sub_options gl_video_conf;
 extern const struct m_sub_options gl_next_conf;
 extern const struct m_sub_options ao_alsa_conf;
 
