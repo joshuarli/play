@@ -111,7 +111,7 @@ impl VideoDecoder for EngineVideo {
     fn send(&mut self, packet: Packet) -> Result<(), String> {
         let mut guard = self.lock()?;
         let Some(shared) = guard.as_mut() else {
-            return Ok(());
+            return Err("video packet with no video stream".to_string());
         };
         let fallback = packet.pts.unwrap_or(0.0);
         let mut attempts = 0;
