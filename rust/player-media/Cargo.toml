@@ -1,0 +1,13 @@
+[package]
+name = "player-media"
+version = "0.1.0"
+edition = "2024"
+license = "MPL-2.0"
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+player-core = { path = "../player-core" }
+
+[build-dependencies]

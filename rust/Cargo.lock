@@ -287,6 +287,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "player-media"
+version = "0.1.0"
+dependencies = [
+ "player-core",
+]
+
+[[package]]
 name = "player-release"
 version = "0.1.0"
 dependencies = [
