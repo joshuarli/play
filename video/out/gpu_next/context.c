@@ -26,7 +26,6 @@
 #include "common/common.h"
 #include "options/m_config.h"
 #include "video/out/placebo/utils.h"
-#include "video/out/gpu/video.h"
 
 #if HAVE_GL
 #include "video/out/opengl/context.h"

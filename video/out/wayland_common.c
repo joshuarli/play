@@ -32,7 +32,6 @@
 #include "osdep/poll_wrapper.h"
 #include "osdep/timer.h"
 #include "present_sync.h"
-#include "video/out/gpu/video.h"
 #include "wayland_common.h"
 #include "win_state.h"
 

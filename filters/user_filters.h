@@ -30,4 +30,3 @@ extern const struct mp_user_filter_entry vf_format;
 extern const struct mp_user_filter_entry vf_vdpaupp;
 extern const struct mp_user_filter_entry vf_vavpp;
 extern const struct mp_user_filter_entry vf_fingerprint;
-extern const struct mp_user_filter_entry vf_gpu;

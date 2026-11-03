@@ -48,9 +48,6 @@ const struct mp_user_filter_entry *vf_list[] = {
 #if HAVE_ZIMG
     &vf_fingerprint,
 #endif
-#if (HAVE_GL && HAVE_EGL) || HAVE_VULKAN
-    &vf_gpu,
-#endif
 };
 
 static bool get_vf_desc(struct m_obj_desc *dst, int index)
