@@ -29,6 +29,16 @@ impl Resampler {
         self.in_rate == self.out_rate
     }
 
+    pub fn in_rate(&self) -> u32 {
+        self.in_rate
+    }
+
+    pub fn reset(&mut self) {
+        self.emitted = 0;
+        self.dropped = 0;
+        self.scratch.clear();
+    }
+
     pub fn buffered_input_frames(&self) -> usize {
         self.scratch.len() / self.channels
     }

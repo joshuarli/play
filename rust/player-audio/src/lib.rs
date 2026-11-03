@@ -1,8 +1,11 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
+pub mod clock;
 pub mod mix;
+pub mod pipeline;
 pub mod resample;
 pub mod session;
+pub mod sink;
 
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::ptr;
