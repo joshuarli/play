@@ -5,7 +5,72 @@ Preflight doc: `campaign-rust.md`. This file is the durable resume point.
 
 ## Current phase
 
-S2 complete. Next: S3 (Rust-owned decoding and audio playback).
+S3 complete. Next: S4 (Rust-owned video decode).
+
+## S3 record
+
+Rust owns audio playback end to end for local files. `DecoderSession`
+opens any Symphonia-closure codec by FFmpeg codec name, takes extradata
+and the native channel mask from the probed stream, synthesizes missing
+packet timestamps from a cursor, and resets both decoder and cursor on
+seek. The mixer maps Symphonia layouts onto mono, stereo, and 5.1 with
+standard downmix gains and fans mono out to every channel. The
+streaming resampler interpolates with Catmull-Rom from an integer
+output count, so split pushes are bit-identical to one whole push and
+long streams cannot drift; same-rate conversion is a bit-exact
+passthrough and one scratch buffer is reused across pushes. `Pipeline`
+pulls packets through decode, mix, and resample into caller-owned
+chunks with no per-chunk allocation, fails loudly on mid-stream layout
+changes, and verifies the decoded layout against the container hint.
+`AudioClock` derives position from frames handed to the sink minus
+frames still queued in it, freezes on pause, and re-anchors on seek
+and resume. `AudioEngine` runs the pump on a worker thread behind a
+command channel, applies software gain, parks at EOF for restart by
+seek, and records worker death loudly. The C ABI exposes load, pause,
+seek, volume, mute, snapshot, destroy, and a metadata probe with
+case-insensitive key match.
+
+The TUI claims audio-only files into the engine and leaves the C
+playloop idle: startup sets idle mode with no current entry when the
+first playlist file probes engine-ready, and the TUI reads track state
+from engine snapshots. Video files keep the client path, engine load
+failures degrade to C playback, and a dead engine falls back to
+`loadfile`. The null sink paces in real time like the C null AO, so
+headless runs keep real playback dynamics. The TUI gate proves the
+bypass: no `AO: [` or `VO: [` line appears in the log while metadata,
+cover art, and redraws work.
+
+Decisions with reasons:
+
+- The resampler is pure Rust, not libswresample. The campaign permits
+  libswresample where justified, and no justification survived: the
+  pinned prefix already ships it for the C chain, but the Rust path
+  needs no new native linkage, stays deterministic, and is covered by
+  unit tests for tone fidelity, zero-crossing preservation, silence,
+  and stable scratch capacity.
+- The CoreAudio channel bitmap passes the FFmpeg mask through. The SDK
+  headers prove the bitmap bits match FFmpeg for mono, stereo, and 5.1;
+  the engine only emits those three layouts, and a compile-time size
+  assert plus a runtime capacity check guard the transcribed structs.
+- Build-script link-args do not propagate to dependent crates the way
+  link-lib and link-search do, so `player-audio/build.rs` repeats the
+  Linux VA-API pair that `player-media` emits for its own targets.
+- Static-pie test binaries cannot call into the container's shared
+  libasound: the first call segfaults. The production link is dynamic
+  musl and unaffected. The two ALSA tests are ignored with the
+  dynamic-link rerun command and both pass under
+  `RUSTFLAGS="-C target-feature=-crt-static"`. The CoreAudio device
+  test is ignored for the owner manual checklist.
+
+Verified: `cargo test` green on macOS (45 audio, 36 media, 13 ffi, 19
+core, 9 lua, 14 tui) and Linux (44 audio with 2 ALSA ignored, rest
+identical); `tests/run.sh audio` 15/15 and `play` 8/8 on macOS; full
+suites green on macOS (337) and Linux (329); `scripts/audit.sh` ok;
+`scripts/measure.sh final` ok with no growth (executable 9,440,304 B,
+distributable 26,774,400 B, first frame 139.61 ms, idle RSS
+83.94 MB). Non-Symphonia codecs (for example AC-3) fail loudly at
+probe time and stay on the C engine; that split is recorded for the
+S7/S8 scope decision.
 
 ## S2 record
 
@@ -70,9 +135,12 @@ Scoped deviations from `campaign-rust.md`:
 
 - Startup parsing and validation: `player-core::config`, `command` (subset), `state`, `playlist`, `input`, `local_file`.
 - FFI surface: `rust/player-ffi` (command, state, playlist, local file, startup, TUI, Lua, mpv handles).
-- Audio decode bridge: `rust/player-audio` (Symphonia packets to PCM).
+- Audio pipeline: `rust/player-audio` (Symphonia sessions, channel
+  mixer, streaming resampler, clock, CoreAudio and ALSA sinks,
+  threaded engine with a C ABI, metadata probe).
 - Script host: `rust/player-lua` (mlua, Lua 5.2, vendored).
-- Terminal UI: `rust/player-tui` (renderer; engine still C).
+- Terminal UI: `rust/player-tui` (renderer) with `player-ffi` routing
+  audio-only files to the Rust engine and video to the C engine.
 
 ## Remaining mpv C dependencies
 
