@@ -97,6 +97,10 @@ impl Pipeline {
         Ok(())
     }
 
+    pub fn duration_seconds(&self) -> Option<f64> {
+        self.session.duration_seconds()
+    }
+
     pub fn next_chunk(&mut self, output: &mut Vec<f32>) -> Result<bool, String> {
         if self.finished && self.converted.is_empty() {
             return Ok(true);
