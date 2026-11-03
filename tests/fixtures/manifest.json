@@ -171,6 +171,23 @@
         "av1"
       ]
     },
+    "chapters": {
+      "audio": [
+        "aac"
+      ],
+      "bytes": 237548,
+      "channels": [
+        2
+      ],
+      "duration": 3,
+      "path": "chapters.mkv",
+      "role": "corpus",
+      "sha256": "8236603fa78a0fb1e45b8af7ad0b5af483afee4571b4f8c77ac69a2220fba44e",
+      "subtitle": [],
+      "video": [
+        "h264"
+      ]
+    },
     "colon": {
       "audio": [
         "aac"

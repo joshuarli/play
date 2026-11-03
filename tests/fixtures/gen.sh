@@ -98,6 +98,32 @@ ff "${video3[@]}" "${audio3[@]}" -f lavfi -i "sine=frequency=660:sample_rate=480
     -metadata:s:a:1 language=jpn -metadata:s:a:1 title=Japanese \
     -shortest "$FIXTURES/multiaudio.mkv"
 
+cat >"$TMP/chapters.ffmeta" <<'EOF'
+;FFMETADATA1
+[CHAPTER]
+TIMEBASE=1/1000
+START=0
+END=1000
+title=Intro
+[CHAPTER]
+TIMEBASE=1/1000
+START=1000
+END=2000
+title=Middle
+[CHAPTER]
+TIMEBASE=1/1000
+START=2000
+END=3000
+title=End
+EOF
+
+ff "${video3[@]}" "${audio3[@]}" -i "$TMP/chapters.ffmeta" \
+    -map 0:v -map 1:a \
+    -c:v libx264 -preset ultrafast -crf 28 -pix_fmt yuv420p \
+    -x264-params keyint=24:min-keyint=24:scenecut=0 \
+    -c:a aac -b:a 64k -ac 2 -shortest -map_metadata 1 \
+    "$FIXTURES/chapters.mkv"
+
 cat >"$FIXTURES/external.srt" <<'EOF'
 1
 00:00:00,200 --> 00:00:01,500
@@ -223,6 +249,9 @@ entries = {
     "multiaudio": {"path": "multiaudio.mkv", "role": "corpus", "duration": 3,
                    "video": ["h264"], "audio": ["aac", "opus"], "subtitle": [],
                    "channels": [2, 2]},
+    "chapters": {"path": "chapters.mkv", "role": "corpus", "duration": 3,
+                 "video": ["h264"], "audio": ["aac"], "subtitle": [],
+                 "channels": [2]},
     "h264-embedded-srt": {"path": "h264-embedded-srt.mkv", "role": "corpus",
                           "duration": 3, "video": ["h264"], "audio": ["aac"],
                           "subtitle": ["subrip"], "channels": [2]},
