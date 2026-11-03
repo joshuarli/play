@@ -503,6 +503,24 @@ impl MediaSession {
         }
         Ok(())
     }
+
+    /// Raw codec parameters for a stream index. The pointer stays valid
+    /// while the session lives; the caller must not free it.
+    pub fn codecpar_ptr(&self, stream_index: usize) -> Option<*const AvCodecParameters> {
+        // SAFETY: streams/nb_streams are valid for the open session.
+        let count = unsafe { (*self.context).nb_streams as usize }.min(MAX_STREAMS);
+        if stream_index >= count {
+            return None;
+        }
+        // SAFETY: index is below nb_streams; codecpar is set by the probe.
+        let stream = unsafe { *(*self.context).streams.add(stream_index) };
+        let codecpar = unsafe { (*stream).codecpar };
+        if codecpar.is_null() {
+            None
+        } else {
+            Some(codecpar)
+        }
+    }
 }
 
 #[cfg(test)]

@@ -46,8 +46,8 @@ pub const AV_NUM_DATA_POINTERS: usize = 8;
 pub const AV_PIX_FMT_NONE: c_int = -1;
 pub const AV_PIX_FMT_YUV420P: c_int = 0;
 pub const AV_PIX_FMT_NV12: c_int = 23;
-pub const AV_PIX_FMT_VAAPI: c_int = 49;
-pub const AV_PIX_FMT_VIDEOTOOLBOX: c_int = 293;
+pub const AV_PIX_FMT_VAAPI: c_int = 44;
+pub const AV_PIX_FMT_VIDEOTOOLBOX: c_int = 157;
 
 pub const AV_HWDEVICE_TYPE_NONE: c_int = 0;
 pub const AV_HWDEVICE_TYPE_VAAPI: c_int = 3;
@@ -443,6 +443,7 @@ unsafe extern "C" {
         flags: c_int,
     ) -> c_int;
     pub fn av_packet_alloc() -> *mut AvPacket;
+    pub fn av_new_packet(pkt: *mut AvPacket, size: c_int) -> c_int;
     pub fn av_packet_free(pkt: *mut *mut AvPacket);
     pub fn av_dict_get(
         m: *const AvDictionary,
