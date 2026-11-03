@@ -5,6 +5,12 @@ module = join_paths(build_root, 'osdep/mac/swift.swiftmodule')
 swift_flags = ['-c', '-emit-library', '-static', '-sdk', macos_sdk_path,
                '-emit-objc-header', '-parse-as-library']
 
+if swift_ver.version_compare('>=5.8')
+    swift_depfile = 'swift.deps'
+else
+    swift_depfile = ''
+endif
+
 # fallback to old swift frontend build
 if swift_ver.version_compare('<5.8')
     message('Falling back to old swift frontend build')
@@ -41,12 +47,24 @@ swift_compile = [swift_prog, swift_flags, '-module-name', 'swift',
                  '-I' + libplacebo.get_variable('includedir',
                             default_value: source_root / 'subprojects' / 'libplacebo' / 'src' / 'include'),
                  '-I' + libavutil.get_variable('includedir')]
+swift_outputs = ['swift.swiftmodule', 'swift.h', 'swift.o']
 
-swift_targets = custom_target('swift_targets',
-    input: swift_sources,
-    output: ['swift.swiftmodule', 'swift.h', 'swift.o'],
-    command: swift_compile,
-)
+if swift_depfile != ''
+    swift_compile += ['-emit-module-dependencies-path',
+                      join_paths(meson.current_build_dir(), swift_depfile)]
+    swift_targets = custom_target('swift_targets',
+        input: swift_sources,
+        output: swift_outputs,
+        command: swift_compile,
+        depfile: swift_depfile,
+    )
+else
+    swift_targets = custom_target('swift_targets',
+        input: swift_sources,
+        output: swift_outputs,
+        command: swift_compile,
+    )
+endif
 sources += swift_targets
 
 swift_lib_dir_py = find_program(join_paths(tools_directory, 'macos-swift-lib-directory.py'))
