@@ -415,10 +415,8 @@ static int reinit_audio_filters_and_output(struct MPContext *mpctx)
     mp_aframe_get_chmap(out_fmt, &out_channels);
 
     int ao_flags = 0;
-    bool spdif_fallback = af_fmt_is_spdif(out_format) &&
-                          ao_c->spdif_passthrough;
 
-    if (opts->ao_null_fallback && !spdif_fallback)
+    if (opts->ao_null_fallback)
         ao_flags |= AO_INIT_NULL_FALLBACK;
 
     if (opts->audio_stream_silence)
@@ -452,32 +450,7 @@ static int reinit_audio_filters_and_output(struct MPContext *mpctx)
     if (mpctx->ao)
         ao_get_format(mpctx->ao, &ao_rate, &ao_format, &ao_channels);
 
-    // Verify passthrough format was not changed.
-    if (mpctx->ao && af_fmt_is_spdif(out_format)) {
-        if (out_rate != ao_rate || out_format != ao_format ||
-            !mp_chmap_equals(&out_channels, &ao_channels))
-        {
-            MP_ERR(mpctx, "Passthrough format unsupported.\n");
-            ao_uninit(mpctx->ao);
-            mpctx->ao = NULL;
-        }
-    }
-
     if (!mpctx->ao) {
-        // If spdif was used, try to fallback to PCM.
-        if (spdif_fallback && ao_c->track && ao_c->track->dec) {
-            MP_VERBOSE(mpctx, "Falling back to PCM output.\n");
-            ao_c->spdif_passthrough = false;
-            ao_c->spdif_failed = true;
-            mp_decoder_wrapper_set_spdif_flag(ao_c->track->dec, false);
-            if (!mp_decoder_wrapper_reinit(ao_c->track->dec))
-                goto init_error;
-            reset_audio_state(mpctx);
-            mp_output_chain_reset_harder(ao_c->filter);
-            mp_wakeup_core(mpctx); // reinit with new format next time
-            return 0;
-        }
-
         MP_ERR(mpctx, "Could not open/initialize audio device -> no sound.\n");
         mpctx->error_playing = MPV_ERROR_AO_INIT_FAILED;
         goto init_error;
@@ -526,9 +499,6 @@ int init_audio_decoder(struct MPContext *mpctx, struct track *track)
     if (!track->dec)
         goto init_error;
 
-    if (track->ao_c)
-        mp_decoder_wrapper_set_spdif_flag(track->dec, true);
-
     if (!mp_decoder_wrapper_reinit(track->dec))
         goto init_error;
 
@@ -572,7 +542,6 @@ void reinit_audio_chain_src(struct MPContext *mpctx, struct track *track)
     ao_c->log = mpctx->log;
     ao_c->filter =
         mp_output_chain_create(mpctx->filter_root, MP_OUTPUT_CHAIN_AUDIO);
-    ao_c->spdif_passthrough = true;
     ao_c->last_out_pts = MP_NOPTS_VALUE;
     ao_c->delay = mpctx->opts->audio_delay;
 
@@ -774,22 +743,6 @@ void reload_audio_output(struct MPContext *mpctx)
     if (ao_c) {
         reset_audio_state(mpctx);
         mp_output_chain_reset_harder(ao_c->filter);
-    }
-
-    // Whether we can use spdif might have changed. If we failed to use spdif
-    // in the previous initialization, try it with spdif again (we'll fallback
-    // to PCM again if necessary).
-    if (ao_c && ao_c->track) {
-        struct mp_decoder_wrapper *dec = ao_c->track->dec;
-        if (dec && ao_c->spdif_failed) {
-            ao_c->spdif_passthrough = true;
-            ao_c->spdif_failed = false;
-            mp_decoder_wrapper_set_spdif_flag(ao_c->track->dec, true);
-            if (!mp_decoder_wrapper_reinit(dec)) {
-                MP_ERR(mpctx, "Error reinitializing audio.\n");
-                error_on_track(mpctx, ao_c->track);
-            }
-        }
     }
 
     mp_wakeup_core(mpctx);

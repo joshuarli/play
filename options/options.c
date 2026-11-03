@@ -61,7 +61,6 @@ extern const struct m_sub_options demux_playlist_conf;
 extern const struct m_sub_options demux_lavf_conf;
 extern const struct m_sub_options demux_mkv_conf;
 extern const struct m_sub_options vd_lavc_conf;
-extern const struct m_sub_options ad_lavc_conf;
 extern const struct m_sub_options hwdec_conf;
 extern const struct m_sub_options input_config;
 extern const struct m_sub_options ra_ctx_conf;
@@ -591,7 +590,6 @@ static const m_option_t mp_opts[] = {
 
     {"", OPT_SUBSTRUCT(dec_wrapper, dec_wrapper_conf)},
     {"", OPT_SUBSTRUCT(vd_lavc_params, vd_lavc_conf)},
-    {"ad-lavc", OPT_SUBSTRUCT(ad_lavc_params, ad_lavc_conf)},
 
     {"", OPT_SUBSTRUCT(hwdec_opts, hwdec_conf)},
 

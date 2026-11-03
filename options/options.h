@@ -347,7 +347,6 @@ typedef struct MPOpts {
     struct stream_opts *stream_opts;
 
     struct vd_lavc_params *vd_lavc_params;
-    struct ad_lavc_params *ad_lavc_params;
 
     struct hwdec_opts *hwdec_opts;
 

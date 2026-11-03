@@ -227,9 +227,7 @@ audio/:
     compressed formats used for spdif.)
 
 audio/decode/:
-    ad_*.c handle audio decoding. ad_lavc.c is the decoder using ffmpeg.
-    ad_spdif.c is not really a decoder, but is used for compressed audio
-    passthrough.
+    ad_symphonia.c handles audio decoding via Symphonia.
 
 audio/filter/:
     Audio filters. af_scaletempo2 is inserted by default if playback is different

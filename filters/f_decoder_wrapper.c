@@ -99,7 +99,6 @@ struct dec_wrapper_opts {
     int video_rotate;
     char *audio_decoders;
     char *video_decoders;
-    char *audio_spdif;
     struct dec_queue_opts *vdec_queue_opts;
     struct dec_queue_opts *adec_queue_opts;
     int64_t video_reverse_size;
@@ -118,9 +117,6 @@ const struct m_sub_options dec_wrapper_conf = {
             .help = decoder_list_help},
         {"vd", OPT_STRING(video_decoders),
             .flags = UPDATE_VD,
-            .help = decoder_list_help},
-        {"audio-spdif", OPT_STRING(audio_spdif),
-            .flags = UPDATE_AD,
             .help = decoder_list_help},
         {"video-rotate", OPT_CHOICE(video_rotate, {"no", -1}),
             .flags = UPDATE_IMGPAR, M_RANGE(0, 359)},
@@ -226,7 +222,6 @@ struct priv {
 
     // --- Protected by cache_lock.
     char *cur_hwdec;
-    bool try_spdif;
     bool attached_picture;
     bool pts_reset;
     int attempt_framedrops; // try dropping this many frames
@@ -246,10 +241,6 @@ static int decoder_list_help(struct mp_log *log, const m_option_t *opt,
         struct mp_decoder_list *list = video_decoder_list();
         mp_print_decoders(log, MSGL_INFO, "Video decoders:", list);
         talloc_free(list);
-        return M_OPT_EXIT;
-    }
-    if (strcmp(opt->name, "audio-spdif") == 0) {
-        mp_info(log, "Choices: ac3,dts-hd,dts (and possibly more)\n");
         return M_OPT_EXIT;
     }
     return 1;
@@ -391,7 +382,6 @@ struct mp_decoder_list *audio_decoder_list(void)
 {
     struct mp_decoder_list *list = talloc_zero(NULL, struct mp_decoder_list);
     ad_symphonia.add_decoders(list);
-    ad_lavc.add_decoders(list);
     return list;
 }
 
@@ -406,7 +396,6 @@ static bool reinit_decoder(struct priv *p)
 
     const struct mp_decoder_fns *driver = NULL;
     struct mp_decoder_list *list = NULL;
-    bool per_entry_driver = false;
     char *user_list = NULL;
     char *fallback = NULL;
 
@@ -415,35 +404,16 @@ static bool reinit_decoder(struct priv *p)
         user_list = p->opts->video_decoders;
         fallback = "h264";
     } else if (p->codec->type == STREAM_AUDIO) {
-        driver = &ad_lavc;
+        driver = &ad_symphonia;
         user_list = p->opts->audio_decoders;
         fallback = "aac";
-
-        mp_mutex_lock(&p->cache_lock);
-        bool try_spdif = p->try_spdif;
-        mp_mutex_unlock(&p->cache_lock);
-
-        if (try_spdif && p->codec->codec) {
-            struct mp_decoder_list *spdif =
-                select_spdif_codec(p->codec->codec, p->opts->audio_spdif);
-            if (spdif->num_entries) {
-                driver = &ad_spdif;
-                list = spdif;
-            } else {
-                talloc_free(spdif);
-            }
-        }
-        if (!list)
-            per_entry_driver = true;
     }
 
     if (!driver)
         return false;
 
-    if (!list) {
+    {
         struct mp_decoder_list *full = talloc_zero(NULL, struct mp_decoder_list);
-        if (per_entry_driver)
-            ad_symphonia.add_decoders(full);
         driver->add_decoders(full);
         const char *codec = p->codec->codec;
         if (codec && strcmp(codec, "null") == 0)
@@ -459,10 +429,6 @@ static bool reinit_decoder(struct priv *p)
         MP_VERBOSE(p, "Opening decoder %s\n", sel->decoder);
 
         const struct mp_decoder_fns *sel_driver = driver;
-        if (per_entry_driver) {
-            sel_driver = sel->driver == MP_DECODER_DRIVER_SYMPHONIA
-                ? &ad_symphonia : &ad_lavc;
-        }
         p->decoder = sel_driver->create(p->decf, p->codec, sel->decoder);
         if (p->decoder) {
             p->codec->decoder = talloc_strdup(p, sel->decoder);
@@ -527,14 +493,6 @@ double mp_decoder_wrapper_get_container_fps(struct mp_decoder_wrapper *d)
     double res = p->fps;
     thread_unlock(p);
     return res;
-}
-
-void mp_decoder_wrapper_set_spdif_flag(struct mp_decoder_wrapper *d, bool spdif)
-{
-    struct priv *p = d->f->priv;
-    mp_mutex_lock(&p->cache_lock);
-    p->try_spdif = spdif;
-    mp_mutex_unlock(&p->cache_lock);
 }
 
 void mp_decoder_wrapper_set_coverart_flag(struct mp_decoder_wrapper *d, bool c)

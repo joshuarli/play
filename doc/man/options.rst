@@ -2078,25 +2078,6 @@ Audio
     to modify a previously specified list, but you should not need these for
     typical use.
 
-``--audio-spdif=<codecs>``
-    List of codecs for which compressed audio passthrough should be used. This
-    works for both classic S/PDIF and HDMI.
-
-    Possible codecs are ``ac3``, ``dts``, ``dts-hd``, ``eac3``, ``truehd``.
-    Multiple codecs can be specified by separating them with ``,``. ``dts``
-    refers to low bitrate DTS core, while ``dts-hd`` refers to DTS MA (receiver
-    and OS support varies). If both ``dts`` and ``dts-hd`` are specified, it
-    behaves equivalent to specifying ``dts-hd`` only.
-
-    In earlier mpv versions you could use ``--ad`` to force the spdif wrapper.
-    This does not work anymore.
-
-    .. warning::
-
-        There is not much reason to use this. HDMI supports uncompressed
-        multichannel PCM, and mpv supports lossless DTS-HD decoding via
-        FFmpeg's new DCA decoder (based on libdcadec).
-
 ``--ad=<decoder1,decoder2,...[-]>``
     Specify a priority list of audio decoders to be used, according to their
     decoder name. When determining which decoder to use, the first decoder that
@@ -2117,11 +2098,6 @@ Audio
 
         ``--ad=help``
             List all available decoders.
-
-    .. warning::
-
-        Enabling compressed audio passthrough (AC3 and DTS via SPDIF/HDMI) with
-        this option is not possible. Use ``--audio-spdif`` instead.
 
 ``--volume=<value>``
     Set the startup volume. 0 means silence, 100 means no volume reduction or
@@ -2175,44 +2151,6 @@ Audio
     the name to force it; this will skip some checks. Give the demuxer name as
     printed by ``--audio-demuxer=help``.
 
-``--ad-lavc-ac3drc=<level>``
-    Select the Dynamic Range Compression level for AC-3 audio streams.
-    ``<level>`` is a float value ranging from 0 to 1, where 0 means no
-    compression (which is the default) and 1 means full compression (make loud
-    passages more silent and vice versa). Values up to 6 are also accepted, but
-    are purely experimental. This option only shows an effect if the AC-3 stream
-    contains the required range compression information.
-
-    The standard mandates that DRC is enabled by default, but mpv (and some
-    other players) ignore this for the sake of better audio quality.
-
-``--ad-lavc-downmix=<yes|no>``
-    Whether to request audio channel downmixing from the decoder (default: no).
-    Some decoders, like AC-3, AAC and DTS, can remix audio on decoding. The
-    requested number of output channels is set with the ``--audio-channels`` option.
-    Useful for playing surround audio on a stereo system.
-
-``--ad-lavc-threads=<0-16>``
-    Number of threads to use for decoding. Whether threading is actually
-    supported depends on codec. As of this writing, it's supported for some
-    lossless codecs only. 0 means autodetect number of cores on the
-    machine and use that, up to the maximum of 16 (default: 1).
-
-``--ad-lavc-o=<key>=<value>[,<key>=<value>[,...]]``
-    Pass AVOptions to libavcodec decoder. Note, a patch to make the o=
-    unneeded and pass all unknown options through the AVOption system is
-    welcome. A full list of AVOptions can be found in the FFmpeg manual.
-
-    This is a key/value list option. See `List Options`_ for details.
-
-``--ad-spdif-dtshd=<yes|no>``, ``--dtshd=<yes|no>``
-    If DTS is passed through, use DTS-HD.
-
-    .. warning::
-
-        This and enabling passthrough via ``--ad`` are deprecated in favor of
-        using ``--audio-spdif=dts-hd``.
-
 ``--audio-channels=<auto-safe|auto|layouts>``
     Control which audio channels are output (e.g. surround vs. stereo). There
     are the following possibilities:
@@ -2252,8 +2190,7 @@ Audio
     If the list of channel layouts has only 1 item, the decoder is asked to
     produce according output. This sometimes triggers decoder-downmix, which
     might be different from the normal mpv downmix. (Only some decoders support
-    remixing audio, like AC-3, AAC or DTS. You can use ``--ad-lavc-downmix=no``
-    to make the decoder always output its native layout.) One consequence is
+    remixing audio, like AC-3, AAC or DTS.) One consequence is
     that ``--audio-channels=stereo`` triggers decoder downmix, while ``auto``
     or ``auto-safe`` never will, even if they end up selecting stereo. This
     happens because the decision whether to use decoder downmix happens long

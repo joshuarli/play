@@ -181,8 +181,6 @@ struct ao_chain {
     struct mp_log *log;
     struct MPContext *mpctx;
 
-    bool spdif_passthrough, spdif_failed;
-
     struct mp_output_chain *filter;
 
     struct ao *ao;

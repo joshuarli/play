@@ -46,9 +46,6 @@ int mp_decoder_wrapper_get_frames_dropped(struct mp_decoder_wrapper *d);
 
 double mp_decoder_wrapper_get_container_fps(struct mp_decoder_wrapper *d);
 
-// Whether to prefer spdif wrapper over real decoders on next reinit.
-void mp_decoder_wrapper_set_spdif_flag(struct mp_decoder_wrapper *d, bool spdif);
-
 // Whether to decode only 1 frame and then stop, and cache the frame across resets.
 void mp_decoder_wrapper_set_coverart_flag(struct mp_decoder_wrapper *d, bool c);
 
@@ -101,9 +98,7 @@ struct mp_decoder_fns {
 };
 
 extern const struct mp_decoder_fns vd_lavc;
-extern const struct mp_decoder_fns ad_lavc;
 extern const struct mp_decoder_fns ad_symphonia;
-extern const struct mp_decoder_fns ad_spdif;
 
 // Convenience wrapper for lavc based decoders. Treat lavc_state as private;
 // init to all-0 on init and resets.
@@ -114,6 +109,3 @@ struct lavc_state {
 void lavc_process(struct mp_filter *f, struct lavc_state *state,
                   int (*send)(struct mp_filter *f, struct demux_packet *pkt),
                   int (*receive)(struct mp_filter *f, struct mp_frame *res));
-
-// ad_spdif.c
-struct mp_decoder_list *select_spdif_codec(const char *codec, const char *pref);
