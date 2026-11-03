@@ -5,7 +5,65 @@ Preflight doc: `campaign-rust.md`. This file is the durable resume point.
 
 ## Current phase
 
-S4 complete. Next: S5 (scheduler).
+S5 complete. Next: S6 (renderer).
+
+## S5 record
+
+Rust owns playback scheduling end to end for audio-only files. The
+new `player-engine` crate holds the state machine, the master clock,
+the scheduler, and a scripted simulator. `Machine` encodes the
+campaign diagram with typed resume targets: pausing from draining
+remembers draining, seeking from pause remembers the paused return,
+and illegal edges are rejected without state change. `MasterClock`
+anchors content position to device time in audio mode and to
+monotonic time in video-only mode, so seeks rebase the anchor
+without rewinding device time; speed, pause, latency, and
+discontinuities all run on fake time in tests. `Scheduler` pumps
+demuxed packets through decoder traits into output traits against
+the clock, presents due video frames, drops late ones deliberately,
+finishes decoders at EOF to release held-back frames, and routes
+seek decode-ahead into a bounded preroll queue instead of the sink.
+Sixteen simulator scenarios cover A/V, video-only, audio-only,
+VFR, reordered DTS, forward/backward/rapid/paused seeks, pause and
+resume, speed, track switch, missing timestamps, drain, decode,
+demux, output, and device failures, shutdown, and stale commands.
+
+The real backend drives the scheduler on a worker thread behind the
+unchanged C symbols: `EngineDemux` wraps one media session for the
+selected audio stream, `EngineAudio` decodes through the
+`PacketDecoder` core extracted from `Pipeline`, and `EngineOutput`
+wraps the null or native sink with software gain. The old
+`AudioEngine` pump is deleted; the C ABI now lives in
+`player-engine`. Audio-only files play, pause, seek, and report
+through the scheduler with no TUI changes; video files stay on the
+C path until the renderer arrives in S6.
+
+Decisions with reasons:
+
+- Progress-bounded pump steps, not packet counts. A 64-packet step
+  blocks seconds on a paced sink and starves commands; each step now
+  stops after the first pushed chunk or decoded frame, matching the
+  old per-chunk command granularity.
+- Seek decode-ahead stashes into preroll. Pushing to a paused sink
+  errors loudly, which caught the first implementation; the queue is
+  bounded and drained by the pumps, paused or playing.
+- Reordered-DTS simulation uses windowed disorder with a matching
+  decoder holdback. Fully reversed input is not incrementally
+  decodable by anyone; the windowed fake proves pts-order
+  presentation with bounded delay, and EOF finish releases the tail.
+- The dev build links a third archive for the engine symbols; the
+  release bundles already flow through `player-release`, which
+  re-exports the engine. The engine repeats the Linux-only native
+  link args that do not propagate from dependency build scripts.
+
+Verified: workspace `cargo test` green on macOS (179 across seven
+crates) and container engine/media/audio; `tests/run.sh play`,
+`seek`, `audio` (15/15 through the scheduler), `tui`, `corpus`,
+`hwdec`, `failures` green; full suites green on macOS (337) and
+Linux (329); `scripts/audit.sh` ok. Track switching is proven in
+the simulator only; product wiring arrives with S7 properties.
+Ordered-chapter segment linking stays open and moves to S7 with
+track management.
 
 ## S4 record
 
