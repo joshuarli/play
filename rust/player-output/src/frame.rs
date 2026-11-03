@@ -224,8 +224,6 @@ fn empty_plane() -> sys::PlPlane {
 mod tests {
     use super::*;
 
-    const IGNORE_LINUX_STATIC: &str = "static-pie test binaries cannot call the container Vulkan loader; run with RUSTFLAGS=\"-C target-feature=-crt-static\"";
-
     fn setup() -> (Vulkan, Renderer) {
         let vk = Vulkan::create().expect("vulkan initializes headlessly");
         let renderer = vk.create_renderer().expect("renderer creates");
@@ -294,7 +292,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(target_os = "linux", ignore = IGNORE_LINUX_STATIC)]
+    #[cfg_attr(target_os = "linux", ignore = "static-pie test binaries cannot call the container Vulkan loader; run with RUSTFLAGS=\"-C target-feature=-crt-static\"")]
     fn yuv420_solid_colors_match_software_reference() {
         for (y, u, v) in [(54, 99, 255), (182, 30, 12), (18, 255, 117), (255, 128, 128), (0, 128, 128)] {
             let expected = bt709_full_to_rgb(y, u, v);
@@ -313,7 +311,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(target_os = "linux", ignore = IGNORE_LINUX_STATIC)]
+    #[cfg_attr(target_os = "linux", ignore = "static-pie test binaries cannot call the container Vulkan loader; run with RUSTFLAGS=\"-C target-feature=-crt-static\"")]
     fn nv12_matches_yuv420() {
         let (vk, renderer) = setup();
         let w = 8;
@@ -359,7 +357,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(target_os = "linux", ignore = IGNORE_LINUX_STATIC)]
+    #[cfg_attr(target_os = "linux", ignore = "static-pie test binaries cannot call the container Vulkan loader; run with RUSTFLAGS=\"-C target-feature=-crt-static\"")]
     fn rgba8_passthrough_matches_input() {
         let (vk, renderer) = setup();
         let mut input = vec![0u8; 8 * 8 * 4];
