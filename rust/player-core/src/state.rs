@@ -8,6 +8,9 @@ pub struct PlaybackState {
     time_pos: f64,
     duration: Option<f64>,
     eof_reached: bool,
+    aid: Option<i64>,
+    sid: Option<i64>,
+    vid: Option<i64>,
     sequence: u64,
 }
 
@@ -33,6 +36,9 @@ impl PlaybackState {
             time_pos: 0.0,
             duration: None,
             eof_reached: false,
+            aid: None,
+            sid: None,
+            vid: None,
             sequence: 0,
         }
     }
@@ -110,6 +116,37 @@ impl PlaybackState {
         self.set_bool("eof-reached", value).is_some()
     }
 
+    pub fn set_track(&mut self, name: &str, value: i64) -> Option<StateChange> {
+        let target = match name {
+            "aid" => &mut self.aid,
+            "sid" => &mut self.sid,
+            "vid" => &mut self.vid,
+            _ => return None,
+        };
+        let next = if value == -2 { None } else { Some(value) };
+        if *target == next {
+            return None;
+        }
+        *target = next;
+        self.sequence += 1;
+        Some(StateChange {
+            sequence: self.sequence,
+        })
+    }
+
+    pub fn get_track(&self, name: &str) -> Option<i64> {
+        match name {
+            "aid" => Some(self.aid.unwrap_or(-2)),
+            "sid" => Some(self.sid.unwrap_or(-2)),
+            "vid" => Some(self.vid.unwrap_or(-2)),
+            _ => None,
+        }
+    }
+
+    pub fn supports_track(name: &str) -> bool {
+        matches!(name, "aid" | "sid" | "vid")
+    }
+
     pub fn get_bool(&self, name: &str) -> Option<bool> {
         match name {
             "pause" => Some(self.paused),
@@ -178,6 +215,23 @@ mod tests {
         assert!(state.set_number("time-pos", 4.5).is_some());
         assert_eq!(state.get_number("time-pos"), Some(4.5));
         assert!(state.set_number("volume", f64::NAN).is_none());
+    }
+
+    #[test]
+    fn state_tracks_selection() {
+        let mut state = PlaybackState::new();
+        assert_eq!(state.get_track("aid"), Some(-2));
+        assert!(state.set_track("aid", 1).is_some());
+        assert_eq!(state.get_track("aid"), Some(1));
+        assert!(state.set_track("aid", 1).is_none());
+        assert!(state.set_track("aid", -2).is_some());
+        assert_eq!(state.get_track("aid"), Some(-2));
+        assert!(state.set_track("vid", -1).is_some());
+        assert_eq!(state.get_track("vid"), Some(-1));
+        assert!(state.set_track("bogus", 1).is_none());
+        assert_eq!(state.get_track("bogus"), None);
+        assert!(PlaybackState::supports_track("sid"));
+        assert!(!PlaybackState::supports_track("pause"));
     }
 
     #[test]

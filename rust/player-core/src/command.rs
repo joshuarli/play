@@ -17,6 +17,8 @@ pub enum Command {
     Screenshot,
     SubtitleAdd(String),
     SelectTrack { kind: TrackKind, id: Option<i64> },
+    SelectTrackAuto(TrackKind),
+    CycleTrack(TrackKind),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -112,6 +114,9 @@ fn parse_cycle(args: &[String]) -> Result<Option<Command>, CommandError> {
         "pause" => Some(Command::Pause(Toggle::Toggle)),
         "fullscreen" => Some(Command::Fullscreen(Toggle::Toggle)),
         "mute" => Some(Command::Mute(Toggle::Toggle)),
+        "audio" => Some(Command::CycleTrack(TrackKind::Audio)),
+        "sub" => Some(Command::CycleTrack(TrackKind::Subtitle)),
+        "video" => Some(Command::CycleTrack(TrackKind::Video)),
         _ => None,
     })
 }
@@ -214,7 +219,7 @@ fn parse_track(
     let id = if value == "no" {
         None
     } else if value == "auto" {
-        return Ok(None);
+        return Ok(Some(Command::SelectTrackAuto(kind)));
     } else {
         Some(
             value
@@ -474,6 +479,26 @@ mod tests {
     }
 
     #[test]
+    fn command_parses_track_cycling() {
+        assert_eq!(
+            command(&["cycle", "audio"]),
+            Some(Command::CycleTrack(TrackKind::Audio))
+        );
+        assert_eq!(
+            command(&["cycle", "sub"]),
+            Some(Command::CycleTrack(TrackKind::Subtitle))
+        );
+        assert_eq!(
+            command(&["cycle", "video"]),
+            Some(Command::CycleTrack(TrackKind::Video))
+        );
+        assert_eq!(
+            parse_string("cycle audio").unwrap(),
+            Some(Command::CycleTrack(TrackKind::Audio))
+        );
+    }
+
+    #[test]
     fn command_accepts_time_seeks_and_auto_tracks() {
         assert_eq!(
             command(&["seek", "1:30"]),
@@ -507,8 +532,14 @@ mod tests {
                 exact: false
             })
         );
-        assert_eq!(command(&["set", "aid", "auto"]), None);
-        assert_eq!(command(&["set", "sid", "auto"]), None);
+        assert_eq!(
+            command(&["set", "aid", "auto"]),
+            Some(Command::SelectTrackAuto(TrackKind::Audio))
+        );
+        assert_eq!(
+            command(&["set", "sid", "auto"]),
+            Some(Command::SelectTrackAuto(TrackKind::Subtitle))
+        );
         assert!(parse_string("seek 1:2:3:4").is_err());
     }
 }
