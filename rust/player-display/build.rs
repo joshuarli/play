@@ -7,5 +7,14 @@ fn main() {
             &dir.join("../player-output/linux-link.args"),
             &dir.join("../../.work/deps/linux/lib"),
         );
+        return;
+    }
+    if target == "macos" {
+        cc::Build::new()
+            .file("bridge/metal_window.m")
+            .flag("-fobjc-arc")
+            .compile("player_display_bridge");
+        println!("cargo:rustc-link-lib=framework=AppKit");
+        println!("cargo:rustc-link-lib=framework=QuartzCore");
     }
 }

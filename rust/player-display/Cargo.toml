@@ -20,5 +20,9 @@ player-output = { path = "../player-output" }
 wayland-client = { version = "=0.31.15", features = ["system"] }
 wayland-protocols = { version = "=0.32.13", features = ["client"] }
 
+[target."cfg(target_os = \"macos\")".dependencies]
+player-output = { path = "../player-output" }
+
 [build-dependencies]
 player-build = { path = "../player-build" }
+cc = { version = "=1.11.0" }

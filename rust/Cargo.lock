@@ -304,6 +304,7 @@ version = "0.1.0"
 name = "player-display"
 version = "0.1.0"
 dependencies = [
+ "cc",
  "player-build",
  "player-output",
  "wayland-client",

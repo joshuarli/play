@@ -9,15 +9,20 @@ fn main() {
         );
         return;
     }
-    let output = std::process::Command::new("pkg-config")
-        .args(["--libs", "libplacebo"])
-        .output()
-        .unwrap_or_else(|_| panic!("player-output: pkg-config libplacebo failed"));
-    assert!(
-        output.status.success(),
-        "player-output: pkg-config libplacebo failed"
-    );
-    let libs = String::from_utf8_lossy(&output.stdout);
+    for package in ["libplacebo", "vulkan"] {
+        let output = std::process::Command::new("pkg-config")
+            .args(["--libs", package])
+            .output()
+            .unwrap_or_else(|_| panic!("player-output: pkg-config {package} failed"));
+        assert!(
+            output.status.success(),
+            "player-output: pkg-config {package} failed"
+        );
+        emit_pkg_libs(&String::from_utf8_lossy(&output.stdout));
+    }
+}
+
+fn emit_pkg_libs(libs: &str) {
     for token in libs.split_whitespace() {
         if let Some(dir) = token.strip_prefix("-L") {
             println!("cargo:rustc-link-search=native={dir}");

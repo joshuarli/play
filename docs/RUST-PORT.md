@@ -9,7 +9,8 @@ S5 complete. S6c complete (engine decodes and presents video headlessly).
 S6d-1 complete (Linux Wayland window presents swapchain frames; static
 suite contains the weston test behind `present-gate`). S6d-2 complete
 (resize/fullscreen/input protocol). S6d-3 complete (OSD overlay
-upload). Next: S6d-4 (macOS bridge).
+upload). S6d-3 complete (OSD overlay upload). S6d-4 complete (macOS
+bridge). Next: S6d-5 (VO swap).
 
 ## S6c record
 
@@ -130,8 +131,38 @@ stay byte-equal; the weston gate adds `window_presents_with_overlay`.
 The bitmap producer (libass rendering of `osd-overlay ass-events`
 from upstream `osc.lua`) is S7; S6d-3 is the upload primitive only.
 
-Still open in S6d: macOS bridge (S6d-4), VO swap and gate updates
-(S6d-5).
+## S6d-4 record
+
+`sys.rs` transcribes `VkMetalSurfaceCreateInfoEXT` (C probe:
+sType 1000217000, 32 bytes, offsets 0/8/16/24) with the extern
+mac-gated: the container loader does not export the metal entry, so an
+unconditional declaration would break static-pie startup on Linux.
+`Instance::new` requests `VK_EXT_metal_surface` plus the portability
+enumeration extension and flag on macOS, and
+`create_metal_surface` builds the surface on a caller-provided
+`CAMetalLayer`.
+
+The layer comes from a narrow v1 ObjC bridge
+(`rust/player-display/bridge/metal_window.m`, compiled via the `cc`
+build-dep on macOS only): open, layer pointer, event pump with close
+detection, pixel size, fullscreen flag, fullscreen set, close.
+`MacWindow` mirrors the Linux `Window` API (open/present/poll/resize/
+fullscreen) and drops bridge-last so the layer outlives
+`vkDestroySurfaceKHR`. `player-output`'s mac build links the Vulkan
+loader now that Rust code references its symbols directly.
+
+Verified for real on a Retina display with
+`cargo run -p player-display --example mac_window_check`: 320x240
+window reports 640x480 pixels, 30 frames present, fullscreen engages
+and resizes to 3024x1898, exits cleanly, PASS. Two lessons recorded:
+AppKit throws when a window is created off the main thread, so
+`MacWindow` must be driven from the main thread (S7 GUI owns the
+runloop; the struct is accordingly `!Send`), and the exit toggle must
+wait for the enter animation to finish or macOS swallows it. No cargo
+test can satisfy the main-thread rule under libtest, so the example
+runner is the durable gate; headless CI cannot run it.
+
+Still open in S6d: VO swap and gate updates (S6d-5).
 
 ## S5 record
 

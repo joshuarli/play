@@ -19,11 +19,21 @@ impl Instance {
             api_version: sys::VK_API_VERSION_1_2,
         };
         let surface_ext = c"VK_KHR_surface";
-        let wayland_ext = c"VK_KHR_wayland_surface";
-        let extensions = [surface_ext.as_ptr(), wayland_ext.as_ptr()];
+        #[cfg(target_os = "macos")]
+        let platform_ext = c"VK_EXT_metal_surface";
+        #[cfg(not(target_os = "macos"))]
+        let platform_ext = c"VK_KHR_wayland_surface";
+        let extensions = [surface_ext.as_ptr(), platform_ext.as_ptr()];
+        #[cfg(target_os = "macos")]
+        let portability_ext = c"VK_KHR_portability_enumeration";
+        #[cfg(target_os = "macos")]
+        let extensions = [extensions[0], extensions[1], portability_ext.as_ptr()];
         let create = sys::VkInstanceCreateInfo {
             s_type: sys::VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
             next: core::ptr::null(),
+            #[cfg(target_os = "macos")]
+            flags: sys::VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR,
+            #[cfg(not(target_os = "macos"))]
             flags: 0,
             app_info: &app_info,
             layer_count: 0,
@@ -59,6 +69,28 @@ impl Instance {
         };
         if status != sys::VK_SUCCESS || raw == 0 {
             return Err(format!("vkCreateWaylandSurfaceKHR failed: {status}"));
+        }
+        Ok(Surface {
+            instance: self.raw,
+            raw,
+        })
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn create_metal_surface(&self, layer: *mut c_void) -> Result<Surface, String> {
+        let create = sys::VkMetalSurfaceCreateInfoEXT {
+            s_type: sys::VK_STRUCTURE_TYPE_METAL_SURFACE_CREATE_INFO_EXT,
+            next: core::ptr::null(),
+            flags: 0,
+            layer,
+        };
+        let mut raw: sys::VkSurfaceKHR = 0;
+        // SAFETY: the instance and Metal layer are live.
+        let status = unsafe {
+            sys::vkCreateMetalSurfaceEXT(self.raw, &create, core::ptr::null(), &mut raw)
+        };
+        if status != sys::VK_SUCCESS || raw == 0 {
+            return Err(format!("vkCreateMetalSurfaceEXT failed: {status}"));
         }
         Ok(Surface {
             instance: self.raw,

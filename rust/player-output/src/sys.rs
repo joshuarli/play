@@ -202,6 +202,10 @@ pub const VK_ERROR_OUT_OF_DATE_KHR: c_int = -1000001004;
 pub const VK_STRUCTURE_TYPE_APPLICATION_INFO: c_int = 0;
 pub const VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO: c_int = 1;
 pub const VK_STRUCTURE_TYPE_WAYLAND_SURFACE_CREATE_INFO_KHR: c_int = 1000006000;
+#[cfg(target_os = "macos")]
+pub const VK_STRUCTURE_TYPE_METAL_SURFACE_CREATE_INFO_EXT: c_int = 1000217000;
+#[cfg(target_os = "macos")]
+pub const VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR: VkFlags = 0x00000001;
 
 pub const VK_PRESENT_MODE_IMMEDIATE_KHR: c_int = 0;
 pub const VK_PRESENT_MODE_MAILBOX_KHR: c_int = 1;
@@ -336,6 +340,22 @@ unsafe extern "C" {
         surface: VkSurfaceKHR,
         allocator: *const c_void,
     );
+    #[cfg(target_os = "macos")]
+    pub fn vkCreateMetalSurfaceEXT(
+        instance: VkInstance,
+        create_info: *const VkMetalSurfaceCreateInfoEXT,
+        allocator: *const c_void,
+        surface: *mut VkSurfaceKHR,
+    ) -> c_int;
+}
+
+#[cfg(target_os = "macos")]
+#[repr(C)]
+pub struct VkMetalSurfaceCreateInfoEXT {
+    pub s_type: c_int,
+    pub next: *const c_void,
+    pub flags: VkFlags,
+    pub layer: *mut c_void,
 }
 
 #[repr(C)]
@@ -471,6 +491,16 @@ mod tests {
         assert_eq!(offset_of!(VkInstanceCreateInfo, extensions), 56);
         assert_eq!(size_of::<VkWaylandSurfaceCreateInfoKHR>(), 40);
         assert_eq!(offset_of!(VkWaylandSurfaceCreateInfoKHR, surface), 32);
+
+        #[cfg(target_os = "macos")]
+        {
+            assert_eq!(VK_STRUCTURE_TYPE_METAL_SURFACE_CREATE_INFO_EXT, 1000217000);
+            assert_eq!(size_of::<VkMetalSurfaceCreateInfoEXT>(), 32);
+            assert_eq!(offset_of!(VkMetalSurfaceCreateInfoEXT, s_type), 0);
+            assert_eq!(offset_of!(VkMetalSurfaceCreateInfoEXT, next), 8);
+            assert_eq!(offset_of!(VkMetalSurfaceCreateInfoEXT, flags), 16);
+            assert_eq!(offset_of!(VkMetalSurfaceCreateInfoEXT, layer), 24);
+        }
 
         assert_eq!(VK_SUCCESS, 0);
         assert_eq!(VK_SUBOPTIMAL_KHR, 1000001003);
