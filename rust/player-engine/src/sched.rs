@@ -12,6 +12,7 @@ pub struct Packet {
     pub stream: usize,
     pub kind: StreamKind,
     pub pts: Option<f64>,
+    pub duration: Option<f64>,
     pub payload: Vec<u8>,
 }
 
@@ -92,8 +93,9 @@ pub struct Stats {
     pub failures: u64,
 }
 
-const PUMP_PACKETS_PER_STEP: usize = 64;
+const PUMP_PACKETS_PER_STEP: usize = 8;
 const SEEK_PUMP_LIMIT: usize = 1024;
+const SEEK_PREROLL_CHUNKS: u64 = 8;
 
 pub struct Scheduler<D, A, V, AO, VO> {
     machine: Machine,
@@ -105,6 +107,7 @@ pub struct Scheduler<D, A, V, AO, VO> {
     video_out: VO,
     commands: Vec<Command>,
     pending_frames: std::collections::VecDeque<DecodedFrame>,
+    preroll: std::collections::VecDeque<AudioChunk>,
     audio_cursor: f64,
     video_cursor: f64,
     eof_seen: bool,
@@ -136,6 +139,7 @@ where
             video_out,
             commands: Vec::new(),
             pending_frames: std::collections::VecDeque::new(),
+            preroll: std::collections::VecDeque::new(),
             audio_cursor: 0.0,
             video_cursor: 0.0,
             eof_seen: false,
@@ -265,6 +269,7 @@ where
         self.video.flush();
         self.audio_out.flush();
         self.pending_frames.clear();
+        self.preroll.clear();
         self.audio_cursor = target;
         self.video_cursor = target;
         self.eof_seen = false;
@@ -274,6 +279,9 @@ where
         let mut have_video = !self.demux.has_video();
         for _ in 0..SEEK_PUMP_LIMIT {
             if have_audio && have_video {
+                break;
+            }
+            if self.preroll.len() >= SEEK_PREROLL_CHUNKS as usize {
                 break;
             }
             match self.demux.read() {
@@ -323,8 +331,7 @@ where
                     if chunk.pts >= target {
                         *have_audio = true;
                     }
-                    self.audio_out.push(chunk)?;
-                    self.stats.audio_chunks += 1;
+                    self.preroll.push_back(chunk);
                 }
             }
             StreamKind::Video => {
@@ -345,8 +352,24 @@ where
         Ok(())
     }
 
+    fn drain_preroll(&mut self) -> bool {
+        while let Some(chunk) = self.preroll.pop_front() {
+            if let Err(message) = self.audio_out.push(chunk) {
+                self.fail(message);
+                return true;
+            }
+            self.stats.audio_chunks += 1;
+        }
+        false
+    }
+
     fn pump_playing(&mut self, now: f64) {
+        if self.drain_preroll() {
+            return;
+        }
         for _ in 0..PUMP_PACKETS_PER_STEP {
+            let audio_before = self.stats.audio_chunks;
+            let video_before = self.pending_frames.len();
             match self.demux.read() {
                 DemuxEvent::Packet(packet) => {
                     if self.feed(packet) {
@@ -389,6 +412,11 @@ where
                     self.fail(message);
                     return;
                 }
+            }
+            if self.stats.audio_chunks != audio_before
+                || self.pending_frames.len() != video_before
+            {
+                break;
             }
         }
         self.present_due(now);
@@ -470,6 +498,9 @@ where
     }
 
     fn pump_draining(&mut self, now: f64) {
+        if self.drain_preroll() {
+            return;
+        }
         match self.audio.drain() {
             Ok(chunks) => {
                 for chunk in chunks {

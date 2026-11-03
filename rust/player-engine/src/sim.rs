@@ -42,12 +42,15 @@ mod tests {
                     stream: 100,
                     kind: StreamKind::Video,
                     pts,
+                    duration: None,
                     payload: vec![index as u8],
                 });
                 index += 1;
             }
             if reorder_video {
-                video.reverse();
+                for pair in video.chunks_exact_mut(2) {
+                    pair.swap(0, 1);
+                }
             }
             let mut audio: Vec<Packet> = Vec::new();
             let mut at = 0.0;
@@ -58,6 +61,7 @@ mod tests {
                         stream,
                         kind: StreamKind::Audio,
                         pts: if strip_pts { None } else { Some(at) },
+                        duration: Some(audio_every),
                         payload: vec![tick as u8],
                     });
                 }
@@ -183,9 +187,12 @@ mod tests {
         buffer: Vec<DecodedFrame>,
         next_id: u64,
         reorder: bool,
+        max_seen: f64,
         sends: usize,
         fail_at_send: Option<usize>,
     }
+
+    const REORDER_WINDOW: f64 = 0.1;
 
     impl FakeVideoDecoder {
         fn new(reorder: bool) -> Self {
@@ -193,9 +200,23 @@ mod tests {
                 buffer: Vec::new(),
                 next_id: 0,
                 reorder,
+                max_seen: f64::NEG_INFINITY,
                 sends: 0,
                 fail_at_send: None,
             }
+        }
+
+        fn release_ready(&mut self) -> Vec<DecodedFrame> {
+            if !self.reorder {
+                return self.buffer.drain(..).collect();
+            }
+            self.buffer.sort_by(|a, b| a.pts.total_cmp(&b.pts));
+            let split = self
+                .buffer
+                .iter()
+                .position(|frame| frame.pts >= self.max_seen - REORDER_WINDOW)
+                .unwrap_or(self.buffer.len());
+            self.buffer.drain(..split).collect()
         }
     }
 
@@ -207,18 +228,14 @@ mod tests {
             }
             let id = self.next_id;
             self.next_id += 1;
-            self.buffer.push(DecodedFrame {
-                pts: packet.pts.expect("scheduler stamps timestamps"),
-                id,
-            });
+            let pts = packet.pts.expect("scheduler stamps timestamps");
+            self.max_seen = self.max_seen.max(pts);
+            self.buffer.push(DecodedFrame { pts, id });
             Ok(())
         }
 
         fn drain(&mut self) -> Result<Vec<DecodedFrame>, String> {
-            if self.reorder {
-                return Ok(Vec::new());
-            }
-            Ok(self.buffer.drain(..).collect())
+            Ok(self.release_ready())
         }
 
         fn finish(&mut self) -> Result<Vec<DecodedFrame>, String> {
@@ -228,6 +245,7 @@ mod tests {
 
         fn flush(&mut self) {
             self.buffer.clear();
+            self.max_seen = f64::NEG_INFINITY;
         }
     }
 
