@@ -1,5 +1,7 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
+pub mod mix;
+pub mod resample;
 pub mod session;
 
 use std::panic::{catch_unwind, AssertUnwindSafe};
