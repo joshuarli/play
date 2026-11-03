@@ -19,11 +19,11 @@ pub enum ClockMode {
 pub struct MasterClock {
     mode: ClockMode,
     speed: f64,
-    device_position: f64,
-    base_position: f64,
-    base_time: f64,
-    paused_position: Option<f64>,
+    device_time: f64,
+    anchor_ref: f64,
+    anchor_content: f64,
     queued_latency: f64,
+    paused_position: Option<f64>,
 }
 
 impl MasterClock {
@@ -31,46 +31,42 @@ impl MasterClock {
         MasterClock {
             mode,
             speed: 1.0,
-            device_position: 0.0,
-            base_position: 0.0,
-            base_time: 0.0,
-            paused_position: None,
+            device_time: 0.0,
+            anchor_ref: 0.0,
+            anchor_content: 0.0,
             queued_latency: 0.0,
+            paused_position: None,
         }
     }
 
     pub fn set_speed(&mut self, speed: f64, now: f64) {
         let current = self.position(now);
         self.speed = speed.max(0.0);
-        self.rebase(current, now);
+        self.anchor_content = current;
+        self.anchor_ref = self.reference(now);
     }
 
     pub fn speed(&self) -> f64 {
         self.speed
     }
 
-    pub fn observe_device(&mut self, audible_position: f64, queued_seconds: f64, now: f64) {
-        self.device_position = audible_position;
+    pub fn observe_device(&mut self, device_time: f64, queued_seconds: f64, _now: f64) {
+        self.device_time = device_time;
         self.queued_latency = queued_seconds.max(0.0);
-        if self.mode == ClockMode::AudioDriven && self.paused_position.is_none() {
-            self.base_position = audible_position;
-            self.base_time = now;
-        }
     }
 
     pub fn set_paused(&mut self, paused: bool, now: f64) {
         if paused {
             self.paused_position = Some(self.position(now));
-        } else {
-            if let Some(frozen) = self.paused_position.take() {
-                self.rebase(frozen, now);
-            }
+        } else if let Some(frozen) = self.paused_position.take() {
+            self.anchor_content = frozen;
+            self.anchor_ref = self.reference(now);
         }
     }
 
     pub fn seek_rebase(&mut self, position: f64, now: f64) {
-        self.device_position = position;
-        self.rebase(position, now);
+        self.anchor_content = position;
+        self.anchor_ref = self.reference(now);
         if self.paused_position.is_some() {
             self.paused_position = Some(position);
         }
@@ -80,23 +76,17 @@ impl MasterClock {
         if let Some(frozen) = self.paused_position {
             return frozen;
         }
-        match self.mode {
-            ClockMode::AudioDriven => self.device_position,
-            ClockMode::SystemDriven => {
-                self.base_position + (now - self.base_time).max(0.0) * self.speed
-            }
-        }
+        self.anchor_content + (self.reference(now) - self.anchor_ref).max(0.0) * self.speed
     }
 
     pub fn output_latency(&self) -> f64 {
         self.queued_latency
     }
 
-    fn rebase(&mut self, position: f64, now: f64) {
-        self.base_position = position;
-        self.base_time = now;
-        if self.mode == ClockMode::AudioDriven {
-            self.device_position = position;
+    fn reference(&self, now: f64) -> f64 {
+        match self.mode {
+            ClockMode::AudioDriven => self.device_time,
+            ClockMode::SystemDriven => now,
         }
     }
 }
@@ -152,9 +142,9 @@ mod tests {
         clock.set_paused(true, 100.5);
         clock.observe_device(2.0, 0.05, 101.0);
         assert!(close(clock.position(101.0), 1.0));
-        clock.set_paused(false, 102.0);
-        clock.observe_device(1.2, 0.05, 102.5);
-        assert!(close(clock.position(103.0), 1.2));
+        clock.set_paused(false, 101.0);
+        clock.observe_device(2.5, 0.05, 102.5);
+        assert!(close(clock.position(103.0), 1.5));
     }
 
     #[test]
@@ -170,11 +160,14 @@ mod tests {
     }
 
     #[test]
-    fn seek_rebases_both_modes_and_paused_state() {
-        let mut audio = MasterClock::new(ClockMode::AudioDriven);
-        audio.observe_device(30.0, 0.0, 200.0);
-        audio.seek_rebase(5.0, 200.0);
-        assert!(close(audio.position(201.0), 5.0));
+    fn seek_rebases_content_without_rewinding_device_time() {
+        let mut clock = MasterClock::new(ClockMode::AudioDriven);
+        clock.observe_device(30.0, 0.0, 200.0);
+        assert!(close(clock.position(200.0), 30.0));
+        clock.seek_rebase(5.0, 200.0);
+        assert!(close(clock.position(200.0), 5.0));
+        clock.observe_device(30.5, 0.0, 201.0);
+        assert!(close(clock.position(201.0), 5.5));
 
         let mut sys = MasterClock::new(ClockMode::SystemDriven);
         sys.seek_rebase(5.0, 200.0);

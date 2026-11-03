@@ -1,7 +1,13 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ResumeTarget {
+pub enum PlayResume {
     Playing,
-    Paused,
+    Draining,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SeekResume {
+    Playing,
+    Paused(PlayResume),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -10,8 +16,8 @@ pub enum State {
     Opening,
     Buffering,
     Playing,
-    Paused,
-    Seeking { resume: ResumeTarget },
+    Paused { resume: PlayResume },
+    Seeking { resume: SeekResume },
     Draining,
     Ended,
     Error,
@@ -104,39 +110,47 @@ fn transition(state: &State, event: Event) -> Option<State> {
         (State::Buffering, Event::Fail) => Some(State::Error),
         (State::Buffering, Event::Close) => Some(State::Closing),
 
-        (State::Playing, Event::Pause) => Some(State::Paused),
+        (State::Playing, Event::Pause) => Some(State::Paused {
+            resume: PlayResume::Playing,
+        }),
         (State::Playing, Event::Seek) => Some(State::Seeking {
-            resume: ResumeTarget::Playing,
+            resume: SeekResume::Playing,
         }),
         (State::Playing, Event::Eof) => Some(State::Draining),
         (State::Playing, Event::Fail) => Some(State::Error),
         (State::Playing, Event::Close) => Some(State::Closing),
 
-        (State::Paused, Event::Resume) => Some(State::Playing),
-        (State::Paused, Event::Seek) => Some(State::Seeking {
-            resume: ResumeTarget::Paused,
+        (State::Paused { resume }, Event::Resume) => Some(match resume {
+            PlayResume::Playing => State::Playing,
+            PlayResume::Draining => State::Draining,
         }),
-        (State::Paused, Event::Fail) => Some(State::Error),
-        (State::Paused, Event::Close) => Some(State::Closing),
+        (State::Paused { resume }, Event::Seek) => Some(State::Seeking {
+            resume: SeekResume::Paused(*resume),
+        }),
+        (State::Paused { .. }, Event::Fail) => Some(State::Error),
+        (State::Paused { .. }, Event::Close) => Some(State::Closing),
 
         (State::Seeking { resume }, Event::SeekDone) => Some(match resume {
-            ResumeTarget::Playing => State::Playing,
-            ResumeTarget::Paused => State::Paused,
+            SeekResume::Playing => State::Playing,
+            SeekResume::Paused(inner) => State::Paused { resume: *inner },
         }),
         (State::Seeking { resume }, Event::Seek) => Some(State::Seeking { resume: *resume }),
         (State::Seeking { .. }, Event::Fail) => Some(State::Error),
         (State::Seeking { .. }, Event::Close) => Some(State::Closing),
 
+        (State::Draining, Event::Pause) => Some(State::Paused {
+            resume: PlayResume::Draining,
+        }),
         (State::Draining, Event::Drained) => Some(State::Ended),
         (State::Draining, Event::Seek) => Some(State::Seeking {
-            resume: ResumeTarget::Playing,
+            resume: SeekResume::Playing,
         }),
         (State::Draining, Event::Fail) => Some(State::Error),
         (State::Draining, Event::Close) => Some(State::Closing),
 
         (State::Ended, Event::Open) => Some(State::Opening),
         (State::Ended, Event::Seek) => Some(State::Seeking {
-            resume: ResumeTarget::Playing,
+            resume: SeekResume::Playing,
         }),
         (State::Ended, Event::Close) => Some(State::Closing),
 
@@ -198,12 +212,17 @@ mod tests {
         assert_eq!(
             *machine.state(),
             State::Seeking {
-                resume: ResumeTarget::Paused
+                resume: SeekResume::Paused(PlayResume::Playing)
             }
         );
         let mut machine = machine;
         machine.apply(Event::SeekDone).expect("legal edge");
-        assert_eq!(*machine.state(), State::Paused);
+        assert_eq!(
+            *machine.state(),
+            State::Paused {
+                resume: PlayResume::Playing
+            }
+        );
     }
 
     #[test]
@@ -217,7 +236,32 @@ mod tests {
             Event::Seek,
             Event::SeekDone,
         ]);
-        assert_eq!(*machine.state(), State::Paused);
+        assert_eq!(
+            *machine.state(),
+            State::Paused {
+                resume: PlayResume::Playing
+            }
+        );
+    }
+
+    #[test]
+    fn pause_during_drain_out_resumes_draining() {
+        let machine = drive(&[
+            Event::Open,
+            Event::Opened,
+            Event::Buffered,
+            Event::Eof,
+            Event::Pause,
+        ]);
+        assert_eq!(
+            *machine.state(),
+            State::Paused {
+                resume: PlayResume::Draining
+            }
+        );
+        let mut machine = machine;
+        machine.apply(Event::Resume).expect("legal edge");
+        assert_eq!(*machine.state(), State::Draining);
     }
 
     #[test]
@@ -231,7 +275,7 @@ mod tests {
             assert_eq!(
                 *machine.state(),
                 State::Seeking {
-                    resume: ResumeTarget::Playing
+                    resume: SeekResume::Playing
                 }
             );
         }
