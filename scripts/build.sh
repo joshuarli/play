@@ -11,9 +11,10 @@ fi
 RUST_TARGET="$ROOT/.work/deps/player-audio/target"
 mkdir -p "$RUST_TARGET"
 CARGO_TARGET_DIR="$RUST_TARGET" cargo build --release \
-    --manifest-path "$ROOT/rust/Cargo.toml" -p player-audio -p player-ffi
+    --manifest-path "$ROOT/rust/Cargo.toml" -p player-audio -p player-ffi -p player-engine
 PLAYER_AUDIO_LIB="$RUST_TARGET/release/libplayer_audio.a"
 PLAYER_FFI_LIB="$RUST_TARGET/release/libplayer_ffi.a"
+PLAYER_ENGINE_LIB="$RUST_TARGET/release/libplayer_engine.a"
 
 options=(
     -Dcplayer=true -Dlibmpv=false -Dgpl=true
@@ -22,6 +23,7 @@ options=(
     -Dmacos-bundle-category=video -Dswift-flags=
     -Dplayer-audio-lib="$PLAYER_AUDIO_LIB"
     -Dplayer-ffi-lib="$PLAYER_FFI_LIB"
+    -Dplayer-engine-lib="$PLAYER_ENGINE_LIB"
 )
 
 enabled_features=(

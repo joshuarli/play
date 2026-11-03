@@ -1,3 +1,8 @@
+pub enum SinkKind {
+    Null,
+    Default,
+}
+
 pub trait AudioSink {
     fn write(&mut self, frames: &[f32]) -> Result<(), String>;
     fn channels(&self) -> usize;

@@ -9,4 +9,5 @@ crate-type = ["cdylib"]
 
 [dependencies]
 player-audio = { path = "../player-audio" }
+player-engine = { path = "../player-engine" }
 player-ffi = { path = "../player-ffi" }

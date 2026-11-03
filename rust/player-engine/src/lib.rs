@@ -1,4 +1,5 @@
 pub mod backend;
+pub mod cabi;
 mod clock;
 mod sched;
 #[cfg(test)]

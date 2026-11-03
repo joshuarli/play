@@ -272,6 +272,14 @@ name = "player-core"
 version = "0.1.0"
 
 [[package]]
+name = "player-engine"
+version = "0.1.0"
+dependencies = [
+ "player-audio",
+ "player-media",
+]
+
+[[package]]
 name = "player-ffi"
 version = "0.1.0"
 dependencies = [
@@ -299,6 +307,7 @@ name = "player-release"
 version = "0.1.0"
 dependencies = [
  "player-audio",
+ "player-engine",
  "player-ffi",
 ]
 

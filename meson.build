@@ -50,6 +50,11 @@ if player_ffi_lib != ''
     dependencies += declare_dependency(link_args: [player_ffi_lib])
 endif
 
+player_engine_lib = get_option('player-engine-lib')
+if player_engine_lib != ''
+    dependencies += declare_dependency(link_args: [player_engine_lib])
+endif
+
 # Keeps track of all enabled/disabled features
 features = {
     'debug': get_option('debug'),

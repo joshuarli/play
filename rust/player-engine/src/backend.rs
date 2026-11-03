@@ -4,8 +4,7 @@ use crate::sched::{
 };
 use crate::state::State;
 use player_audio::decode::PacketDecoder;
-use player_audio::engine::SinkKind;
-use player_audio::sink::{AudioSink, NullSink};
+use player_audio::sink::{AudioSink, NullSink, SinkKind};
 use player_audio::open_default_sink;
 use player_media::{MediaError, MediaSession, Packet as MediaPacket, StreamInfo, StreamKind as MediaKind};
 use std::collections::VecDeque;

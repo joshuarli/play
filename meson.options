@@ -10,6 +10,7 @@ option('disable-packet-pool', type: 'boolean', value: false, description: 'disab
 # misc features
 option('player-audio-lib', type: 'string', value: '', description: 'Rust player-audio static library')
 option('player-ffi-lib', type: 'string', value: '', description: 'Rust player-ffi static library')
+option('player-engine-lib', type: 'string', value: '', description: 'Rust player-engine static library')
 option('cdda', type: 'feature', value: 'auto', description: 'cdda support (libcdio)')
 option('cplugins', type: 'feature', value: 'auto', description: 'C plugins')
 option('dvbin', type: 'feature', value: 'auto', description: 'DVB input module')
