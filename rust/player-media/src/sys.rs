@@ -11,6 +11,7 @@
 use std::ffi::{c_char, c_int, c_uint, c_void};
 
 pub const AVFORMAT_VERSION_MAJOR: u32 = 63;
+pub const AVCODEC_VERSION_MAJOR: u32 = 63;
 
 pub const AVMEDIA_TYPE_VIDEO: c_int = 0;
 pub const AVMEDIA_TYPE_AUDIO: c_int = 1;
@@ -30,6 +31,211 @@ pub const AVSEEK_SIZE: c_int = 0x10000;
 
 /// `AVERROR_EOF`, proven by the packet-drain tests on every platform.
 pub const AVERROR_EOF: c_int = -541478725;
+
+/// `AVERROR(EAGAIN)`: the decoder's try-again signal is the negated
+/// platform errno, 35 on macOS and 11 on Linux.
+#[cfg(target_os = "macos")]
+pub const AVERROR_EAGAIN: c_int = -35;
+/// `AVERROR(EAGAIN)`: the decoder's try-again signal is the negated
+/// platform errno, 35 on macOS and 11 on Linux.
+#[cfg(not(target_os = "macos"))]
+pub const AVERROR_EAGAIN: c_int = -11;
+
+pub const AV_NUM_DATA_POINTERS: usize = 8;
+
+pub const AV_PIX_FMT_NONE: c_int = -1;
+pub const AV_PIX_FMT_YUV420P: c_int = 0;
+pub const AV_PIX_FMT_NV12: c_int = 23;
+pub const AV_PIX_FMT_VAAPI: c_int = 49;
+pub const AV_PIX_FMT_VIDEOTOOLBOX: c_int = 293;
+
+pub const AV_HWDEVICE_TYPE_NONE: c_int = 0;
+pub const AV_HWDEVICE_TYPE_VAAPI: c_int = 3;
+pub const AV_HWDEVICE_TYPE_VIDEOTOOLBOX: c_int = 6;
+
+pub const AV_HWFRAME_TRANSFER_DIRECTION_FROM: c_int = 0;
+
+pub enum AvCodec {}
+
+pub enum AvBufferRef {}
+
+pub enum AvFrameSideData {}
+
+/// Prefix of `AVFrame` through `hw_frames_ctx`, transcribed from
+/// `libavutil/frame.h` of the pinned FFmpeg. Fields after
+/// `hw_frames_ctx` are not mapped; never access them.
+#[repr(C)]
+pub struct AvFrame {
+    pub data: [*mut u8; AV_NUM_DATA_POINTERS],
+    pub linesize: [c_int; AV_NUM_DATA_POINTERS],
+    pub extended_data: *mut *mut u8,
+    pub width: c_int,
+    pub height: c_int,
+    pub nb_samples: c_int,
+    pub format: c_int,
+    pub pict_type: c_int,
+    pub sample_aspect_ratio: AvRational,
+    pub pts: i64,
+    pub pkt_dts: i64,
+    pub time_base: AvRational,
+    pub quality: c_int,
+    pub opaque: *mut c_void,
+    pub repeat_pict: c_int,
+    pub sample_rate: c_int,
+    pub buf: [*mut AvBufferRef; AV_NUM_DATA_POINTERS],
+    pub extended_buf: *mut *mut AvBufferRef,
+    pub nb_extended_buf: c_int,
+    pub side_data: *mut *mut AvFrameSideData,
+    pub nb_side_data: c_int,
+    pub flags: c_int,
+    pub color_range: c_int,
+    pub color_primaries: c_int,
+    pub color_trc: c_int,
+    pub colorspace: c_int,
+    pub chroma_location: c_int,
+    pub best_effort_timestamp: i64,
+    pub metadata: *mut AvDictionary,
+    pub decode_error_flags: c_int,
+    pub hw_frames_ctx: *mut AvBufferRef,
+}
+
+pub type AvGetFormat =
+    Option<unsafe extern "C" fn(ctx: *mut AvCodecContext, formats: *const c_int) -> c_int>;
+
+pub type AvGetBuffer2 = Option<
+    unsafe extern "C" fn(ctx: *mut AvCodecContext, frame: *mut AvFrame, flags: c_int) -> c_int,
+>;
+
+pub type AvDrawHorizBand = Option<
+    unsafe extern "C" fn(
+        ctx: *mut AvCodecContext,
+        src: *const AvFrame,
+        offset: *const c_int,
+        y: c_int,
+        band_type: c_int,
+        height: c_int,
+    ),
+>;
+
+/// Prefix of `AVCodecContext` through `extra_hw_frames`, transcribed
+/// from `libavcodec/avcodec.h` of the pinned FFmpeg. The conditional
+/// `intra_dc_precision` field is present because the pin keeps the
+/// pre-64 compatibility defines. Fields after `extra_hw_frames` are
+/// not mapped; never access them.
+#[repr(C)]
+pub struct AvCodecContext {
+    pub av_class: *const c_void,
+    pub log_level_offset: c_int,
+    pub codec_type: c_int,
+    pub codec: *const AvCodec,
+    pub codec_id: c_int,
+    pub codec_tag: c_uint,
+    pub priv_data: *mut c_void,
+    pub internal: *mut c_void,
+    pub opaque: *mut c_void,
+    pub bit_rate: i64,
+    pub flags: c_int,
+    pub flags2: c_int,
+    pub extradata: *mut u8,
+    pub extradata_size: c_int,
+    pub time_base: AvRational,
+    pub pkt_timebase: AvRational,
+    pub framerate: AvRational,
+    pub delay: c_int,
+    pub width: c_int,
+    pub height: c_int,
+    pub coded_width: c_int,
+    pub coded_height: c_int,
+    pub sample_aspect_ratio: AvRational,
+    pub pix_fmt: c_int,
+    pub sw_pix_fmt: c_int,
+    pub color_primaries: c_int,
+    pub color_trc: c_int,
+    pub colorspace: c_int,
+    pub color_range: c_int,
+    pub chroma_sample_location: c_int,
+    pub field_order: c_int,
+    pub refs: c_int,
+    pub has_b_frames: c_int,
+    pub slice_flags: c_int,
+    pub draw_horiz_band: AvDrawHorizBand,
+    pub get_format: AvGetFormat,
+    pub max_b_frames: c_int,
+    pub b_quant_factor: f32,
+    pub b_quant_offset: f32,
+    pub i_quant_factor: f32,
+    pub i_quant_offset: f32,
+    pub lumi_masking: f32,
+    pub temporal_cplx_masking: f32,
+    pub spatial_cplx_masking: f32,
+    pub p_masking: f32,
+    pub dark_masking: f32,
+    pub nsse_weight: c_int,
+    pub me_cmp: c_int,
+    pub me_sub_cmp: c_int,
+    pub mb_cmp: c_int,
+    pub ildct_cmp: c_int,
+    pub dia_size: c_int,
+    pub last_predictor_count: c_int,
+    pub me_pre_cmp: c_int,
+    pub pre_dia_size: c_int,
+    pub me_subpel_quality: c_int,
+    pub me_range: c_int,
+    pub mb_decision: c_int,
+    pub intra_matrix: *mut u16,
+    pub inter_matrix: *mut u16,
+    pub chroma_intra_matrix: *mut u16,
+    pub intra_dc_precision: c_int,
+    pub mb_lmin: c_int,
+    pub mb_lmax: c_int,
+    pub bidir_refine: c_int,
+    pub keyint_min: c_int,
+    pub gop_size: c_int,
+    pub mv0_threshold: c_int,
+    pub slices: c_int,
+    pub sample_rate: c_int,
+    pub sample_fmt: c_int,
+    pub ch_layout: AvChannelLayout,
+    pub frame_size: c_int,
+    pub block_align: c_int,
+    pub cutoff: c_int,
+    pub audio_service_type: c_int,
+    pub request_sample_fmt: c_int,
+    pub initial_padding: c_int,
+    pub trailing_padding: c_int,
+    pub seek_preroll: c_int,
+    pub get_buffer2: AvGetBuffer2,
+    pub bit_rate_tolerance: c_int,
+    pub global_quality: c_int,
+    pub compression_level: c_int,
+    pub qcompress: f32,
+    pub qblur: f32,
+    pub qmin: c_int,
+    pub qmax: c_int,
+    pub max_qdiff: c_int,
+    pub rc_buffer_size: c_int,
+    pub rc_override_count: c_int,
+    pub rc_override: *mut c_void,
+    pub rc_max_rate: i64,
+    pub rc_min_rate: i64,
+    pub rc_max_available_vbv_use: f32,
+    pub rc_min_vbv_overflow_use: f32,
+    pub rc_initial_buffer_occupancy: c_int,
+    pub trellis: c_int,
+    pub stats_out: *mut c_char,
+    pub stats_in: *mut c_char,
+    pub workaround_bugs: c_int,
+    pub strict_std_compliance: c_int,
+    pub error_concealment: c_int,
+    pub debug: c_int,
+    pub err_recognition: c_int,
+    pub hwaccel: *const c_void,
+    pub hwaccel_context: *mut c_void,
+    pub hw_frames_ctx: *mut AvBufferRef,
+    pub hw_device_ctx: *mut AvBufferRef,
+    pub hwaccel_flags: c_int,
+    pub extra_hw_frames: c_int,
+}
 
 pub const MAX_STREAMS: usize = 256;
 pub const MAX_CHAPTERS: usize = 256;
@@ -261,4 +467,40 @@ unsafe extern "C" {
     ) -> *mut AvIoContext;
     pub fn avcodec_descriptor_get(id: c_int) -> *const AvCodecDescriptor;
     pub fn avformat_version() -> c_uint;
+    pub fn avcodec_version() -> c_uint;
+    pub fn avcodec_find_decoder(id: c_int) -> *const AvCodec;
+    pub fn avcodec_alloc_context3(codec: *const AvCodec) -> *mut AvCodecContext;
+    pub fn avcodec_parameters_to_context(
+        ctx: *mut AvCodecContext,
+        par: *const AvCodecParameters,
+    ) -> c_int;
+    pub fn avcodec_open2(
+        ctx: *mut AvCodecContext,
+        codec: *const AvCodec,
+        options: *mut *mut AvDictionary,
+    ) -> c_int;
+    pub fn avcodec_send_packet(ctx: *mut AvCodecContext, pkt: *const AvPacket) -> c_int;
+    pub fn avcodec_receive_frame(ctx: *mut AvCodecContext, frame: *mut AvFrame) -> c_int;
+    pub fn avcodec_flush_buffers(ctx: *mut AvCodecContext);
+    pub fn avcodec_free_context(ctx: *mut *mut AvCodecContext);
+    pub fn av_frame_alloc() -> *mut AvFrame;
+    pub fn av_frame_free(frame: *mut *mut AvFrame);
+    pub fn av_frame_unref(frame: *mut AvFrame);
+    pub fn av_hwdevice_ctx_create(
+        device_ctx: *mut *mut AvBufferRef,
+        device_type: c_int,
+        device: *const c_char,
+        opts: *mut AvDictionary,
+        flags: c_int,
+    ) -> c_int;
+    pub fn av_hwdevice_find_type_by_name(name: *const c_char) -> c_int;
+    pub fn av_hwframe_transfer_data(dst: *mut AvFrame, src: *const AvFrame, flags: c_int)
+    -> c_int;
+    pub fn av_get_pix_fmt_name(pix_fmt: c_int) -> *const c_char;
+    pub fn av_opt_set_int(
+        obj: *mut c_void,
+        name: *const c_char,
+        value: i64,
+        search_flags: c_int,
+    ) -> c_int;
 }
