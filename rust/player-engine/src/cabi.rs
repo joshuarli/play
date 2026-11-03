@@ -5,7 +5,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::ptr;
 
 #[repr(C)]
-struct EngineSnapshotFfi {
+pub struct EngineSnapshotFfi {
     position: f64,
     duration: f64,
     volume: f32,
