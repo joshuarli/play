@@ -1,5 +1,6 @@
 use std::ffi::{c_char, c_int, CStr};
 use std::ptr;
+use std::sync::Mutex;
 
 use player_core::state::PlaybackState;
 
@@ -9,22 +10,26 @@ pub struct PlayerState {
 }
 
 struct StateHandle {
-    state: PlaybackState,
+    state: Mutex<PlaybackState>,
 }
 
-unsafe fn as_state<'a>(handle: *mut PlayerState) -> Option<&'a mut StateHandle> {
+fn lock_state<'a>(handle: &'a StateHandle) -> std::sync::MutexGuard<'a, PlaybackState> {
+    handle.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+unsafe fn as_state<'a>(handle: *mut PlayerState) -> Option<&'a StateHandle> {
     if handle.is_null() {
         None
     } else {
         // SAFETY: handle was created by player_ffi_state_create and is live for the call.
-        Some(unsafe { &mut *(handle as *mut StateHandle) })
+        Some(unsafe { &*(handle as *mut StateHandle) })
     }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn player_ffi_state_create() -> *mut PlayerState {
     Box::into_raw(Box::new(StateHandle {
-        state: PlaybackState::new(),
+        state: Mutex::new(PlaybackState::new()),
     })) as *mut PlayerState
 }
 
@@ -62,7 +67,7 @@ pub unsafe extern "C" fn player_ffi_state_set_bool(
     if !PlaybackState::supports_bool(name) {
         return -1;
     }
-    match handle.state.set_bool(name, value != 0) {
+    match lock_state(handle).set_bool(name, value != 0) {
         Some(_) => 1,
         None => 0,
     }
@@ -93,7 +98,35 @@ pub unsafe extern "C" fn player_ffi_state_set_number(
     if !value.is_finite() {
         return -2;
     }
-    match handle.state.set_number(name, value) {
+    match lock_state(handle).set_number(name, value) {
+        Some(_) => 1,
+        None => 0,
+    }
+}
+
+/// # Safety
+///
+/// `handle` must be live and `name` must be a valid NUL-terminated string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn player_ffi_state_set_track(
+    handle: *mut PlayerState,
+    name: *const c_char,
+    value: c_int,
+) -> c_int {
+    let Some(handle) = (unsafe { as_state(handle) }) else {
+        return -2;
+    };
+    if name.is_null() {
+        return -2;
+    }
+    // SAFETY: name is a NUL-terminated string.
+    let Ok(name) = unsafe { CStr::from_ptr(name) }.to_str() else {
+        return -2;
+    };
+    if !PlaybackState::supports_track(name) {
+        return -1;
+    }
+    match lock_state(handle).set_track(name, value as i64) {
         Some(_) => 1,
         None => 0,
     }
@@ -119,7 +152,7 @@ pub unsafe extern "C" fn player_ffi_state_get_bool(
     let Ok(name) = unsafe { CStr::from_ptr(name) }.to_str() else {
         return -1;
     };
-    let Some(value) = handle.state.get_bool(name) else {
+    let Some(value) = lock_state(handle).get_bool(name) else {
         return -1;
     };
     // SAFETY: out is writable.
@@ -147,11 +180,39 @@ pub unsafe extern "C" fn player_ffi_state_get_number(
     let Ok(name) = unsafe { CStr::from_ptr(name) }.to_str() else {
         return -1;
     };
-    let Some(value) = handle.state.get_number(name) else {
+    let Some(value) = lock_state(handle).get_number(name) else {
         return -1;
     };
     // SAFETY: out is writable.
     unsafe { *out = value };
+    0
+}
+
+/// # Safety
+///
+/// `handle` must be live, `name` must be a valid NUL-terminated string, and `out`
+/// must be writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn player_ffi_state_get_track(
+    handle: *mut PlayerState,
+    name: *const c_char,
+    out: *mut c_int,
+) -> c_int {
+    let Some(handle) = (unsafe { as_state(handle) }) else {
+        return -1;
+    };
+    if name.is_null() || out.is_null() {
+        return -1;
+    }
+    // SAFETY: name is a NUL-terminated string.
+    let Ok(name) = unsafe { CStr::from_ptr(name) }.to_str() else {
+        return -1;
+    };
+    let Some(value) = lock_state(handle).get_track(name) else {
+        return -1;
+    };
+    // SAFETY: out is writable.
+    unsafe { *out = value as c_int };
     0
 }
 
@@ -166,7 +227,7 @@ pub unsafe extern "C" fn player_ffi_state_set_time_pos(
     let Some(handle) = (unsafe { as_state(handle) }) else {
         return -1;
     };
-    handle.state.set_time_pos(value) as c_int
+    lock_state(handle).set_time_pos(value) as c_int
 }
 
 /// # Safety
@@ -180,7 +241,7 @@ pub unsafe extern "C" fn player_ffi_state_set_duration(
     let Some(handle) = (unsafe { as_state(handle) }) else {
         return -1;
     };
-    handle.state.set_duration(value) as c_int
+    lock_state(handle).set_duration(value) as c_int
 }
 
 /// # Safety
@@ -194,7 +255,7 @@ pub unsafe extern "C" fn player_ffi_state_set_eof_reached(
     let Some(handle) = (unsafe { as_state(handle) }) else {
         return -1;
     };
-    handle.state.set_eof_reached(value != 0) as c_int
+    lock_state(handle).set_eof_reached(value != 0) as c_int
 }
 
 /// # Safety
@@ -212,10 +273,10 @@ pub unsafe extern "C" fn player_ffi_state_describe(
     if out.is_null() || cap == 0 {
         return -1;
     }
-    let state = &handle.state;
+    let state = lock_state(handle);
     let duration = state.get_number("duration").unwrap_or(-1.0);
     let text = format!(
-        "pause={} fullscreen={} mute={} volume={:.3} speed={:.3} time-pos={:.3} duration={:.3} eof={} seq={}",
+        "pause={} fullscreen={} mute={} volume={:.3} speed={:.3} time-pos={:.3} duration={:.3} eof={} aid={} sid={} vid={} seq={}",
         state.get_bool("pause").unwrap_or(false) as c_int,
         state.get_bool("fullscreen").unwrap_or(false) as c_int,
         state.get_bool("mute").unwrap_or(false) as c_int,
@@ -224,6 +285,9 @@ pub unsafe extern "C" fn player_ffi_state_describe(
         state.get_number("time-pos").unwrap_or(0.0),
         duration,
         state.get_bool("eof-reached").unwrap_or(false) as c_int,
+        state.get_track("aid").unwrap_or(-2),
+        state.get_track("sid").unwrap_or(-2),
+        state.get_track("vid").unwrap_or(-2),
         state.sequence()
     );
     let bytes = text.as_bytes();
@@ -242,7 +306,7 @@ pub unsafe extern "C" fn player_ffi_state_describe(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn player_ffi_state_sequence(handle: *mut PlayerState) -> u64 {
     unsafe { as_state(handle) }
-        .map(|handle| handle.state.sequence())
+        .map(|handle| lock_state(handle).sequence())
         .unwrap_or(0)
 }
 
@@ -257,6 +321,7 @@ mod tests {
         let pause = CString::new("pause").unwrap();
         let volume = CString::new("volume").unwrap();
         let duration = CString::new("duration").unwrap();
+        let aid = CString::new("aid").unwrap();
         let unknown = CString::new("unknown").unwrap();
         // SAFETY: the handle and names are valid for the calls.
         unsafe {
@@ -286,10 +351,44 @@ mod tests {
                 player_ffi_state_set_bool(std::ptr::null_mut(), pause.as_ptr(), 1),
                 -2
             );
+            assert_eq!(player_ffi_state_set_track(handle, aid.as_ptr(), 1), 1);
+            assert_eq!(player_ffi_state_set_track(handle, aid.as_ptr(), 1), 0);
+            let mut track = 0;
+            assert_eq!(player_ffi_state_get_track(handle, aid.as_ptr(), &mut track), 0);
+            assert_eq!(track, 1);
+            assert_eq!(player_ffi_state_set_track(handle, unknown.as_ptr(), 1), -1);
+            assert_eq!(player_ffi_state_get_track(handle, unknown.as_ptr(), &mut track), -1);
             assert_eq!(player_ffi_state_set_time_pos(handle, 1.0), 1);
             assert_eq!(player_ffi_state_set_time_pos(handle, 1.0), 0);
             assert!(player_ffi_state_sequence(handle) > 0);
             player_ffi_state_destroy(handle);
         }
+    }
+
+    #[test]
+    fn state_ffi_survives_concurrent_access() {
+        use std::thread;
+        let handle = player_ffi_state_create() as usize;
+        // SAFETY: the handle stays live until all threads join, and the
+        // state behind it is synchronized.
+        let handles: Vec<_> = (0..8)
+            .map(|index| {
+                thread::spawn(move || unsafe {
+                    let handle = handle as *mut PlayerState;
+                    let pause = CString::new("pause").unwrap();
+                    let volume = CString::new("volume").unwrap();
+                    for _ in 0..100 {
+                        player_ffi_state_set_bool(handle, pause.as_ptr(), index % 2);
+                        player_ffi_state_set_number(handle, volume.as_ptr(), index as f64);
+                        let mut value = 0;
+                        player_ffi_state_get_bool(handle, pause.as_ptr(), &mut value);
+                    }
+                })
+            })
+            .collect();
+        for thread in handles {
+            thread.join().expect("worker panicked");
+        }
+        unsafe { player_ffi_state_destroy(handle as *mut PlayerState) };
     }
 }

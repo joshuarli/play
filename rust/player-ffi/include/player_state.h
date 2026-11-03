@@ -11,6 +11,10 @@ void player_ffi_state_destroy(struct player_state *state);
 int player_ffi_state_set_bool(struct player_state *state, const char *name, int value);
 int player_ffi_state_set_number(struct player_state *state, const char *name,
                                 double value);
+int player_ffi_state_set_track(struct player_state *state, const char *name,
+                               int value);
+int player_ffi_state_get_track(struct player_state *state, const char *name,
+                               int *out);
 int player_ffi_state_get_bool(struct player_state *state, const char *name,
                               int *out);
 int player_ffi_state_get_number(struct player_state *state, const char *name,

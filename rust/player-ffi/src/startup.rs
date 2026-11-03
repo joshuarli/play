@@ -81,6 +81,72 @@ pub unsafe extern "C" fn player_ffi_startup_parse(
     }
 }
 
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct PlayerHostSteps {
+    pub ctx: *mut c_void,
+    pub create: Option<unsafe extern "C" fn(*mut c_void) -> *mut c_void>,
+    pub init: Option<unsafe extern "C" fn(*mut c_void, *mut c_void, *mut *mut c_char) -> c_int>,
+    pub play: Option<unsafe extern "C" fn(*mut c_void, *mut c_void)>,
+    pub finish: Option<unsafe extern "C" fn(*mut c_void, *mut c_void, c_int) -> c_int>,
+    pub destroy: Option<unsafe extern "C" fn(*mut c_void, *mut c_void)>,
+}
+
+/// Run the whole player lifecycle: create, initialize, play, finish, destroy.
+///
+/// The host owns every step implementation; Rust owns the order. Returns the
+/// process exit code: 1 when the arguments or the step table are unusable.
+///
+/// # Safety
+///
+/// `argv` must contain `argc` valid NUL-terminated strings, and `steps` must
+/// point to a complete step table whose functions are valid for the call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn player_ffi_run(
+    argc: c_int,
+    argv: *const *const c_char,
+    steps: *const PlayerHostSteps,
+) -> c_int {
+    let result = catch_unwind(AssertUnwindSafe(|| -> Result<c_int, ()> {
+        if argc < 0 || argv.is_null() || steps.is_null() {
+            return Err(());
+        }
+        // SAFETY: steps is non-null and points to a valid table for the call.
+        let steps = unsafe { *steps };
+        let (Some(create), Some(init), Some(play), Some(finish), Some(destroy)) =
+            (steps.create, steps.init, steps.play, steps.finish, steps.destroy)
+        else {
+            return Err(());
+        };
+        // SAFETY: create is valid; the context stays alive for the call.
+        let mpctx = unsafe { create(steps.ctx) };
+        if mpctx.is_null() {
+            return Ok(1);
+        }
+        // Skip the program name, mirroring the previous C entry point.
+        // SAFETY: argv contains argc valid entries.
+        let options = if argc > 1 && !(unsafe { *argv }).is_null() {
+            unsafe { argv.add(1) as *mut *mut c_char }
+        } else {
+            ptr::null_mut()
+        };
+        // SAFETY: init, play, finish, and destroy are valid; mpctx is live
+        // until destroy runs, and options borrows argv for the call.
+        let status = unsafe { init(steps.ctx, mpctx, options) };
+        if status == 0 {
+            unsafe { play(steps.ctx, mpctx) };
+        }
+        let code = unsafe { finish(steps.ctx, mpctx, status) };
+        unsafe { destroy(steps.ctx, mpctx) };
+        Ok(code)
+    }));
+    match result {
+        Ok(Ok(code)) => code,
+        Ok(Err(())) => 1,
+        Err(_) => 1,
+    }
+}
+
 const INCOMPLETE_SINK: &str = "startup sink is incomplete";
 
 fn apply_operation(sink: &PlayerStartupSink, operation: StartupOp) -> Result<(), String> {
@@ -164,6 +230,145 @@ fn start_time_parts(start: &StartTime) -> (c_int, f64) {
 
 fn c_string(value: &str) -> Result<CString, String> {
     CString::new(value).map_err(|_| "argument contains NUL".to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::CString;
+    use std::sync::{LazyLock, Mutex};
+
+    static CALLS: LazyLock<Mutex<Vec<&'static str>>> =
+        LazyLock::new(|| Mutex::new(Vec::new()));
+    static INIT_STATUS: std::sync::atomic::AtomicI32 =
+        std::sync::atomic::AtomicI32::new(0);
+    static SERIAL: Mutex<()> = Mutex::new(());
+
+    fn calls() -> std::sync::MutexGuard<'static, Vec<&'static str>> {
+        CALLS.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn log(call: &'static str) {
+        calls().push(call);
+    }
+
+    unsafe extern "C" fn stub_create(_ctx: *mut c_void) -> *mut c_void {
+        log("create");
+        0x1234 as *mut c_void
+    }
+
+    unsafe extern "C" fn stub_init(
+        _ctx: *mut c_void,
+        mpctx: *mut c_void,
+        options: *mut *mut c_char,
+    ) -> c_int {
+        assert_eq!(mpctx as usize, 0x1234);
+        // SAFETY: the test passes a NUL-terminated options array.
+        let first = unsafe { CStr::from_ptr(*options) };
+        assert_eq!(first.to_str().unwrap(), "a.mkv");
+        log("init");
+        INIT_STATUS.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    unsafe extern "C" fn stub_play(_ctx: *mut c_void, mpctx: *mut c_void) {
+        assert_eq!(mpctx as usize, 0x1234);
+        log("play");
+    }
+
+    unsafe extern "C" fn stub_finish(
+        _ctx: *mut c_void,
+        mpctx: *mut c_void,
+        status: c_int,
+    ) -> c_int {
+        assert_eq!(mpctx as usize, 0x1234);
+        assert_eq!(status, INIT_STATUS.load(std::sync::atomic::Ordering::SeqCst));
+        log("finish");
+        7
+    }
+
+    unsafe extern "C" fn stub_destroy(_ctx: *mut c_void, mpctx: *mut c_void) {
+        assert_eq!(mpctx as usize, 0x1234);
+        log("destroy");
+    }
+
+    fn steps() -> PlayerHostSteps {
+        PlayerHostSteps {
+            ctx: ptr::null_mut(),
+            create: Some(stub_create),
+            init: Some(stub_init),
+            play: Some(stub_play),
+            finish: Some(stub_finish),
+            destroy: Some(stub_destroy),
+        }
+    }
+
+    fn run_with(args: &[&str], init_status: i32) -> (c_int, std::sync::MutexGuard<'static, ()>) {
+        let serial = SERIAL.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        INIT_STATUS.store(init_status, std::sync::atomic::Ordering::SeqCst);
+        calls().clear();
+        let owned: Vec<CString> = args
+            .iter()
+            .map(|arg| CString::new(*arg).unwrap())
+            .collect();
+        let mut pointers: Vec<*const c_char> =
+            owned.iter().map(|arg| arg.as_ptr()).collect();
+        pointers.push(ptr::null());
+        let table = steps();
+        // SAFETY: the argument vector and step table stay live for the call.
+        let code = unsafe {
+            player_ffi_run(
+                args.len() as c_int,
+                pointers.as_ptr(),
+                &table as *const PlayerHostSteps,
+            )
+        };
+        (code, serial)
+    }
+
+    #[test]
+    fn run_sequences_full_lifecycle() {
+        let (code, _serial) = run_with(&["player", "a.mkv"], 0);
+        assert_eq!(code, 7);
+        assert_eq!(
+            *calls(),
+            ["create", "init", "play", "finish", "destroy"]
+        );
+    }
+
+    #[test]
+    fn run_skips_play_when_init_fails() {
+        let (code, _serial) = run_with(&["player", "a.mkv"], -1);
+        assert_eq!(code, 7);
+        assert_eq!(
+            *calls(),
+            ["create", "init", "finish", "destroy"]
+        );
+    }
+
+    #[test]
+    fn run_rejects_bad_input() {
+        let table = steps();
+        // SAFETY: the table is valid; the argument pointer is null.
+        assert_eq!(
+            unsafe { player_ffi_run(1, ptr::null(), &table as *const PlayerHostSteps) },
+            1
+        );
+        let owned = CString::new("player").unwrap();
+        let pointers = [owned.as_ptr(), ptr::null()];
+        let mut broken = steps();
+        broken.play = None;
+        // SAFETY: arguments and table stay live for the call.
+        assert_eq!(
+            unsafe {
+                player_ffi_run(
+                    1,
+                    pointers.as_ptr(),
+                    &broken as *const PlayerHostSteps,
+                )
+            },
+            1
+        );
+    }
 }
 
 unsafe fn write_error(err: *mut c_char, cap: usize, message: &str) {
