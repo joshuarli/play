@@ -73,6 +73,8 @@
 #include "misc/language.h"
 #include "misc/node.h"
 #include "player_state.h"
+#include "player_event.h"
+#include "player_command.h"
 #include "misc/thread_pool.h"
 #include "misc/thread_tools.h"
 #include "misc/path_utils.h"
@@ -1946,6 +1948,19 @@ static int mp_property_switch_track(void *ctx, struct m_property *prop,
 
     switch (action) {
     case M_PROPERTY_GET:
+        if (order == 0 && mpctx->control_state) {
+            const char *state_name = NULL;
+            if (type == STREAM_AUDIO)
+                state_name = "aid";
+            else if (type == STREAM_VIDEO)
+                state_name = "vid";
+            else if (type == STREAM_SUB)
+                state_name = "sid";
+            if (state_name
+                && player_ffi_state_get_track(mpctx->control_state, state_name,
+                                              (int *)arg) == 0)
+                return M_PROPERTY_OK;
+        }
         if (mpctx->playback_initialized) {
             *(int *)arg = track ? track->user_tid : -2;
         } else {
@@ -4329,6 +4344,15 @@ static int control_state_sync_option(struct MPContext *mpctx,
     if (!strcmp(name, "speed"))
         return player_ffi_state_set_number(mpctx->control_state, "speed",
                                            opts->playback_speed);
+    if (!strcmp(name, "aid"))
+        return player_ffi_state_set_track(mpctx->control_state, "aid",
+                                          opts->stream_id[0][STREAM_AUDIO]);
+    if (!strcmp(name, "vid"))
+        return player_ffi_state_set_track(mpctx->control_state, "vid",
+                                          opts->stream_id[0][STREAM_VIDEO]);
+    if (!strcmp(name, "sid"))
+        return player_ffi_state_set_track(mpctx->control_state, "sid",
+                                          opts->stream_id[0][STREAM_SUB]);
     return -1;
 }
 
@@ -4345,6 +4369,32 @@ void mp_control_state_sync(struct MPContext *mpctx)
                                 opts->softvol_volume);
     player_ffi_state_set_number(mpctx->control_state, "speed",
                                 opts->playback_speed);
+    player_ffi_state_set_track(mpctx->control_state, "aid",
+                               opts->stream_id[0][STREAM_AUDIO]);
+    player_ffi_state_set_track(mpctx->control_state, "vid",
+                               opts->stream_id[0][STREAM_VIDEO]);
+    player_ffi_state_set_track(mpctx->control_state, "sid",
+                               opts->stream_id[0][STREAM_SUB]);
+}
+
+// Mirror the mp_property_switch_track read path into the Rust store without
+// notifying: auto-resolved and unmarked selections change here, and observers
+// already learn user-initiated changes through the option-change hook above.
+static void control_state_sync_track(struct MPContext *mpctx, const char *name,
+                                     int order, enum stream_type type)
+{
+    if (!mpctx->control_state || !mpctx->opts)
+        return;
+    int value;
+    struct track *track = mpctx->current_track[order][type];
+    if (track) {
+        value = track->user_tid;
+    } else if (!mpctx->playback_initialized) {
+        value = mpctx->opts->stream_id[order][type];
+    } else {
+        value = -2;
+    }
+    player_ffi_state_set_track(mpctx->control_state, name, value);
 }
 
 void mp_control_state_update(struct MPContext *mpctx)
@@ -4354,6 +4404,9 @@ void mp_control_state_update(struct MPContext *mpctx)
     if (player_ffi_state_set_bool(mpctx->control_state, "fullscreen",
                                   mpctx->opts->vo->fullscreen) > 0)
         mp_notify_property(mpctx, "fullscreen");
+    control_state_sync_track(mpctx, "aid", 0, STREAM_AUDIO);
+    control_state_sync_track(mpctx, "vid", 0, STREAM_VIDEO);
+    control_state_sync_track(mpctx, "sid", 0, STREAM_SUB);
 }
 
 static int mp_property_state_bool(void *ctx, struct m_property *prop,
@@ -5650,6 +5703,38 @@ static void run_command_on_worker_thread(void *p)
 // accessed from the completion callback.
 // The completion callback is invoked exactly once. If it's NULL, it's ignored.
 // Ownership of cmd goes to the caller.
+// Every executed command passes the Rust dispatcher first. String and argv
+// input were already checked at parse time; node input was not, so this is
+// the choke point that closes the bypass. Owned commands are validated by
+// shape here (1), anything else runs through the C engine (0), and malformed
+// owned commands fail before they execute (-1).
+static bool dispatch_command(struct mp_cmd_ctx *ctx)
+{
+    struct mp_cmd *cmd = ctx->cmd;
+    if (cmd->def == &mp_cmd_list)
+        return true; // parts are dispatched on their own runs
+    void *tmp = talloc_new(NULL);
+    const char **argv = talloc_array(tmp, const char *, cmd->nargs + 1);
+    argv[0] = cmd->name;
+    for (int n = 0; n < cmd->nargs; n++) {
+        char *text = m_option_print(cmd->args[n].type, &cmd->args[n].v);
+        argv[n + 1] = text ? text : "";
+        talloc_steal(tmp, text);
+    }
+    char err[160] = {0};
+    int checked =
+        player_ffi_command_check_strv(cmd->nargs + 1, argv, err, sizeof(err));
+    talloc_free(tmp);
+    if (checked < 0) {
+        ctx->success = false;
+        mp_cmd_msg(ctx, MSGL_ERR, "Command rejected: %s\n",
+                   err[0] ? err : "invalid command");
+        mp_cmd_ctx_complete(ctx);
+        return false;
+    }
+    return true;
+}
+
 void run_command(struct MPContext *mpctx, struct mp_cmd *cmd,
                  struct mp_abort_entry *abort,
                  void (*on_completion)(struct mp_cmd_ctx *cmd),
@@ -5704,6 +5789,11 @@ void run_command(struct MPContext *mpctx, struct mp_cmd *cmd,
             }
         }
     }
+
+    // Dispatch after property expansion so owned commands are validated with
+    // the values they will actually execute.
+    if (!dispatch_command(ctx))
+        return;
 
     if (cmd->def->spawn_thread) {
         mpctx->outstanding_async += 1; // prevent that core disappears
@@ -8081,5 +8171,7 @@ void mp_option_run_callback(struct MPContext *mpctx, struct mp_option_callback *
 
 void mp_notify_property(struct MPContext *mpctx, const char *property)
 {
+    if (mpctx->event_bus)
+        player_ffi_event_push(mpctx->event_bus, property);
     mp_client_property_change(mpctx, property);
 }

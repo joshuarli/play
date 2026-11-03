@@ -447,6 +447,56 @@ error:
     return NULL;
 }
 
+// Check every `;`-separated part of a multi-command string on its own.
+// The whole-string check above lets `;` through, so without this the parts
+// after the first would never see validation.
+static bool check_cmd_parts(struct mp_log *log, void *tmp, bstr str)
+{
+    bstr rest = str;
+    while (1) {
+        rest = bstr_lstrip(rest);
+        // Find the next top-level `;`. A `#` outside quotes starts a trailing
+        // comment, which cannot hold commands.
+        bool quoted = false;
+        bool escaped = false;
+        bstr part = rest;
+        part.len = 0;
+        while (rest.len > 0) {
+            char c = rest.start[0];
+            if (escaped) {
+                escaped = false;
+            } else if (c == '\\' && quoted) {
+                escaped = true;
+            } else if (c == '"') {
+                quoted = !quoted;
+            } else if (!quoted && (c == ';' || c == '#')) {
+                break;
+            }
+            rest.start++;
+            rest.len--;
+            part.len++;
+        }
+        if (rest.len > 0 && rest.start[0] == '#') {
+            rest.len = 0; // trailing comment: nothing after it can run
+        } else if (rest.len > 0) {
+            rest.start++; // skip `;`
+            rest.len--;
+        }
+        bstr trimmed = bstr_strip(part);
+        if (trimmed.len > 0) {
+            char *text = bstrto0(tmp, trimmed);
+            char err[160] = {0};
+            if (player_ffi_command_check_str(text, err, sizeof(err)) < 0) {
+                mp_err(log, "Command rejected: %s\n", err);
+                return false;
+            }
+        }
+        bstr ahead = bstr_lstrip(rest);
+        if (ahead.len == 0)
+            return true;
+    }
+}
+
 mp_cmd_t *mp_input_parse_cmd_str(struct mp_log *log, bstr str, const char *loc)
 {
     void *tmp = talloc_new(NULL);
@@ -456,6 +506,10 @@ mp_cmd_t *mp_input_parse_cmd_str(struct mp_log *log, bstr str, const char *loc)
     talloc_free(text);
     if (checked < 0) {
         mp_err(log, "Command rejected: %s\n", err);
+        talloc_free(tmp);
+        return NULL;
+    }
+    if (!check_cmd_parts(log, tmp, str)) {
         talloc_free(tmp);
         return NULL;
     }

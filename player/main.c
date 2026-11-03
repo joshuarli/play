@@ -68,6 +68,7 @@
 #include "player_ffi.h"
 #include "player_startup.h"
 #include "player_state.h"
+#include "player_event.h"
 #include "command.h"
 #include "screenshot.h"
 #include "tui.h"
@@ -203,6 +204,8 @@ void mp_destroy(struct MPContext *mpctx)
     mp_mutex_destroy(&mpctx->abort_lock);
     player_ffi_state_destroy(mpctx->control_state);
     mpctx->control_state = NULL;
+    player_ffi_event_destroy(mpctx->event_bus);
+    mpctx->event_bus = NULL;
     talloc_free(mpctx->mconfig); // destroy before dispatch
     talloc_free(mpctx);
 }
@@ -267,6 +270,7 @@ struct MPContext *mp_create(void)
         .osd_progbar = { .type = -1 },
         .playlist = playlist_new(mpctx),
         .control_state = player_ffi_state_create(),
+        .event_bus = player_ffi_event_create(),
         .dispatch = mp_dispatch_create(mpctx),
         .playback_abort = mp_cancel_new(mpctx),
         .thread_pool = mp_thread_pool_create(mpctx, 0, 1, 30),
@@ -628,22 +632,31 @@ static void set_bundled_vulkan_icd(void)
 }
 #endif
 
-int mpv_main(int argc, char *argv[])
+static void *mp_host_create(void *ctx)
 {
-#if HAVE_COCOA
-    set_bundled_vulkan_icd();
-#endif
+    (void)ctx;
     struct MPContext *mpctx = mp_create();
-    if (!mpctx)
-        return 1;
+    if (mpctx)
+        mpctx->is_cli = true;
+    return mpctx;
+}
 
-    mpctx->is_cli = true;
+static int mp_host_init(void *ctx, void *mpctx, char **options)
+{
+    (void)ctx;
+    return mp_initialize(mpctx, options);
+}
 
-    char **options = argv && argv[0] ? argv + 1 : NULL; // skips program name
-    int r = mp_initialize(mpctx, options);
-    if (r == 0)
-        mp_play_files(mpctx);
+static void mp_host_play(void *ctx, void *mpctx)
+{
+    (void)ctx;
+    mp_play_files(mpctx);
+}
 
+static int mp_host_finish(void *ctx, void *mpctx, int r)
+{
+    (void)ctx;
+    struct MPContext *m = mpctx;
     int rc = 0;
     const char *reason = NULL;
     if (r < 0) {
@@ -651,19 +664,19 @@ int mpv_main(int argc, char *argv[])
         rc = 1;
     } else if (r > 0) {
         // nothing
-    } else if (mpctx->stop_play == PT_QUIT) {
+    } else if (m->stop_play == PT_QUIT) {
         reason = "Quit";
-    } else if (mpctx->files_played) {
-        if (mpctx->files_errored || mpctx->files_broken) {
+    } else if (m->files_played) {
+        if (m->files_errored || m->files_broken) {
             reason = "Some errors happened";
             rc = 3;
         } else {
             reason = "End of file";
         }
-    } else if (mpctx->files_broken && !mpctx->files_errored) {
+    } else if (m->files_broken && !m->files_errored) {
         reason = "Errors when loading file";
         rc = 2;
-    } else if (mpctx->files_errored) {
+    } else if (m->files_errored) {
         reason = "Interrupted by error";
         rc = 2;
     } else {
@@ -671,10 +684,30 @@ int mpv_main(int argc, char *argv[])
     }
 
     if (reason)
-        MP_INFO(mpctx, "Exiting... (%s)\n", reason);
-    if (mpctx->has_quit_custom_rc)
-        rc = mpctx->quit_custom_rc;
-
-    mp_destroy(mpctx);
+        MP_INFO(m, "Exiting... (%s)\n", reason);
+    if (m->has_quit_custom_rc)
+        rc = m->quit_custom_rc;
     return rc;
+}
+
+static void mp_host_destroy(void *ctx, void *mpctx)
+{
+    (void)ctx;
+    mp_destroy(mpctx);
+}
+
+int mpv_main(int argc, char *argv[])
+{
+#if HAVE_COCOA
+    set_bundled_vulkan_icd();
+#endif
+    static const player_host_steps steps = {
+        .ctx = NULL,
+        .create = mp_host_create,
+        .init = mp_host_init,
+        .play = mp_host_play,
+        .finish = mp_host_finish,
+        .destroy = mp_host_destroy,
+    };
+    return player_ffi_run(argc, argv, &steps);
 }
