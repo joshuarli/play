@@ -32,7 +32,7 @@ libplacebo = dependency('libplacebo', version: '>=6.338.2',
 libass = dependency('libass', version: '>= 0.12.2')
 
 # the dependency order of libass -> ffmpeg is necessary due to
-# static linking symbol resolution between fontconfig and MinGW
+# static linking symbol resolution between fontconfig and libass
 dependencies = [libass,
                 libavcodec,
                 libavfilter,
@@ -227,7 +227,6 @@ sources = files(
     'video/out/gpu/osd.c',
     'video/out/gpu/ra.c',
     'video/out/gpu/shader_cache.c',
-    'video/out/gpu/spirv.c',
     'video/out/gpu/user_shaders.c',
     'video/out/gpu/utils.c',
     'video/out/gpu/video.c',
@@ -304,34 +303,12 @@ if cc.get_id() == 'gcc'
 endif
 
 darwin = host_machine.system() == 'darwin'
-win32 = host_machine.system() == 'cygwin' or host_machine.system() == 'windows'
-posix = not win32
 
 features += {'darwin': darwin}
-features += {'posix': posix}
-features += {'dos-paths': win32, 'win32': win32}
 
-mswin_flags = ['-D_WIN32_WINNT=0x0A00', '-DWINVER=0x0A00', '-DUNICODE',
-               '-DCOBJMACROS', '-DINITGUID', '-DNOMINMAX',
-               '-D_USE_MATH_DEFINES', '-DWIN32_LEAN_AND_MEAN',
-               '-D_CRT_DECLARE_NONSTDC_NAMES', '-D_CRT_NONSTDC_NO_WARNINGS',
-               '-D_CRT_SECURE_NO_WARNINGS', '-DWINRT_NO_SOURCE_LOCATION']
+flags += ['-D_GNU_SOURCE']
 
-if host_machine.system() == 'windows'
-    flags += [mswin_flags]
-    flags_c += ['-U__STRICT_ANSI__']
-endif
-
-if host_machine.system() == 'cygwin'
-    flags += [mswin_flags, '-mwin32']
-endif
-
-if posix
-    flags += ['-D_GNU_SOURCE']
-endif
-
-link_flags += cc.get_supported_link_arguments(['-Wl,--nxcompat,--no-seh,--dynamicbase',
-                                               '-Wl,-z,noexecstack'])
+link_flags += cc.get_supported_link_arguments(['-Wl,-z,noexecstack'])
 
 features += {'build-date': get_option('build-date')}
 if not features['build-date']
@@ -349,24 +326,16 @@ endif
 # C11 atomics are mandatory but linking to the library is not always required.
 dependencies += cc.find_library('atomic', required: false)
 
-win32_threads = get_option('win32-threads').require(win32)
+pthreads = dependency('threads')
+sources += files('osdep/threads-posix.c')
+features += {'pthread-condattr-setclock':
+                cc.has_header_symbol('pthread.h',
+                                     'pthread_condattr_setclock',
+                                     args: '-D_GNU_SOURCE',
+                                     dependencies: pthreads)}
+dependencies += pthreads
 
-features += {'win32-threads': win32_threads.allowed()}
-if not features['win32-threads']
-    pthreads = dependency('threads')
-    sources += files('osdep/threads-posix.c')
-    features += {'pthread-condattr-setclock':
-                    cc.has_header_symbol('pthread.h',
-                                         'pthread_condattr_setclock',
-                                         args: '-D_GNU_SOURCE',
-                                         dependencies: pthreads)}
-    dependencies += pthreads
-endif
-
-pthread_debug = get_option('pthread-debug').require(
-    win32_threads.disabled(),
-    error_message: 'win32-threads was found!',
-)
+pthread_debug = get_option('pthread-debug')
 features += {'pthread-debug': pthread_debug.allowed()}
 
 if get_option('fuzzers')
@@ -403,24 +372,22 @@ if features['cocoa']
     main_fn_source = files('osdep/main-fn-mac.c')
 endif
 
-if posix
-    if not get_option('fuzzers') and cc.has_function('fork', prefix : '#include <unistd.h>')
-        sources += files('osdep/subprocess-posix.c')
-    else
-        sources += files('osdep/subprocess-dummy.c')
-    endif
-    sources += files('input/ipc-unix.c',
-                     'osdep/poll_wrapper.c',
-                     'osdep/terminal-unix.c',
-                     'sub/filter_regex.c')
+if not get_option('fuzzers') and cc.has_function('fork', prefix : '#include <unistd.h>')
+    sources += files('osdep/subprocess-posix.c')
+else
+    sources += files('osdep/subprocess-dummy.c')
 endif
+sources += files('input/ipc-unix.c',
+                 'osdep/poll_wrapper.c',
+                 'osdep/terminal-unix.c',
+                 'sub/filter_regex.c')
 
-if posix and not features['cocoa']
+if not features['cocoa']
     sources += files('osdep/language-posix.c')
     main_fn_source = files('osdep/main-fn-unix.c')
 endif
 
-if posix and not darwin
+if not darwin
     path_source = files('osdep/path-unix.c')
     timer_source = files('osdep/timer-linux.c')
 endif
@@ -437,8 +404,6 @@ features += {'memrchr': cc.has_function('memrchr', args: '-D_GNU_SOURCE',
                                         prefix: '#include <string.h>')}
 
 optical_devices = {
-    'windows': 'D:',
-    'cygwin': 'D:',
     'darwin': '/dev/disk1',
     'freebsd': '/dev/cd0',
     'openbsd': '/dev/rcd0c',
@@ -459,78 +424,9 @@ if features['android']
                      'video/out/vo_mediacodec_embed.c')
 endif
 
-uwp_opt = get_option('uwp').require(
-    not get_option('cplayer'),
-    error_message: 'cplayer is not false!',
-)
-uwp = cc.find_library('windowsapp', required: uwp_opt)
-features += {'uwp': uwp.found()}
-if features['uwp']
-    dependencies += uwp
-    path_source = files('osdep/path-uwp.c')
-endif
-
-features += {'win32-executable': win32 and get_option('cplayer')}
-if win32
-    timer_source = files('osdep/timer-win32.c')
-    sources += files('osdep/w32_keyboard.c',
-                     'osdep/windows_utils.c')
-endif
-
-features += {'win32-desktop': win32 and not uwp.found()}
-if features['win32-desktop']
-    win32_desktop_libs = [cc.find_library('avrt'),
-                          cc.find_library('dwmapi'),
-                          cc.find_library('gdi32'),
-                          cc.find_library('imm32'),
-                          cc.find_library('ntdll'),
-                          cc.find_library('ole32'),
-                          cc.find_library('pathcch'),
-                          cc.find_library('shcore'),
-                          cc.find_library('user32'),
-                          cc.find_library('uuid'),
-                          cc.find_library('uxtheme'),
-                          cc.find_library('version')]
-    dependencies += win32_desktop_libs
-    path_source = files('osdep/path-win.c')
-    if not get_option('fuzzers')
-        sources += files('osdep/subprocess-win.c')
-    else
-        sources += files('osdep/subprocess-dummy.c')
-    endif
-    sources += files('input/ipc-win.c',
-                     'player/clipboard/clipboard-win.c',
-                     'osdep/language-win.c',
-                     'osdep/terminal-win.c',
-                     'osdep/w32_register.c',
-                     'video/out/w32_common.c',
-                     'video/out/win32/displayconfig.c',
-                     'video/out/win32/droptarget.c',
-                     'video/out/win32/menu.c')
-    main_fn_source = files('osdep/main-fn-win.c')
-endif
-
-if not posix and not features['win32-desktop']
-    sources += files('input/ipc-dummy.c',
-                     'osdep/subprocess-dummy.c',
-                     'osdep/terminal-dummy.c')
-endif
-
-# media controls
-if win32
-    subdir('osdep/win32')
-else
-    features += {'win32-smtc': false}
-endif
-
 features += {'glob-posix': cc.has_function('glob', prefix: '#include <glob.h>')}
 
-features += {'glob-win32': win32 and not features['glob-posix']}
-if features['glob-win32']
-    sources += files('osdep/glob-win.c')
-endif
-
-features += {'glob': features['glob-posix'] or features['glob-win32']}
+features += {'glob': features['glob-posix']}
 
 features += {'vt.h': cc.has_header_symbol('sys/vt.h', 'VT_GETMODE')}
 
@@ -543,14 +439,14 @@ features += {'mac-thread-name': darwin}
 
 features += {'glibc-thread-name': false}
 if not features['mac-thread-name']
-    features += {'glibc-thread-name': posix and cc.has_function('pthread_setname_np', args: '-D_GNU_SOURCE',
-                                                                dependencies: pthreads, prefix: '#include <pthread.h>')}
+    features += {'glibc-thread-name': cc.has_function('pthread_setname_np', args: '-D_GNU_SOURCE',
+                                                      dependencies: pthreads, prefix: '#include <pthread.h>')}
 endif
 
 features += {'bsd-thread-name': false}
 if not features['mac-thread-name'] and not features['glibc-thread-name']
-    features += {'bsd-thread-name': posix and cc.has_function('pthread_set_name_np', dependencies: pthreads,
-                                                              prefix: '#include <pthread.h>\n#include <pthread_np.h>')}
+    features += {'bsd-thread-name': cc.has_function('pthread_set_name_np', dependencies: pthreads,
+                                                    prefix: '#include <pthread.h>\n#include <pthread_np.h>')}
 endif
 
 features += {'bsd-fstatfs': cc.has_function('fstatfs', prefix: '#include <sys/mount.h>\n#include <sys/param.h>')}
@@ -611,7 +507,6 @@ iconv = dependency('iconv', required: get_option('iconv'))
 features += {'iconv': iconv.found()}
 if features['iconv']
     dependencies += iconv
-    add_project_arguments('-DWINICONV_CONST=', language: ['c', 'objc'])
 endif
 
 lcms2 = dependency('lcms2', version: '>= 2.6', required: get_option('lcms2'))
@@ -822,15 +717,6 @@ if features['sndio']
     sources += files('audio/out/ao_sndio.c')
 endif
 
-wasapi = cc.has_header_symbol('audioclient.h', 'IAudioClient', required:
-    get_option('wasapi').require(win32))
-features += {'wasapi': wasapi}
-if features['wasapi']
-    sources += files('audio/out/ao_wasapi.c',
-                     'audio/out/ao_wasapi_changenotify.c',
-                     'audio/out/ao_wasapi_utils.c')
-endif
-
 
 # video output dependencies
 caca_opt = get_option('caca').require(
@@ -842,16 +728,6 @@ features += {'caca': caca.found()}
 if features['caca']
     dependencies += caca
     sources += files('video/out/vo_caca.c')
-endif
-
-direct3d_opt = get_option('direct3d').require(
-    get_option('gpl') and features['win32-desktop'],
-    error_message: 'the build is not GPL or this is not a win32 desktop!',
-)
-direct3d = cc.has_header('d3d9.h', required: direct3d_opt)
-features += {'direct3d': direct3d}
-if features['direct3d']
-    sources += files('video/out/vo_direct3d.c')
 endif
 
 drm = dependency('libdrm', version: '>= 2.4.105', required: get_option('drm'))
@@ -895,14 +771,6 @@ if features['sdl2-video']
     dependencies += sdl2
 endif
 
-shaderc = dependency('shaderc', required:
-    get_option('shaderc').require(features['win32-desktop']))
-features += {'shaderc': shaderc.found()}
-if features['shaderc']
-    dependencies += shaderc
-    sources += files('video/out/gpu/spirv_shaderc.c')
-endif
-
 sixel = dependency('libsixel', version: '>= 1.5', required: get_option('sixel'))
 features += {'sixel': sixel.found()}
 if features['sixel']
@@ -910,27 +778,7 @@ if features['sixel']
     sources += files('video/out/vo_sixel.c')
 endif
 
-features += {'posix-shm': false}
-if features['posix']
-    features += {'posix-shm': cc.has_function('shm_open', prefix: '#include <sys/mman.h>')}
-endif
-
-spirv_cross = dependency('spirv-cross-c-shared', required:
-    get_option('spirv-cross').require(features['win32-desktop']))
-features += {'spirv-cross': spirv_cross.found()}
-if features['spirv-cross']
-    dependencies += spirv_cross
-endif
-
-d3d11 = get_option('d3d11').require(
-    features['win32-desktop'] and features['shaderc'] and features['spirv-cross'],
-    error_message: 'Either is not a win32 desktop or shaderc nor spirv-cross were found!',
-)
-features += {'d3d11': d3d11.allowed()}
-if features['d3d11']
-    sources += files('video/out/d3d11/context.c',
-                     'video/out/d3d11/ra_d3d11.c')
-endif
+features += {'posix-shm': cc.has_function('shm_open', prefix: '#include <sys/mman.h>')}
 
 wayland = {
     'deps': [dependency('wayland-client', version: '>= 1.21.0', required: get_option('wayland')),
@@ -1026,8 +874,6 @@ features += {'gl': false}
 GL = dependency('', required: false)
 if darwin
     GL = dependency('appleframeworks', modules: 'OpenGL', required: get_option('gl-cocoa'))
-elif features['win32-desktop']
-    GL = dependency('GL', required: get_option('gl-win32'))
 elif features['x11']
     GL = dependency('GL', required: get_option('gl-x11'))
 endif
@@ -1042,17 +888,6 @@ if features['gl-cocoa']
     features += {'gl': true}
 endif
 
-gl_win32 = get_option('gl-win32').require(
-    GL.found() and gl_allowed and features['win32-desktop'],
-    error_message: 'GL and win32 desktop were not found!',
-)
-features += {'gl-win32': gl_win32.allowed()}
-if features['gl-win32']
-    dependencies += GL
-    features += {'gl': true}
-    sources += files('video/out/opengl/context_win.c')
-endif
-
 gl_x11 = get_option('gl-x11').require(
     GL.found() and gl_allowed and features['x11'],
     error_message: 'GL and x11 were not found!',
@@ -1062,56 +897,6 @@ if features['gl-x11']
     dependencies += GL
     features += {'gl': true}
     sources += files('video/out/opengl/context_glx.c')
-endif
-
-gl_dxinterop = get_option('gl-dxinterop').require(
-    features['gl-win32'] and
-        cc.has_header_symbol('GL/wglext.h', 'WGL_ACCESS_READ_ONLY_NV',
-                             prefix: '#include <GL/gl.h>') and
-        cc.has_header_symbol('d3d9.h', 'IDirect3D9Ex'),
-    error_message: 'gl-dxinterop could not be found!',
-)
-features += {'gl-dxinterop': gl_dxinterop.allowed()}
-if features['gl-dxinterop']
-    sources += files('video/out/opengl/context_dxinterop.c')
-endif
-
-egl_angle = get_option('egl-angle').require(
-    features['gl-win32'] and
-        cc.has_header_symbol('EGL/eglext.h',
-                             'EGL_D3D_TEXTURE_2D_SHARE_HANDLE_ANGLE',
-                             prefix: '#include <EGL/egl.h>') and
-        cc.has_header_symbol('EGL/eglext_angle.h',
-                             'PFNEGLCREATEDEVICEANGLEPROC',
-                             # TODO: change to list when meson 1.0.0 is required
-                             prefix: '#include <EGL/egl.h>\n#include <EGL/eglext.h>'),
-    error_message: 'egl-angle could not be found!',
-)
-features += {'egl-angle': egl_angle.allowed()}
-if features['egl-angle']
-    sources += files('video/out/opengl/angle_dynamic.c')
-endif
-
-egl_dep = cc.find_library('EGL', required:
-    get_option('egl-angle-lib').require(features['egl-angle']))
-egl_angle_lib = get_option('egl-angle-lib').require(
-    egl_dep.found() and cc.has_function('eglCreateWindowSurface',
-                                               dependencies: egl_dep,
-                                               prefix: '#include <EGL/egl.h>'),
-    error_message: 'egl-angle-lib could not be found!',
-)
-features += {'egl-angle-lib': egl_angle_lib.allowed()}
-if features['egl-angle-lib']
-    dependencies += egl_dep
-endif
-
-egl_angle_win32 = get_option('egl-angle-win32').require(
-    features['egl-angle'] and features['win32-desktop'],
-    error_message: 'either this is not a win32 desktop or egl-angle was not found!',
-)
-features += {'egl-angle-win32': egl_angle_win32.allowed()}
-if features['egl-angle-win32']
-    sources += files('video/out/opengl/context_angle.c')
 endif
 
 egl = dependency('egl', version: '>= 1.4.0', required: get_option('egl'))
@@ -1172,7 +957,7 @@ if plain_gl.allowed()
     features += {'gl': true}
 endif
 
-if features['egl'] or features['egl-android'] or features['egl-angle-win32']
+if features['egl'] or features['egl-android']
     sources += files('video/out/opengl/egl_helpers.c')
 endif
 
@@ -1219,10 +1004,6 @@ if features['vulkan'] and features['wayland']
     sources += files('video/out/vulkan/context_wayland.c')
 endif
 
-if features['vulkan'] and features['win32-desktop']
-    sources += files('video/out/vulkan/context_win.c')
-endif
-
 if features['vulkan'] and features['x11']
      sources += files('video/out/vulkan/context_xlib.c')
 endif
@@ -1231,11 +1012,6 @@ features += {'vk-khr-display': false}
 
 if features['vulkan'] or (features['gl'] and features['egl'])
     sources += files('video/filter/vf_gpu.c')
-endif
-
-if features['d3d11'] or features['egl-angle-win32'] or (features['vulkan'] and win32)
-    sources += files('video/out/gpu/d3d11_helpers.c')
-    features += {'dxgi-debug-d3d11': cc.has_header_symbol('d3d11sdklayers.h', 'DXGI_DEBUG_D3D11')}
 endif
 
 # hwaccel
@@ -1276,44 +1052,6 @@ if features['android-media-ndk']
     sources += files('video/out/hwdec/hwdec_aimagereader.c')
 endif
 
-d3d_hwaccel = get_option('d3d-hwaccel').require(
-    win32,
-    error_message: 'the os is not win32!',
-)
-features += {'d3d-hwaccel': d3d_hwaccel.allowed()}
-if features['d3d-hwaccel']
-    sources += files('video/d3d.c',
-                     'video/filter/vf_d3d11vpp.c')
-endif
-
-if features['d3d-hwaccel'] and features['egl-angle']
-    sources += files('video/out/opengl/hwdec_d3d11egl.c')
-endif
-if features['d3d-hwaccel'] and features['d3d11']
-    sources += files('video/out/d3d11/hwdec_d3d11va.c')
-endif
-
-d3d9_hwaccel = get_option('d3d9-hwaccel').require(
-    features['d3d-hwaccel'],
-    error_message: 'd3d-hwaccel was not found!',
-)
-features += {'d3d9-hwaccel': d3d9_hwaccel.allowed()}
-if features['d3d9-hwaccel'] and features['egl-angle']
-    sources += files('video/out/opengl/hwdec_dxva2egl.c')
-endif
-if features['d3d9-hwaccel'] and features['d3d11']
-    sources += files('video/out/d3d11/hwdec_dxva2dxgi.c')
-endif
-
-gl_dxinterop_d3d9 = get_option('gl-dxinterop-d3d9').require(
-    features['gl-dxinterop'] and features['d3d9-hwaccel'],
-    error_message: 'gl-dxinterop and d3d9-hwaccel were not found!',
-)
-features += {'gl-dxinterop-d3d9': gl_dxinterop_d3d9.allowed()}
-if features['gl-dxinterop-d3d9']
-    sources += files('video/out/opengl/hwdec_dxva2gldx.c')
-endif
-
 # this is an arbitrary GLES 3.x symbol
 ios_gl = cc.has_header_symbol('OpenGLES/ES3/glext.h', 'GL_RGB32F', required:
     get_option('ios-gl').require(darwin))
@@ -1346,16 +1084,8 @@ if features['vaapi-x11']
     sources += files('video/out/vo_vaapi.c')
 endif
 
-vaapi_win32 = dependency('libva-win32', required:
-    get_option('vaapi-win32').require(libva.found() and win32))
-features += {'vaapi-win32': vaapi_win32.found()}
-if features['vaapi-win32']
-    dependencies += vaapi_win32
-endif
-
 vaapi = get_option('vaapi').require(libva.found() and (features['vaapi-drm'] or
-                                    features['vaapi-wayland'] or features['vaapi-x11'] or
-                                    features['vaapi-win32']))
+                                    features['vaapi-wayland'] or features['vaapi-x11']))
 features += {'vaapi': vaapi.allowed()}
 
 if features['vaapi']
@@ -1629,22 +1359,6 @@ features += {'libmpv-' + get_option('default_library'): get_option('libmpv')}
 
 
 # build targets
-if win32
-    windows = import('windows')
-    res_flags = ['--codepage=65001']
-
-    # Unintuitively, this compile operates out of the osdep subdirectory.
-    # Hence, these includes are needed.
-    res_includes = [source_root, build_root]
-
-    resources = ['etc/mpv-icon.ico',
-                 'osdep/mpv.exe.manifest']
-
-    sources += windows.compile_resources('osdep/mpv.rc', args: res_flags, depend_files: resources,
-                                         depends: version_h, include_directories: res_includes)
-endif
-
-
 incdir_public = include_directories('./include')
 incdir_player_audio = include_directories('rust/player-audio/include')
 incdir_player_ffi = include_directories('rust/player-ffi/include')
@@ -1711,24 +1425,11 @@ if get_option('cplayer')
 
     if get_option('libmpv')
         mpv = executable('mpv', main_fn_source, objects: libmpv_objects,
-                         dependencies: dependencies,
-                         win_subsystem: get_option('win32-subsystem'), install: true)
+                         dependencies: dependencies, install: true)
     else
         mpv = executable('mpv', main_fn_source + sources, dependencies: dependencies,
                          include_directories: [incdir_public, incdir_player_audio, incdir_player_ffi],
-                         win_subsystem: get_option('win32-subsystem'), install: true)
-    endif
-
-    if win32
-        if get_option('win32-subsystem') != 'console'
-            wrapper_sources = 'osdep/win32-console-wrapper.c'
-            executable('mpv', wrapper_sources, c_args: ['-municode', '-fno-asynchronous-unwind-tables', '-fno-stack-protector'],
-                       link_args: ['-municode', '-nostartfiles', '-nodefaultlibs'],
-                       override_options: ['b_sanitize=none'],
-                       name_suffix: 'com', install: true)
-        endif
-        install_data(['etc/mpv-register.bat', 'etc/mpv-unregister.bat'],
-                     install_dir: get_option('bindir'))
+                         install: true)
     endif
 
     if darwin
@@ -1740,7 +1441,7 @@ if get_option('cplayer')
         )
     endif
 
-    if not win32 and not darwin
+    if not darwin
         if meson.can_run_host_binaries()
             mpv_protocols = custom_target('mpv_protocols',
                 output: 'mpv_protocols',
@@ -1774,7 +1475,6 @@ if features['sdl2-audio'] or features['sdl2-gamepad'] or features['sdl2-video']
 endif
 
 summary({'cocoa': features['cocoa'] and features['swift'],
-         'd3d11': features['d3d11'],
          'drm': features['drm'],
          'libmpv': get_option('libmpv'),
          'lua': features['lua'],

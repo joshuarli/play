@@ -29,19 +29,9 @@
 #include "mp_image_pool.h"
 #include "options/m_config.h"
 
-#ifdef _WIN32
-#include "osdep/windows_utils.h"
-#include "out/d3d11/context.h"
-#include "out/gpu/d3d11_helpers.h"
-#endif
-
 #include <libavutil/hwcontext.h>
 #include <libavutil/hwcontext_vaapi.h>
 
-#ifdef _WIN32
-#define DEV_PATH_DEFAULT NULL
-#define DEV_PATH_VALIDATE mp_dxgi_validate_adapter
-#else
 #define DEV_PATH_DEFAULT "/dev/dri/renderD128"
 #define DEV_PATH_VALIDATE validate_path
 
@@ -49,7 +39,6 @@ static inline OPT_STRING_VALIDATE_FUNC(validate_path)
 {
     return (*value && **value) ? 0 : M_OPT_INVALID;
 }
-#endif
 
 struct vaapi_opts {
     char *path;
@@ -220,31 +209,6 @@ static const struct va_native_display disp_x11 = {
 };
 #endif
 
-#if HAVE_VAAPI_WIN32
-#include <va/va_win32.h>
-
-static void win32_create(struct mp_log *log, VADisplay **out_display,
-                         void **out_native_ctx, const char *path)
-{
-    LUID *luid = NULL;
-    DXGI_ADAPTER_DESC1 desc = {0};
-    if (path && path[0]) {
-        IDXGIAdapter1 *adapter = mp_get_dxgi_adapter(log, bstr0(path), NULL);
-        if (!adapter || FAILED(IDXGIAdapter1_GetDesc1(adapter, &desc))) {
-            mp_err(log, "Failed to get adapter LUID for name: %s\n", path);
-        } else {
-            luid = &desc.AdapterLuid;
-        }
-        SAFE_RELEASE(adapter);
-    }
-    *out_display = vaGetDisplayWin32(luid);
-}
-
-static const struct va_native_display disp_win32 = {
-    .create = win32_create,
-};
-#endif
-
 #if HAVE_VAAPI_DRM
 #include <unistd.h>
 #include <fcntl.h>
@@ -289,9 +253,6 @@ static const struct va_native_display disp_drm = {
 static const struct va_native_display *const native_displays[] = {
 #if HAVE_VAAPI_DRM
     &disp_drm,
-#endif
-#if HAVE_VAAPI_WIN32
-    &disp_win32,
 #endif
 #if HAVE_VAAPI_X11
     &disp_x11,

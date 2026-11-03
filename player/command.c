@@ -83,10 +83,6 @@
 
 #include "core.h"
 
-#ifdef _WIN32
-#include <windows.h>
-#endif
-
 struct command_ctx {
     // All properties, terminated with a {0} item.
     struct m_property *properties;
@@ -2520,23 +2516,6 @@ static struct mp_image_params get_video_out_params(struct MPContext *mpctx)
     return o_params;
 }
 
-static int mp_property_vo_display_swapchain(void *ctx, struct m_property *prop,
-    int action, void *arg)
-{
-    MPContext *mpctx = ctx;
-    struct vo *vo = mpctx->video_out;
-    if (!vo)
-        return M_PROPERTY_UNAVAILABLE;
-
-    void *swapchain_ptr = vo_get_display_swapchain(vo);
-    if (swapchain_ptr == NULL)
-        return M_PROPERTY_UNAVAILABLE;
-
-    int64_t swapchain = (intptr_t)swapchain_ptr;
-
-    return m_property_int64_ro(action, arg, swapchain);
-}
-
 static int mp_property_vo_imgparams(void *ctx, struct m_property *prop,
                                     int action, void *arg)
 {
@@ -2867,7 +2846,7 @@ static int mp_property_display_names(void *ctx, struct m_property *prop,
 {
     MPContext *mpctx = ctx;
     struct vo *vo = mpctx->video_out;
-    if (!vo || vo->display_swapchain)
+    if (!vo)
         return M_PROPERTY_UNAVAILABLE;
 
     switch (action) {
@@ -4564,7 +4543,6 @@ static const struct m_property mp_properties_base[] = {
     {"deinterlace-active", mp_property_deinterlace},
     {"idle-active", mp_property_idle},
     {"window-id", mp_property_window_id},
-    {"display-swapchain", mp_property_vo_display_swapchain},
 
     {"chapter-list", mp_property_list_chapters},
     {"track-list", mp_property_list_tracks},
@@ -7813,15 +7791,6 @@ void mp_notify(struct MPContext *mpctx, int event, void *arg)
     mp_client_broadcast_event(mpctx, event, arg);
 }
 
-static void update_priority(struct MPContext *mpctx)
-{
-#if HAVE_WIN32_DESKTOP
-    struct MPOpts *opts = mpctx->opts;
-    if (opts->w32_priority > 0)
-        SetPriorityClass(GetCurrentProcess(), opts->w32_priority);
-#endif
-}
-
 static void update_track_switch(struct MPContext *mpctx, int order, int type)
 {
     if (!mpctx->playback_initialized)
@@ -7958,9 +7927,6 @@ void mp_option_run_callback(struct MPContext *mpctx, struct mp_option_callback *
     if (flags & UPDATE_AUDIO)
         reload_audio_output(mpctx);
 
-    if (flags & UPDATE_PRIORITY)
-        update_priority(mpctx);
-
     if (flags & UPDATE_SCREENSAVER)
         update_screensaver_state(mpctx);
 
@@ -8012,7 +7978,7 @@ void mp_option_run_callback(struct MPContext *mpctx, struct mp_option_callback *
             queue_seek(mpctx, MPSEEK_RELATIVE, 0.0, MPSEEK_EXACT, 0);
     }
 
-    if (opt_ptr == &opts->vo->android_surface_size || opt_ptr == &opts->vo->d3d11_composition_size) {
+    if (opt_ptr == &opts->vo->android_surface_size) {
         if (mpctx->video_out)
             vo_control(mpctx->video_out, VOCTRL_EXTERNAL_RESIZE, NULL);
     }

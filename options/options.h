@@ -81,8 +81,6 @@ typedef struct mp_vo_opts {
 
     struct m_geometry android_surface_size;
 
-    struct m_geometry d3d11_composition_size;
-
     int swapchain_depth;  // max number of images to render ahead
 
     struct m_geometry video_crop;
@@ -338,9 +336,6 @@ typedef struct MPOpts {
     char **playlist_exts;
     bool osd_bar_visible;
 
-    struct w32_register_opts *w32_register_opts;
-    int w32_priority;
-    bool media_controls;
 
     struct demux_playlist_opts *demux_playlist;
     struct demux_lavf_opts *demux_lavf;
@@ -369,16 +364,11 @@ typedef struct MPOpts {
     struct ra_ctx_opts *ra_ctx_opts;
     struct gl_video_opts *gl_video_opts;
     struct gl_next_opts *gl_next_opts;
-    struct angle_opts *angle_opts;
     struct opengl_opts *opengl_opts;
     struct vulkan_opts *vulkan_opts;
     struct vulkan_display_opts *vulkan_display_opts;
-    struct spirv_opts *spirv_opts;
-    struct d3d11_opts *d3d11_opts;
-    struct d3d11va_opts *d3d11va_opts;
     struct macos_opts *macos_opts;
     struct drm_opts *drm_opts;
-    struct wingl_opts *wingl_opts;
     struct cuda_opts *cuda_opts;
     struct vaapi_opts *vaapi_opts;
     struct sws_opts *sws_opts;

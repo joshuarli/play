@@ -17,10 +17,6 @@
 
 #include <libplacebo/config.h>
 
-#ifdef PL_HAVE_D3D11
-#include <libplacebo/d3d11.h>
-#endif
-
 #ifdef PL_HAVE_OPENGL
 #include <libplacebo/opengl.h>
 #endif
@@ -31,12 +27,6 @@
 #include "options/m_config.h"
 #include "video/out/placebo/utils.h"
 #include "video/out/gpu/video.h"
-
-#if HAVE_D3D11
-#include "osdep/windows_utils.h"
-#include "video/out/d3d11/ra_d3d11.h"
-#include "video/out/d3d11/context.h"
-#endif
 
 #if HAVE_GL
 #include "video/out/opengl/context.h"
@@ -49,63 +39,6 @@
 #if HAVE_VULKAN
 #include "video/out/vulkan/context.h"
 #endif
-
-#if HAVE_D3D11
-static bool d3d11_pl_init(struct vo *vo, struct gpu_ctx *ctx,
-                          struct ra_ctx_opts *ctx_opts)
-{
-#if !defined(PL_HAVE_D3D11)
-    MP_MSG(ctx, vo->probing ? MSGL_V : MSGL_ERR,
-           "libplacebo was built without D3D11 support.\n");
-    return false;
-#else // defined(PL_HAVE_D3D11)
-    bool success = false;
-
-    ID3D11Device   *device    = ra_d3d11_get_device(ctx->ra_ctx->ra);
-    IDXGISwapChain *swapchain = ra_d3d11_ctx_get_swapchain(ctx->ra_ctx);
-    if (!device || !swapchain) {
-        mp_err(ctx->log,
-               "Failed to receive required components from the mpv d3d11 "
-               "context! (device: %s, swap chain: %s)\n",
-               device    ? "OK" : "failed",
-               swapchain ? "OK" : "failed");
-        goto err_out;
-    }
-
-    pl_d3d11 d3d11 = pl_d3d11_create(ctx->pllog,
-        pl_d3d11_params(
-            .device = device,
-        )
-    );
-    if (!d3d11) {
-        mp_err(ctx->log, "Failed to acquire a d3d11 libplacebo context!\n");
-        goto err_out;
-    }
-    ctx->gpu = d3d11->gpu;
-
-    mppl_log_set_probing(ctx->pllog, false);
-
-    ctx->swapchain = pl_d3d11_create_swapchain(d3d11,
-        pl_d3d11_swapchain_params(
-            .swapchain = swapchain,
-            .disable_10bit_sdr = ra_d3d11_ctx_prefer_8bit_output_format(ctx->ra_ctx),
-        )
-    );
-    if (!ctx->swapchain) {
-        mp_err(ctx->log, "Failed to acquire a d3d11 libplacebo swap chain!\n");
-        goto err_out;
-    }
-
-    success = true;
-
-err_out:
-    SAFE_RELEASE(swapchain);
-    SAFE_RELEASE(device);
-
-    return success;
-#endif // defined(PL_HAVE_D3D11)
-}
-#endif // HAVE_D3D11
 
 struct gpu_ctx *gpu_ctx_create(struct vo *vo, struct ra_ctx_opts *ctx_opts)
 {
@@ -130,15 +63,6 @@ struct gpu_ctx *gpu_ctx_create(struct vo *vo, struct ra_ctx_opts *ctx_opts)
         goto err_out;
 
     mppl_log_set_probing(ctx->pllog, vo->probing);
-
-#if HAVE_D3D11
-    if (ra_is_d3d11(ctx->ra_ctx->ra)) {
-        if (!d3d11_pl_init(vo, ctx, ctx_opts))
-            goto err_out;
-
-        return ctx;
-    }
-#endif
 
 #if HAVE_GL && defined(PL_HAVE_OPENGL)
     if (ra_is_gl(ctx->ra_ctx->ra)) {
@@ -215,13 +139,6 @@ void gpu_ctx_destroy(struct gpu_ctx **ctxp)
         if (ra_is_gl(ctx->ra_ctx->ra)) {
             pl_opengl opengl = pl_opengl_get(ctx->gpu);
             pl_opengl_destroy(&opengl);
-        }
-#endif
-
-#if HAVE_D3D11 && defined(PL_HAVE_D3D11)
-        if (ra_is_d3d11(ctx->ra_ctx->ra)) {
-            pl_d3d11 d3d11 = pl_d3d11_get(ctx->gpu);
-            pl_d3d11_destroy(&d3d11);
         }
 #endif
     }

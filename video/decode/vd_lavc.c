@@ -267,18 +267,14 @@ struct autoprobe_info {
 
 // Things not included in this list will be tried last, in random order.
 const struct autoprobe_info hwdec_autoprobe_info[] = {
-    {"d3d11va",         HWDEC_FLAG_AUTO | HWDEC_FLAG_WHITELIST},
     {"vulkan",          HWDEC_FLAG_AUTO | HWDEC_FLAG_WHITELIST},
-    {"dxva2",           HWDEC_FLAG_AUTO},
     {"nvdec",           HWDEC_FLAG_AUTO | HWDEC_FLAG_WHITELIST},
     {"vaapi",           HWDEC_FLAG_AUTO | HWDEC_FLAG_WHITELIST},
     {"vdpau",           HWDEC_FLAG_AUTO},
     {"drm",             HWDEC_FLAG_AUTO | HWDEC_FLAG_WHITELIST},
     {"mediacodec",      HWDEC_FLAG_AUTO},
     {"videotoolbox",    HWDEC_FLAG_AUTO | HWDEC_FLAG_WHITELIST},
-    {"d3d11va-copy",    HWDEC_FLAG_AUTO | HWDEC_FLAG_WHITELIST},
     {"vulkan-copy",     HWDEC_FLAG_AUTO | HWDEC_FLAG_WHITELIST},
-    {"dxva2-copy",      HWDEC_FLAG_AUTO | HWDEC_FLAG_WHITELIST},
     {"nvdec-copy",      HWDEC_FLAG_AUTO | HWDEC_FLAG_WHITELIST},
     {"vaapi-copy",      HWDEC_FLAG_AUTO | HWDEC_FLAG_WHITELIST},
     {"vdpau-copy",      HWDEC_FLAG_AUTO | HWDEC_FLAG_WHITELIST},
@@ -360,7 +356,7 @@ static void add_all_hwdec_methods(struct hwdec_info **infos, int *num_infos)
             wrapper = codec->wrapper_name;
 
         // A decoder can provide multiple methods. In particular, hwaccels
-        // provide various methods (e.g. native h264 with vaapi & d3d11), but
+        // provide various methods (e.g. native h264 with vaapi), but
         // even wrapper decoders could provide multiple methods.
         bool found_any = false;
         for (int n = 0; ; n++) {

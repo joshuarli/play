@@ -75,9 +75,6 @@ void mp_cancel_set_cb(struct mp_cancel *c, void (*cb)(void *ctx), void *ctx);
 // has slaves is an error.
 void mp_cancel_set_parent(struct mp_cancel *slave, struct mp_cancel *parent);
 
-// win32 "Event" HANDLE that indicates the current mp_cancel state.
-void *mp_cancel_get_event(struct mp_cancel *c);
-
 // The FD becomes readable if mp_cancel_test() would return true.
 // Don't actually read from it, just use it for poll().
 int mp_cancel_get_fd(struct mp_cancel *c);

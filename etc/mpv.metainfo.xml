@@ -5,7 +5,7 @@
     <summary>A free, open source, and cross-platform media player</summary>
     <description>
         <p>mpv is a free (as in freedom) media player for the command line. It supports a wide variety of media file formats, audio and video codecs, and subtitle types.</p>
-        <p>mpv has an OpenGL, Vulkan, and D3D11 based video output that is capable of many features loved by videophiles, such as video scaling with popular high quality algorithms, color management, frame timing, interpolation, HDR, and more.</p>
+        <p>mpv has an OpenGL and Vulkan based video output that is capable of many features loved by videophiles, such as video scaling with popular high quality algorithms, color management, frame timing, interpolation, HDR, and more.</p>
         <p>While mpv strives for minimalism and provides no real GUI, it has a small controller on top of the video for basic control.</p>
         <p>mpv can leverage most hardware decoding APIs on all platforms. Hardware decoding can be enabled at runtime on demand.</p>
         <p>Powerful scripting capabilities can make the player do almost anything. There is a large selection of user scripts on the wiki.</p>

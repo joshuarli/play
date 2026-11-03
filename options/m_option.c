@@ -44,11 +44,7 @@
 #include "m_option.h"
 #include "m_config_frontend.h"
 
-#if HAVE_DOS_PATHS
-#define OPTION_PATH_SEPARATOR ';'
-#else
 #define OPTION_PATH_SEPARATOR ':'
-#endif
 
 const char m_option_path_separator = OPTION_PATH_SEPARATOR;
 

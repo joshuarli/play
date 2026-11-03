@@ -46,13 +46,8 @@ static const mp_get_platform_path_cb path_resolvers[] = {
 #endif
 #if HAVE_DARWIN
     mp_get_platform_path_darwin,
-#elif !defined(_WIN32) || defined(__CYGWIN__)
+#else
     mp_get_platform_path_unix,
-#endif
-#if HAVE_UWP
-    mp_get_platform_path_uwp,
-#elif defined(_WIN32)
-    mp_get_platform_path_win,
 #endif
 };
 

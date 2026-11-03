@@ -78,14 +78,6 @@ static const char def_config[] =
 #include "etc/builtin.conf.inc"
 ;
 
-#if HAVE_WIN32_SMTC
-#include "osdep/win32/smtc.h"
-#endif
-
-#if HAVE_WIN32_DESKTOP
-#include "osdep/w32_register.h"
-#endif
-
 #if HAVE_COCOA
 #include <mach-o/dyld.h>
 #include <unistd.h>
@@ -573,11 +565,6 @@ int mp_initialize(struct MPContext *mpctx, char **options)
     if (handle_help_options(mpctx))
         return 1; // help
 
-#if HAVE_WIN32_DESKTOP
-    if (mp_w32_handle_register(mpctx))
-        return 1; // register/unregister
-#endif
-
     check_library_versions(mp_null_log, 0);
 
     if (!playlist_entry_count(mpctx->playlist) && !opts->player_idle_mode &&
@@ -594,11 +581,6 @@ int mp_initialize(struct MPContext *mpctx, char **options)
 #if HAVE_COCOA
     mpv_handle *ctx = mp_new_client(mpctx->clients, "mac");
     cocoa_set_mpv_handle(ctx);
-#endif
-
-#if HAVE_WIN32_SMTC
-    if (opts->media_controls)
-        mp_smtc_init(mp_new_client(mpctx->clients, "SystemMediaTransportControls"));
 #endif
 
     mpctx->ipc_ctx = mp_init_ipc(mpctx->clients, mpctx->global);

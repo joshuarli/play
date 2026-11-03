@@ -45,8 +45,6 @@
 #define MP_ASSERT_UNREACHABLE() assert(!"unreachable")
 #elif __has_builtin(__builtin_unreachable)
 #define MP_ASSERT_UNREACHABLE() __builtin_unreachable()
-#elif defined(_MSC_VER)
-#define MP_ASSERT_UNREACHABLE() __assume(0)
 #elif __STDC_VERSION__ >= 202311L
 #include <stddef.h>
 #define MP_ASSERT_UNREACHABLE() unreachable()
@@ -54,15 +52,8 @@
 #define MP_ASSERT_UNREACHABLE() ((void)0)
 #endif
 
-#ifdef __MINGW_PRINTF_FORMAT
-#define MP_PRINTF_FORMAT __MINGW_PRINTF_FORMAT
-#elif __has_attribute(format)
+#if __has_attribute(format)
 #define MP_PRINTF_FORMAT __printf__
-#endif
-
-#ifdef __MINGW_SCANF_FORMAT
-#define MP_SCANF_FORMAT __MINGW_SCANF_FORMAT
-#elif __has_attribute(format)
 #define MP_SCANF_FORMAT __scanf__
 #endif
 

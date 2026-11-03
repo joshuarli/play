@@ -87,7 +87,6 @@ extern "C" {
  *
  * There may be certain requirements on the OpenGL implementation:
  *
- * - Windows: ANGLE is required (although in theory GL/DX interop could be used)
  * - Intel/Linux: EGL is required, and also the native display resource needs
  *                to be provided (e.g. MPV_RENDER_PARAM_X11_DISPLAY for X11 and
  *                MPV_RENDER_PARAM_WL_DISPLAY for Wayland)

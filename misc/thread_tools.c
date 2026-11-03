@@ -19,11 +19,7 @@
 #include <string.h>
 #include <sys/types.h>
 
-#ifdef _WIN32
-#include <windows.h>
-#else
 #include <poll.h>
-#endif
 
 #include "common/common.h"
 #include "misc/linked_list.h"
@@ -46,9 +42,9 @@ uintptr_t mp_waiter_wait(struct mp_waiter *waiter)
     // and the object is "single-shot".) So destroy it here.
 
     // Normally, we expect that the system uses futexes, in which case the
-    // following functions will do nearly nothing. This is true for Windows
-    // and Linux. But some lesser OSes still might allocate kernel objects
-    // when initializing mutexes, so destroy them here.
+    // following functions will do nearly nothing. This is true for Linux.
+    // But some lesser OSes still might allocate kernel objects when
+    // initializing mutexes, so destroy them here.
     mp_mutex_destroy(&waiter->lock);
     mp_cond_destroy(&waiter->wakeup);
 
@@ -84,7 +80,6 @@ struct mp_cancel {
     void (*cb)(void *ctx);
     void *cb_ctx;
     int wakeup_pipe[2];
-    void *win32_event; // actually HANDLE
 
     // Slave list. These are automatically notified as well.
     struct {
@@ -110,11 +105,6 @@ static void cancel_destroy(void *p)
         close(c->wakeup_pipe[0]);
         close(c->wakeup_pipe[1]);
     }
-
-#ifdef _WIN32
-    if (c->win32_event)
-        CloseHandle(c->win32_event);
-#endif
 
     mp_mutex_destroy(&c->lock);
     mp_cond_destroy(&c->wakeup);
@@ -147,11 +137,6 @@ static void trigger_locked(struct mp_cancel *c)
 
     if (c->wakeup_pipe[1] >= 0)
         (void)write(c->wakeup_pipe[1], &(char){0}, 1);
-
-#ifdef _WIN32
-    if (c->win32_event)
-        SetEvent(c->win32_event);
-#endif
 }
 
 void mp_cancel_trigger(struct mp_cancel *c)
@@ -175,11 +160,6 @@ void mp_cancel_reset(struct mp_cancel *c)
                 break;
         }
     }
-
-#ifdef _WIN32
-    if (c->win32_event)
-        ResetEvent(c->win32_event);
-#endif
 
     mp_mutex_unlock(&c->lock);
 }
@@ -259,17 +239,3 @@ int mp_cancel_get_fd(struct mp_cancel *c)
 
     return c->wakeup_pipe[0];
 }
-
-#ifdef _WIN32
-void *mp_cancel_get_event(struct mp_cancel *c)
-{
-    mp_mutex_lock(&c->lock);
-    if (!c->win32_event) {
-        c->win32_event = CreateEventW(NULL, TRUE, FALSE, NULL);
-        retrigger_locked(c);
-    }
-    mp_mutex_unlock(&c->lock);
-
-    return c->win32_event;
-}
-#endif

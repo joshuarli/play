@@ -30,11 +30,6 @@
 
 #include "config.h"
 
-#ifdef _WIN32
-#include <windows.h>
-#include <dwmapi.h>
-#endif
-
 #include "options.h"
 #include "m_config.h"
 #include "m_option.h"
@@ -89,19 +84,12 @@ extern const struct m_sub_options clipboard_conf;
 extern const struct m_sub_options opengl_conf;
 extern const struct m_sub_options vulkan_conf;
 extern const struct m_sub_options vulkan_display_conf;
-extern const struct m_sub_options spirv_conf;
-extern const struct m_sub_options d3d11_conf;
-extern const struct m_sub_options d3d11va_conf;
-extern const struct m_sub_options angle_conf;
 extern const struct m_sub_options macos_conf;
 extern const struct m_sub_options wayland_conf;
-extern const struct m_sub_options wingl_conf;
 extern const struct m_sub_options vaapi_conf;
 extern const struct m_sub_options egl_conf;
 
 extern const struct m_sub_options mp_sub_filter_opts;
-
-extern const struct m_sub_options w32_register_conf;
 
 static const struct m_sub_options screenshot_conf = {
     .opts = image_writer_opts,
@@ -214,9 +202,6 @@ static const m_option_t mp_vo_opt_list[] = {
 #endif
 #if HAVE_EGL_ANDROID
     {"android-surface-size", OPT_SIZE_BOX(android_surface_size)},
-#endif
-#if HAVE_D3D11
-    {"d3d11-composition-size", OPT_SIZE_BOX(d3d11_composition_size)},
 #endif
     {"swapchain-depth", OPT_INT(swapchain_depth), M_RANGE(1, VO_MAX_SWAPCHAIN_DEPTH)},
     {"override-display-fps", OPT_REPLACED("display-fps-override")},
@@ -494,19 +479,6 @@ static const m_option_t mp_opts[] = {
 #endif
     {"msg-module", OPT_BOOL(msg_module), .flags = UPDATE_TERM},
     {"msg-time", OPT_BOOL(msg_time), .flags = UPDATE_TERM},
-#if HAVE_WIN32_DESKTOP
-    {"", OPT_SUBSTRUCT(w32_register_opts, w32_register_conf)},
-    {"priority", OPT_CHOICE(w32_priority,
-        {"no",          0},
-        {"realtime",    REALTIME_PRIORITY_CLASS},
-        {"high",        HIGH_PRIORITY_CLASS},
-        {"abovenormal", ABOVE_NORMAL_PRIORITY_CLASS},
-        {"normal",      NORMAL_PRIORITY_CLASS},
-        {"belownormal", BELOW_NORMAL_PRIORITY_CLASS},
-        {"idle",        IDLE_PRIORITY_CLASS}),
-        .flags = UPDATE_PRIORITY},
-#endif
-    {"media-controls", OPT_BOOL(media_controls)},
     {"config", OPT_BOOL(load_config), .flags = M_OPT_PRE_PARSE},
     {"config-dir", OPT_STRING(force_configdir),
         .flags = M_OPT_NOCFG | M_OPT_PRE_PARSE | M_OPT_FILE},
@@ -830,13 +802,12 @@ static const m_option_t mp_opts[] = {
     {"", OPT_SUBSTRUCT(ra_ctx_opts, ra_ctx_conf)},
     {"", OPT_SUBSTRUCT(gl_video_opts, gl_video_conf)},
     {"", OPT_SUBSTRUCT(gl_next_opts, gl_next_conf)},
-    {"", OPT_SUBSTRUCT(spirv_opts, spirv_conf)},
 
 #if HAVE_GL
     {"", OPT_SUBSTRUCT(opengl_opts, opengl_conf)},
 #endif
 
-#if HAVE_EGL || HAVE_EGL_ANDROID || HAVE_EGL_ANGLE_WIN32
+#if HAVE_EGL || HAVE_EGL_ANDROID
     {"egl", OPT_SUBSTRUCT(egl_opts, egl_conf)},
 #endif
 
@@ -847,27 +818,12 @@ static const m_option_t mp_opts[] = {
 #endif
 #endif
 
-#if HAVE_D3D11
-    {"", OPT_SUBSTRUCT(d3d11_opts, d3d11_conf)},
-#if HAVE_D3D_HWACCEL
-    {"", OPT_SUBSTRUCT(d3d11va_opts, d3d11va_conf)},
-#endif
-#endif
-
-#if HAVE_EGL_ANGLE_WIN32
-    {"", OPT_SUBSTRUCT(angle_opts, angle_conf)},
-#endif
-
 #if HAVE_COCOA
     {"", OPT_SUBSTRUCT(macos_opts, macos_conf)},
 #endif
 
 #if HAVE_DRM
     {"", OPT_SUBSTRUCT(drm_opts, drm_conf)},
-#endif
-
-#if HAVE_GL_WIN32
-    {"", OPT_SUBSTRUCT(wingl_opts, wingl_conf)},
 #endif
 
 #if HAVE_CUDA_HWACCEL
@@ -961,7 +917,6 @@ static const struct MPOpts mp_default_opts = {
     .osd_bar_visible = true,
     .screenshot_template = "mpv-shot%n",
     .play_dir = 1,
-    .media_controls = true,
     .video_exts = (char *[]){
         "3g2", "3gp", "avi", "flv", "ivf", "m2ts", "m4v", "mj2", "mkv", "mov",
         "mp4", "mpeg", "mpg", "mxf", "ogv", "rmvb", "ts", "webm", "wmv", "y4m",

@@ -31,28 +31,20 @@
 #include "video/out/vo.h"
 
 #include "context.h"
-#include "spirv.h"
 
 /* OpenGL */
 extern const struct ra_ctx_fns ra_ctx_glx;
 extern const struct ra_ctx_fns ra_ctx_x11_egl;
 extern const struct ra_ctx_fns ra_ctx_drm_egl;
 extern const struct ra_ctx_fns ra_ctx_wayland_egl;
-extern const struct ra_ctx_fns ra_ctx_wgl;
-extern const struct ra_ctx_fns ra_ctx_angle;
-extern const struct ra_ctx_fns ra_ctx_dxgl;
 extern const struct ra_ctx_fns ra_ctx_android;
 
 /* Vulkan */
 extern const struct ra_ctx_fns ra_ctx_vulkan_wayland;
-extern const struct ra_ctx_fns ra_ctx_vulkan_win;
 extern const struct ra_ctx_fns ra_ctx_vulkan_xlib;
 extern const struct ra_ctx_fns ra_ctx_vulkan_android;
 extern const struct ra_ctx_fns ra_ctx_vulkan_display;
 extern const struct ra_ctx_fns ra_ctx_vulkan_mac;
-
-/* Direct3D 11 */
-extern const struct ra_ctx_fns ra_ctx_d3d11;
 
 /* No API */
 extern const struct ra_ctx_fns ra_ctx_wldmabuf;
@@ -77,16 +69,9 @@ static const struct ra_ctx_fns ra_ctx_dummy = {
 
 static const struct ra_ctx_fns *const contexts[] = {
     &ra_ctx_dummy,
-// Direct3D contexts:
-#if HAVE_D3D11
-    &ra_ctx_d3d11,
-#endif
 
 // Vulkan contexts:
 #if HAVE_VULKAN
-#if HAVE_WIN32_DESKTOP
-    &ra_ctx_vulkan_win,
-#endif
 #if HAVE_WAYLAND
     &ra_ctx_vulkan_wayland,
 #endif
@@ -101,15 +86,6 @@ static const struct ra_ctx_fns *const contexts[] = {
 // OpenGL contexts:
 #if HAVE_EGL_ANDROID
     &ra_ctx_android,
-#endif
-#if HAVE_EGL_ANGLE_WIN32
-    &ra_ctx_angle,
-#endif
-#if HAVE_GL_WIN32
-    &ra_ctx_wgl,
-#endif
-#if HAVE_GL_DXINTEROP
-    &ra_ctx_dxgl,
 #endif
 #if HAVE_EGL_WAYLAND
     &ra_ctx_wayland_egl,
@@ -336,9 +312,6 @@ void ra_ctx_destroy(struct ra_ctx **ctx_ptr)
     struct ra_ctx *ctx = *ctx_ptr;
     if (!ctx)
         return;
-
-    if (ctx->spirv && ctx->spirv->fns->uninit)
-        ctx->spirv->fns->uninit(ctx);
 
     ctx->fns->uninit(ctx);
     talloc_free(ctx);

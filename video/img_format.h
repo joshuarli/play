@@ -265,10 +265,6 @@ enum mp_imgfmt {
     // Hardware accelerated formats. Plane data points to special data
     // structures, instead of pixel data.
     IMGFMT_VDPAU,           // VdpVideoSurface
-    // plane 0: ID3D11Texture2D
-    // plane 1: slice index casted to pointer
-    IMGFMT_D3D11,
-    IMGFMT_DXVA2,           // IDirect3DSurface9 (NV12/P010/P016)
     IMGFMT_MMAL,            // MMAL_BUFFER_HEADER_T
     IMGFMT_MEDIACODEC,      // AVMediaCodecBuffer
     IMGFMT_CUDA,            // CUDA Buffer

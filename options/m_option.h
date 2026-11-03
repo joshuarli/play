@@ -436,7 +436,6 @@ char *format_file_size(int64_t size);
 #define UPDATE_IMGPAR           (UINT64_C(1) << 4)   // video image params overrides
 #define UPDATE_INPUT            (UINT64_C(1) << 5)   // mostly --input-* options
 #define UPDATE_AUDIO            (UINT64_C(1) << 6)   // --audio-channels etc.
-#define UPDATE_PRIORITY         (UINT64_C(1) << 7)   // --priority (Windows-only)
 #define UPDATE_SCREENSAVER      (UINT64_C(1) << 8)   // --stop-screensaver
 #define UPDATE_VOL              (UINT64_C(1) << 9)   // softvol related options
 #define UPDATE_LAVFI_COMPLEX    (UINT64_C(1) << 10)  // --lavfi-complex

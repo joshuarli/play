@@ -35,25 +35,10 @@
 #include "misc/path_utils.h"
 #include "player_ffi.h"
 
-#if HAVE_DOS_PATHS
-#include <windows.h>
-#include <pathcch.h>
-#endif
-
 char *mp_basename(const char *path)
 {
     char *s;
 
-#if HAVE_DOS_PATHS
-    if (!mp_is_url(bstr0(path))) {
-        s = strrchr(path, '\\');
-        if (s)
-            path = s + 1;
-        s = strrchr(path, ':');
-        if (s)
-            path = s + 1;
-    }
-#endif
     s = strrchr(path, '/');
     return s ? s + 1 : (char *)path;
 }
@@ -69,11 +54,7 @@ struct bstr mp_dirname(const char *path)
 }
 
 
-#if HAVE_DOS_PATHS
-static const char mp_path_separators[] = "\\/";
-#else
 static const char mp_path_separators[] = "/";
-#endif
 
 // Mutates path and removes a trailing '/' (or '\' on Windows)
 void mp_path_strip_trailing_separator(char *path)
@@ -100,15 +81,6 @@ bool mp_path_is_absolute(struct bstr path)
     if (path.len && strchr(mp_path_separators, path.start[0]))
         return true;
 
-#if HAVE_DOS_PATHS
-    // Note: "X:filename" is a path relative to the current working directory
-    //       of drive X, and thus is not an absolute path. It needs to be
-    //       followed by \ or /.
-    if (path.len >= 3 && path.start[1] == ':' &&
-        strchr(mp_path_separators, path.start[2]))
-        return true;
-#endif
-
     return false;
 }
 
@@ -123,11 +95,6 @@ char *mp_path_join_bstr(void *talloc_ctx, struct bstr p1, struct bstr p2)
         return bstrdup0(talloc_ctx, p2);
 
     bool have_separator = strchr(mp_path_separators, p1.start[p1.len - 1]);
-#if HAVE_DOS_PATHS
-    // "X:" only => path relative to "X:" current working directory.
-    if (p1.len == 2 && p1.start[1] == ':')
-        have_separator = true;
-#endif
 
     return talloc_asprintf(talloc_ctx, "%.*s%s%.*s", BSTR_P(p1),
                            have_separator ? "" : "/", BSTR_P(p2));
@@ -173,33 +140,6 @@ char *mp_normalize_path(void *talloc_ctx, const char *path)
         path = mp_path_join(tmp, cwd, path);
     }
 
-#if HAVE_DOS_PATHS
-    wchar_t *pathw = mp_from_utf8(tmp, path);
-    wchar_t *read = pathw, *write = pathw;
-    wchar_t prev = '\0';
-    // preserve leading double backslashes
-    if (read[0] == '\\' && read[1] == '\\') {
-        prev = '\\';
-        write += 2;
-        read += 2;
-    }
-    wchar_t curr;
-    while ((curr = *read)) {
-        if (curr == '/')
-            curr = '\\';
-        if (curr != '\\' || prev != '\\')
-            *write++ = curr;
-        prev = curr;
-        read++;
-    }
-    *write = '\0';
-    size_t max_size = wcslen(pathw) + 1;
-    wchar_t *pathc = talloc_array(tmp, wchar_t, max_size);
-    HRESULT hr = PathCchCanonicalizeEx(pathc, max_size, pathw, PATHCCH_ALLOW_LONG_PATHS);
-    char *ret = SUCCEEDED(hr) ? mp_to_utf8(talloc_ctx, pathc) : talloc_strdup(talloc_ctx, path);
-    talloc_free(tmp);
-    return ret;
-#else
     char *result = talloc_strdup(tmp, "");
     const char *next;
     const char *end = path + strlen(path);
@@ -241,7 +181,6 @@ char *mp_normalize_path(void *talloc_ctx, const char *path)
     result = talloc_steal(talloc_ctx, result);
     talloc_free(tmp);
     return result;
-#endif
 }
 
 bool mp_path_exists(const char *path)

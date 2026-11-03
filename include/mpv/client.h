@@ -26,10 +26,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#ifdef _WIN32
-#define MPV_EXPORT __declspec(dllexport)
-#define MPV_SELECTANY __declspec(selectany)
-#elif defined(__GNUC__) || defined(__clang__)
+#if defined(__GNUC__) || defined(__clang__)
 #define MPV_EXPORT __attribute__((visibility("default")))
 #define MPV_SELECTANY
 #else
@@ -176,11 +173,6 @@ extern "C" {
  * kernel uses and does not recode filenames. At least on Linux, passing a
  * string to libmpv is like passing a string to the fopen() function.
  *
- * On Windows, filenames are always UTF-8, libmpv converts between UTF-8 and
- * UTF-16 when using win32 API functions. libmpv never uses or accepts
- * filenames in the local 8 bit encoding. It does not use fopen() either;
- * it uses _wfopen().
- *
  * On macOS, filenames and other strings taken/returned by libmpv can have
  * inconsistent unicode normalization. This can sometimes lead to problems.
  * You have to hope for the best.
@@ -196,8 +188,8 @@ extern "C" {
  * input directly.
  *
  * There is an older way to embed the native mpv window into your own. You have
- * to get the raw window handle, and set it as "wid" option. This works on X11,
- * win32, and macOS only. It's much easier to use than the render API, but
+ * to get the raw window handle, and set it as "wid" option. This works on X11
+ * and macOS only. It's much easier to use than the render API, but
  * also has various problems.
  *
  * Also see client API examples and the mpv manpage. There is an extensive
@@ -645,9 +637,6 @@ typedef enum mpv_format {
      *          and even filenames don't necessarily have to be in UTF-8 (at
      *          least on Linux). If you pass the strings to code that requires
      *          valid UTF-8, you have to sanitize it in some way.
-     *          On Windows, filenames are always UTF-8, and libmpv converts
-     *          between UTF-8 and UTF-16 when using win32 API functions. See
-     *          the "Encoding of filenames" section for details.
      *
      * Example for reading:
      *
@@ -1896,7 +1885,6 @@ MPV_EXPORT int mpv_hook_continue(mpv_handle *ctx, uint64_t id);
  *             manually, and call write() on your pipe in the callback.
  *
  * @return A UNIX FD of the read end of the wakeup pipe, or -1 on error.
- *         On MS Windows/MinGW, this will always return -1.
  */
 MPV_EXPORT int mpv_get_wakeup_pipe(mpv_handle *ctx);
 
@@ -1907,16 +1895,7 @@ MPV_EXPORT int mpv_get_wakeup_pipe(mpv_handle *ctx);
  * functions with function pointers. Those pointer will be initialized when
  * loading the plugin.
  *
- * It is recommended to use this symbol table when targeting Windows. The loader
- * does not have notion of global symbols. Loading cplugin into mpv process will
- * not allow this plugin to call any of the symbols that may be available in
- * other modules. Instead cplugin has to link explicitly to specific PE binary,
- * libmpv-2.dll/mpv.exe or any other binary that may have linked mpv statically.
- * This limits portability of cplugin as it would need to be compiled separately
- * for each of target PE binary that includes mpv's symbols. Which in practice
- * is unrealistic, as we want one cplugin to be loaded without those restrictions.
- *
- * Instead of linking to any PE binary, we create function pointers for all mpv's
+ * Instead of linking to any binary, we create function pointers for all mpv's
  * exported symbols. For convenience names of entrypoints are redefined to those
  * pointer, so no changes are required in cplugin source code, except of defining
  * MPV_CPLUGIN_DYNAMIC_SYM. Those function pointer are exported to make them

@@ -292,9 +292,7 @@ bool mp_load_scripts(struct MPContext *mpctx)
 
 #if HAVE_CPLUGINS
 
-#ifndef _WIN32
 #include <dlfcn.h>
-#endif
 
 #define MPV_DLOPEN_FN "mpv_open_cplugin"
 typedef int (*mpv_open_cplugin)(mpv_handle *handle);
@@ -393,11 +391,7 @@ error: ;
 
 const struct mp_scripting mp_scripting_cplugin = {
     .name = "cplugin",
-    #ifdef _WIN32
-    .file_ext = "dll",
-    #else
     .file_ext = "so",
-    #endif
     .load = load_cplugin,
 };
 

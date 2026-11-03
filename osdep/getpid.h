@@ -19,11 +19,6 @@
 
 #pragma once
 
-#ifdef _WIN32
-#include <windows.h>
-#define mp_getpid() GetCurrentProcessId()
-#else // POSIX
 #include <sys/types.h>
 #include <unistd.h>
 #define mp_getpid() getpid()
-#endif

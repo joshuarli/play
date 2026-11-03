@@ -53,63 +53,21 @@ int main(void)
     TEST_JOIN("ab",         "cd",           "ab/cd");
     TEST_JOIN("ab/",        "cd",           "ab/cd");
     TEST_JOIN("ab/",        "/cd",          "/cd");
-    // Note: we prefer "/" on win32, but tolerate "\".
-#if HAVE_DOS_PATHS
-    TEST_ABS(true, "\\ab");
-    TEST_ABS(true, "c:\\");
-    TEST_ABS(true, "c:/");
-    TEST_ABS(false, "c:");
-    TEST_ABS(false, "c:a");
-    TEST_ABS(false, "c:a\\");
-    TEST_JOIN("ab\\",       "cd",           "ab\\cd");
-    TEST_JOIN("ab\\",       "\\cd",         "\\cd");
-    TEST_JOIN("c:/",        "de",           "c:/de");
-    TEST_JOIN("c:/a",       "de",           "c:/a/de");
-    TEST_JOIN("c:\\a",      "c:\\b",        "c:\\b");
-    TEST_JOIN("c:/a",       "c:/b",         "c:/b");
-    // Note: drive-relative paths are not always supported "properly"
-    TEST_JOIN("c:/a",       "d:b",          "c:/a/d:b");
-    TEST_JOIN("c:a",        "b",            "c:a/b");
-    TEST_JOIN("c:",         "b",            "c:b");
-#endif
 
     TEST_NORMALIZE("https://foo", "https://foo");
-#if !HAVE_DOS_PATHS
     TEST_NORMALIZE("/foo", "/foo");
-#endif
 
     void *ctx = talloc_new(NULL);
     bstr dst = bstr0(mp_getcwd(ctx));
     bstr_xappend(ctx, &dst, bstr0("/foo"));
-#if HAVE_DOS_PATHS
-    char *p = dst.start;
-    while (*p) {
-        *p = *p == '/' ? '\\' : *p;
-        p++;
-    }
-#endif
     TEST_NORMALIZE(dst.start, "foo");
     talloc_free(ctx);
 
-#if HAVE_DOS_PATHS
-    TEST_NORMALIZE("C:\\foo\\baz", "C:/foo/bar/../baz");
-    TEST_NORMALIZE("C:\\", "C:/foo/../..");
-    TEST_NORMALIZE("C:\\foo\\baz", "C:/foo/bar/./../baz");
-    TEST_NORMALIZE("C:\\foo\\bar\\baz", "C:/foo//bar/./baz");
-    TEST_NORMALIZE("C:\\foo\\bar\\baz", "C:/foo\\./bar\\/baz");
-    TEST_NORMALIZE("C:\\file.mkv", "\\\\?\\C:\\folder\\..\\file.mkv");
-    TEST_NORMALIZE("C:\\dir", "\\\\?\\C:\\dir\\subdir\\..\\.");
-    TEST_NORMALIZE("D:\\newfile.txt", "\\\\?\\D:\\\\new\\subdir\\..\\..\\newfile.txt");
-    TEST_NORMALIZE("\\\\server\\share\\path", "\\\\?\\UNC/server/share/path/.");
-    TEST_NORMALIZE("C:\\", "C:/.");
-    TEST_NORMALIZE("C:\\", "C:/../");
-#else
     TEST_NORMALIZE("/foo/bar", "/foo//bar");
     TEST_NORMALIZE("/foo/bar", "/foo///bar");
     TEST_NORMALIZE("/foo/bar", "/foo/bar/");
     TEST_NORMALIZE("/foo/bar", "/foo/./bar");
     TEST_NORMALIZE("/usr", "/usr/bin/..");
-#endif
 
     TEST_BASENAME("/usr/local/bin", "bin");
     TEST_BASENAME("/usr/local/", "");
@@ -122,12 +80,6 @@ int main(void)
     TEST_BASENAME("", "");
     TEST_BASENAME(".", ".");
     TEST_BASENAME("..", "..");
-#if HAVE_DOS_PATHS
-    TEST_BASENAME("C:\\Windows\\System32", "System32");
-    TEST_BASENAME("C:\\Windows\\", "");
-    TEST_BASENAME("C:\\", "");
-    TEST_BASENAME("C:", "");
-#endif
 
     TEST_DIRNAME("/usr/local/bin", "/usr/local/");
     TEST_DIRNAME("/usr/local/", "/usr/local/");
@@ -140,12 +92,6 @@ int main(void)
     TEST_DIRNAME("", ".");
     TEST_DIRNAME(".", ".");
     TEST_DIRNAME("..", ".");
-#if HAVE_DOS_PATHS
-    TEST_DIRNAME("C:\\Windows\\System32", "C:\\Windows\\");
-    TEST_DIRNAME("C:\\Windows\\", "C:\\Windows\\");
-    TEST_DIRNAME("C:\\", "C:\\");
-    TEST_DIRNAME("C:", "C:");
-#endif
 
     return 0;
 }

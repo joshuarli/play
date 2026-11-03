@@ -39,18 +39,18 @@ enabled_features=(alsa iconv vaapi vaapi-drm vaapi-wayland vulkan wayland zlib)
 disabled_features=(
     cdda cocoa coreaudio cplugins dvbin dvdnav javascript jpeg lcms2 libarchive
     libavdevice libbluray pthread-debug rubberband sdl2-gamepad swift-build
-    uchardet uwp vapoursynth vector win32-threads x11-clipboard zimg
+    uchardet vapoursynth vector x11-clipboard zimg
     audiounit avfoundation jack openal audiotrack aaudio opensles
-    oss-audio pipewire pulse sdl2-audio sndio wasapi
-    caca d3d11 direct3d dmabuf-wayland drm egl egl-android egl-angle
-    egl-angle-lib egl-angle-win32 egl-drm egl-wayland egl-x11 gbm
-    gl gl-cocoa gl-dxinterop gl-win32 gl-x11 sdl2-video shaderc sixel
-    spirv-cross plain-gl vdpau vdpau-gl-x11
-    vaapi-win32 vaapi-x11 x11 xv
-    android-media-ndk cuda-hwaccel cuda-interop d3d-hwaccel d3d9-hwaccel
-    gl-dxinterop-d3d9 ios-gl videotoolbox-gl videotoolbox-pl
+    oss-audio pipewire pulse sdl2-audio sndio
+    caca dmabuf-wayland drm egl egl-android
+    egl-drm egl-wayland egl-x11 gbm
+    gl gl-cocoa gl-x11 sdl2-video sixel
+    plain-gl vdpau vdpau-gl-x11
+    vaapi-x11 x11 xv
+    android-media-ndk cuda-hwaccel cuda-interop
+    ios-gl videotoolbox-gl videotoolbox-pl
     macos-cocoa-cb macos-media-player macos-touchbar
-    win32-smtc html-build manpage-build pdf-build
+    html-build manpage-build pdf-build
 )
 
 for feature in "${disabled_features[@]}"; do

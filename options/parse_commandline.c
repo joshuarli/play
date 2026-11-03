@@ -95,27 +95,10 @@ static bool split_opt(struct parse_state *p)
     return true;
 }
 
-#ifdef _WIN32
-static void process_non_option(struct playlist *files, const char *arg)
-{
-    glob_t gg;
-
-    // Glob filenames on Windows (cmd.exe doesn't do this automatically)
-    if (glob(arg, 0, NULL, &gg)) {
-        playlist_append_file(files, arg);
-    } else {
-        for (int i = 0; i < gg.gl_pathc; i++)
-            playlist_append_file(files, gg.gl_pathv[i]);
-
-        globfree(&gg);
-    }
-}
-#else
 static void process_non_option(struct playlist *files, const char *arg)
 {
     playlist_append_file(files, arg);
 }
-#endif
 
 // returns M_OPT_... error code
 int m_config_parse_mp_command_line(m_config_t *config, struct playlist *files,

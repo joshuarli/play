@@ -30,26 +30,12 @@ test_utils_files = [
     'ta/ta_utils.c'
 ]
 
-test_utils_deps = [libavutil, libm]
-
-if win32
-    test_utils_files += 'osdep/windows_utils.c'
-endif
+test_utils_deps = [libavutil, libm, pthreads]
 
 if features['pthread-debug']
     test_utils_files += 'osdep/threads-posix.c'
 endif
 
-# The zimg code requires using threads.
-if not features['win32-threads']
-    test_utils_deps += pthreads
-endif
-
-if features['win32-desktop']
-    test_utils_deps += [cc.find_library('imm32'),
-                        cc.find_library('ntdll'),
-                        cc.find_library('pathcch')]
-endif
 test_utils_objects = libmpv.extract_objects(test_utils_files)
 test_utils = static_library('test-utils', 'test_utils.c', include_directories: incdir,
                             c_args: test_utils_args, objects: test_utils_objects,

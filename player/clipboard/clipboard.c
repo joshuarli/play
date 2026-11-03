@@ -29,16 +29,12 @@ struct clipboard_opts {
 };
 
 // backend list
-extern const struct clipboard_backend clipboard_backend_win32;
 extern const struct clipboard_backend clipboard_backend_mac;
 extern const struct clipboard_backend clipboard_backend_wayland;
 extern const struct clipboard_backend clipboard_backend_x11;
 extern const struct clipboard_backend clipboard_backend_vo;
 
 static const struct clipboard_backend *const clipboard_backend_list[] = {
-#if HAVE_WIN32_DESKTOP
-    &clipboard_backend_win32,
-#endif
 #if HAVE_COCOA
     &clipboard_backend_mac,
 #endif
@@ -82,7 +78,6 @@ const struct m_sub_options clipboard_conf = {
     },
     .defaults = &(const struct clipboard_opts) {
         .backends = (struct m_obj_settings[]) {
-            {.name = "win32", .enabled = true},
             {.name = "mac", .enabled = true},
             {.name = "wayland", .enabled = true},
             {.name = "x11", .enabled = true},

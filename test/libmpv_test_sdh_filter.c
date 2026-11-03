@@ -15,11 +15,7 @@
  * License along with mpv.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifdef _WIN32
-#include <io.h>
-#else
 #include <unistd.h>
-#endif
 
 #include "libmpv_common.h"
 

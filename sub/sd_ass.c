@@ -103,9 +103,7 @@ static void fill_plaintext(struct sd *sd, double pts);
 static const struct sd_filter_functions *const filters[] = {
     // Note: list order defines filter order.
     &sd_filter_sdh,
-#if HAVE_POSIX
     &sd_filter_regex,
-#endif
 #if HAVE_JAVASCRIPT
     &sd_filter_jsre,
 #endif

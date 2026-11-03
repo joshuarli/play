@@ -148,7 +148,6 @@ const struct m_obj_list vo_obj_list = {
     .description = "video outputs",
     .aliases = {
         {"gl", "gpu"},
-        {"direct3d_shaders", "direct3d"},
         {"opengl", "gpu"},
         {"opengl-cb", "libmpv"},
         {0}
@@ -1357,11 +1356,6 @@ double vo_get_display_fps(struct vo *vo)
     double res = vo->in->display_fps;
     mp_mutex_unlock(&in->lock);
     return res;
-}
-
-void * vo_get_display_swapchain(struct vo *vo)
-{
-    return vo->display_swapchain;
 }
 
 // Set specific event flags, and wakeup the playback core if needed.

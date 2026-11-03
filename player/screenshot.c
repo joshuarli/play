@@ -101,11 +101,7 @@ static bool write_screenshot(struct mp_cmd_ctx *cmd, struct mp_image *img,
     return ok;
 }
 
-#ifdef _WIN32
-#define ILLEGAL_FILENAME_CHARS "?\"/\\<>*|:"
-#else
 #define ILLEGAL_FILENAME_CHARS "/"
-#endif
 
 // Replace all characters disallowed in filenames with '_' and return the newly
 // allocated result string.

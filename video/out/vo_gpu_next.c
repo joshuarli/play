@@ -54,11 +54,7 @@
 #include "video/out/opengl/ra_gl.h"
 #endif
 
-#if HAVE_D3D11 && defined(PL_HAVE_D3D11)
-#include <libplacebo/d3d11.h>
-#include "video/out/d3d11/ra_d3d11.h"
-#include "osdep/windows_utils.h"
-#endif
+
 
 
 struct osd_entry {
@@ -565,22 +561,6 @@ static pl_tex hwdec_get_tex(struct priv *p, int n)
                          &(GLenum){0}, &(GLenum){0});
         ra_gl_get_raw_tex(ra, ratex, &par.texture, &par.target);
         return pl_opengl_wrap(p->gpu, &par);
-    }
-#endif
-
-#if HAVE_D3D11 && defined(PL_HAVE_D3D11)
-    if (ra_is_d3d11(ra)) {
-        int array_slice = 0;
-        ID3D11Resource *res = ra_d3d11_get_raw_tex(ra, ratex, &array_slice);
-        pl_tex tex = pl_d3d11_wrap(p->gpu, pl_d3d11_wrap_params(
-            .tex = res,
-            .array_slice = array_slice,
-            .fmt = ra_d3d11_get_format(ratex->params.format),
-            .w = ratex->params.w,
-            .h = ratex->params.h,
-        ));
-        SAFE_RELEASE(res);
-        return tex;
     }
 #endif
 
@@ -1290,22 +1270,6 @@ static bool draw_frame(struct vo *vo, struct vo_frame *frame)
         // Depending how it's resolved in Wayland Protocol, Mesa, things will
         // change.
         // See: <https://gitlab.freedesktop.org/wayland/wayland-protocols/-/merge_requests/456>
-#ifdef _WIN32
-        // Windows uses the sRGB piecewise function. Send piecewise sRGB to
-        // Windows in HDR mode so that it can be converted to PQ, the same way
-        // as mpv does internally. Note that in SDR mode, even with ACM enabled,
-        // Windows assumes the display is sRGB. It doesn't perform gamma
-        // conversion, or any conversions would roundtrip back to sRGB.
-        // In which case the EOTF depends on the display.
-        // Ideally, compositors would agree on how to handle sRGB, but I’ll
-        // leave that part of the story for the reader to explore.
-        // Note: Older Windows versions, without ACM, were not able to convert
-        // sRGB to PQ output. We are not concerned about this case, as it would
-        // look wrong anyway.
-        bool target_pq = !target_unknown && target_csp.transfer == PL_COLOR_TRC_PQ;
-        if (opts->treat_srgb_as_power22 & 4 && target_pq)
-            target.color.transfer = PL_COLOR_TRC_SRGB;
-#endif
     }
     update_overlays(vo, p->osd_res,
                     (frame->current && opts->blend_subs) ? OSD_DRAW_OSD_ONLY : 0,

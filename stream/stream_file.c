@@ -123,10 +123,6 @@ char *mp_file_url_to_filename(void *talloc_ctx, bstr url)
         return NULL;
     char *filename = bstrto0(talloc_ctx, url);
     mp_url_unescape_inplace(filename);
-#if HAVE_DOS_PATHS
-    if (filename[0] == '/' && filename[1] && filename[2] == ':')
-        memmove(filename, filename + 1, strlen(filename));
-#endif
     return filename;
 }
 

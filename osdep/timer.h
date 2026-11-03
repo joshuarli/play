@@ -47,14 +47,6 @@ void mp_sleep_ns(int64_t ns);
 uint64_t mp_raw_time_ns_from_mach(uint64_t mach_time);
 #endif
 
-#ifdef _WIN32
-// returns: timer resolution in ns if needed and started successfully, else 0
-int64_t mp_start_hires_timers(int64_t wait_ns);
-
-// call unconditionally with the return value of mp_start_hires_timers
-void mp_end_hires_timers(int64_t resolution_ns);
-#endif  /* _WIN32 */
-
 // Converts time units to nanoseconds (int64_t)
 #define MP_TIME_S_TO_NS(s) ((s) * INT64_C(1000000000))
 #define MP_TIME_MS_TO_NS(ms) ((ms) * INT64_C(1000000))

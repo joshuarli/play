@@ -24,13 +24,6 @@
 // cases should be investigated at some point.
 #define LSAN_IGNORE_DLCLOSE
 
-#ifdef _WIN32
-#include <windows.h>
-
-#define LOAD_LIB() HMODULE lib = LoadLibraryW(L"libmpv-2.dll")
-#define CLOSE_LIB() FreeLibrary(lib)
-#define GET_SYM GetProcAddress
-#else
 #include <dlfcn.h>
 
 #ifdef __APPLE__
@@ -41,7 +34,6 @@
 #define LOAD_LIB() void *lib = dlopen(LIB_NAME, RTLD_NOW | RTLD_LOCAL)
 #define CLOSE_LIB() dlclose(lib)
 #define GET_SYM dlsym
-#endif
 
 #define INIT_SYM(name) __typeof__(&mpv_##name) name = (void *) GET_SYM(lib, "mpv_" #name); \
                        if (!name) exit(1)
