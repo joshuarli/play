@@ -65,6 +65,7 @@
 
 #include "core.h"
 #include "client.h"
+#include "player_audio.h"
 #include "player_ffi.h"
 #include "player_startup.h"
 #include "player_state.h"
@@ -567,6 +568,18 @@ int mp_initialize(struct MPContext *mpctx, char **options)
         mp_print_version(mpctx->log, true);
         MP_INFO(mpctx, "%s", mp_help_text);
         return 1;
+    }
+
+    if (mpctx->tui && playlist_entry_count(mpctx->playlist) > 0) {
+        struct playlist_entry *first = playlist_get_first(mpctx->playlist);
+        if (first && first->filename &&
+            player_audio_probe(first->filename, NULL, NULL, 0) == 1)
+        {
+            // Audio-only files the Rust engine can play stay out of the C
+            // playloop; the TUI drives them directly.
+            opts->player_idle_mode = 1;
+            mpctx->stop_play = PT_STOP;
+        }
     }
 
     MP_STATS(mpctx, "start init");

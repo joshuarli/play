@@ -545,7 +545,9 @@ def gate_tui(results, args):
                       f"exit {proc.returncode}: {stderr[-300:]}")
         if log.exists():
             text = log.read_text(errors="replace")
-            results.check("tui: null video output", "VO: [null]" in text,
+            results.check("tui: rust engine bypasses video output", "VO: [" not in text,
+                          text[-400:])
+            results.check("tui: rust engine bypasses audio output", "AO: [" not in text,
                           text[-400:])
             results.check("tui: no GPU output", "gpu-next" not in text)
         else:

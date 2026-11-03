@@ -54,4 +54,51 @@ int player_audio_decode(struct player_audio_decoder *dec,
 void player_audio_reset(struct player_audio_decoder *dec);
 void player_audio_destroy(struct player_audio_decoder *dec);
 
+/* Rust playback engine (S3): opaque handle plus the probe the TUI and
+ * startup use to decide whether a file bypasses the C playloop. */
+
+struct player_audio_engine;
+
+struct player_audio_probe {
+    int engine_ready;
+    double duration;
+    unsigned int sample_rate;
+    unsigned short channels;
+    char title[128];
+    char artist[128];
+    char album[128];
+    char date[32];
+};
+
+struct player_audio_snapshot {
+    double position;
+    double duration;
+    float volume;
+    int paused;
+    int muted;
+    int ended;
+    int has_error;
+    char error[256];
+};
+
+/* 1 when the Rust engine can play the file, 0 when the C engine keeps it,
+ * negative on probe error. `out` may be NULL to skip the metadata. */
+int player_audio_probe(const char *path, struct player_audio_probe *out,
+                       char *err, size_t err_cap);
+
+struct player_audio_engine *player_audio_engine_load(const char *path,
+                                                    int null_sink,
+                                                    char *err, size_t err_cap);
+void player_audio_engine_set_paused(struct player_audio_engine *engine,
+                                    int paused);
+void player_audio_engine_seek(struct player_audio_engine *engine,
+                              double seconds);
+void player_audio_engine_set_volume(struct player_audio_engine *engine,
+                                    float volume);
+void player_audio_engine_set_muted(struct player_audio_engine *engine,
+                                   int muted);
+int player_audio_engine_snapshot(struct player_audio_engine *engine,
+                                 struct player_audio_snapshot *out);
+void player_audio_engine_destroy(struct player_audio_engine *engine);
+
 #endif

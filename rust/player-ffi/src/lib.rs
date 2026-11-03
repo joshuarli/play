@@ -3,6 +3,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use player_core::input::{classify_input, InputError, InputPath};
 
+mod audio;
 mod command;
 mod event;
 mod local_file;

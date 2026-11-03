@@ -193,7 +193,7 @@ fn run_worker(
         let pipeline = Pipeline::open(&path, probe.stream_index, sink.rate())?;
         Ok((sink, pipeline))
     };
-    let (mut sink, mut pipeline) = match build() {
+    let (sink, pipeline) = match build() {
         Ok(built) => built,
         Err(message) => {
             update(&state, |status| status.error = Some(message.clone()));
@@ -510,7 +510,7 @@ fn probe_metadata(session: &MediaSession) -> (String, String, String, String) {
             .find_map(|key| {
                 entries
                     .iter()
-                    .find(|(name, _)| name == key)
+                    .find(|(name, _)| name.eq_ignore_ascii_case(key))
                     .map(|(_, value)| value.clone())
             })
             .unwrap_or_default()
@@ -532,9 +532,10 @@ pub unsafe extern "C" fn player_audio_probe(
     err: *mut c_char,
     err_cap: usize,
 ) -> c_int {
-    if path.is_null() || out.is_null() {
+    if path.is_null() {
         return -1;
     }
+    let write_out = !out.is_null();
     // SAFETY: path is a valid NUL-terminated string for this call.
     let path = unsafe { CStr::from_ptr(path) }.to_string_lossy().into_owned();
     let result = catch_unwind(AssertUnwindSafe(|| -> Result<AudioProbeFfi, String> {
@@ -572,9 +573,11 @@ pub unsafe extern "C" fn player_audio_probe(
     }));
     match result {
         Ok(Ok(probe)) => {
-            // SAFETY: out points to a valid probe struct for this call.
-            unsafe { ptr::write(out, probe) };
-            let ready = unsafe { (*out).engine_ready };
+            let ready = probe.engine_ready;
+            if write_out {
+                // SAFETY: out points to a valid probe struct for this call.
+                unsafe { ptr::write(out, probe) };
+            }
             if ready == 1 { 1 } else { 0 }
         }
         Ok(Err(message)) => {

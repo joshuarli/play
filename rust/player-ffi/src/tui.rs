@@ -4,6 +4,7 @@ use std::ptr;
 
 use player_tui::{Control, Cover, Player, Snapshot, Track};
 
+use crate::audio::{self, Engine};
 use crate::mpv::{
     MPV_FORMAT_DOUBLE, MPV_FORMAT_FLAG, MPV_EVENT_SHUTDOWN, MpvHandle, mpv_command,
     mpv_error_string, mpv_free, mpv_get_property, mpv_get_property_string,
@@ -25,9 +26,25 @@ pub struct PlayerTuiCallbacks {
     >,
 }
 
+struct EngineTrack {
+    path: String,
+    title: String,
+    artist: String,
+    album: String,
+    year: String,
+}
+
+struct EnginePlayback {
+    engine: Engine,
+    index: usize,
+    track: EngineTrack,
+}
+
 struct TuiApi {
     client: *mut MpvHandle,
     callbacks: PlayerTuiCallbacks,
+    playlist: Option<Vec<String>>,
+    playback: Option<EnginePlayback>,
 }
 
 impl TuiApi {
@@ -104,10 +121,245 @@ impl TuiApi {
                 .into_owned()
         }
     }
+
+    fn playlist_entries(&mut self) -> &[String] {
+        let count = self
+            .get_string("playlist-count")
+            .and_then(|count| count.parse::<usize>().ok())
+            .unwrap_or(0);
+        let fresh = self.playlist.as_ref().map_or(true, |cached| {
+            cached.len() != count
+        });
+        if fresh {
+            let mut entries = Vec::new();
+            for index in 0..count {
+                if let Some(path) = self.get_string(&format!("playlist/{index}/filename")) {
+                    entries.push(path);
+                }
+            }
+            self.playlist = Some(entries);
+        }
+        self.playlist.as_deref().unwrap_or(&[])
+    }
+
+    fn null_sink_requested(&self) -> bool {
+        self.get_string("options/ao").as_deref() == Some("null")
+    }
+
+    fn claim(&mut self, index: usize) -> bool {
+        let path = match self.playlist_entries().get(index) {
+            Some(path) => path.clone(),
+            None => return false,
+        };
+        let probe = match audio::probe_file(&path) {
+            Ok(probe) if probe.engine_ready => probe,
+            _ => return false,
+        };
+        if !self.get_string("path").unwrap_or_default().is_empty() {
+            let _ = self.command(&["stop"]);
+        }
+        let engine = match Engine::load(&path, self.null_sink_requested()) {
+            Ok(engine) => engine,
+            Err(_) => {
+                self.playback = None;
+                let _ = self.command(&["loadfile", &path]);
+                return false;
+            }
+        };
+        engine.set_paused(self.get_flag("pause").unwrap_or(false));
+        engine.set_volume(
+            self.get_double("volume")
+                .map(|volume| volume as f32 / 100.0)
+                .unwrap_or(1.0),
+        );
+        engine.set_muted(self.get_flag("mute").unwrap_or(false));
+        let file_stem = std::path::Path::new(&path)
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        self.playback = Some(EnginePlayback {
+            engine,
+            index,
+            track: EngineTrack {
+                path,
+                title: if probe.title.is_empty() {
+                    file_stem
+                } else {
+                    probe.title
+                },
+                artist: probe.artist,
+                album: probe.album,
+                year: probe.date.chars().take(4).collect(),
+            },
+        });
+        true
+    }
+
+    fn maybe_claim(&mut self) {
+        if self.playback.is_some() {
+            return;
+        }
+        if !self.get_string("path").unwrap_or_default().is_empty() {
+            return;
+        }
+        if self.playlist_entries().is_empty() {
+            return;
+        }
+        self.claim(0);
+    }
+
+    fn step(&mut self, direction: i32) -> Result<(), String> {
+        let entries_len = self.playlist_entries().len();
+        let engine_index = self.playback.as_ref().map(|playback| playback.index);
+        let current = match engine_index {
+            Some(index) => Some(index),
+            None => {
+                let path = self.get_string("path").unwrap_or_default();
+                self.playlist_entries()
+                    .iter()
+                    .position(|entry| *entry == path)
+            }
+        };
+        let current = match current {
+            Some(index) => index,
+            None => {
+                return self.command(&[if direction > 0 {
+                    "playlist-next"
+                } else {
+                    "playlist-prev"
+                }]);
+            }
+        };
+        let target = current as i64 + direction as i64;
+        if target < 0 || target as usize >= entries_len {
+            return Ok(());
+        }
+        if self.claim(target as usize) {
+            Ok(())
+        } else if self.playback.is_some() {
+            self.playback = None;
+            let path = self
+                .playlist_entries()
+                .get(target as usize)
+                .cloned()
+                .unwrap_or_default();
+            self.command(&["loadfile", &path])
+        } else {
+            self.command(&[if direction > 0 {
+                "playlist-next"
+            } else {
+                "playlist-prev"
+            }])
+        }
+    }
+
+    fn engine_snapshot(&mut self) -> Option<Snapshot> {
+        let playback = self.playback.as_ref()?;
+        let status = match playback.engine.snapshot() {
+            Ok(status) => status,
+            Err(_) => {
+                let path = playback.track.path.clone();
+                self.playback = None;
+                let _ = self.command(&["loadfile", &path]);
+                return None;
+            }
+        };
+        if let Some(message) = status.error {
+            eprintln!("player: audio engine error: {message}");
+        }
+        let format = std::path::Path::new(&playback.track.path)
+            .extension()
+            .map(|extension| extension.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        Some(Snapshot {
+            path: playback.track.path.clone(),
+            track: Track {
+                title: playback.track.title.clone(),
+                artist: playback.track.artist.clone(),
+                album: playback.track.album.clone(),
+                year: playback.track.year.clone(),
+                format,
+            },
+            pos: status.position,
+            duration: status.duration,
+            playing: !status.paused && !status.ended,
+            volume: (status.volume as f64).clamp(0.0, 1.0),
+            muted: status.muted,
+        })
+    }
+
+    fn engine_control(&mut self, control: Control) -> Result<(), String> {
+        let status = match self.engine_status() {
+            Some(status) => status,
+            None => {
+                self.playback = None;
+                return self.client_control(control);
+            }
+        };
+        match control {
+            Control::Pause => {
+                self.apply_engine(|engine| engine.set_paused(!status.paused));
+                Ok(())
+            }
+            Control::Seek(delta) => {
+                self.apply_engine(|engine| engine.seek(status.position + delta as f64));
+                Ok(())
+            }
+            Control::Volume(delta) => {
+                self.apply_engine(|engine| {
+                    engine.set_volume(status.volume + delta as f32 / 100.0)
+                });
+                Ok(())
+            }
+            Control::Mute => {
+                self.apply_engine(|engine| engine.set_muted(!status.muted));
+                Ok(())
+            }
+            Control::Next => self.step(1),
+            Control::Previous => self.step(-1),
+            Control::Restart => {
+                self.apply_engine(|engine| engine.seek(0.0));
+                Ok(())
+            }
+            Control::Quit => {
+                self.playback = None;
+                self.command(&["quit"])
+            }
+        }
+    }
+
+    fn client_control(&mut self, control: Control) -> Result<(), String> {
+        match control {
+            Control::Pause => self.command(&["cycle", "pause"]),
+            Control::Seek(delta) => self.command(&["seek", &delta.to_string()]),
+            Control::Volume(delta) => self.command(&["add", "volume", &delta.to_string()]),
+            Control::Mute => self.command(&["cycle", "mute"]),
+            Control::Next => self.step(1),
+            Control::Previous => self.step(-1),
+            Control::Restart => self.command(&["seek", "0", "absolute"]),
+            Control::Quit => self.command(&["quit"]),
+        }
+    }
+
+    fn engine_status(&self) -> Option<crate::audio::EngineStatus> {
+        self.playback
+            .as_ref()
+            .and_then(|playback| playback.engine.snapshot().ok())
+    }
+
+    fn apply_engine(&mut self, apply: impl FnOnce(&Engine)) {
+        if let Some(playback) = self.playback.as_ref() {
+            apply(&playback.engine);
+        }
+    }
 }
 
 impl Player for TuiApi {
     fn snapshot(&mut self) -> Snapshot {
+        self.maybe_claim();
+        if let Some(snapshot) = self.engine_snapshot() {
+            return snapshot;
+        }
         let path = self.get_string("path").unwrap_or_default();
         let media_title = self.get_string("media-title");
         let title = media_title
@@ -161,16 +413,10 @@ impl Player for TuiApi {
     }
 
     fn control(&mut self, control: Control) -> Result<(), String> {
-        match control {
-            Control::Pause => self.command(&["cycle", "pause"]),
-            Control::Seek(delta) => self.command(&["seek", &delta.to_string()]),
-            Control::Volume(delta) => self.command(&["add", "volume", &delta.to_string()]),
-            Control::Mute => self.command(&["cycle", "mute"]),
-            Control::Next => self.command(&["playlist-next"]),
-            Control::Previous => self.command(&["playlist-prev"]),
-            Control::Restart => self.command(&["seek", "0", "absolute"]),
-            Control::Quit => self.command(&["quit"]),
+        if self.playback.is_some() {
+            return self.engine_control(control);
         }
+        self.client_control(control)
     }
 
     fn cover_art(&mut self, path: &str) -> Option<Cover> {
@@ -228,6 +474,8 @@ pub unsafe extern "C" fn player_ffi_tui_run(
         let mut api = TuiApi {
             client: client.cast::<MpvHandle>(),
             callbacks,
+            playlist: None,
+            playback: None,
         };
         player_tui::run(&mut api)
     }));

@@ -18,6 +18,7 @@ pub struct NullSink {
     peak: f32,
     energy: f64,
     paused: bool,
+    anchor: Option<(std::time::Instant, u64)>,
 }
 
 impl NullSink {
@@ -29,6 +30,7 @@ impl NullSink {
             peak: 0.0,
             energy: 0.0,
             paused: false,
+            anchor: None,
         }
     }
 
@@ -45,6 +47,28 @@ impl NullSink {
             return 0.0;
         }
         (self.energy / (self.frames * self.channels as u64) as f64).sqrt() as f32
+    }
+}
+
+impl NullSink {
+    fn pace(&mut self) {
+        if self.rate == 0 {
+            return;
+        }
+        let now = std::time::Instant::now();
+        let (start, base) = match self.anchor {
+            Some(anchor) => anchor,
+            None => {
+                self.anchor = Some((now, self.frames));
+                return;
+            }
+        };
+        let expected =
+            std::time::Duration::from_secs_f64((self.frames - base) as f64 / self.rate as f64);
+        let elapsed = now.duration_since(start);
+        if let Some(lag) = expected.checked_sub(elapsed + std::time::Duration::from_millis(2)) {
+            std::thread::sleep(lag.min(std::time::Duration::from_secs(1)));
+        }
     }
 }
 
@@ -67,6 +91,7 @@ impl AudioSink for NullSink {
             }
             self.energy += (value * value) as f64;
         }
+        self.pace();
         Ok(())
     }
 
@@ -89,10 +114,12 @@ impl AudioSink for NullSink {
 
     fn resume(&mut self) -> Result<(), String> {
         self.paused = false;
+        self.anchor = None;
         Ok(())
     }
 
     fn flush(&mut self) -> Result<(), String> {
+        self.anchor = None;
         Ok(())
     }
 }
