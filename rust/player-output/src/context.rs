@@ -60,22 +60,19 @@ impl Vulkan {
         self.gpu
     }
 
-    pub fn find_rgba8(&self) -> Result<sys::PlFmt, String> {
+    pub fn find_rgba8(&self, caps: c_int) -> Result<sys::PlFmt, String> {
         // SAFETY: the gpu is live.
         let fmt = unsafe {
-            sys::pl_find_fmt(
-                self.gpu,
-                sys::PL_FMT_UNORM,
-                4,
-                8,
-                8,
-                sys::PL_FMT_CAP_HOST_READABLE,
-            )
+            sys::pl_find_fmt(self.gpu, sys::PL_FMT_UNORM, 4, 8, 8, caps)
         };
         if fmt.is_null() {
             return Err("no RGBA8 texture format".to_string());
         }
         Ok(fmt)
+    }
+
+    pub fn create_renderer(&self) -> Result<crate::Renderer, String> {
+        crate::Renderer::new(self.log, self.gpu)
     }
 
     pub fn create_tex(&self, width: c_int, height: c_int, fmt: sys::PlFmt) -> Result<sys::PlTex, String> {
@@ -112,6 +109,49 @@ impl Vulkan {
         let tex = unsafe { sys::pl_tex_create(self.gpu, &params) };
         if tex.is_null() {
             return Err("pl_tex_create failed".to_string());
+        }
+        Ok(tex)
+    }
+
+    pub fn create_render_target(
+        &self,
+        width: c_int,
+        height: c_int,
+        fmt: sys::PlFmt,
+    ) -> Result<sys::PlTex, String> {
+        let params = sys::PlTexParams {
+            w: width,
+            h: height,
+            d: 0,
+            format: fmt,
+            sampleable: false,
+            renderable: true,
+            storable: false,
+            blit_src: false,
+            blit_dst: false,
+            host_writable: false,
+            host_readable: true,
+            export_handle: 0,
+            import_handle: 0,
+            shared_mem: sys::PlSharedMem {
+                handle: sys::PlHandle {
+                    ptr: core::ptr::null_mut(),
+                },
+                size: 0,
+                offset: 0,
+                drm_format_mod: 0,
+                stride_w: 0,
+                stride_h: 0,
+                plane: 0,
+            },
+            initial_data: core::ptr::null(),
+            user_data: core::ptr::null_mut(),
+            debug_tag: core::ptr::null(),
+        };
+        // SAFETY: the gpu is live and params outlives the call.
+        let tex = unsafe { sys::pl_tex_create(self.gpu, &params) };
+        if tex.is_null() {
+            return Err("pl_tex_create render target failed".to_string());
         }
         Ok(tex)
     }
@@ -215,7 +255,9 @@ mod tests {
     )]
     fn init_and_tex_roundtrip() {
         let vk = Vulkan::create().expect("vulkan initializes headlessly");
-        let fmt = vk.find_rgba8().expect("rgba8 format exists");
+        let fmt = vk
+            .find_rgba8(sys::PL_FMT_CAP_HOST_READABLE)
+            .expect("rgba8 format exists");
         let tex = vk.create_tex(4, 4, fmt).expect("texture creates");
         let pattern: Vec<u8> = (0..64).map(|i| (i * 7 + 3) as u8).collect();
         vk.upload(tex, 4, 4, &pattern).expect("upload works");

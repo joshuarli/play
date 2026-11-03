@@ -14,6 +14,7 @@ pub const PL_FMT_UNORM: c_int = 1;
 pub const PL_FMT_FLOAT: c_int = 5;
 
 pub const PL_FMT_CAP_SAMPLEABLE: c_int = 1;
+pub const PL_FMT_CAP_RENDERABLE: c_int = 1 << 3;
 pub const PL_FMT_CAP_HOST_READABLE: c_int = 1 << 9;
 
 pub type PlLog = *const c_void;
@@ -23,6 +24,108 @@ pub type PlFmt = *const c_void;
 pub type PlRenderer = *mut c_void;
 pub type PlTimer = *mut c_void;
 pub type PlBuf = *mut c_void;
+
+pub const PL_COLOR_SYSTEM_RGB: c_int = 12;
+pub const PL_COLOR_LEVELS_FULL: c_int = 2;
+pub const PL_COLOR_PRIM_BT_709: c_int = 3;
+pub const PL_COLOR_TRC_SRGB: c_int = 2;
+pub const PL_ALPHA_INDEPENDENT: c_int = 1;
+
+pub const PL_TEX_ADDRESS_CLAMP: c_int = 0;
+pub const PL_FIELD_NONE: c_int = 0;
+pub const PL_ROTATION_0: c_int = 0;
+
+#[repr(C)]
+pub struct PlPlane {
+    pub texture: PlTex,
+    pub address_mode: c_int,
+    pub flipped: bool,
+    pub components: c_int,
+    pub component_mapping: [c_int; 4],
+    pub shift_x: f32,
+    pub shift_y: f32,
+}
+
+#[repr(C)]
+pub struct PlBitEncoding {
+    pub sample_depth: c_int,
+    pub color_depth: c_int,
+    pub bit_shift: c_int,
+}
+
+#[repr(C)]
+pub struct PlColorRepr {
+    pub sys: c_int,
+    pub levels: c_int,
+    pub alpha: c_int,
+    pub bits: PlBitEncoding,
+    pub dovi: *const c_void,
+}
+
+#[repr(C)]
+pub struct PlHdrMetadata {
+    pub opaque: [u8; 148],
+}
+
+#[repr(C)]
+pub struct PlColorSpace {
+    pub primaries: c_int,
+    pub transfer: c_int,
+    pub hdr: PlHdrMetadata,
+}
+
+#[repr(C)]
+pub struct PlIccProfile {
+    pub data: *const c_void,
+    pub len: usize,
+    pub signature: u64,
+}
+
+#[derive(Clone, Copy)]
+#[repr(C, align(8))]
+pub struct PlFilmGrain {
+    pub opaque: [u8; 208],
+}
+
+#[repr(C)]
+pub struct PlRect2df {
+    pub x0: f32,
+    pub y0: f32,
+    pub x1: f32,
+    pub y1: f32,
+}
+
+#[repr(C)]
+pub struct PlFrame {
+    pub num_planes: c_int,
+    pub planes: [PlPlane; 4],
+    pub enhancement_layer: *const PlFrame,
+    pub field: c_int,
+    pub first_field: c_int,
+    pub prev: *const PlFrame,
+    pub next: *const PlFrame,
+    pub acquire: Option<unsafe extern "C" fn(PlGpu, *mut PlFrame) -> bool>,
+    pub release: Option<unsafe extern "C" fn(PlGpu, *mut PlFrame)>,
+    pub repr: PlColorRepr,
+    pub color: PlColorSpace,
+    pub icc: *mut c_void,
+    pub profile: PlIccProfile,
+    pub lut: *const c_void,
+    pub lut_type: c_int,
+    pub crop: PlRect2df,
+    pub rotation: c_int,
+    pub pixel_aspect_ratio: f32,
+    pub overlays: *const c_void,
+    pub num_overlays: c_int,
+    pub film_grain: PlFilmGrain,
+    pub user_data: *mut c_void,
+}
+
+#[derive(Clone, Copy)]
+#[repr(C)]
+pub struct PlRenderParams {
+    pub opaque: [u8; 288],
+}
 
 #[repr(C)]
 pub struct PlVulkanParams {
@@ -143,6 +246,16 @@ unsafe extern "C" {
     pub fn pl_tex_destroy(gpu: PlGpu, tex: *mut PlTex);
     pub fn pl_tex_upload(gpu: PlGpu, params: *const PlTexTransferParams) -> bool;
     pub fn pl_tex_download(gpu: PlGpu, params: *const PlTexTransferParams) -> bool;
+
+    pub static pl_render_default_params: PlRenderParams;
+
+    pub fn pl_frames_infer(rr: PlRenderer, image: *mut PlFrame, target: *mut PlFrame);
+    pub fn pl_render_image(
+        rr: PlRenderer,
+        image: *const PlFrame,
+        target: *const PlFrame,
+        params: *const PlRenderParams,
+    ) -> bool;
 }
 
 #[cfg(test)]
@@ -179,6 +292,43 @@ mod tests {
         assert_eq!(size_of::<PlRect3d>(), 24);
         assert_eq!(align_of::<PlVulkanHead>(), align_of::<*mut c_void>());
         assert_eq!(offset_of!(PlVulkanHead, gpu), 0);
+
+        assert_eq!(PL_COLOR_SYSTEM_RGB, 12);
+        assert_eq!(PL_COLOR_LEVELS_FULL, 2);
+        assert_eq!(PL_COLOR_PRIM_BT_709, 3);
+        assert_eq!(PL_COLOR_TRC_SRGB, 2);
+
+        assert_eq!(size_of::<PlPlane>(), 48);
+        assert_eq!(offset_of!(PlPlane, texture), 0);
+        assert_eq!(offset_of!(PlPlane, components), 16);
+        assert_eq!(offset_of!(PlPlane, component_mapping), 20);
+        assert_eq!(offset_of!(PlPlane, shift_x), 36);
+
+        assert_eq!(size_of::<PlColorRepr>(), 32);
+        assert_eq!(size_of::<PlColorSpace>(), 156);
+        assert_eq!(offset_of!(PlColorSpace, primaries), 0);
+        assert_eq!(offset_of!(PlColorSpace, hdr), 8);
+        assert_eq!(size_of::<PlHdrMetadata>(), 148);
+        assert_eq!(size_of::<PlIccProfile>(), 24);
+
+        assert_eq!(size_of::<PlFrame>(), 744);
+        assert_eq!(offset_of!(PlFrame, num_planes), 0);
+        assert_eq!(offset_of!(PlFrame, planes), 8);
+        assert_eq!(offset_of!(PlFrame, repr), 248);
+        assert_eq!(offset_of!(PlFrame, color), 280);
+        assert_eq!(offset_of!(PlFrame, icc), 440);
+        assert_eq!(offset_of!(PlFrame, profile), 448);
+        assert_eq!(offset_of!(PlFrame, lut), 472);
+        assert_eq!(offset_of!(PlFrame, lut_type), 480);
+        assert_eq!(offset_of!(PlFrame, crop), 484);
+        assert_eq!(offset_of!(PlFrame, rotation), 500);
+        assert_eq!(offset_of!(PlFrame, pixel_aspect_ratio), 504);
+        assert_eq!(offset_of!(PlFrame, overlays), 512);
+        assert_eq!(offset_of!(PlFrame, num_overlays), 520);
+        assert_eq!(offset_of!(PlFrame, film_grain), 528);
+        assert_eq!(offset_of!(PlFrame, user_data), 736);
+
+        assert_eq!(size_of::<PlRenderParams>(), 288);
 
         assert_eq!(size_of::<PlVulkanParams>(), 128);
         assert_eq!(offset_of!(PlVulkanParams, instance), 0);
