@@ -4,10 +4,10 @@ Player is a local-only media player. The macOS release artifact is `dist/Player.
 
 ## Current state
 
-- The app was rebuilt at `c047192` and fully re-verified on the macOS host after the terminal UI work.
+- The app was rebuilt at `96331a9` and fully re-verified on the macOS host after the terminal UI work.
 - `tests/run.sh suite`: 315 passed, 0 failed. The run includes the release gate.
 - `scripts/audit.sh`: ok.
-- `scripts/measure.sh final`: ok at `c047192`; the host was quiet before and after the run.
+- `scripts/measure.sh final`: ok at `96331a9`; the host was quiet before and after the run.
 - App: 28,437,647 B on disk; executable 9,707,520 B; framework closure 17,334,096 B in 13 files; bundled icon 1,387,652 B.
 - One `file` protocol and one Lua interpreter.
 - `--tui` plays in the terminal with centered embedded cover art. Kitty graphics are used on Ghostty, kitty, and WezTerm; other terminals use truecolor half-blocks. The TUI is audio-first and keeps `vo=null`.
