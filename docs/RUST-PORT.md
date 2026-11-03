@@ -5,7 +5,35 @@ Preflight doc: `campaign-rust.md`. This file is the durable resume point.
 
 ## Current phase
 
-S0 (ground and oracle). Next: S1 (Rust owns the control path).
+S1 complete (`9d508c7`, `2ce9685`). Next: S2 (Rust-owned local demuxing).
+
+## S1 record
+
+Rust owns the application entry (`player_ffi_run` sequences
+create/init/play/finish/destroy; `player/main.c` is a thin host), one
+command dispatcher (parse-time checks plus a `run_command` gate that sees
+every executed command including node input; multi-command strings validate
+per part and never partially execute), scalar playback state plus
+aid/sid/vid, and the property event bus. C getters read the Rust store;
+C reports facts on option changes and each playloop pass. Verified:
+`cargo test` green, `tests/run.sh dispatch` 13/13 on both platforms, full
+suites green on macOS (331) and Linux (323), budgets and audits pass.
+
+Scoped deviations from `campaign-rust.md`:
+
+- Property-change *delivery* still runs through the C client path; the Rust
+  bus is the authoritative log in S1 and becomes the delivery source in S7.
+  Replacing `send_client_property_changes` now would risk the observe paths
+  that S7 owns.
+- Full playlist convergence stays with S5 (scheduler owns playlist
+  transitions). S1 classifies playlist commands at the dispatcher and keeps
+  the existing order/ID sync.
+- `cargo fmt --check` reports drift across the repo (including untouched
+  files) under the pinned toolchain; no fmt gate exists in CI or audits, so
+  S1 leaves formatting alone. New code follows neighboring style.
+- The Linux suite runs against `build-linux/mpv`, which no suite rebuilds.
+  Rebuild it with `scripts/linux-container.sh scripts/build-linux.sh`
+  before every Linux suite run; S1 caught a stale binary this way.
 
 ## Rust-owned components
 
