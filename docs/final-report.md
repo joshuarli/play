@@ -74,13 +74,13 @@ The development loop is `scripts/build.sh` plus `tests/run.sh suite`. Scratch ar
 
 ### Outcome
 
-The Linux build is a mostly static `x86_64-unknown-linux-musl` executable: the mpv pipeline, the pinned minimal FFmpeg n9.0.2, the Rust control plane as one staticlib, one Lua 5.2 interpreter, `vo=gpu-next` over Vulkan and Wayland, and ALSA. The release is `dist/player-x86_64-linux-musl.tar.gz` (player and README) with a SHA-256 file. The stripped executable is 26,355,208 B and needs exactly nine shared libraries: musl, `libvulkan.so.1`, `libwayland-client.so.0`, `libwayland-cursor.so.0`, `libxkbcommon.so.0`, `libasound.so.2`, and, for VA-API hardware decode, `libva.so.2`, `libva-drm.so.2`, and `libva-wayland.so.2`.
+The Linux build is a mostly static `x86_64-unknown-linux-musl` executable: the mpv pipeline, the pinned minimal FFmpeg n9.0.2, the Rust control plane as one staticlib, one Lua 5.2 interpreter, `vo=gpu-next` over Vulkan and Wayland, and ALSA. The release is `dist/player-x86_64-linux-musl.tar.gz` (player and README) with a SHA-256 file. The stripped executable in the published v0.41.0 tarball is 26,465,800 B and needs exactly nine shared libraries: musl, `libvulkan.so.1`, `libwayland-client.so.0`, `libwayland-cursor.so.0`, `libxkbcommon.so.0`, `libasound.so.2`, and, for VA-API hardware decode, `libva.so.2`, `libva-drm.so.2`, and `libva-wayland.so.2`.
 
 ### Verification
 
 | Command | Result |
 |---|---|
-| `scripts/linux-container.sh tests/run.sh suite` | 297 passed, 0 failed (includes `linux-gpu-next`, `linux-audio`, `linux-local-only`, `linux-osc`, `linux-audit`) |
+| `scripts/linux-container.sh tests/run.sh suite` | 295 passed, 0 failed (includes `linux-gpu-next`, `linux-audio`, `linux-local-only`, `linux-osc`, `linux-audit`) |
 | `scripts/linux-container.sh scripts/audit-linux.sh` | ok; the extra-`NEEDED` negative case failed as expected |
 | `scripts/linux-container.sh tests/run.sh ffmpeg-audit` | 19 passed |
 | `cargo test --target x86_64-unknown-linux-musl` | 60 passed |
@@ -88,22 +88,26 @@ The Linux build is a mostly static `x86_64-unknown-linux-musl` executable: the m
 
 | Budget | Limit | Actual |
 |---|---:|---:|
-| Stripped binary | 50,000,000 B | 26,355,208 B |
+| Stripped binary | 50,000,000 B | 26,465,800 B |
 | Direct dynamic libraries | 9 (6 before VA-API) | 9 |
+| Cold `--version` | 300 ms | deferred: host busy |
+| Warm `--version` | 150 ms | deferred: host busy |
+| First frame, 1080p | 1 s | deferred: host busy |
 | 1080p RSS | 300 MB | 128.94 MB |
+| Seek | 250 ms | deferred: host busy |
 | Network schemes | 0 | 0 |
 | Duplicate Lua interpreters | 0 | 0 |
 
-Cold start, warm start, first frame, and seek are **perf gate deferred: host busy**. The host load was 25 on 32 cores from unrelated work for the final run, so the row in `docs/metrics.md` is labelled as not a gate. The numbers it recorded (cold 5.14 ms, warm 4.3 ms, first frame 105 ms, seek 1.07 ms) are far inside the budgets but are not evidence for them.
+Cold start, warm start, first frame, and seek are **perf gate deferred: host busy**. The host load was 25 on 32 cores from unrelated work for the final run, so the row in `docs/metrics.md` is labelled as not a gate. The numbers it recorded (cold 5.14 ms, warm 4.3 ms, first frame 105 ms, seek 1.07 ms) are far inside the budgets but are not evidence for them. That row is the `646198c` build; the published binary adds VA-API (three libraries and the `--hwdec=auto` default). The RSS figure is from the same row.
 
 ### Provenance
 
-- The Linux source set (`wayland_common.c/.h`, `vulkan/context_wayland.c`, `ao_alsa.c`, `als-linux.c`, `language-posix.c`, `timer-linux.c`) comes from mpv v0.41.0 at the pin above.
+- The Linux source set (`video/out/wayland_common.c`, `video/out/wayland_common.h`, `video/out/vulkan/context_wayland.c`, `audio/out/ao_alsa.c`, `osdep/als-linux.c`, `osdep/language-posix.c`, `osdep/timer-linux.c`, `video/out/hwdec/hwdec_vaapi.c`, and `video/filter/vf_vavpp.c`) comes from mpv v0.41.0 at the pin above.
 - `docker/linux/Dockerfile` pins `alpine:edge` by digest. `scripts/build-deps-linux.sh` builds zlib 1.3.2, expat 2.9.0, dav1d 1.5.4, FreeType 2.15.0, FriBiDi 1.0.17, HarfBuzz 15.0.0, fontconfig 2.18.1, shaderc 2026.4, libplacebo 7.387.0, and libass 0.17.5 from SHA-256-pinned sources; FFmpeg n9.0.2 comes from `scripts/build-ffmpeg.sh` with the shared allowlist.
 
 ### Known limits
 
-- musl systems only. A glibc system cannot load the Vulkan, Wayland, xkbcommon, and ALSA libraries. glibc is explicitly out of scope.
+- musl systems only. A glibc system cannot load the Vulkan, Wayland, xkbcommon, ALSA, and libva libraries. glibc is explicitly out of scope.
 - Hardware decode is VA-API only and on by default (`--hwdec=auto`, Linux only); zero-copy import needs a real compositor and is owner-run. No X11, OpenGL, or DRM output.
 - The headless gate uses lavapipe with `--gpu-sw=yes` and `--vulkan-swap-mode=mailbox`. FIFO pacing, fractional scale, real pointer and keyboard input, GPU output, and ALSA hardware are owner-run (`docs/manual-checklist.md`).
 - Linux fixtures match the macOS stream structure; their bytes differ from the macOS ones and between Linux hosts.

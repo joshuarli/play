@@ -30,7 +30,6 @@ The local-only gate creates a hostile temporary `HOME` with `mpv.conf`, `input.c
 ## Removed
 
 - glibc Linux. The Linux build targets x86-64 musl only, and glibc is explicitly out of scope.
-
 - Network and wrapper streams, including HTTP, HTTPS, FTP, SFTP, SSH, RTSP, RTMP, HLS, DASH, SMB, libavformat, AVDevice, Blu-ray, DVD, CDDA, DVB, EDL, memory, `fd`, `slice`, `appending`, `mpv`, `ffmpeg`, `lavf`, `hex`, `null`, and the image-file reader.
 - Disc, external CUE, EDL, libarchive, image-file, `mpv`, null, and raw audio or video demuxers.
 - The yt-dlp hook and the option tables for stream-lavf, raw demuxers, discs, and capture.
@@ -43,7 +42,7 @@ The local-only gate creates a hostile temporary `HOME` with `mpv.conf`, `input.c
 
 ## CLI
 
-Supported: `player FILE...`, `--fullscreen` and `--fs`, `--start`, `--audio-file` and `--audio-files`, `--sub-file` and `--sub-files`, `--version`, `--help`, and the playback, track, and OSD controls used by the OSC and local playback.
+Supported: `player FILE...`, `--fullscreen` and `--fs`, `--start`, `--playlist`, `--audio-file` and `--audio-files`, `--sub-file` and `--sub-files`, `--version`, `--help`, and the playback, track, and OSD controls used by the OSC and local playback.
 
 Removed: `--ytdl*`, `--hls-bitrate`, `--lavfi-complex`, `--stream-dump`, `--stretch-dvd-subs`, the encoding group (`--o`, `--of`, `--ovc`, `--oac`, their option tables, `--orawts`, and metadata flags), the Windows window and capture group, and options for deleted Lua overlay modules. `--http-header-fields` and the other network groups were removed with the network modules.
 
@@ -57,5 +56,4 @@ Removed: `--ytdl*`, `--hls-bitrate`, `--lavfi-complex`, `--stream-dump`, `--stre
 ## Remaining debt
 
 - The UTF-8-only path API.
-- The Rust fullscreen mirror is not updated when the window changes fullscreen.
 - Clipboard support is live although the release report previously described the player as having none. Decide whether to keep it or remove it.

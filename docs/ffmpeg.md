@@ -60,4 +60,4 @@ Current result: 19 passed, 0 failed. A temporary manifest with `http` added to t
 
 ## Release state
 
-The release app bundles the minimal FFmpeg 9.0.2 built from the pinned allowlist. `--list-protocols` reports only `file`; no encoder, muxer, device, network protocol, or external library beyond dav1d is enabled. The app links the pinned closure, not Homebrew, and is measured in `docs/metrics.md`.
+Both release artifacts bundle the minimal FFmpeg 9.0.2 built from the pinned allowlist. `--list-protocols` reports only `file`; no encoder, muxer, device, network protocol, or external library beyond dav1d is enabled. The macOS app links the pinned closure, not Homebrew; sizes are in `docs/metrics.md`.

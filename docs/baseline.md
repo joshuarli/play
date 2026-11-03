@@ -6,7 +6,7 @@ Imported mpv **v0.41.0** at upstream commit `41f6a645068483470267271e1d09966ca3b
 
 FFmpeg pin: **n9.0.2** at upstream commit `ce8f11b9fac4cd7ccfb41ca7c01bc17f5cda8cc3`.
 
-Upstream mpv's `DOCS/` directory is relocated to `doc/` because macOS is case-insensitive and the repository's `docs/` cannot coexist with it. Local references were updated; inherited `.github` workflows still reference `DOCS/` and are not run.
+Upstream mpv's `DOCS/` directory is relocated to `doc/` because macOS is case-insensitive and the repository's `docs/` cannot coexist with it. Local references were updated; inherited `.github` workflows that referenced `DOCS/` were not run.
 
 ## Upstream pins
 
@@ -161,7 +161,7 @@ The release audit checks the final closure and preserves the required notices an
 - Hardware-decoded frames cannot be screenshotted; diagnostics use `--hwdec=no` or `videotoolbox-copy`.
 - `-Dlibmpv=false` still produces `libmpv.2.dylib`; it is not linked and must be excluded from the release.
 - No `timeout` binary is available; the harness uses IPC and process timeouts, terminating at 2 s and killing at 5 s.
-- There is no CI in this repo; gates are local commands in `tests/run.sh` and `scripts/audit.sh`.
+- The baseline had no CI; gates were local commands in `tests/run.sh` and `scripts/audit.sh`. Current workflows build both release artifacts.
 - The stock build had network protocols; the release build does not.
 - FFmpeg n9.0.2's native AV1 decoder is hardware-only; the release uses libdav1d for software AV1.
 - External ASS subtitles require the `ass` demuxer; the MP4 decoder name is `movtext`, not `mov_text`.

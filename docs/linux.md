@@ -1,6 +1,6 @@
 # Linux
 
-Player builds for Linux x86-64 on musl with `vo=gpu-next` over Vulkan and Wayland, ALSA audio, and a mostly static executable. The build host is the Alpine edge image in `docker/linux/Dockerfile`, pinned by digest. `scripts/linux-container.sh COMMAND...` runs a command in that image as the calling user with the repository mounted at `/work`.
+Player builds for Linux x86-64 on musl with `vo=gpu-next` over Vulkan and Wayland, ALSA audio, and a mostly static executable. It is mostly static rather than fully static because a fully static binary cannot load a Vulkan ICD; a `wlshm` fallback was rejected because it has no GPU, HDR, or hardware decode. The build host is the Alpine edge image in `docker/linux/Dockerfile`, pinned by digest. `scripts/linux-container.sh COMMAND...` runs a command in that image as the calling user with the repository mounted at `/work`.
 
 ## Build
 
@@ -8,7 +8,7 @@ Player builds for Linux x86-64 on musl with `vo=gpu-next` over Vulkan and Waylan
 make linux
 ```
 
-runs `scripts/build-deps-linux.sh` and `scripts/release-linux.sh` in the container. Individual steps: `scripts/linux-container.sh scripts/build-linux.sh` writes `build-linux/mpv` and a stripped `dist/player` (about 26 MB), and `scripts/linux-container.sh scripts/audit-linux.sh` checks it. `scripts/linux-container.sh` runs with `seccomp=unconfined` so the local-only gate can create a user and network namespace with `unshare -rn`.
+runs `scripts/build-deps-linux.sh` and `scripts/release-linux.sh` in the container. Individual steps: `scripts/linux-container.sh scripts/build-linux.sh` writes `build-linux/mpv` and a stripped `dist/player` (about 26 MB), and `scripts/linux-container.sh scripts/audit-linux.sh` checks it. `scripts/linux-container.sh` runs with `seccomp=unconfined` and `apparmor=unconfined` so the local-only gate can create a user and network namespace with `unshare -rn`.
 
 ## Dependencies
 
@@ -48,4 +48,4 @@ The VA driver comes from the host, the same way the Vulkan ICD does: `mesa-va-ga
 
 ## Fixtures
 
-`tests/fixtures/gen.sh` generates the 27-file corpus with the image's FFmpeg 9.0.2. Stream structure matches `tests/fixtures/manifest.json` exactly. The external encoders choose threads and SIMD paths from the host at run time, so their bytes differ from the macOS Homebrew ones and between Linux hosts; the gate compares structure only on Linux. Byte hashes are checked on macOS against the tracked manifest. After an intended structural change, review the drift and run `tests/fixtures/gen.sh --write-manifest`.
+`tests/fixtures/gen.sh` generates the corpus with the image's FFmpeg 9.0.2; `tests/fixtures/manifest.json` lists the files. Stream structure matches the manifest exactly. The external encoders choose threads and SIMD paths from the host at run time, so their bytes differ from the macOS Homebrew ones and between Linux hosts; the gate compares structure only on Linux. Byte hashes are checked on macOS against the tracked manifest. After an intended structural change, review the drift and run `tests/fixtures/gen.sh --write-manifest`.

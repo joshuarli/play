@@ -1471,7 +1471,7 @@ def gate_baseline_docs(results, args):
 
 def gate_meta(results, args):
     required_paths = [
-        "PLAN.md", "docs/baseline.md", "docs/metrics.md", "docs/manual-checklist.md",
+        "docs/baseline.md", "docs/metrics.md", "docs/manual-checklist.md",
         "docs/ffmpeg.md", "docs/architecture.md", "docs/licenses.md", "docs/scope.md",
         "scripts/build.sh", "scripts/dev-deps.sh",
         "scripts/build-ffmpeg.sh", "scripts/measure.sh",

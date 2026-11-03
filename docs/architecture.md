@@ -41,7 +41,7 @@ FFmpeg demuxes every container and decodes video. VideoToolbox is the hardware p
 - Errors are typed where the ABI defines an enum. The command check returns an error string and `-1`; audio create and decode return a `player_audio_status` value.
 - No Rust unwind may cross the ABI. `player-ffi` wraps the boundary entry points in `catch_unwind`; the state, playlist, and local-file entry points currently rely on their code not panicking. `player-audio` wraps every entry point.
 - The audio decoder handle is not thread-safe. The caller serializes access. There are no shared mutable globals.
-- The Lua backend and the audio bridge are the only Rust code with `unsafe`; every block states its safety argument.
+- `rust/player-ffi` and `rust/player-audio` are the only crates with `unsafe`; every block states its safety argument.
 
 ## Script host
 
@@ -70,12 +70,12 @@ Linux x86-64 musl uses the same pipeline, Rust plane, and Lua host as macOS. The
 |---|---|---|
 | Video | `gpu-next`, Vulkan over MoltenVK, Cocoa | `gpu-next`, Vulkan, Wayland (`--gpu-context=waylandvk`) |
 | Audio | CoreAudio | ALSA |
-| Rust link | `libplayer_release.dylib` | `libplayer_ffi.a` and `libplayer_audio.a` |
+| Rust link | `libplayer_release.dylib` | one `libplayer_release.a` staticlib |
 | Build | `scripts/build.sh`, `scripts/release.sh` | `scripts/build-linux.sh` |
 
-Files restored from the mpv v0.41.0 pin (`41f6a645068483470267271e1d09966ca3b9f413`) with headers intact: `video/out/wayland_common.c`, `video/out/wayland_common.h`, `video/out/vulkan/context_wayland.c`, `audio/out/ao_alsa.c`, `osdep/als-linux.c`, `osdep/language-posix.c`, and `osdep/timer-linux.c`, `video/out/hwdec/hwdec_vaapi.c`, and `video/filter/vf_vavpp.c`. `audio/out/ao.c` registers `alsa` under `HAVE_ALSA`.
+Files restored from the mpv v0.41.0 pin (`41f6a645068483470267271e1d09966ca3b9f413`) with headers intact: `video/out/wayland_common.c`, `video/out/wayland_common.h`, `video/out/vulkan/context_wayland.c`, `audio/out/ao_alsa.c`, `osdep/als-linux.c`, `osdep/language-posix.c`, `osdep/timer-linux.c`, `video/out/hwdec/hwdec_vaapi.c`, and `video/filter/vf_vavpp.c`. `audio/out/ao.c` registers `alsa` under `HAVE_ALSA`.
 
-`scripts/build-linux.sh` links the static prefix from `scripts/build-deps-linux.sh` and disables `libavdevice`; the local-only player has no capture devices. The Rust bridges link as one `libplayer_release.a` built with `--crate-type staticlib`, so the binary has one Rust runtime. The executable needs only musl, `libvulkan.so.1`, `libwayland-client.so.0`, `libwayland-cursor.so.0`, `libxkbcommon.so.0`, `libasound.so.2`, `libva.so.2`, `libva-drm.so.2`, and `libva-wayland.so.2`, and `scripts/audit-linux.sh` enforces that set. VA-API hardware decode is opt-in: `hwdec_vaapi.c` exports a surface as a dmabuf and `dmabuf_interop_pl.c` imports it into Vulkan; the VA display comes from the Wayland connection, or from a DRM render node for `vaapi-copy`. `meson.build` no longer requires mpv's `drm` feature for `vaapi-drm`; that feature, with its VO, stays off. Remaining Linux gaps: fractional scale, FIFO pacing, real input, and audible output are owner-run (`docs/manual-checklist.md`); there is no hardware decode other than VA-API, no glibc build, and no system-font fallback beyond fontconfig and the installed fonts.
+`scripts/build-linux.sh` links the static prefix from `scripts/build-deps-linux.sh` and disables `libavdevice`; the local-only player has no capture devices. The Rust bridges link as one `libplayer_release.a` built with `--crate-type staticlib`, so the binary has one Rust runtime. The executable needs only musl, `libvulkan.so.1`, `libwayland-client.so.0`, `libwayland-cursor.so.0`, `libxkbcommon.so.0`, `libasound.so.2`, `libva.so.2`, `libva-drm.so.2`, and `libva-wayland.so.2`, and `scripts/audit-linux.sh` enforces that set. VA-API hardware decode is on by default (`--hwdec=auto`); `docs/linux.md` covers the methods and drivers. mpv's `drm` feature stays off; `vaapi-drm` needs only `libva-drm` for `vaapi-copy`. Remaining Linux gaps: fractional scale, FIFO pacing, real input, and audible output are owner-run (`docs/manual-checklist.md`); there is no hardware decode other than VA-API, no glibc build, and no system-font fallback beyond fontconfig and the installed fonts.
 
 ## Provenance
 
@@ -86,4 +86,4 @@ Files restored from the mpv v0.41.0 pin (`41f6a645068483470267271e1d09966ca3b9f4
 
 ## Follow-on
 
-The A/V scheduler, general demux and decode orchestration beyond the Symphonia audio bridge, and renderer integration remain outside this scope. The Linux x86-64 musl gpu-next build is the active campaign (`PLAN.md`). A network capability, a second Lua interpreter, or automatic user config and scripts would need an explicit decision.
+The A/V scheduler, general demux and decode orchestration beyond the Symphonia audio bridge, and renderer integration remain outside this scope. Follow-on work is aarch64 Linux, HDR output, and a fully static musl `wlshm` fallback. A network capability, a second Lua interpreter, or automatic user config and scripts would need an explicit decision.

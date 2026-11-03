@@ -4,7 +4,7 @@ Player is a local-only media player. The macOS release artifact is `dist/Player.
 
 ## Current state
 
-- The app was rebuilt at `cbb4ec2`, and the full verification was re-run on the macOS host after the Linux campaign.
+- The app was rebuilt at `cbb4ec2` and fully re-verified on the macOS host after the Linux work.
 - `tests/run.sh suite`: 303 passed, 0 failed. The run includes the release gate.
 - `scripts/audit.sh`: ok.
 - `scripts/measure.sh final`: ok at `cbb4ec2`; the host was quiet before and after the run.
@@ -34,12 +34,3 @@ Player is a local-only media player. The macOS release artifact is `dist/Player.
 - `tests/run.sh linux-vaapi` (needs a GPU render node, not part of `suite`): passes on an AMD Raphael iGPU for h264, hevc, vp9, and av1 with `vaapi-copy`.
 - Fixtures match the tracked stream structure; their bytes differ from macOS and between Linux hosts because the encoders select threads and SIMD paths at run time.
 - Measurements are in `docs/metrics.md`; the runtime set, headless gates, and fixtures are in `docs/linux.md`.
-
-## Evidence
-
-- `docs/final-report.md`: release outcome, provenance, and limits.
-- `docs/metrics.md`: measurement history and budget results.
-- `docs/repo-audit.md`: security, license, and complexity audit.
-- `TODO.md`: open defects and their fixes.
-
-First command: `tests/run.sh suite && scripts/audit.sh`.

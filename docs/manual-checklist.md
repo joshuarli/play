@@ -1,6 +1,6 @@
 # Manual checklist
 
-Owner-run checks at each milestone and before release. Automated gates are headless; these checks need a window, speakers, or real input devices. Run `scripts/manual-checklist.sh --fixture-dir .work/fixtures` for the dev build, or `scripts/manual-checklist.sh --fixture-dir .work/fixtures --release` for the shipped app at `dist/Player.app/Contents/MacOS/player`, or `scripts/manual-checklist.sh --fixture-dir .work/fixtures --release-linux` for `dist/player` on Linux. Do not treat these as automated gates.
+Owner-run checks before a release and after a platform change. Automated gates are headless; these checks need a window, speakers, or real input devices. Run `scripts/manual-checklist.sh --fixture-dir .work/fixtures` for the dev build, or `scripts/manual-checklist.sh --fixture-dir .work/fixtures --release` for the shipped app at `dist/Player.app/Contents/MacOS/player`, or `scripts/manual-checklist.sh --fixture-dir .work/fixtures --release-linux` for `dist/player` on Linux. Do not treat these as automated gates.
 
 | Area | Check | Result |
 |---|---|---|

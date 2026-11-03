@@ -1,6 +1,6 @@
 # Release licenses
 
-The release app is assembled from the pinned sources in `scripts/build-deps.sh`. Build tools (CMake, Meson, Ninja, Python, glad2, Jinja2, MarkupSafe) are not shipped.
+The macOS release app is assembled from the pinned sources in `scripts/build-deps.sh`. Build tools (CMake, Meson, Ninja, Python, glad2, Jinja2, MarkupSafe) are not shipped.
 
 | Component | Version | License |
 | --- | --- | --- |

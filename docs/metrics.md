@@ -1,6 +1,6 @@
 # Metrics
 
-Automated playback is headless (`--vo=null --ao=null`), so GUI and renderer behavior is owner-run. Rows before 2026-11-02 are medians of three runs; later rows are medians of seven, with the spread kept in `.work/tmp/measure-LABEL.json`. RSS and CPU come from `/usr/bin/time -l`; the measurement fixtures are generated in `.work/fixtures/measure`. Revisions before `campaign-base` are pre-consolidation commits that no longer exist.
+Automated playback is headless (`--vo=null --ao=null`), so GUI and renderer behavior is owner-run. Rows are medians of seven runs, except the earliest rows, which predate the seven-run method and are medians of three. The spread is kept in `.work/tmp/measure-LABEL.json`. RSS and CPU come from `/usr/bin/time -l`; the measurement fixtures are generated in `.work/fixtures/measure`. Revisions before `campaign-base` are pre-consolidation commits that no longer exist.
 
 ## Measurement history
 
@@ -92,3 +92,5 @@ Medians of 7 runs with the spread (max − min). `scripts/measure-linux.sh`; col
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | baseline | 2026-11-01 | 2681555-dirty | 6,643,680 | 18 | 62.3 ± 60.95 | 62.5 ± 6.16 | 187.43 ± 45.29 | 39.6 | 156.33 | 0.57 | 1.65 ± 35.14 | 11.42 ± 1.37 | 1 |
 | final (host busy: timings are not a gate) | 2026-11-01 | 646198c | 26,355,208 | 6 | 5.14 ± 1.53 | 4.3 ± 1.53 | 105.41 ± 48.74 | 15.7 | 128.94 | 0.36 | 1.07 ± 30.4 | 2.6 ± 1.67 | 1 |
+
+The published v0.41.0 tarball adds VA-API (three libraries and the `--hwdec=auto` default) to the `646198c` build: its stripped binary is 26,465,800 B with nine `NEEDED` entries. Its timings are the deferred ones above, not a gate.

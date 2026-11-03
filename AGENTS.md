@@ -9,7 +9,7 @@ Player is a local-only media player built on the mpv v0.41.0 playback pipeline, 
 - `scripts/audit.sh` runs the FFmpeg manifest, build-surface, and local-only audits.
 - `scripts/build-deps.sh` builds the pinned release dependency closure under `.work/deps/release`.
 - `scripts/release.sh` builds and bundles `dist/Player.app`.
-- `make install` runs that build and copies the app to `~/Applications`.
+- `make install` copies the macOS app to `~/Applications` or the Linux binary to `~/.local/bin`.
 - `scripts/measure.sh final` checks the release budgets.
 - `make linux` builds the Linux dependency prefix and tarball in the pinned Alpine image; `scripts/linux-container.sh COMMAND` runs any command there, such as `tests/run.sh suite` or `scripts/audit-linux.sh`.
 - `cargo test --manifest-path rust/Cargo.toml` runs the Rust tests.
@@ -27,17 +27,17 @@ Player is a local-only media player built on the mpv v0.41.0 playback pipeline, 
 
 ## Documents
 
-- `docs/install.md`: build, run, and owner checks.
-- `docs/linux.md`: Linux runtime set, container, headless gates, ALSA, fixtures.
-- `docs/architecture.md`: ownership boundaries, FFI, script host, renderer, release closure.
-- `docs/scope.md`: retained and removed input surfaces, CLI, local-only boundary, debt.
-- `docs/ffmpeg.md`: FFmpeg pin, allowlist, manifest gate.
-- `docs/metrics.md`: measured baseline and release numbers.
-- `docs/baseline.md`: P0 baseline record.
-- `docs/status.md`: current state and evidence.
-- `docs/final-report.md`: release outcome and known limits.
-- `docs/licenses.md`: shipped licenses.
-- `docs/manual-checklist.md`: owner-run visual and audio checks.
-- `docs/lua-api.md`: generated Lua API audit.
-- `docs/repo-audit.md`: dated security, license, and complexity evidence.
-- `PLAN.md`: Linux x86-64 musl gpu-next campaign record.
+- [docs/install.md](docs/install.md): build, run, release artifacts, and owner checks.
+- [docs/linux.md](docs/linux.md): Linux runtime set, container, headless gates, ALSA, fixtures.
+- [docs/architecture.md](docs/architecture.md): ownership boundaries, FFI, script host, renderer, release closure.
+- [docs/scope.md](docs/scope.md): input boundary, retained and removed modules, CLI, debt.
+- [docs/ffmpeg.md](docs/ffmpeg.md): FFmpeg pin, allowlist, manifest gate.
+- [docs/metrics.md](docs/metrics.md): measurement history and release budgets.
+- [docs/status.md](docs/status.md): current state and evidence.
+- [docs/final-report.md](docs/final-report.md): release outcome and known limits.
+- [docs/baseline.md](docs/baseline.md): P0 baseline record.
+- [docs/repo-audit.md](docs/repo-audit.md): dated security, license, and complexity audit.
+- [docs/licenses.md](docs/licenses.md): shipped licenses.
+- [docs/manual-checklist.md](docs/manual-checklist.md): owner-run visual and audio checks.
+- [docs/lua-api.md](docs/lua-api.md): generated Lua API closure.
+- [TODO.md](TODO.md): open work.
