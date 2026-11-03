@@ -10,6 +10,11 @@ use player_lua::{
     ScriptModule, SHUTDOWN_TIMEOUT,
 };
 
+use crate::mpv::{
+    MpvEvent, MpvHandle, mpv_command, mpv_error_string, mpv_free, mpv_get_property,
+    mpv_wait_event,
+};
+
 const MPV_FORMAT_NONE: c_int = 0;
 const MPV_FORMAT_STRING: c_int = 1;
 const MPV_FORMAT_OSD_STRING: c_int = 2;
@@ -37,11 +42,6 @@ const ASSDRAW: &str = include_str!("../../../player/lua/assdraw.lua");
 const OPTIONS: &str = include_str!("../../../player/lua/options.lua");
 const INPUT: &str = include_str!("../../../player/lua/input.lua");
 const OSC: &str = include_str!("../../../player/lua/osc.lua");
-
-#[repr(C)]
-pub struct MpvHandle {
-    _private: [u8; 0],
-}
 
 #[repr(C)]
 pub union MpvNodeValue {
@@ -73,14 +73,6 @@ pub struct MpvByteArray {
 }
 
 #[repr(C)]
-pub struct MpvEvent {
-    pub event_id: c_int,
-    pub error: c_int,
-    pub reply_userdata: u64,
-    pub data: *mut c_void,
-}
-
-#[repr(C)]
 #[derive(Clone, Copy)]
 pub struct PlayerLuaCallbacks {
     pub ctx: *mut c_void,
@@ -95,14 +87,7 @@ pub struct PlayerLuaCallbacks {
 
 unsafe extern "C" {
     fn mpv_command_string(ctx: *mut MpvHandle, args: *const c_char) -> c_int;
-    fn mpv_command(ctx: *mut MpvHandle, args: *const *const c_char) -> c_int;
     fn mpv_command_node(ctx: *mut MpvHandle, args: *mut MpvNode, result: *mut MpvNode) -> c_int;
-    fn mpv_get_property(
-        ctx: *mut MpvHandle,
-        name: *const c_char,
-        format: c_int,
-        data: *mut c_void,
-    ) -> c_int;
     fn mpv_set_property(
         ctx: *mut MpvHandle,
         name: *const c_char,
@@ -119,11 +104,8 @@ unsafe extern "C" {
     fn mpv_unobserve_property(ctx: *mut MpvHandle, registered: u64) -> c_int;
     fn mpv_request_event(ctx: *mut MpvHandle, event: c_int, enable: c_int) -> c_int;
     fn mpv_event_name(event: c_int) -> *const c_char;
-    fn mpv_error_string(error: c_int) -> *const c_char;
-    fn mpv_wait_event(ctx: *mut MpvHandle, timeout: f64) -> *mut MpvEvent;
     fn mpv_event_to_node(dst: *mut MpvNode, event: *mut MpvEvent) -> c_int;
     fn mpv_free_node_contents(node: *mut MpvNode);
-    fn mpv_free(data: *mut c_void);
 }
 
 impl MpvNode {

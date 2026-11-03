@@ -68,6 +68,24 @@ ff "${audio3[@]}" -ac 2 -c:a libopus -b:a 96k -f ogg "$FIXTURES/audio-ogg.ogg"
 ff "${audio3[@]}" -ac 2 -c:a alac -f ipod "$FIXTURES/audio-alac.m4a"
 
 ff "${audio3[@]}" -ac 1 -c:a pcm_s16le "$FIXTURES/audio-mono.wav"
+cover="$TMP/tui-cover.png"
+cover_audio="$TMP/tui-cover-audio.flac"
+ff -f lavfi -i "color=c=#ff966a:s=64x64:d=1" -frames:v 1 "$cover"
+ff "${audio3[@]}" -ac 2 -c:a flac "$cover_audio"
+ff -i "$cover_audio" -i "$cover" -map 0:a -map 1:v \
+    -c:a copy -c:v copy -disposition:v attached_pic \
+    -metadata title="Paper Satellites" -metadata artist="Mira Vale" \
+    -metadata album="Low Light" -metadata date="2026" -metadata track="2/12" \
+    "$FIXTURES/audio-cover.flac"
+
+cover_jpeg="$TMP/tui-cover.jpg"
+ff -f lavfi -i "color=c=#4a90d9:s=64x64:d=1" -frames:v 1 -c:v mjpeg -q:v 2 "$cover_jpeg"
+ff -i "$FIXTURES/audio-mp3.mp3" -i "$cover_jpeg" -map 0:a -map 1:v \
+    -c:a copy -c:v copy -disposition:v attached_pic \
+    -metadata title="Blue Hours" -metadata artist="Mira Vale" \
+    -metadata album="Low Light" -metadata date="2026" -metadata track="3/12" \
+    "$FIXTURES/audio-cover-jpeg.mp3"
+
 ff "${audio3[@]}" -ac 6 -channel_layout 5.1 -c:a pcm_s16le "$FIXTURES/surround51.wav"
 
 ff "${video3[@]}" "${audio3[@]}" -f lavfi -i "sine=frequency=660:sample_rate=48000:duration=3" \
@@ -198,6 +216,10 @@ entries = {
                   "video": [], "audio": ["opus"], "subtitle": [], "channels": [2]},
     "audio-alac": {"path": "audio-alac.m4a", "role": "corpus", "duration": 3,
                    "video": [], "audio": ["alac"], "subtitle": [], "channels": [2]},
+    "audio-cover": {"path": "audio-cover.flac", "role": "cover", "duration": 3,
+                    "video": ["png"], "audio": ["flac"], "subtitle": [], "channels": [2]},
+    "audio-cover-jpeg": {"path": "audio-cover-jpeg.mp3", "role": "cover", "duration": 3,
+                         "video": ["mjpeg"], "audio": ["mp3"], "subtitle": [], "channels": [2]},
     "multiaudio": {"path": "multiaudio.mkv", "role": "corpus", "duration": 3,
                    "video": ["h264"], "audio": ["aac", "opus"], "subtitle": [],
                    "channels": [2, 2]},

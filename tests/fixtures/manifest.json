@@ -15,6 +15,40 @@
       "subtitle": [],
       "video": []
     },
+    "audio-cover": {
+      "audio": [
+        "flac"
+      ],
+      "bytes": 58650,
+      "channels": [
+        2
+      ],
+      "duration": 3,
+      "path": "audio-cover.flac",
+      "role": "cover",
+      "sha256": "8642c6f30aeee87c4c1e4a1e678b6132d71ed5b36193f799777373c36baaab9e",
+      "subtitle": [],
+      "video": [
+        "png"
+      ]
+    },
+    "audio-cover-jpeg": {
+      "audio": [
+        "mp3"
+      ],
+      "bytes": 49154,
+      "channels": [
+        2
+      ],
+      "duration": 3,
+      "path": "audio-cover-jpeg.mp3",
+      "role": "cover",
+      "sha256": "c8070fc953d60eabbd99da426e94b0c4295403c61537e15e1fff52a37223983e",
+      "subtitle": [],
+      "video": [
+        "mjpeg"
+      ]
+    },
     "audio-flac": {
       "audio": [
         "flac"

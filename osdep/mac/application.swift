@@ -21,6 +21,22 @@ class Application: NSApplication, NSApplicationDelegate {
     var appHub: AppHub { return AppHub.shared }
     var eventManager: NSAppleEventManager { return NSAppleEventManager.shared() }
     var playbackThreadId: mp_thread!
+    var isTui: Bool {
+        var enabled = false
+        for argument in CommandLine.arguments.dropFirst() {
+            switch argument {
+            case "--tui", "--tui=yes", "--tui=true", "--tui=1":
+                enabled = true
+            case "--no-tui", "--tui=no", "--tui=false", "--tui=0":
+                enabled = false
+            case "--":
+                return enabled
+            default:
+                break
+            }
+        }
+        return enabled
+    }
     var argc: Int32?
     var argv: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
 
@@ -90,7 +106,7 @@ class Application: NSApplication, NSApplicationDelegate {
         let application: Application = TypeHelper.bridge(ptr: ptr)
         mp_thread_set_name("core/playback")
         let exitCode: Int32 = mpv_main(application.argc ?? 1, application.argv)
-        if (exitCode == 2 || exitCode == 3) && AppHub.shared.isBundle {
+        if (exitCode == 2 || exitCode == 3) && AppHub.shared.isBundle && !application.isTui {
             DispatchQueue.main.sync {
                 NSApp.activate(ignoringOtherApps: true)
                 let alert = NSAlert()
@@ -111,7 +127,7 @@ class Application: NSApplication, NSApplicationDelegate {
 
         NSApp = self
         NSApp.delegate = self
-        NSApp.setActivationPolicy(appHub.isBundle ? .regular : .accessory)
+        NSApp.setActivationPolicy(isTui ? .prohibited : (appHub.isBundle ? .regular : .accessory))
         setupBundle()
         pthread_create(&playbackThreadId, nil, playbackThread, TypeHelper.bridge(obj: self))
         appHub.input.wait()

@@ -42,6 +42,7 @@
 #include "common/codecs.h"
 #include "common/encode.h"
 #include "options/m_config.h"
+#include "options/m_config_frontend.h"
 #include "options/m_option.h"
 #include "options/m_property.h"
 #include "common/common.h"
@@ -71,6 +72,7 @@
 #include "player_state.h"
 #include "command.h"
 #include "screenshot.h"
+#include "tui.h"
 
 static const char def_config[] =
 #include "etc/builtin.conf.inc"
@@ -108,6 +110,7 @@ const char mp_help_text[] =
 " --no-audio        do not play sound\n"
 " --no-video        do not play video\n"
 " --fs              fullscreen playback\n"
+" --tui             play audio in the terminal\n"
 " --sub-file=<file> specify subtitle file to use\n"
 " --playlist=<file> specify playlist file\n"
 "\n"
@@ -365,6 +368,12 @@ static void startup_set_fullscreen(void *p, int value)
     ctx->mpctx->opts->vo->fullscreen = value != 0;
 }
 
+static void startup_set_tui(void *p, int value)
+{
+    struct startup_ctx *ctx = p;
+    ctx->mpctx->tui = value != 0;
+}
+
 static void startup_set_start(void *p, int type, double pos)
 {
     struct startup_ctx *ctx = p;
@@ -414,6 +423,22 @@ static void startup_add_remaining(void *p, const char *arg)
     ctx->remaining[ctx->num_remaining] = NULL;
 }
 
+static bool startup_requests_tui(char **options)
+{
+    bool tui = false;
+    for (int index = 0; options && options[index]; index++) {
+        if (!strcmp(options[index], "--"))
+            break;
+        if (!strcmp(options[index], "--tui") || !strcmp(options[index], "--tui=yes") ||
+            !strcmp(options[index], "--tui=true") || !strcmp(options[index], "--tui=1"))
+            tui = true;
+        else if (!strcmp(options[index], "--no-tui") || !strcmp(options[index], "--tui=no") ||
+                 !strcmp(options[index], "--tui=false") || !strcmp(options[index], "--tui=0"))
+            tui = false;
+    }
+    return tui;
+}
+
 static int mp_parse_startup(struct MPContext *mpctx, char **options)
 {
     void *tmp = talloc_new(NULL);
@@ -426,6 +451,7 @@ static int mp_parse_startup(struct MPContext *mpctx, char **options)
         .add_file = startup_add_file,
         .add_playlist = startup_add_playlist,
         .set_fullscreen = startup_set_fullscreen,
+        .set_tui = startup_set_tui,
         .set_start = startup_set_start,
         .append_path = startup_append_path,
         .set_paths = startup_set_paths,
@@ -441,6 +467,13 @@ static int mp_parse_startup(struct MPContext *mpctx, char **options)
                  err[0] ? err : "unknown error");
         talloc_free(tmp);
         return -1;
+    }
+    if (mpctx->tui) {
+        startup_add_remaining(&ctx, "--terminal=no");
+        startup_add_remaining(&ctx, "--input-terminal=no");
+        startup_add_remaining(&ctx, "--vo=null");
+        startup_add_remaining(&ctx, "--force-window=no");
+        startup_add_remaining(&ctx, "--osc=no");
     }
     if (ctx.num_remaining) {
         int r = m_config_parse_mp_command_line(mpctx->mconfig, mpctx->playlist,
@@ -470,6 +503,10 @@ int mp_initialize(struct MPContext *mpctx, char **options)
         m_config_preparse_command_line(mpctx->mconfig, mpctx->global,
                                        &opts->verbose, options);
     }
+    if (options && startup_requests_tui(options)) {
+        opts->use_terminal = false;
+        opts->consolecontrols = false;
+    }
 
     mp_init_paths(mpctx->global, opts);
     mp_msg_set_early_logging(mpctx->global, true);
@@ -491,6 +528,16 @@ int mp_initialize(struct MPContext *mpctx, char **options)
         int r = mp_parse_startup(mpctx, options);
         if (r)
             return r;
+    }
+
+    if (mpctx->tui) {
+        opts->use_terminal = false;
+        opts->consolecontrols = false;
+        opts->lua_load_osc = false;
+        opts->force_vo = 0;
+        if (m_config_set_option_cli(mpctx->mconfig, bstr0("vo"), bstr0("null"), 0) < 0 ||
+            m_config_set_option_cli(mpctx->mconfig, bstr0("force-window"), bstr0("no"), 0) < 0)
+            return -1;
     }
 
     if (opts->operation_mode == 1) {
@@ -572,6 +619,9 @@ int mp_initialize(struct MPContext *mpctx, char **options)
     // Needed to properly enter _initial_ idle mode if playlist empty.
     if (mpctx->opts->player_idle_mode && !playlist_entry_count(mpctx->playlist))
         mpctx->stop_play = PT_STOP;
+
+    if (mpctx->tui && tui_start(mpctx) < 0)
+        return -1;
 
     MP_STATS(mpctx, "end init");
 

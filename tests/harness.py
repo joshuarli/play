@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
+import fcntl
 import hashlib
 import json
 import os
 import plistlib
+import pty
 import re
+import select
 import shutil
 import signal
 import socket
+import struct
 import subprocess
 import sys
+import termios
 import threading
 import time
 import traceback
@@ -435,6 +440,195 @@ def gate_fixtures(results, args):
     if not linux:
         results.check(f"fixtures: {len(seen)} file hashes", not hash_errors,
                       f"mismatch: {', '.join(hash_errors[:5])}")
+
+
+ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+
+
+def pty_session(args, env_extra=None, cols=110, rows=34, wait_for=b"", timeout=12):
+    master, slave = pty.openpty()
+    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+    env = os.environ.copy()
+    env.pop("TMUX", None)
+    env.update({"TERM": "xterm-256color", "COLORTERM": "truecolor"})
+    if env_extra:
+        env.update(env_extra)
+    proc = subprocess.Popen(
+        [str(MPV), *[str(arg) for arg in args]],
+        stdin=slave, stdout=slave, stderr=subprocess.PIPE, env=env,
+        close_fds=True,
+    )
+    os.close(slave)
+    buf = bytearray()
+    deadline = time.monotonic() + timeout
+    try:
+        while time.monotonic() < deadline:
+            if wait_for and wait_for in buf:
+                break
+            ready, _, _ = select.select([master], [], [], 0.1)
+            if ready:
+                try:
+                    chunk = os.read(master, 262144)
+                except OSError:
+                    break
+                if not chunk:
+                    break
+                buf.extend(chunk)
+            if proc.poll() is not None:
+                break
+        return proc, master, buf
+    except Exception:
+        proc.kill()
+        proc.wait(timeout=5)
+        os.close(master)
+        raise
+
+
+def pty_finish(proc, master, buf, keys=b"q", timeout=6):
+    try:
+        os.write(master, keys)
+    except OSError:
+        pass
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        ready, _, _ = select.select([master], [], [], 0.1)
+        if ready:
+            try:
+                chunk = os.read(master, 262144)
+            except OSError:
+                break
+            if not chunk:
+                break
+            buf.extend(chunk)
+        if proc.poll() is not None:
+            break
+    if proc.poll() is None:
+        proc.kill()
+    proc.wait(timeout=5)
+    stderr = proc.stderr.read().decode("utf-8", "replace")
+    proc.stderr.close()
+    os.close(master)
+    return bytes(buf), stderr
+
+
+def gate_tui(results, args):
+    entry = fixture_entry("audio-cover")
+    path = fixture_path(entry)
+    log = TMP / f"tui-{os.getpid()}-{uuid.uuid4().hex}.log"
+    log.unlink(missing_ok=True)
+    proc = None
+    master = None
+    try:
+        proc, master, buf = pty_session(
+            ["--no-config", "--tui", "--ao=null", "--volume=0", "--pause=yes",
+             f"--log-file={log}", str(path)],
+            env_extra={"PLAYER_TUI_ART": "blocks"},
+            wait_for=b"Paper Satellites",
+        )
+        results.check("tui: metadata rendered", b"Paper Satellites" in buf)
+        results.check("tui: alternate screen", b"\x1b[?1049h" in buf)
+        # Give the cover decode and the next frame time to arrive.
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline and b"\xe2\x96\x80" not in buf:
+            ready, _, _ = select.select([master], [], [], 0.1)
+            if ready:
+                try:
+                    buf.extend(os.read(master, 262144))
+                except OSError:
+                    break
+        results.check("tui: half-block cover art", b"\xe2\x96\x80" in buf,
+                      ANSI_RE.sub("", bytes(buf).decode("utf-8", "replace"))[-400:])
+        buf, stderr = pty_finish(proc, master, buf)
+        master = None
+        results.check("tui: restored the screen", b"\x1b[?1049l" in buf)
+        results.check("tui: clean exit", proc.returncode == 0,
+                      f"exit {proc.returncode}: {stderr[-300:]}")
+        if log.exists():
+            text = log.read_text(errors="replace")
+            results.check("tui: null video output", "VO: [null]" in text,
+                          text[-400:])
+            results.check("tui: no GPU output", "gpu-next" not in text)
+        else:
+            results.check("tui: null video output", False, "missing log file")
+    except Exception as exc:
+        results.check("tui", False, str(exc))
+    finally:
+        if proc is not None and proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=5)
+        if master is not None:
+            try:
+                os.close(master)
+            except OSError:
+                pass
+
+    not_terminal = subprocess.run(
+        [str(MPV), "--no-config", "--tui", "--ao=null", str(path)],
+        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, timeout=15,
+    )
+    results.check("tui: rejects a non-terminal", not_terminal.returncode != 0 and
+                  "interactive terminal" in not_terminal.stdout, not_terminal.stdout[-300:])
+
+    proc = None
+    master = None
+    try:
+        proc, master, buf = pty_session(
+            ["--no-config", "--tui", "--ao=null", "--volume=0", "--pause=yes", str(path)],
+            env_extra={"PLAYER_TUI_ART": "blocks"},
+            wait_for=b"Paper Satellites",
+        )
+        os.kill(proc.pid, signal.SIGTERM)
+        buf, stderr = pty_finish(proc, master, buf, keys=b"")
+        master = None
+        results.check("tui: signal restores the screen", b"\x1b[?1049l" in buf)
+        results.check("tui: signal exit", proc.returncode == 0,
+                      f"exit {proc.returncode}: {stderr[-300:]}")
+    except Exception as exc:
+        results.check("tui: signal", False, str(exc))
+    finally:
+        if proc is not None and proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=5)
+        if master is not None:
+            try:
+                os.close(master)
+            except OSError:
+                pass
+
+    # Kitty transfer is not decoded here; the test only checks the protocol bytes.
+    proc = None
+    master = None
+    try:
+        proc, master, buf = pty_session(
+            ["--no-config", "--tui", "--ao=null", "--volume=0", "--pause=yes", str(path)],
+            env_extra={"PLAYER_TUI_ART": "kitty"},
+            wait_for=b"Paper Satellites",
+        )
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline and b"\x1b_G" not in buf:
+            ready, _, _ = select.select([master], [], [], 0.1)
+            if ready:
+                try:
+                    buf.extend(os.read(master, 262144))
+                except OSError:
+                    break
+        results.check("tui: kitty transfer", b"\x1b_G" in buf and b"f=24" in buf)
+        buf, stderr = pty_finish(proc, master, buf)
+        master = None
+        results.check("tui: kitty clean exit", proc.returncode == 0,
+                      f"exit {proc.returncode}: {stderr[-300:]}")
+    except Exception as exc:
+        results.check("tui: kitty", False, str(exc))
+    finally:
+        if proc is not None and proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=5)
+        if master is not None:
+            try:
+                os.close(master)
+            except OSError:
+                pass
 
 
 def gate_play(results, args):
@@ -1797,6 +1991,7 @@ GATES = {
     "ffi": gate_ffi,
     "lua-host": gate_lua_host,
     "lua-api-audit": gate_lua_api_audit,
+    "tui": gate_tui,
     "baseline-docs": gate_baseline_docs,
     "meta": gate_meta,
     "release": gate_release,
@@ -1808,14 +2003,14 @@ SUITE = [
     "local-only", "osc", "osc-input", "input", "playlist", "cli", "state", "failures",
     "rust-link", "ffi",
     "lua-host",
-    "lua-api-audit", "release",
+    "lua-api-audit", "tui", "release",
 ]
 
 
 LINUX_SUITE = [
     "fixtures", "linux-corpus", "linux-audio", "linux-gpu-next", "linux-local-only", "linux-osc",
     "linux-mostly-static", "linux-hwdec-default", "local-paths", "seek", "input", "playlist", "cli", "state",
-    "failures", "lua-host", "lua-api-audit", "linux-rust-link",
+    "failures", "lua-host", "lua-api-audit", "tui", "linux-rust-link",
 ]
 
 

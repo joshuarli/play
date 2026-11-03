@@ -6,6 +6,8 @@ use player_core::input::{classify_input, InputError, InputPath};
 mod command;
 mod local_file;
 mod lua;
+mod mpv;
+mod tui;
 mod playlist;
 mod state;
 mod startup;

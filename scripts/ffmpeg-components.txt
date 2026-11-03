@@ -1,5 +1,5 @@
 demuxers: mov matroska avi mp3 flac wav ogg srt webvtt ass
-video_decoders: h264 hevc libdav1d vp9 mpeg4
+video_decoders: h264 hevc libdav1d vp9 mpeg4 png mjpeg
 subtitle_decoders: subrip ass webvtt movtext
 parsers: h264 hevc av1 vp9 mpeg4video aac mpegaudio opus vorbis flac
 bsfs: h264_mp4toannexb hevc_mp4toannexb vp9_superframe aac_adtstoasc extract_extradata null

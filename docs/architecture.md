@@ -7,6 +7,7 @@ Player is one process: the retained mpv playback pipeline in C, a Rust control p
 - **C:** playback loop, demux and decode pipeline, filters, subtitles, video output (`gpu-next` over libplacebo, Vulkan, and MoltenVK), CoreAudio, Cocoa platform glue, client event delivery, track-list payloads, and execution of the supported commands.
 - **Rust:** startup configuration, playlist ownership, command validation, scalar playback state and change detection, local file I/O, the Symphonia audio bridge, and the Lua host.
 - **Lua:** the built-in on-screen controls and any script the user loads explicitly. The interpreter is vendored Lua 5.2.4 through `mlua`.
+- **Terminal:** `player-tui` is a safe Rust renderer used by `--tui`. It owns the alternate screen, input, layout, kitty graphics or half-block art, and the transport. C decodes the attached picture through `player_tui_cover_art`. The terminal frontend does not create a window; the playback process uses `vo=null`.
 
 The release app links the Rust plane as one `libplayer_release.dylib`. The development build links `player-ffi` and `player-audio` as static libraries.
 
@@ -42,6 +43,16 @@ FFmpeg demuxes every container and decodes video. VideoToolbox is the hardware p
 - No Rust unwind may cross the ABI. `player-ffi` wraps the boundary entry points in `catch_unwind`; the state, playlist, and local-file entry points currently rely on their code not panicking. `player-audio` wraps every entry point.
 - The audio decoder handle is not thread-safe. The caller serializes access. There are no shared mutable globals.
 - `rust/player-ffi` and `rust/player-audio` are the only crates with `unsafe`; every block states its safety argument.
+
+## Terminal UI
+
+`--tui` is a frontend mode, not a video output. The startup parser consumes the flag in `player-core::config`, and `mp_initialize` forces `vo=null`, disables terminal logging and input, disables the OSC, and starts a weak `tui` client. The client runs `player_ffi_tui_run` on a detached thread; the thread owns the alternate screen and restores it before the client is destroyed. The C playloop is unchanged.
+
+The Rust renderer queries `path`, `media-title`, the metadata keys, `file-format`, `duration`, `time-pos`, `pause`, `volume`, and `mute` through the normal client API. Commands are the normal validated command table (`cycle pause`, `seek`, `add volume`, `playlist-next`, `quit`). Album art comes from the attached picture in the current file: `player_tui_cover_art` opens the file with FFmpeg, decodes the picture, scales it to 320 × 320 RGB, and hands the buffer to Rust. The renderer samples the accent colour from those pixels.
+
+Art transport is kitty graphics when the environment identifies Ghostty, kitty, or WezTerm and tmux passthrough is enabled; otherwise it uses truecolor half-block cells. Inside tmux with `allow-passthrough off`, the fallback is deliberate. The kitty transfer uses raw RGB (`f=24`) and is removed by image id on resize, track change, and exit. Sixel is not implemented; the design note in `docs/tui-design.md` records that limit.
+
+The terminal UI does not use `unsafe`; the FFI boundary stays in `player-ffi`. The only new FFmpeg components are the PNG and MJPEG picture decoders, justified by the `audio-cover` and `audio-cover-jpeg` fixtures. FFmpeg is built with zlib so its PNG decoder works.
 
 ## Script host
 

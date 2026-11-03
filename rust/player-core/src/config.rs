@@ -20,6 +20,7 @@ pub enum StartupOp {
     AddFile(String),
     AddPlaylist(String),
     SetFullscreen(bool),
+    SetTui(bool),
     SetStart(StartTime),
     AudioFiles(PathListOp),
     SubFiles(PathListOp),
@@ -73,6 +74,13 @@ pub fn parse_startup(args: &[String]) -> Result<Vec<StartupOp>, ConfigError> {
         let (name, value) = split_option(arg);
         let operation = match name {
             "--fullscreen" | "--fs" => StartupOp::SetFullscreen(parse_bool(name, value)?),
+            "--tui" => StartupOp::SetTui(parse_bool(name, value)?),
+            "--no-tui" => {
+                if let Some(value) = value {
+                    return Err(ConfigError::InvalidValue(name.to_owned(), value.to_owned()));
+                }
+                StartupOp::SetTui(false)
+            }
             "--no-fullscreen" | "--no-fs" => {
                 if let Some(value) = value {
                     return Err(ConfigError::InvalidValue(name.to_owned(), value.to_owned()));
@@ -313,6 +321,21 @@ mod tests {
         }
         assert!(parse_startup(&args(&["--fullscreen=maybe"])).is_err());
         assert!(parse_startup(&args(&["--no-fullscreen=yes"])).is_err());
+    }
+
+    #[test]
+    fn config_parses_tui() {
+        for (value, expected) in [
+            ("--tui", true),
+            ("--tui=yes", true),
+            ("--tui=no", false),
+            ("--no-tui", false),
+        ] {
+            let parsed = parse_startup(&args(&[value])).unwrap();
+            assert_eq!(parsed, vec![StartupOp::SetTui(expected)], "{value}");
+        }
+        assert!(parse_startup(&args(&["--tui=maybe"])).is_err());
+        assert!(parse_startup(&args(&["--no-tui=yes"])).is_err());
     }
 
     #[test]

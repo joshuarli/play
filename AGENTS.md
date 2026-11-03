@@ -13,6 +13,7 @@ Player is a local-only media player built on the mpv v0.41.0 playback pipeline, 
 - `scripts/measure.sh final` checks the release budgets.
 - `make linux` builds the Linux dependency prefix and tarball in the pinned Alpine image; `scripts/linux-container.sh COMMAND` runs any command there, such as `tests/run.sh suite` or `scripts/audit-linux.sh`.
 - `cargo test --manifest-path rust/Cargo.toml` runs the Rust tests.
+- `build/mpv --tui FILE` runs the terminal player.
 
 ## Invariants
 
@@ -40,4 +41,5 @@ Player is a local-only media player built on the mpv v0.41.0 playback pipeline, 
 - [docs/licenses.md](docs/licenses.md): shipped licenses.
 - [docs/manual-checklist.md](docs/manual-checklist.md): owner-run visual and audio checks.
 - [docs/lua-api.md](docs/lua-api.md): generated Lua API closure.
+- [docs/tui-design.md](docs/tui-design.md): terminal UI layout, art transport, and limits.
 - [TODO.md](TODO.md): open work.

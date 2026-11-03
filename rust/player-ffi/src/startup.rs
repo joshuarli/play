@@ -11,6 +11,7 @@ pub struct PlayerStartupSink {
     pub add_file: Option<unsafe extern "C" fn(*mut c_void, *const c_char)>,
     pub add_playlist: Option<unsafe extern "C" fn(*mut c_void, *const c_char) -> c_int>,
     pub set_fullscreen: Option<unsafe extern "C" fn(*mut c_void, c_int)>,
+    pub set_tui: Option<unsafe extern "C" fn(*mut c_void, c_int)>,
     pub set_start: Option<unsafe extern "C" fn(*mut c_void, c_int, f64)>,
     pub append_path: Option<unsafe extern "C" fn(*mut c_void, c_int, *const c_char)>,
     pub set_paths:
@@ -39,6 +40,7 @@ pub unsafe extern "C" fn player_ffi_startup_parse(
         if sink.add_file.is_none()
             || sink.add_playlist.is_none()
             || sink.set_fullscreen.is_none()
+            || sink.set_tui.is_none()
             || sink.set_start.is_none()
             || sink.append_path.is_none()
             || sink.set_paths.is_none()
@@ -101,6 +103,11 @@ fn apply_operation(sink: &PlayerStartupSink, operation: StartupOp) -> Result<(),
             let callback = sink.set_fullscreen.ok_or(INCOMPLETE_SINK)?;
             // SAFETY: the callback and ctx come from the caller and are valid for the call.
             unsafe { callback(sink.ctx, c_int::from(fullscreen)) };
+        }
+        StartupOp::SetTui(tui) => {
+            let callback = sink.set_tui.ok_or(INCOMPLETE_SINK)?;
+            // SAFETY: the callback and ctx come from the caller and are valid for the call.
+            unsafe { callback(sink.ctx, c_int::from(tui)) };
         }
         StartupOp::SetStart(start) => {
             let (kind, position) = start_time_parts(&start);

@@ -64,6 +64,7 @@ configure_args=(
     --disable-network --disable-avdevice --disable-autodetect
     --disable-everything
     --enable-libdav1d
+    --enable-zlib
 )
 case "$PLATFORM" in
     macos) configure_args+=(--enable-videotoolbox) ;;

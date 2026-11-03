@@ -8,6 +8,7 @@ typedef struct player_startup_sink {
     void (*add_file)(void *ctx, const char *path);
     int (*add_playlist)(void *ctx, const char *path);
     void (*set_fullscreen)(void *ctx, int value);
+    void (*set_tui)(void *ctx, int value);
     void (*set_start)(void *ctx, int type, double pos);
     void (*append_path)(void *ctx, int is_sub, const char *path);
     void (*set_paths)(void *ctx, int is_sub, const char *const *paths, size_t count);

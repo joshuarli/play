@@ -162,6 +162,7 @@ sources = files(
     'options/path.c',
 
     ## Player
+    'player/album_art.c',
     'player/audio.c',
     'player/client.c',
     'player/command.c',
@@ -175,6 +176,7 @@ sources = files(
     'player/screenshot.c',
     'player/scripting.c',
     'player/sub.c',
+    'player/tui.c',
     'player/video.c',
 
     ## clipboard
