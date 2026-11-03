@@ -5,7 +5,38 @@ Preflight doc: `campaign-rust.md`. This file is the durable resume point.
 
 ## Current phase
 
-S1 complete (`9d508c7`, `2ce9685`). Next: S2 (Rust-owned local demuxing).
+S2 complete. Next: S3 (Rust-owned decoding and audio playback).
+
+## S2 record
+
+New `player-media` crate: `MediaSession` opens local files through
+`classify_input` plus `LocalFile`, feeds libavformat through a custom AVIO
+context that never receives a path, and exposes streams, container
+metadata, duration, chapters, attachments, packets, and seeking. FFmpeg
+bindings are hand-transcribed from the pinned n9.0.2 headers
+(`player-media/src/sys.rs`) with a runtime major-version gate; the static
+closure links libavformat, libavcodec, libavutil, zlib, libm, dav1d, and on
+Linux the container libva, mirroring the C link. Nine session tests cover
+stream discovery, chapters, multiaudio, packet flow to EOF (proving
+`AVERROR_EOF`), seeking, cover art, local-only rejection, malformed input,
+and tagged metadata. The C engine is untouched; no demux C is deleted yet.
+
+Proven against the pinned build (C replicas in `.work/tmp/s2probe`):
+libavformat consumes the context on failed open (nulls the pointer, never
+touch it) and may reallocate the AVIO buffer during probing (always free
+the current pointer). Both rules are encoded in `MediaSession::close` and
+the open failure path.
+
+Open items, explicitly deferred:
+
+- Ordered-chapter segment linking stays open for S5. libavformat does not
+  do it (mpv used `demux_mkv_timeline`); no ordered-chapter fixture exists
+  to prove it either way. S2 added a simple-chapter fixture
+  (`chapters.mkv`) and chapter enumeration; ordered chapters need a fixture
+  plus a linking design.
+- The Rust session is not wired to any decoder yet. That is S3/S4 work;
+  S2 proves demuxing alone.
+- `cargo fmt --check` drift is unchanged (pre-existing, no gate).
 
 ## S1 record
 

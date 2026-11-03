@@ -4,9 +4,10 @@
 
 Goal: replace the remaining mpv-derived C playback engine with a small Rust-owned engine. No loss of supported local playback. Both release artifacts keep building.
 
-- Last accepted: S1 (`2ce9685`). Preflight complete 2026-11-03.
-- Red: none. Suites green on macOS (331) and Linux (323) at S1 close.
-- Next: S2 (Rust-owned local demuxing). Then S3.
+- Last accepted: S2. Preflight complete 2026-11-03.
+- Red: none. S2 acceptance green on macOS and Linux.
+- Next: S3 (Rust-owned decoding and audio playback). Then S4.
+- Ordered chapters stay open for S5 (no fixture, needs linking design).
 - Resume: read this doc and `docs/RUST-PORT.md`, then run the next open slice. If the tree moved, adapt. Never overwrite newer work.
 
 ## Charter
