@@ -335,6 +335,10 @@ impl VideoSession {
             };
         }
         set_option(context, "threads", thread_count())?;
+        #[cfg(target_os = "linux")]
+        if hw == HwRequest::VaApi && !render_node_present() {
+            return Err("vaapi: no DRM render node".to_string());
+        }
         if hw != HwRequest::None {
             // SAFETY: the device reference is created here.
             let mut device: *mut AvBufferRef = ptr::null_mut();
@@ -535,6 +539,20 @@ fn check_dimensions(info: &StreamInfo) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
+fn render_node_present() -> bool {
+    std::fs::read_dir("/dev/dri")
+        .map(|entries| {
+            entries.filter_map(|entry| entry.ok()).any(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("renderD")
+            })
+        })
+        .unwrap_or(false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -645,11 +663,11 @@ mod tests {
             assert!(frame.best_effort_ticks() >= last_ticks);
             last_ticks = frame.best_effort_ticks();
             let (y, y_stride) = frame.plane(0).expect("luma plane");
-            assert_eq!(y_stride, 320);
-            assert_eq!(y.len(), 320 * 240);
+            assert!(y_stride >= 320, "stride {y_stride}");
+            assert_eq!(y.len(), y_stride * 240);
             let (u, u_stride) = frame.plane(1).expect("chroma plane");
-            assert_eq!(u_stride, 160);
-            assert_eq!(u.len(), 160 * 120);
+            assert!(u_stride >= 160, "stride {u_stride}");
+            assert_eq!(u.len(), u_stride * 120);
             assert!(frame.native_handle().is_none());
         }
         assert!(last_ticks > 0);
@@ -723,6 +741,36 @@ mod tests {
             (1.5..2.5).contains(&after_seconds),
             "seek landed at {after_seconds}"
         );
+    }
+
+    #[test]
+    fn hardware_or_fallback_decodes() {
+        let path = fixture("h264.mp4");
+        let index = video_index(&path);
+        let hw = if cfg!(target_os = "macos") {
+            HwRequest::VideoToolbox
+        } else {
+            HwRequest::VaApi
+        };
+        match VideoSession::open(&path, index, hw) {
+            Ok(mut session) => {
+                let frames = session.drain_all().expect("drain works");
+                assert!(!frames.is_empty());
+                let first = &frames[0];
+                assert!(first.is_hardware(), "expected hardware frames");
+                assert!(first.native_handle().is_some());
+                let sw = first.transfer_to_software().expect("transfer works");
+                assert_eq!((sw.width(), sw.height()), (320, 240));
+                assert!(!sw.is_hardware());
+                assert!(sw.plane(0).is_some());
+            }
+            Err(message) => {
+                let mut fallback =
+                    VideoSession::open(&path, index, HwRequest::None).expect("fallback works");
+                let frames = fallback.drain_all().expect("drain works");
+                assert!(!frames.is_empty(), "fallback decoded nothing: {message}");
+            }
+        }
     }
 
     #[test]
