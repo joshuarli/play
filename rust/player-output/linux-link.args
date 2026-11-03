@@ -1,0 +1,13 @@
+# Linux musl native closure for the libplacebo renderer.
+# One directive per line: `arg:` prints cargo:rustc-link-arg=,
+# `lib:` prints cargo:rustc-link-lib=. `{PREFIX}` is the consuming
+# crate's ../../.work/deps/linux/lib. Both player-output and
+# player-engine read this file; edit here and both follow.
+arg:{PREFIX}/libplacebo.a
+arg:{PREFIX}/libshaderc_combined.a
+arg:/usr/lib/libstdc++.a
+arg:/usr/lib/libvulkan.so
+lib:dl
+lib:m
+arg:-lc
+arg:/usr/lib/gcc/x86_64-alpine-linux-musl/15.2.0/libgcc.a
