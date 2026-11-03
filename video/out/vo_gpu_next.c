@@ -906,7 +906,8 @@ static void apply_target_options(struct priv *p, struct pl_frame *target,
         ));
     }
 
-    pl_icc_update(p->pllog, &p->icc_profile, NULL, &p->icc_params);
+    if (p->icc_profile)
+        pl_icc_update(p->pllog, &p->icc_profile, NULL, &p->icc_params);
     target->icc = p->icc_profile;
 }
 
@@ -1211,7 +1212,8 @@ static bool draw_frame(struct vo *vo, struct vo_frame *frame)
                 .out_max  = &p->icc_params.max_luma,
             ));
         }
-        pl_icc_update(p->pllog, &p->icc_profile, NULL, &p->icc_params);
+        if (p->icc_profile)
+            pl_icc_update(p->pllog, &p->icc_profile, NULL, &p->icc_params);
         // Update again after possible max_luma change
         if (p->icc_profile)
             hint = p->icc_profile->csp;
@@ -1485,6 +1487,11 @@ static int reconfig(struct vo *vo, struct mp_image_params *params)
 // Takes over ownership of `icc`. Can be used to unload profile (icc.len == 0)
 static bool update_icc(struct priv *p, struct bstr icc)
 {
+    if (!p->icc_profile && icc.len == 0) {
+        talloc_free(icc.start);
+        return false;
+    }
+
     struct pl_icc_profile profile = {
         .data = icc.start,
         .len  = icc.len,
