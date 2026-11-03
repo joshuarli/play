@@ -5,6 +5,7 @@ use player_core::input::{classify_input, InputError, InputPath};
 
 mod audio;
 mod command;
+mod engine;
 mod event;
 mod local_file;
 mod lua;

@@ -316,7 +316,12 @@ plus `tests/run.sh linux-gpu-next` in the Alpine container. The GUI plays video 
 
 ### S7 Subtitles, scripting, GUI, TUI, clipboard removal
 
-Owns: `rust/player-lua/`, subtitle paths, `rust/player-tui/`, GUI glue, clipboard remnants where found. Prerequisite: S6.
+Owns: `rust/player-lua/`, subtitle paths, `rust/player-tui/`, GUI glue. Prerequisite: S6. Slices run serially (S7b before S7c-e; S7a landed first as specified).
+
+- S7a: clipboard removal (done).
+- S7b: direct Rust engine Lua adapter in `rust/player-ffi/` next to the C adapter. S7b-1: property core + event pump + unit tests. S7b-2: command surface + file lifecycle events + osd-overlay record. S7b-3: headless osc.lua integration against the engine.
+- S7c: libass OSD/subtitle rendering + pixel-diff fidelity gate.
+- S7d: TUI on Rust engine. S7e: GUI app.
 
 - Subtitles: Rust-managed tracks and timing, narrow libass wrapper, external and embedded codec support, styling, font lookup, positioning. Correct changes after seeks and track switches.
 - Lua: keep `player-lua` and the built-in OSC unless a measurement forces replacement. Replace the mpv client API adapter with a direct Rust engine adapter. Preserve supported command, property, event, overlay, and input-binding behavior. Script shutdown never retains a freed engine handle. One Lua interpreter.

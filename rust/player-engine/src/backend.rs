@@ -273,6 +273,8 @@ pub struct EngineStatus {
     pub paused: bool,
     pub ended: bool,
     pub presented: u64,
+    pub video_width: u32,
+    pub video_height: u32,
     pub error: Option<String>,
 }
 
@@ -393,7 +395,7 @@ fn run_worker(
         state: state.clone(),
         clean: false,
     };
-    let build = || -> Result<(EngineScheduler, f64), String> {
+    let build = || -> Result<(EngineScheduler, f64, u32, u32), String> {
         let demux = EngineDemux::open(&path)?;
         let info = demux
             .stream_info(demux.selected_audio())
@@ -431,18 +433,31 @@ fn run_worker(
                 (decoder, EngineVideoOutput::passive(shared, frames_tx))
             }
         };
+        let (video_width, video_height) = demux
+            .selected_video()
+            .and_then(|index| {
+                demux
+                    .session()
+                    .streams()
+                    .into_iter()
+                    .find(|stream| stream.index == index)
+            })
+            .map(|info| (info.width.max(0) as u32, info.height.max(0) as u32))
+            .unwrap_or((0, 0));
         let mut scheduler = EngineScheduler::new(demux, audio, video, output, video_out);
         scheduler.open();
-        Ok((scheduler, duration))
+        Ok((scheduler, duration, video_width, video_height))
     };
-    let (mut worker, duration) = match build() {
-        Ok((scheduler, duration)) => (
+    let (mut worker, duration, video_width, video_height) = match build() {
+        Ok((scheduler, duration, video_width, video_height)) => (
             Worker {
                 scheduler,
                 volume: 1.0,
                 muted: false,
             },
             duration,
+            video_width,
+            video_height,
         ),
         Err(message) => {
             update(&state, |status| status.error = Some(message.clone()));
@@ -451,7 +466,11 @@ fn run_worker(
             return;
         }
     };
-    update(&state, |status| status.duration = duration);
+    update(&state, |status| {
+        status.duration = duration;
+        status.video_width = video_width;
+        status.video_height = video_height;
+    });
     if ready.send(Ok(())).is_err() {
         guard.clean = true;
         return;
@@ -663,6 +682,11 @@ mod tests {
         };
         frames.extend(engine.drain_frames());
         assert!(status.error.is_none(), "unexpected error: {:?}", status.error);
+        assert_eq!(
+            (status.video_width, status.video_height),
+            (320, 240),
+            "status carries the selected video dims"
+        );
         assert!(status.presented > 0, "no frames presented");
         assert!(!frames.is_empty(), "no frames delivered");
         for frame in &frames {

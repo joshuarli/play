@@ -932,7 +932,7 @@ fn log_level(level: &str) -> Option<c_int> {
     }
 }
 
-fn format_time_fmt(format: &str, time: f64) -> Result<String, String> {
+pub(crate) fn format_time_fmt(format: &str, time: f64) -> Result<String, String> {
     if time == i64::MIN as f64 {
         return Ok("unknown".to_owned());
     }
