@@ -5,6 +5,7 @@ mod sched;
 #[cfg(test)]
 mod sim;
 mod state;
+pub mod video;
 
 pub use backend::{EngineStatus, SchedulerEngine};
 

@@ -10,3 +10,4 @@ crate-type = ["staticlib", "rlib"]
 [dependencies]
 player-audio = { path = "../player-audio" }
 player-media = { path = "../player-media" }
+player-output = { path = "../player-output" }

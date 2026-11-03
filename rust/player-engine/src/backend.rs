@@ -1,8 +1,9 @@
 use crate::sched::{
-    AudioChunk, AudioDecoder, AudioOutput, Command, DecodedFrame, DemuxEvent, Demuxer, Packet,
-    Scheduler, StreamKind, VideoDecoder, VideoOutput,
+    AudioChunk, AudioDecoder, AudioOutput, Command, DemuxEvent, Demuxer, Packet, Scheduler,
+    StreamKind,
 };
 use crate::state::State;
+use crate::video::{EngineVideo, EngineVideoOutput, PresentedFrame};
 use player_audio::decode::PacketDecoder;
 use player_audio::sink::{AudioSink, NullSink, SinkKind};
 use player_audio::open_default_sink;
@@ -12,10 +13,14 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+const PRESENTED_CHANNEL_DEPTH: usize = 4;
+
 pub struct EngineDemux {
     session: MediaSession,
     audio_streams: Vec<usize>,
+    video_streams: Vec<usize>,
     selected: usize,
+    selected_video: Option<usize>,
     duration: f64,
 }
 
@@ -23,11 +28,10 @@ impl EngineDemux {
     pub fn open(path: &str) -> Result<Self, String> {
         let session = MediaSession::open(path).map_err(|err| err.to_string())?;
         let mut audio = Vec::new();
+        let mut video = Vec::new();
         for stream in session.streams() {
             match stream.kind {
-                MediaKind::Video if !stream.attached => {
-                    return Err(format!("{path} has a video stream"));
-                }
+                MediaKind::Video if !stream.attached => video.push(stream.index),
                 MediaKind::Audio => audio.push(stream.index),
                 _ => {}
             }
@@ -40,16 +44,27 @@ impl EngineDemux {
             return Err(format!("{path} has no usable audio format"));
         }
         let duration = session.duration_seconds().unwrap_or(0.0).max(0.0);
+        let selected_video = video.first().copied();
         Ok(EngineDemux {
             session,
             audio_streams: audio,
+            video_streams: video,
             selected,
+            selected_video,
             duration,
         })
     }
 
     pub fn stream_info(&self, index: usize) -> Option<StreamInfo> {
         stream_info(&self.session, index)
+    }
+
+    pub fn session(&self) -> &MediaSession {
+        &self.session
+    }
+
+    pub fn selected_video(&self) -> Option<usize> {
+        self.selected_video
     }
 
     pub fn duration(&self) -> f64 {
@@ -70,7 +85,7 @@ impl Demuxer for EngineDemux {
     }
 
     fn has_video(&self) -> bool {
-        false
+        self.selected_video.is_some()
     }
 
     fn read(&mut self) -> DemuxEvent {
@@ -79,12 +94,16 @@ impl Demuxer for EngineDemux {
                 Err(MediaError::Eof) => return DemuxEvent::Eof,
                 Err(other) => return DemuxEvent::Error(other.to_string()),
                 Ok(packet) => {
-                    if packet.stream_index != self.selected {
+                    let kind = if packet.stream_index == self.selected {
+                        StreamKind::Audio
+                    } else if Some(packet.stream_index) == self.selected_video {
+                        StreamKind::Video
+                    } else {
                         continue;
-                    }
+                    };
                     return DemuxEvent::Packet(Packet {
                         stream: packet.stream_index,
-                        kind: StreamKind::Audio,
+                        kind,
                         pts: packet.pts_seconds,
                         duration: packet.duration_seconds,
                         payload: packet.data,
@@ -176,32 +195,6 @@ impl AudioDecoder for EngineAudio {
     }
 }
 
-pub struct NoVideoDecoder;
-
-impl VideoDecoder for NoVideoDecoder {
-    fn send(&mut self, _packet: Packet) -> Result<(), String> {
-        Err("video packet on the audio-only path".to_string())
-    }
-
-    fn drain(&mut self) -> Result<Vec<DecodedFrame>, String> {
-        Ok(Vec::new())
-    }
-
-    fn finish(&mut self) -> Result<Vec<DecodedFrame>, String> {
-        Ok(Vec::new())
-    }
-
-    fn flush(&mut self) {}
-}
-
-pub struct NullVideoOutput;
-
-impl VideoOutput for NullVideoOutput {
-    fn present(&mut self, _pts: f64, _id: u64) -> Result<(), String> {
-        Ok(())
-    }
-}
-
 pub struct EngineOutput {
     sink: Box<dyn AudioSink>,
     written: u64,
@@ -280,6 +273,7 @@ pub struct EngineStatus {
     pub muted: bool,
     pub paused: bool,
     pub ended: bool,
+    pub presented: u64,
     pub error: Option<String>,
 }
 
@@ -295,6 +289,7 @@ enum WorkerCommand {
 pub struct SchedulerEngine {
     commands: mpsc::Sender<WorkerCommand>,
     state: Arc<Mutex<EngineStatus>>,
+    frames: Option<mpsc::Receiver<PresentedFrame>>,
     worker: Option<thread::JoinHandle<()>>,
 }
 
@@ -302,6 +297,9 @@ impl SchedulerEngine {
     pub fn load(path: &str, kind: SinkKind) -> Result<Self, String> {
         let (command_tx, command_rx) = mpsc::channel::<WorkerCommand>();
         let (ready_tx, ready_rx) = mpsc::channel::<Result<(), String>>();
+        // Bounded: present blocks when the consumer falls behind instead of
+        // buffering frames without limit.
+        let (frames_tx, frames_rx) = mpsc::sync_channel(PRESENTED_CHANNEL_DEPTH);
         let state = Arc::new(Mutex::new(EngineStatus {
             volume: 1.0,
             ..EngineStatus::default()
@@ -311,13 +309,14 @@ impl SchedulerEngine {
         let worker = thread::Builder::new()
             .name("player-scheduler".to_string())
             .spawn(move || {
-                run_worker(owned_path, kind, command_rx, worker_state, ready_tx);
+                run_worker(owned_path, kind, command_rx, worker_state, ready_tx, frames_tx);
             })
             .map_err(|err| format!("scheduler worker failed to start: {err}"))?;
         match ready_rx.recv() {
             Ok(Ok(())) => Ok(SchedulerEngine {
                 commands: command_tx,
                 state,
+                frames: Some(frames_rx),
                 worker: Some(worker),
             }),
             Ok(Err(message)) => {
@@ -357,10 +356,23 @@ impl SchedulerEngine {
             .unwrap_or_else(|poison| poison.into_inner())
             .clone()
     }
+
+    pub fn drain_frames(&self) -> Vec<PresentedFrame> {
+        let mut frames = Vec::new();
+        if let Some(rx) = self.frames.as_ref() {
+            while let Ok(frame) = rx.try_recv() {
+                frames.push(frame);
+            }
+        }
+        frames
+    }
 }
 
 impl Drop for SchedulerEngine {
     fn drop(&mut self) {
+        // Drop the receiver first: a worker blocked in present unblocks with
+        // a send error instead of hanging the join below.
+        drop(self.frames.take());
         let _ = self.commands.send(WorkerCommand::Stop);
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
@@ -368,7 +380,7 @@ impl Drop for SchedulerEngine {
     }
 }
 
-type EngineScheduler = Scheduler<EngineDemux, EngineAudio, NoVideoDecoder, EngineOutput, NullVideoOutput>;
+type EngineScheduler = Scheduler<EngineDemux, EngineAudio, EngineVideo, EngineOutput, EngineVideoOutput>;
 
 fn run_worker(
     path: String,
@@ -376,6 +388,7 @@ fn run_worker(
     commands: mpsc::Receiver<WorkerCommand>,
     state: Arc<Mutex<EngineStatus>>,
     ready: mpsc::Sender<Result<(), String>>,
+    frames_tx: mpsc::SyncSender<PresentedFrame>,
 ) {
     let mut guard = PanicGuard {
         state: state.clone(),
@@ -406,8 +419,20 @@ fn run_worker(
             volume: 1.0,
             muted: false,
         };
-        let mut scheduler =
-            EngineScheduler::new(demux, audio, NoVideoDecoder, output, NullVideoOutput);
+        let (video, video_out) = match demux.selected_video() {
+            Some(stream) => {
+                let decoder = EngineVideo::open(demux.session(), stream)?;
+                let shared = decoder.shared();
+                let output = EngineVideoOutput::open(shared, frames_tx)?;
+                (decoder, output)
+            }
+            None => {
+                let decoder = EngineVideo::passive();
+                let shared = decoder.shared();
+                (decoder, EngineVideoOutput::passive(shared, frames_tx))
+            }
+        };
+        let mut scheduler = EngineScheduler::new(demux, audio, video, output, video_out);
         scheduler.open();
         Ok((scheduler, duration))
     };
@@ -494,12 +519,14 @@ impl Worker {
         let paused = matches!(self.scheduler.state(), State::Paused { .. });
         let ended = matches!(self.scheduler.state(), State::Ended | State::Error);
         let error = self.scheduler.failure().map(str::to_string);
+        let presented = self.scheduler.stats().presented;
         let (volume, muted) = (self.volume, self.muted);
         update(state, |status| {
             status.position = position;
             status.paused = paused;
             status.ended = ended;
             status.error = error;
+            status.presented = presented;
             status.volume = volume;
             status.muted = muted;
         });
@@ -614,12 +641,48 @@ mod tests {
     }
 
     #[test]
-    fn rejects_video_files() {
-        let err = match SchedulerEngine::load(&fixture("h264.mp4"), SinkKind::Null) {
-            Ok(_) => panic!("video must be rejected"),
-            Err(err) => err,
+    #[cfg_attr(
+        target_os = "linux",
+        ignore = "static-pie test binaries cannot call the container Vulkan loader; run with RUSTFLAGS=\"-C target-feature=-crt-static\""
+    )]
+    fn plays_video_through_renderer() {
+        let engine =
+            SchedulerEngine::load(&fixture("h264.mp4"), SinkKind::Null).expect("engine loads video");
+        let deadline = Instant::now() + StdDuration::from_secs(30);
+        let mut frames = Vec::new();
+        let status = loop {
+            frames.extend(engine.drain_frames());
+            let status = engine.snapshot();
+            if status.ended || status.error.is_some() {
+                break status;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting: {status:?}"
+            );
+            thread::sleep(StdDuration::from_millis(5));
         };
-        assert!(err.contains("video stream"), "unexpected error: {err}");
+        frames.extend(engine.drain_frames());
+        assert!(status.error.is_none(), "unexpected error: {:?}", status.error);
+        assert!(status.presented > 0, "no frames presented");
+        assert!(!frames.is_empty(), "no frames delivered");
+        for frame in &frames {
+            assert_eq!((frame.width, frame.height), (320, 240));
+            assert_eq!(frame.rgba.len(), 320 * 240 * 4);
+        }
+        let varied = frames.iter().any(|frame| {
+            let (min, max) = frame
+                .rgba
+                .iter()
+                .fold((255u8, 0u8), |(lo, hi), &b| (lo.min(b), hi.max(b)));
+            max - min > 16
+        });
+        assert!(varied, "frames carry no picture");
+        assert_eq!(
+            status.presented as usize,
+            frames.len(),
+            "every presented frame is delivered exactly once"
+        );
     }
 
     #[test]

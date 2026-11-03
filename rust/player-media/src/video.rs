@@ -5,9 +5,17 @@ use std::ptr;
 
 pub const AVCOL_SPC_UNSPECIFIED: c_int = 2;
 pub const AVCOL_SPC_BT709: c_int = 1;
+pub const AVCOL_SPC_BT470BG: c_int = 5;
+pub const AVCOL_SPC_SMPTE170M: c_int = 6;
+pub const AVCOL_SPC_BT2020_NCL: c_int = 9;
 pub const AVCOL_RANGE_UNSPECIFIED: c_int = 0;
 pub const AVCOL_RANGE_MPEG: c_int = 1;
 pub const AVCOL_RANGE_JPEG: c_int = 2;
+
+pub use crate::sys::{
+    AV_PIX_FMT_GRAY8, AV_PIX_FMT_NV12, AV_PIX_FMT_NV21, AV_PIX_FMT_RGB24, AV_PIX_FMT_RGBA,
+    AV_PIX_FMT_YUV420P, AV_PIX_FMT_YUV422P, AV_PIX_FMT_YUV444P,
+};
 
 const AV_CODEC_ID_MPEG4: c_int = 12;
 const AV_CODEC_ID_H264: c_int = 27;
@@ -417,6 +425,10 @@ impl VideoSession {
         unsafe { (*self.context).pix_fmt }
     }
 
+    pub fn time_base(&self) -> (i32, i32) {
+        self.time_base
+    }
+
     pub fn send(&mut self, data: &[u8], pts_seconds: Option<f64>) -> Result<bool, String> {
         // SAFETY: a packet carries one compressed frame.
         let packet = unsafe { av_packet_alloc() };
@@ -657,6 +669,21 @@ mod tests {
         unsafe { av_hwdevice_find_type_by_name(name.as_ptr()) }
     }
 
+    fn color_name(space: c_int, range: c_int) -> (String, String) {
+        // SAFETY: the name tables are static for the linked libavutil.
+        let space_ptr = unsafe { av_color_space_name(space) };
+        let range_ptr = unsafe { av_color_range_name(range) };
+        let name = |pointer: *const std::ffi::c_char| {
+            if pointer.is_null() {
+                return String::new();
+            }
+            unsafe { std::ffi::CStr::from_ptr(pointer) }
+                .to_string_lossy()
+                .into_owned()
+        };
+        (name(space_ptr), name(range_ptr))
+    }
+
     #[test]
     fn pixfmt_constants_match_linked_library() {
         assert_eq!(pix_name(AV_PIX_FMT_YUV420P), "yuv420p");
@@ -669,6 +696,30 @@ mod tests {
         assert_eq!(pix_name(AV_PIX_FMT_GRAY8), "gray");
         assert_eq!(pix_name(AV_PIX_FMT_VAAPI), "vaapi");
         assert_eq!(pix_name(AV_PIX_FMT_VIDEOTOOLBOX), "videotoolbox_vld");
+    }
+
+    #[test]
+    fn color_constants_match_linked_library() {
+        assert_eq!(
+            color_name(AVCOL_SPC_BT709, AVCOL_RANGE_MPEG),
+            ("bt709".to_string(), "tv".to_string())
+        );
+        assert_eq!(
+            color_name(AVCOL_SPC_BT470BG, AVCOL_RANGE_JPEG),
+            ("bt470bg".to_string(), "pc".to_string())
+        );
+        assert_eq!(
+            color_name(AVCOL_SPC_SMPTE170M, AVCOL_RANGE_UNSPECIFIED),
+            ("smpte170m".to_string(), "unknown".to_string())
+        );
+        assert_eq!(
+            color_name(AVCOL_SPC_BT2020_NCL, AVCOL_RANGE_MPEG),
+            ("bt2020nc".to_string(), "tv".to_string())
+        );
+        assert_eq!(
+            color_name(AVCOL_SPC_UNSPECIFIED, AVCOL_RANGE_UNSPECIFIED),
+            ("unknown".to_string(), "unknown".to_string())
+        );
     }
 
     #[test]

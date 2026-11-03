@@ -504,6 +504,8 @@ unsafe extern "C" {
     pub fn av_hwframe_transfer_data(dst: *mut AvFrame, src: *const AvFrame, flags: c_int)
     -> c_int;
     pub fn av_get_pix_fmt_name(pix_fmt: c_int) -> *const c_char;
+    pub fn av_color_space_name(space: c_int) -> *const c_char;
+    pub fn av_color_range_name(range: c_int) -> *const c_char;
     pub fn av_opt_set_int(
         obj: *mut c_void,
         name: *const c_char,
