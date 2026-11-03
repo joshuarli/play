@@ -5,6 +5,7 @@ pub mod backend_alsa;
 #[cfg(target_os = "macos")]
 pub mod backend_coreaudio;
 pub mod clock;
+pub mod decode;
 pub mod engine;
 pub mod mix;
 pub mod pipeline;
