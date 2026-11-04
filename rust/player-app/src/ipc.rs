@@ -2,8 +2,7 @@ use std::io::{ErrorKind, Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 
-use player_lua::NativeValue;
-use player_lua::utils::{format_json, parse_json};
+use crate::value::{format_json, parse_json, NativeValue};
 
 pub struct IpcServer {
     listener: UnixListener,
@@ -67,8 +66,8 @@ impl IpcServer {
             if text.trim().is_empty() {
                 continue;
             }
-            match parse_json(text, false) {
-                Ok((value, _)) => messages.push(value),
+            match parse_json(text) {
+                Ok(value) => messages.push(value),
                 Err(_) => messages.push(NativeValue::Map(vec![(
                     "invalid".to_owned(),
                     NativeValue::String(text.to_owned()),
@@ -104,8 +103,12 @@ impl IpcServer {
         let Some(client) = self.client.as_mut() else {
             return;
         };
-        let Ok(mut text) = format_json(value) else {
-            return;
+        let mut text = match format_json(value) {
+            Ok(text) => text,
+            Err(_) => {
+                eprintln!("player: dropped an IPC message that has no JSON form");
+                return;
+            }
         };
         text.push('\n');
         client.outbound.extend_from_slice(text.as_bytes());

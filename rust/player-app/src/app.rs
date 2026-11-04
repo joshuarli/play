@@ -4,52 +4,40 @@ use std::time::{Duration, Instant};
 
 use player_audio::sink::SinkKind;
 use player_core::command::{
-    parse_string, Adjust, Command as CoreCommand, Toggle, TrackKind as CoreTrackKind,
+    parse_string, Adjust, Command as CoreCommand, OscVisibility, OscVisibilityChange, Toggle,
+    TrackKind as CoreTrackKind,
 };
 use player_core::input::{classify_input, InputPath};
 use player_engine::video::PresentedFrame;
-use player_engine::{EngineStatus, SchedulerEngine};
-use player_backend::engine::{EngineBackend, SharedEngine};
-use player_lua::queue::EventSender;
-use player_lua::{
-    CommandRequest, NativeValue, PlayerBackend, PropertyFormat, ScriptEvent, ScriptHost,
-    ScriptModule,
-};
+use player_engine::{EngineStatus, SchedulerEngine, TrackKind};
+use player_backend::engine::{EngineBackend, DEFAULT_OSD_DURATION};
 use player_output::{Overlay, OverlayRect};
 use player_tui::{Control, Cover, Player as TuiPlayer, Snapshot, Track};
 
 use crate::ipc::{self, IpcServer};
 use crate::options::{self, Options, Start};
+use crate::osc::{Osc, Playback, Response};
 use crate::playlist::{self, Entry, Playlist};
 use crate::properties::{self, Probe};
+use crate::value::NativeValue;
 use crate::window::{HostEvent, HostWindow};
-
-const ASSDRAW: &str = include_str!("../../player-lua/lua/assdraw.lua");
-const OPTIONS: &str = include_str!("../../player-lua/lua/options.lua");
-const INPUT: &str = include_str!("../../player-lua/lua/input.lua");
-const OSC: &str = include_str!("../../player-lua/lua/osc.lua");
 
 const GATE_FRAMES: u64 = 24;
 const GATE_OVERLAY_INK: usize = 100;
+const OVERLAY_MIN_INTERVAL: Duration = Duration::from_millis(16);
+const SUBTITLE_INTERVAL: Duration = Duration::from_millis(50);
 
 struct Observer {
     name: String,
     last: Option<NativeValue>,
 }
 
-struct ScriptInstance {
-    name: String,
-    host: ScriptHost,
-    sender: EventSender,
-}
-
 pub struct App {
     pub options: Options,
     pub playlist: Playlist,
     pub probe: Option<Probe>,
-    pub shared: Option<SharedEngine>,
-    hosts: Vec<ScriptInstance>,
-    pub(crate) idle_properties: std::sync::Arc<std::sync::Mutex<HashMap<String, NativeValue>>>,
+    pub backend: Option<EngineBackend>,
+    pub(crate) osc: Option<Osc>,
     pub ipc: Option<IpcServer>,
     pub paused: bool,
     pub speed: f64,
@@ -71,12 +59,14 @@ pub struct App {
     osd_size: (i32, i32),
     osd_hash: u64,
     last_osd: Instant,
+    rendered_osc: Option<u64>,
+    rendered_message: bool,
+    osd_error: Option<String>,
     gui: bool,
     applied_fullscreen: bool,
     presented_size: (i32, i32),
     gate_ready_at: Option<Instant>,
     last_gate_report: Instant,
-    last_gate_visibility: Instant,
     bindings: HashMap<String, String>,
     screenshot_index: u32,
     observers: HashMap<u64, Observer>,
@@ -92,6 +82,8 @@ pub struct App {
 impl App {
     pub fn new(options: Options) -> Self {
         let fullscreen = options.fullscreen;
+        let osc = (options.osc && !options.tui)
+            .then(|| Osc::new(OscVisibility::Auto, Instant::now()));
         App {
             paused: options.pause,
             speed: 1.0,
@@ -103,9 +95,8 @@ impl App {
             options,
             playlist: Playlist::new(),
             probe: None,
-            shared: None,
-            hosts: Vec::new(),
-            idle_properties: std::sync::Arc::new(std::sync::Mutex::new(HashMap::new())),
+            backend: None,
+            osc,
             ipc: None,
             eof_reached: false,
             display: None,
@@ -120,16 +111,16 @@ impl App {
             osd_size: (0, 0),
             osd_hash: 0,
             last_osd: Instant::now()
-                .checked_sub(Duration::from_millis(50))
+                .checked_sub(SUBTITLE_INTERVAL)
                 .unwrap_or_else(Instant::now),
+            rendered_osc: None,
+            rendered_message: false,
+            osd_error: None,
             gui: false,
             applied_fullscreen: fullscreen,
             presented_size: (0, 0),
             gate_ready_at: None,
             last_gate_report: Instant::now(),
-            last_gate_visibility: Instant::now()
-                .checked_sub(Duration::from_secs(1))
-                .unwrap_or_else(Instant::now),
             bindings: HashMap::new(),
             screenshot_index: 0,
             observers: HashMap::new(),
@@ -144,73 +135,39 @@ impl App {
     }
 
     pub fn status(&self) -> EngineStatus {
-        self.shared
+        self.backend
             .as_ref()
-            .and_then(|shared| shared.inspect(|backend| backend.status()))
+            .map(EngineBackend::status)
             .unwrap_or_default()
     }
 
     pub fn set_paused(&mut self, paused: bool) -> Result<(), String> {
         self.paused = paused;
         self.pending_pause = Some(paused);
-        if let Some(shared) = &self.shared {
-            shared
-                .mutate(|backend| {
-                    backend.command(CommandRequest::Args(vec![
-                        "set".to_owned(),
-                        "pause".to_owned(),
-                        if paused { "yes" } else { "no" }.to_owned(),
-                    ]))
-                })
-                .ok_or_else(|| "engine backend lock failed".to_owned())??;
+        if let Some(backend) = &self.backend {
+            backend.set_paused(paused);
         }
         Ok(())
     }
 
     pub fn set_speed(&mut self, speed: f64) {
         self.speed = speed.clamp(0.01, 100.0);
-        if let Some(shared) = &self.shared {
-            let _ = shared.mutate(|backend| {
-                backend.set_property("speed", NativeValue::Double(self.speed))
-            });
+        if let Some(backend) = &self.backend {
+            backend.set_speed(self.speed);
         }
     }
 
     pub fn set_volume(&mut self, volume: f32) {
         self.volume = volume.clamp(0.0, 200.0) as f64;
-        if let Some(shared) = &self.shared {
-            let _ = shared.mutate(|backend| {
-                backend.command(CommandRequest::Args(vec![
-                    "set".to_owned(),
-                    "volume".to_owned(),
-                    format!("{:.6}", self.volume),
-                ]))
-            });
+        if let Some(backend) = &self.backend {
+            backend.set_volume_percent(self.volume);
         }
     }
 
     pub fn set_muted(&mut self, muted: bool) {
         self.muted = muted;
-        if let Some(shared) = &self.shared {
-            let _ = shared.mutate(|backend| {
-                backend.command(CommandRequest::Args(vec![
-                    "set".to_owned(),
-                    "mute".to_owned(),
-                    if muted { "yes" } else { "no" }.to_owned(),
-                ]))
-            });
-        }
-    }
-
-    pub fn apply_fullscreen(&self) {
-        if let Some(shared) = &self.shared {
-            let _ = shared.mutate(|backend| {
-                backend.command(CommandRequest::Args(vec![
-                    "set".to_owned(),
-                    "fullscreen".to_owned(),
-                    if self.fullscreen { "yes" } else { "no" }.to_owned(),
-                ]))
-            });
+        if let Some(backend) = &self.backend {
+            backend.set_muted(muted);
         }
     }
 
@@ -226,10 +183,8 @@ impl App {
         let Some(stream) = audios.get((id - 1).max(0) as usize) else {
             return Err(format!("no audio track {id}"));
         };
-        if let Some(shared) = &self.shared {
-            shared
-                .mutate(|backend| backend.set_property("aid", NativeValue::Int(id)))
-                .ok_or_else(|| "engine backend lock failed".to_owned())??;
+        if let Some(backend) = &self.backend {
+            backend.select_audio_id(id)?;
         }
         self.aid = Some(id);
         self.aid_disabled = false;
@@ -249,59 +204,61 @@ impl App {
         if self.aid.is_none() {
             self.aid = Some(1);
         }
-        if let Some(shared) = &self.shared
+        if let Some(backend) = &self.backend
             && let Some(id) = self.aid
+            && let Err(message) = backend.select_audio_id(id)
         {
-            let _ = shared.mutate(|backend| backend.set_property("aid", NativeValue::Int(id)));
+            eprintln!("player: {message}");
         }
     }
 
     pub fn select_sub(&mut self, id: Option<i64>) -> Result<(), String> {
-        let Some(shared) = &self.shared else {
+        let Some(backend) = &self.backend else {
             return Ok(());
         };
-        shared
-            .mutate(|backend| {
-                backend.set_property(
-                    "sid",
-                    id.map(NativeValue::Int).unwrap_or(NativeValue::Bool(false)),
-                )
-            })
-            .ok_or_else(|| "engine backend lock failed".to_owned())?
+        match id {
+            Some(id) => backend.select_sub_id(id),
+            None => {
+                backend.deselect_sub();
+                Ok(())
+            }
+        }
     }
 
-    pub fn select_sub_id(&mut self, id: i64) -> Result<(), String> {
-        self.select_sub(Some(id))
+    pub fn select_first_sub(&mut self) {
+        if let Some(backend) = &self.backend {
+            backend.select_first_sub();
+        }
     }
 
-    pub fn select_sub_name(&mut self, name: &str) -> Result<(), String> {
-        let Some(shared) = &self.shared else {
-            return Ok(());
-        };
-        shared
-            .mutate(|backend| {
-                backend.set_property("sid", NativeValue::String(name.to_owned()))
-            })
-            .ok_or_else(|| "engine backend lock failed".to_owned())?
+    pub fn set_sub_visible(&mut self, visible: bool) {
+        if let Some(backend) = &mut self.backend {
+            backend.set_sub_visible(visible);
+        }
     }
 
     pub fn set_display(&mut self, width: u32, height: u32) {
         self.display = Some((width, height));
-        if let Some(shared) = &self.shared {
-            shared.mutate(|backend| backend.set_display_size(width, height));
+    }
+
+    pub fn show_text(&mut self, text: &str, duration: Duration) {
+        if let Some(backend) = &mut self.backend {
+            backend.show_text(text, duration);
         }
     }
 
-    pub fn set_osc_visible(&mut self) {
-        if let Some(shared) = &self.shared {
-            let _ = shared.mutate(|backend| {
-                backend.command(CommandRequest::Args(vec![
-                    "script-message".to_owned(),
-                    "osc-visibility".to_owned(),
-                    "cycle".to_owned(),
-                ]))
-            });
-        }
+    pub fn set_osc_visibility(&mut self, change: OscVisibilityChange) -> Result<(), String> {
+        let osc = self
+            .osc
+            .as_mut()
+            .ok_or_else(|| "the OSC is disabled".to_owned())?;
+        let mode = match change {
+            OscVisibilityChange::Cycle => osc.visibility().next(),
+            OscVisibilityChange::Set(mode) => mode,
+        };
+        osc.set_visibility(mode, Instant::now());
+        self.show_text(&format!("OSC visibility: {}", mode.name()), DEFAULT_OSD_DURATION);
+        Ok(())
     }
 
     pub fn quit(&mut self) {
@@ -313,108 +270,11 @@ impl App {
     }
 
     fn unload(&mut self) {
-        self.hosts.clear();
-        self.shared = None;
+        self.backend = None;
         self.probe = None;
         self.end_sent = false;
         self.eof_reached = false;
         self.pending_pause = None;
-    }
-
-    fn spawn_osc(&mut self) {
-        let Some(shared) = self.shared.clone() else {
-            return;
-        };
-        if !self.options.osc {
-            return;
-        }
-        match ScriptHost::spawn_with_modules(
-            "osc",
-            "@osc.lua",
-            OSC,
-            vec![
-                ScriptModule::new("mp.assdraw", ASSDRAW),
-                ScriptModule::new("mp.options", OPTIONS),
-            ],
-            shared,
-        ) {
-            Ok(host) => {
-                let sender = host.event_sender().sender();
-                self.hosts.push(ScriptInstance {
-                    name: "osc".to_owned(),
-                    host,
-                    sender,
-                });
-            }
-            Err(_) => {}
-        }
-    }
-
-    fn spawn_scripts(&mut self) {
-        let scripts = self.options.scripts.clone();
-        if scripts.is_empty() {
-            return;
-        }
-        match self.shared.clone() {
-            Some(shared) => {
-                for path in scripts {
-                    self.spawn_script_file(&path, shared.clone());
-                }
-            }
-            None => {
-                for path in scripts {
-                    self.spawn_script_file(
-                        &path,
-                        IdleBackend::new(self.idle_properties.clone()),
-                    );
-                }
-            }
-        }
-    }
-
-    fn spawn_script_file<B: PlayerBackend>(&mut self, path: &str, backend: B) {
-        let source = match std::fs::read_to_string(path) {
-            Ok(source) => source,
-            Err(error) => {
-                eprintln!("player: cannot read {path}: {error}");
-                return;
-            }
-        };
-        let name = Path::new(path)
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or(path)
-            .to_owned();
-        match ScriptHost::spawn_with_modules(
-            name.clone(),
-            format!("@{path}"),
-            source,
-            vec![
-                ScriptModule::new("mp.assdraw", ASSDRAW),
-                ScriptModule::new("mp.options", OPTIONS),
-                ScriptModule::new("mp.input", INPUT),
-            ],
-            backend,
-        ) {
-            Ok(host) => {
-                let sender = host.event_sender().sender();
-                self.hosts.push(ScriptInstance {
-                    name,
-                    host,
-                    sender,
-                });
-            }
-            Err(error) => eprintln!("player: cannot start {path}: {error}"),
-        }
-    }
-
-    fn stop_scripts(&mut self) {
-        for instance in &mut self.hosts {
-            if let Err(error) = instance.host.stop() {
-                eprintln!("player: {}: {error}", instance.name);
-            }
-        }
-        self.hosts.clear();
     }
 
     pub fn load_current(&mut self) -> Result<(), String> {
@@ -474,15 +334,7 @@ impl App {
             self.defer_event(ipc::event("audio-reconfig", Vec::new()));
             self.defer_event(ipc::event("audio-reconfig", Vec::new()));
         }
-        let mut backend = EngineBackend::open(engine);
-        if self.options.null_video || self.options.no_video || self.gui {
-            backend.set_overlay_mode();
-        }
-        backend.set_display_size(
-            self.display.map(|(width, _)| width).unwrap_or(1280),
-            self.display.map(|(_, height)| height).unwrap_or(720),
-        );
-        self.shared = Some(SharedEngine::new(backend));
+        self.backend = Some(EngineBackend::open(engine));
         self.probe = Some(probe);
         self.paused = self.options.pause;
         self.volume = self.options.volume;
@@ -502,24 +354,21 @@ impl App {
                     .position(|_| true)
             })
             .map(|_| 1);
-        if let Some(shared) = &self.shared {
+        if let Some(backend) = &self.backend {
             match self.options.sid.as_deref() {
                 Some("no") => {}
                 Some(value) if value != "auto" => {
                     if let Ok(id) = value.parse::<i64>()
                         && id > 0
                     {
-                        shared.mutate(|backend| backend.select_sub_position(id as usize - 1));
+                        backend.select_sub_position(id as usize - 1);
                     }
                 }
-                _ => {
-                    shared.mutate(|backend| backend.select_sub_position(0));
-                }
+                _ => backend.select_sub_position(0),
             }
         }
-        if !self.options.tui {
-            self.spawn_osc();
-            self.spawn_scripts();
+        if let Some(osc) = &mut self.osc {
+            osc.start_file(Instant::now());
         }
         if !self.options.quiet {
             println!("Playing: {}", entry.path);
@@ -530,18 +379,9 @@ impl App {
         self.set_volume(self.volume as f32);
         self.set_muted(self.muted);
         self.set_speed(self.speed);
-        self.apply_fullscreen();
-        if let Some(shared) = &self.shared {
+        if let Some(backend) = &self.backend {
             for file in &self.options.sub_files {
-                let result = shared
-                    .mutate(|backend| {
-                        backend.command(CommandRequest::Args(vec![
-                            "sub-add".to_owned(),
-                            file.clone(),
-                        ]))
-                    })
-                    .ok_or_else(|| "engine backend lock failed".to_owned())?;
-                if let Err(message) = result {
+                if let Err(message) = backend.add_sub(file) {
                     eprintln!("player: cannot load subtitle {file}: {message}");
                 }
             }
@@ -636,14 +476,8 @@ impl App {
     }
 
     pub fn seek_absolute(&mut self, seconds: f64) {
-        if let Some(shared) = &self.shared {
-            let _ = shared.mutate(|backend| {
-                backend.command(CommandRequest::Args(vec![
-                    "seek".to_owned(),
-                    format!("{:.6}", seconds.max(0.0)),
-                    "absolute".to_owned(),
-                ]))
-            });
+        if let Some(backend) = &self.backend {
+            backend.seek_to(seconds.max(0.0));
         }
         self.send_event(ipc::event("seek", Vec::new()));
         self.send_event(ipc::event("playback-restart", Vec::new()));
@@ -651,14 +485,8 @@ impl App {
     }
 
     pub fn seek_relative(&mut self, seconds: f64) {
-        if let Some(shared) = &self.shared {
-            let _ = shared.mutate(|backend| {
-                backend.command(CommandRequest::Args(vec![
-                    "seek".to_owned(),
-                    format!("{seconds:.6}"),
-                    "relative".to_owned(),
-                ]))
-            });
+        if let Some(backend) = &self.backend {
+            backend.seek_to(backend.status().position + seconds);
         }
         self.send_event(ipc::event("seek", Vec::new()));
         self.send_event(ipc::event("playback-restart", Vec::new()));
@@ -696,7 +524,7 @@ impl App {
             "append" | "append-play" => {
                 let first = self.playlist.count();
                 self.playlist.append(entries);
-                if mode == "append-play" && self.shared.is_none() {
+                if mode == "append-play" && self.backend.is_none() {
                     self.playlist.set_current(Some(first));
                     self.load_current()?;
                 }
@@ -751,8 +579,7 @@ impl App {
         }
         let bundled = std::env::var("MPVBUNDLE").as_deref() == Ok("true");
         if self.options.files.is_empty() && self.options.playlists.is_empty() {
-            if self.options.idle || self.options.tui || bundled || !self.options.scripts.is_empty()
-            {
+            if self.options.idle || self.options.tui || bundled {
                 self.options.idle = true;
             } else {
                 print!("{}", options::help());
@@ -784,9 +611,6 @@ impl App {
             self.playlist.set_current(Some(0));
             self.load_current()?;
         }
-        if self.shared.is_none() {
-            self.spawn_scripts();
-        }
         if let Some(path) = &self.options.ipc {
             self.ipc = Some(IpcServer::bind(path)?);
         }
@@ -813,7 +637,7 @@ impl App {
             } else {
                 self.tick()?;
             }
-            if self.shared.is_none() && !self.options.idle && !self.options.tui {
+            if self.backend.is_none() && !self.options.idle && !self.options.tui {
                 break;
             }
             if last_status.elapsed() >= Duration::from_millis(50) {
@@ -838,7 +662,7 @@ impl App {
             for entry in entries {
                 self.playlist.push(entry);
             }
-            if self.shared.is_none() {
+            if self.backend.is_none() {
                 let index = self.playlist.count() - 1;
                 self.playlist.set_current(Some(index));
                 self.load_current()?;
@@ -902,13 +726,12 @@ impl App {
                     }
                 }
                 HostEvent::PointerMotion { x, y } => self.mouse_move(x, y)?,
-                HostEvent::PointerButton { name, pressed } => {
-                    if pressed {
-                        self.keypress(&name)?;
-                    }
-                }
+                HostEvent::PointerButton { pressed } => self.pointer_button(pressed)?,
+                HostEvent::Wheel { up } => self.wheel(up)?,
                 HostEvent::PointerLeave => {
-                    self.script_message_to("osc", &["osc-hide".to_owned()])?;
+                    if let Some(osc) = &mut self.osc {
+                        osc.pointer_leave(Instant::now());
+                    }
                 }
                 HostEvent::OpenFiles { paths, append } => {
                     self.open_files(paths, append)?;
@@ -951,29 +774,7 @@ impl App {
         if self.display != Some((width as u32, height as u32)) {
             self.set_display(width as u32, height as u32);
         }
-        let now = Instant::now();
-        let mut osd_changed = false;
-        if size != self.osd_size || now.duration_since(self.last_osd) >= Duration::from_millis(50) {
-            self.last_osd = now;
-            let rendered = self
-                .shared
-                .as_ref()
-                .and_then(|shared| {
-                    shared.mutate(|backend| {
-                        backend.set_display_size(width as u32, height as u32);
-                        backend
-                            .render_overlay(width as u32, height as u32, 1.0)
-                            .ok()
-                            .flatten()
-                    })
-                })
-                .flatten();
-            let hash = rendered.as_deref().map(hash_bytes).unwrap_or(0);
-            osd_changed = hash != self.osd_hash || size != self.osd_size;
-            self.osd = rendered;
-            self.osd_size = size;
-            self.osd_hash = hash;
-        }
+        let osd_changed = self.render_window_overlay(width as u32, height as u32);
         if let Some(frame) = self.last_frame.as_ref()
             && (new_frames || osd_changed || size != self.presented_size)
         {
@@ -1005,18 +806,57 @@ impl App {
         Ok(())
     }
 
-    fn gui_gate(&mut self, width: i32, height: i32) -> Result<(), String> {
-        if self.last_gate_visibility.elapsed() >= Duration::from_millis(200) {
-            self.last_gate_visibility = Instant::now();
-            let visibility = self
-                .shared
-                .as_ref()
-                .and_then(|shared| shared.inspect(|backend| backend.user_value("user-data/osc/visibility")))
-                .flatten();
-            if visibility != Some(NativeValue::String("always".to_owned())) {
-                self.script_message_to("osc", &["osc-hide".to_owned()])?;
-                self.script_message_to("osc", &["osc-visibility".to_owned(), "always".to_owned()])?;
+    fn render_window_overlay(&mut self, width: u32, height: u32) -> bool {
+        let Some(backend) = self.backend.as_mut() else {
+            let changed = self.osd.take().is_some();
+            self.osd_hash = 0;
+            return changed;
+        };
+        let size = (width as i32, height as i32);
+        let now = Instant::now();
+        let since = now.duration_since(self.last_osd);
+        if let Some(osc) = &mut self.osc {
+            osc.overlay();
+        }
+        let osc_revision = self.osc.as_ref().map(Osc::revision);
+        let message = backend.has_message();
+        let due = size != self.osd_size
+            || (since >= OVERLAY_MIN_INTERVAL
+                && (osc_revision != self.rendered_osc || message != self.rendered_message))
+            || (since >= SUBTITLE_INTERVAL && (message || backend.subtitles_selected()));
+        if !due {
+            return false;
+        }
+        let osc = self.osc.as_mut().and_then(Osc::overlay);
+        let rendered = match backend.render_overlay(width, height, osc) {
+            Ok(rendered) => {
+                self.osd_error = None;
+                rendered
             }
+            Err(message) => {
+                if self.osd_error.as_deref() != Some(message.as_str()) {
+                    eprintln!("player: OSD render failed: {message}");
+                    self.osd_error = Some(message);
+                }
+                None
+            }
+        };
+        self.last_osd = now;
+        self.rendered_osc = osc_revision;
+        self.rendered_message = message;
+        let hash = rendered.as_deref().map(hash_bytes).unwrap_or(0);
+        let changed = hash != self.osd_hash || size != self.osd_size;
+        self.osd = rendered;
+        self.osd_size = size;
+        self.osd_hash = hash;
+        changed
+    }
+
+    fn gui_gate(&mut self, width: i32, height: i32) -> Result<(), String> {
+        if let Some(osc) = &mut self.osc
+            && osc.visibility() != OscVisibility::Always
+        {
+            osc.set_visibility(OscVisibility::Always, Instant::now());
         }
         let ink = self
             .osd
@@ -1063,7 +903,6 @@ impl App {
         if !self.options.quiet {
             println!("Exiting... (Quit)");
         }
-        self.stop_scripts();
         self.send_event(ipc::event("shutdown", Vec::new()));
         self.unload();
     }
@@ -1081,43 +920,19 @@ impl App {
             ));
             self.end_sent = true;
         }
-        let Some(shared) = self.shared.clone() else {
+        let Some(backend) = self.backend.as_mut() else {
             if self.options.idle && !self.idle_sent {
                 self.defer_event(ipc::event("idle", Vec::new()));
                 self.idle_sent = true;
             }
             return Ok(());
         };
-        if self.hosts.is_empty() {
-            shared.pump_frames();
-        } else {
-            for instance in &self.hosts {
-                shared
-                    .pump(&instance.sender)
-                    .map_err(|error| format!("script pump failed: {error}"))?;
-            }
-        }
-        let mut index = 0;
-        while index < self.hosts.len() {
-            match self.hosts[index].host.poll() {
-                Some(Ok(())) => {
-                    self.hosts.remove(index);
-                }
-                Some(Err(error)) => {
-                    return Err(format!("{}: {error}", self.hosts[index].name));
-                }
-                None => index += 1,
-            }
-        }
-        if let Some(frames) = shared.mutate(|backend| backend.take_frames())
-            && let Some(frame) = frames.into_iter().last()
-        {
+        backend.pump_frames();
+        if let Some(frame) = backend.take_frames().pop() {
             self.last_frame = Some(frame);
             self.frame_serial += 1;
         }
-        let status = shared
-            .inspect(|backend| backend.status())
-            .unwrap_or_default();
+        let status = backend.status();
         if self
             .options
             .frames
@@ -1136,9 +951,7 @@ impl App {
         self.volume = status.volume as f64 * 100.0;
         self.muted = status.muted;
         self.speed = status.speed;
-        self.fullscreen = shared
-            .inspect(|backend| backend.fullscreen())
-            .unwrap_or(self.fullscreen);
+        self.update_osc(&status);
         if status.ended && !self.end_sent {
             self.end_sent = true;
             let reason = "eof";
@@ -1167,6 +980,31 @@ impl App {
             }
         }
         Ok(())
+    }
+
+    fn update_osc(&mut self, status: &EngineStatus) {
+        let Some(osc) = self.osc.as_mut() else {
+            return;
+        };
+        let count = |kind: TrackKind| status.tracks.iter().filter(|track| track.kind == kind).count();
+        let playback = Playback {
+            paused: self.paused,
+            fullscreen: self.fullscreen,
+            muted: self.muted,
+            volume: self.volume,
+            position: status.position,
+            duration: self.probe.as_ref().map_or(status.duration, |probe| probe.duration),
+            audio_tracks: count(TrackKind::Audio),
+            sub_tracks: count(TrackKind::Subtitle),
+            aid: if self.aid_disabled { None } else { self.aid },
+            sid: status
+                .tracks
+                .iter()
+                .find(|track| track.kind == TrackKind::Subtitle && track.selected)
+                .map(|track| track.id as i64),
+        };
+        let (width, height) = self.display.unwrap_or((1280, 720));
+        osc.update(playback, width, height, Instant::now());
     }
 
     fn deliver_observers(&mut self) {
@@ -1330,28 +1168,8 @@ impl App {
                 match property.as_str() {
                     "pause" => self.set_paused(!self.paused)?,
                     "mute" => self.set_muted(!self.muted),
-                    "fullscreen" => {
-                        self.fullscreen = !self.fullscreen;
-                        self.apply_fullscreen();
-                    }
-                    "sub" => {
-                        let status = self.status();
-                        let subtitles: Vec<_> = status
-                            .tracks
-                            .iter()
-                            .filter(|track| track.kind == player_engine::TrackKind::Subtitle)
-                            .collect();
-                        let current = subtitles.iter().position(|track| track.selected);
-                        let next = match current {
-                            Some(index) if index + 1 < subtitles.len() => Some(index + 1),
-                            Some(_) => None,
-                            None => Some(0),
-                        };
-                        let id = next
-                            .and_then(|index| subtitles.get(index))
-                            .map(|track| track.id as i64);
-                        self.select_sub(id)?;
-                    }
+                    "fullscreen" => self.fullscreen = !self.fullscreen,
+                    "sub" => self.cycle_sub()?,
                     _ => return Err(format!("cannot cycle '{property}'")),
                 }
                 Ok(NativeValue::None)
@@ -1462,34 +1280,18 @@ impl App {
                 Ok(NativeValue::None)
             }
             "keypress" => {
-                if let Some(key) = rest.first() {
-                    self.keypress(key)?;
-                }
+                let key = rest.first().ok_or_else(|| "keypress needs a key".to_owned())?;
+                self.keypress(key)?;
                 Ok(NativeValue::None)
             }
-            "script-message" => {
-                self.post_script_message(rest)?;
-                Ok(NativeValue::None)
-            }
-            "script-message-to" => {
-                let Some((target, payload)) = rest.split_first() else {
-                    return Err("script-message-to needs a target".to_owned());
-                };
-                self.script_message_to(target, payload)?;
-                Ok(NativeValue::None)
-            }
-            "script-binding" => {
-                let binding = rest
+            "keydown" | "keyup" => {
+                let key = rest
                     .first()
-                    .ok_or_else(|| "script-binding needs a name".to_owned())?;
-                let (_, name) = binding
-                    .split_once('/')
-                    .ok_or_else(|| format!("invalid script binding '{binding}'"))?;
-                self.post_script_message(&[
-                    "key-binding".to_owned(),
-                    name.to_owned(),
-                    "d".to_owned(),
-                ])?;
+                    .ok_or_else(|| format!("{name} needs a key"))?;
+                if !key.eq_ignore_ascii_case("MBTN_LEFT") {
+                    return Err(format!("{name} supports MBTN_LEFT only"));
+                }
+                self.pointer_button(name == "keydown")?;
                 Ok(NativeValue::None)
             }
             "mouse" => {
@@ -1506,28 +1308,30 @@ impl App {
                 self.mouse_move(x, y)?;
                 Ok(NativeValue::None)
             }
+            "mouse-leave" => {
+                if let Some(osc) = &mut self.osc {
+                    osc.pointer_leave(Instant::now());
+                }
+                Ok(NativeValue::None)
+            }
             "sub-add" => {
                 let path = rest.first().ok_or_else(|| "sub-add needs a path".to_owned())?;
-                if let Some(shared) = &self.shared {
-                    shared
-                        .mutate(|backend| {
-                            backend.command(CommandRequest::Args(vec![
-                                "sub-add".to_owned(),
-                                path.clone(),
-                            ]))
-                        })
-                        .ok_or_else(|| "engine backend lock failed".to_owned())??;
+                if let Some(backend) = &self.backend {
+                    backend.add_sub(path)?;
                 }
                 Ok(NativeValue::None)
             }
             "show-text" => {
-                if let Some(shared) = &self.shared {
-                    let mut argv = vec!["show-text".to_owned()];
-                    argv.extend(rest.iter().cloned());
-                    shared
-                        .mutate(|backend| backend.command(CommandRequest::Args(argv)))
-                        .ok_or_else(|| "engine backend lock failed".to_owned())??;
-                }
+                let text = rest
+                    .first()
+                    .ok_or_else(|| "show-text needs a text argument".to_owned())?;
+                let duration = match rest.get(1).map(|value| value.parse::<i64>()) {
+                    None => DEFAULT_OSD_DURATION,
+                    Some(Ok(milliseconds)) if milliseconds < 0 => DEFAULT_OSD_DURATION,
+                    Some(Ok(milliseconds)) => Duration::from_millis(milliseconds as u64),
+                    Some(Err(_)) => return Err("show-text duration is not an integer".to_owned()),
+                };
+                self.show_text(text, duration);
                 Ok(NativeValue::None)
             }
             "screenshot" => self.write_screenshot(None),
@@ -1535,19 +1339,43 @@ impl App {
                 let path = rest
                     .first()
                     .ok_or_else(|| "screenshot-to-file needs a path".to_owned())?;
-                self.write_screenshot(Some(path))
+                let content = match rest.get(1).map(String::as_str) {
+                    None | Some("video") => ScreenshotContent::Video,
+                    Some("window") => ScreenshotContent::Window,
+                    Some(other) => {
+                        return Err(format!("screenshot-to-file flags are video or window, not '{other}'"));
+                    }
+                };
+                self.write_screenshot_with(Some(path), content)
             }
-            "screenshot-raw" => self.screenshot_raw(),
             _ => Err(format!("unknown command '{name}'")),
         }
     }
 
     fn write_screenshot(&mut self, path: Option<&str>) -> Result<NativeValue, String> {
+        self.write_screenshot_with(path, ScreenshotContent::Video)
+    }
+
+    fn write_screenshot_with(
+        &mut self,
+        path: Option<&str>,
+        content: ScreenshotContent,
+    ) -> Result<NativeValue, String> {
         let frame = self
             .last_frame
             .as_ref()
             .ok_or_else(|| "no video frame is available for a screenshot".to_owned())?;
-        let png = crate::png::encode_png(&frame.rgba, frame.width, frame.height)?;
+        let (width, height) = (frame.width, frame.height);
+        let mut rgba = frame.rgba.clone();
+        if content == ScreenshotContent::Window {
+            let backend = self
+                .backend
+                .as_mut()
+                .ok_or_else(|| "no file is loaded".to_owned())?;
+            let osc = self.osc.as_mut().and_then(Osc::overlay);
+            backend.compose(&mut rgba, width, height, osc)?;
+        }
+        let png = crate::png::encode_png(&rgba, width, height)?;
         let target = match path {
             Some(path) => Path::new(path).to_path_buf(),
             None => {
@@ -1560,58 +1388,23 @@ impl App {
         Ok(NativeValue::None)
     }
 
-    fn screenshot_raw(&self) -> Result<NativeValue, String> {
-        let frame = self
-            .last_frame
-            .as_ref()
-            .ok_or_else(|| "no video frame is available for a screenshot".to_owned())?;
-        Ok(NativeValue::Map(vec![
-            ("w".to_owned(), NativeValue::Int(frame.width as i64)),
-            ("h".to_owned(), NativeValue::Int(frame.height as i64)),
-            (
-                "stride".to_owned(),
-                NativeValue::Int(frame.width as i64 * 4),
-            ),
-            ("format".to_owned(), NativeValue::String("rgba".to_owned())),
-            ("data".to_owned(), NativeValue::Bytes(frame.rgba.clone())),
-        ]))
-    }
-
     fn keypress(&mut self, key: &str) -> Result<(), String> {
-        if let Some(text) = self.bindings.get(key).cloned() {
-            if let Err(message) = self.run_binding(&text) {
-                eprintln!("player: {message}");
-            }
-            return Ok(());
+        if key.eq_ignore_ascii_case("MBTN_LEFT") {
+            self.pointer_button(true)?;
+            return self.pointer_button(false);
         }
-        if let Some((_, name)) = self.section_binding(key)? {
-            let mouse_button = key.to_ascii_lowercase().starts_with("mbtn");
-            if mouse_button {
-                self.post_script_message(&[
-                    "key-binding".to_owned(),
-                    name.clone(),
-                    "dm".to_owned(),
-                ])?;
-                self.post_script_message(&[
-                    "key-binding".to_owned(),
-                    name,
-                    "um".to_owned(),
-                ])?;
-            } else {
-                self.post_script_message(&[
-                    "key-binding".to_owned(),
-                    name,
-                    "d".to_owned(),
-                ])?;
-            }
+        if key.eq_ignore_ascii_case("WHEEL_UP") {
+            return self.wheel(true);
+        }
+        if key.eq_ignore_ascii_case("WHEEL_DOWN") {
+            return self.wheel(false);
+        }
+        if self.run_bound_key(key) {
             return Ok(());
         }
         match key {
             "SPACE" => self.set_paused(!self.paused)?,
-            "f" => {
-                self.fullscreen = !self.fullscreen;
-                self.apply_fullscreen();
-            }
+            "f" => self.fullscreen = !self.fullscreen,
             "m" => self.set_muted(!self.muted),
             "[" => self.set_speed(self.speed - 0.1),
             "]" => self.set_speed(self.speed + 0.1),
@@ -1619,10 +1412,12 @@ impl App {
                 self.command(&["frame-step".to_owned()])?;
             }
             "q" => self.quit = true,
-            "o" => self.set_osc_visible(),
-            "j" => {
-                self.command(&["cycle".to_owned(), "sub".to_owned()])?;
+            "o" => {
+                if self.osc.is_some() {
+                    self.set_osc_visibility(OscVisibilityChange::Cycle)?;
+                }
             }
+            "j" => self.cycle_sub()?,
             "RIGHT" => self.seek_relative(5.0),
             "LEFT" => self.seek_relative(-5.0),
             "UP" => self.set_volume((self.volume + 2.0) as f32),
@@ -1632,6 +1427,54 @@ impl App {
             _ => {}
         }
         Ok(())
+    }
+
+    fn run_bound_key(&mut self, key: &str) -> bool {
+        let Some(text) = self.bindings.get(key).cloned() else {
+            return false;
+        };
+        if let Err(message) = self.run_binding(&text) {
+            eprintln!("player: {message}");
+        }
+        true
+    }
+
+    fn pointer_button(&mut self, pressed: bool) -> Result<(), String> {
+        let response = self
+            .osc
+            .as_mut()
+            .map_or(Response::Pass, |osc| osc.button(pressed));
+        match response {
+            Response::Command(command) => self.execute_core(command),
+            Response::Pass if pressed => {
+                self.run_bound_key("MBTN_LEFT");
+                Ok(())
+            }
+            Response::Pass | Response::Consumed => Ok(()),
+        }
+    }
+
+    fn wheel(&mut self, up: bool) -> Result<(), String> {
+        let response = self.osc.as_mut().map_or(Response::Pass, |osc| osc.wheel(up));
+        match response {
+            Response::Command(command) => self.execute_core(command),
+            Response::Pass => {
+                self.run_bound_key(if up { "WHEEL_UP" } else { "WHEEL_DOWN" });
+                Ok(())
+            }
+            Response::Consumed => Ok(()),
+        }
+    }
+
+    fn mouse_move(&mut self, x: f64, y: f64) -> Result<(), String> {
+        let response = self
+            .osc
+            .as_mut()
+            .map_or(Response::Pass, |osc| osc.pointer_move(x, y, Instant::now()));
+        match response {
+            Response::Command(command) => self.execute_core(command),
+            Response::Pass | Response::Consumed => Ok(()),
+        }
     }
 
     fn run_binding(&mut self, text: &str) -> Result<(), String> {
@@ -1655,7 +1498,6 @@ impl App {
             }
             CoreCommand::Fullscreen(toggle) => {
                 self.fullscreen = toggle_value(toggle, self.fullscreen);
-                self.apply_fullscreen();
             }
             CoreCommand::Mute(toggle) => {
                 self.set_muted(toggle_value(toggle, self.muted));
@@ -1722,15 +1564,8 @@ impl App {
                 self.write_screenshot(None)?;
             }
             CoreCommand::SubtitleAdd(path) => {
-                if let Some(shared) = &self.shared {
-                    shared
-                        .mutate(|backend| {
-                            backend.command(CommandRequest::Args(vec![
-                                "sub-add".to_owned(),
-                                path.clone(),
-                            ]))
-                        })
-                        .ok_or_else(|| "engine backend lock failed".to_owned())??;
+                if let Some(backend) = &self.backend {
+                    backend.add_sub(&path)?;
                 }
             }
             CoreCommand::SelectTrack { kind, id } => match kind {
@@ -1739,7 +1574,7 @@ impl App {
                     None => self.disable_audio(),
                 },
                 CoreTrackKind::Subtitle => match id {
-                    Some(id) => self.select_sub_id(id)?,
+                    Some(id) => self.select_sub(Some(id))?,
                     None => self.select_sub(None)?,
                 },
                 CoreTrackKind::Video => {
@@ -1753,13 +1588,31 @@ impl App {
             },
             CoreCommand::CycleTrack(kind) => match kind {
                 CoreTrackKind::Audio => self.cycle_audio()?,
-                CoreTrackKind::Subtitle => {
-                    self.command(&["cycle".to_owned(), "sub".to_owned()])?;
-                }
+                CoreTrackKind::Subtitle => self.cycle_sub()?,
                 CoreTrackKind::Video => {}
             },
+            CoreCommand::OscVisibility(change) => self.set_osc_visibility(change)?,
         }
         Ok(())
+    }
+
+    fn cycle_sub(&mut self) -> Result<(), String> {
+        let status = self.status();
+        let subtitles: Vec<_> = status
+            .tracks
+            .iter()
+            .filter(|track| track.kind == TrackKind::Subtitle)
+            .collect();
+        let current = subtitles.iter().position(|track| track.selected);
+        let next = match current {
+            Some(index) if index + 1 < subtitles.len() => Some(index + 1),
+            Some(_) => None,
+            None => Some(0),
+        };
+        let id = next
+            .and_then(|index| subtitles.get(index))
+            .map(|track| track.id as i64);
+        self.select_sub(id)
     }
 
     fn cycle_audio(&mut self) -> Result<(), String> {
@@ -1767,7 +1620,7 @@ impl App {
         let audios: Vec<_> = status
             .tracks
             .iter()
-            .filter(|track| track.kind == player_engine::TrackKind::Audio)
+            .filter(|track| track.kind == TrackKind::Audio)
             .collect();
         if audios.is_empty() {
             return Err("no audio tracks".to_owned());
@@ -1788,40 +1641,6 @@ impl App {
                 Ok(())
             }
         }
-    }
-
-    fn script_message_to(&mut self, target: &str, args: &[String]) -> Result<(), String> {
-        let args = NativeValue::Array(
-            args.iter()
-                .map(|value| NativeValue::String(value.clone()))
-                .collect(),
-        );
-        let event = ScriptEvent::new("client-message").with_field("args", args);
-        for instance in &self.hosts {
-            if instance.name == target {
-                instance
-                    .host
-                    .post_event(event.clone())
-                    .map_err(|error| error.to_string())?;
-            }
-        }
-        Ok(())
-    }
-
-    fn post_script_message(&mut self, args: &[String]) -> Result<(), String> {
-        let args = NativeValue::Array(
-            args.iter()
-                .map(|value| NativeValue::String(value.clone()))
-                .collect(),
-        );
-        let event = ScriptEvent::new("client-message").with_field("args", args);
-        for instance in &self.hosts {
-            instance
-                .host
-                .post_event(event.clone())
-                .map_err(|error| error.to_string())?;
-        }
-        Ok(())
     }
 
     fn tui_pump(&mut self) {
@@ -1852,54 +1671,6 @@ impl App {
             self.load_current()?;
         }
         Ok(())
-    }
-
-    fn mouse_move(&mut self, x: f64, y: f64) -> Result<(), String> {
-        if let Some(shared) = &self.shared {
-            shared.mutate(|backend| backend.set_mouse_pos(x, y));
-        }
-        if let Some((_, name)) = self.section_binding("mouse_move")? {
-            self.post_script_message(&[
-                "key-binding".to_owned(),
-                name,
-                "pm".to_owned(),
-            ])?;
-        }
-        Ok(())
-    }
-
-    fn section_binding(&self, key: &str) -> Result<Option<(String, String)>, String> {
-        let Some(shared) = &self.shared else {
-            return Ok(None);
-        };
-        let sections = shared
-            .inspect(|backend| backend.sections())
-            .unwrap_or_default();
-        for (section, contents, enabled) in sections {
-            if !enabled {
-                continue;
-            }
-            for line in contents.lines() {
-                let line = line.trim();
-                if line.is_empty() || line.starts_with('#') {
-                    continue;
-                }
-                let Some((bound, command)) = line.split_once(char::is_whitespace) else {
-                    continue;
-                };
-                if !bound.eq_ignore_ascii_case(key) {
-                    continue;
-                }
-                let Some(binding) = command.trim().strip_prefix("script-binding ") else {
-                    continue;
-                };
-                let (_, name) = binding
-                    .split_once('/')
-                    .ok_or_else(|| format!("invalid script binding '{binding}'"))?;
-                return Ok(Some((section, name.to_owned())));
-            }
-        }
-        Ok(None)
     }
 
     pub fn observe_property(&mut self, id: u64, name: &str) {
@@ -1994,111 +1765,6 @@ impl TuiPlayer for App {
 
     fn shutdown(&mut self) -> bool {
         self.quit
-    }
-}
-
-struct IdleBackend {
-    properties: std::sync::Arc<std::sync::Mutex<HashMap<String, NativeValue>>>,
-}
-
-impl IdleBackend {
-    fn new(properties: std::sync::Arc<std::sync::Mutex<HashMap<String, NativeValue>>>) -> Self {
-        IdleBackend { properties }
-    }
-}
-
-impl PlayerBackend for IdleBackend {
-    fn log(&mut self, level: &str, message: &str) {
-        eprintln!("[{level}] {message}");
-    }
-
-    fn command(&mut self, command: CommandRequest) -> Result<NativeValue, String> {
-        let name = match &command {
-            CommandRequest::String(text) => text.split_whitespace().next(),
-            CommandRequest::Args(args) => args.first().map(String::as_str),
-            CommandRequest::Native(_) => None,
-        };
-        match name {
-            Some("define-section" | "enable-section" | "disable-section" | "script-message"
-            | "script-message-to" | "quit") => Ok(NativeValue::None),
-            Some(other) => Err(format!("no file is loaded; cannot run '{other}'")),
-            None => Err("no file is loaded".to_owned()),
-        }
-    }
-
-    fn get_property(
-        &mut self,
-        name: &str,
-        _format: PropertyFormat,
-    ) -> Result<NativeValue, String> {
-        if let Some(value) = self
-            .properties
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .get(name)
-        {
-            return Ok(value.clone());
-        }
-        match name {
-            "pause" | "mute" | "eof-reached" | "vo-configured" => Ok(NativeValue::Bool(false)),
-            "idle-active" => Ok(NativeValue::Bool(true)),
-            "volume" => Ok(NativeValue::Double(100.0)),
-            "time-pos" | "duration" => Ok(NativeValue::Double(0.0)),
-            "path" | "filename" => Ok(NativeValue::String(String::new())),
-            "playlist-count" => Ok(NativeValue::Int(0)),
-            _ => Err(format!("property not found: {name}")),
-        }
-    }
-
-    fn set_property(&mut self, name: &str, value: NativeValue) -> Result<(), String> {
-        self.properties
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .insert(name.to_owned(), value);
-        Ok(())
-    }
-
-    fn del_property(&mut self, name: &str) -> Result<(), String> {
-        self.properties
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .remove(name);
-        Ok(())
-    }
-
-    fn observe_property(
-        &mut self,
-        _id: u64,
-        _name: &str,
-        _format: PropertyFormat,
-    ) -> Result<(), String> {
-        Ok(())
-    }
-
-    fn unobserve_property(&mut self, _id: u64) -> i32 {
-        0
-    }
-
-    fn request_event(&mut self, _name: &str, enable: bool) -> bool {
-        enable
-    }
-
-    fn find_config_file(&mut self, _name: &str) -> Option<String> {
-        None
-    }
-
-    fn format_time(&mut self, seconds: f64, _format: &str) -> Result<String, String> {
-        Ok(format!("{seconds:.2}"))
-    }
-
-    fn input_set_section_mouse_area(
-        &mut self,
-        _section: &str,
-        _x0: f64,
-        _y0: f64,
-        _x1: f64,
-        _y1: f64,
-    ) {
     }
 }
 
@@ -2268,4 +1934,10 @@ pub fn run(args: &[String]) -> Result<(), String> {
 
 pub fn entry(path: &str) -> Result<Entry, String> {
     playlist::local_entry(path)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ScreenshotContent {
+    Video,
+    Window,
 }

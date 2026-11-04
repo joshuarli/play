@@ -1,90 +1,20 @@
-use std::fs;
-use std::os::unix::fs::MetadataExt;
-use std::path::Path;
-
-use crate::value::NativeValue;
-
 const MAX_JSON_DEPTH: usize = 64;
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum NativeValue {
+    None,
+    Bool(bool),
+    Int(i64),
+    Double(f64),
+    String(String),
+    Array(Vec<NativeValue>),
+    Map(Vec<(String, NativeValue)>),
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct UtilsError;
+pub struct JsonError;
 
-pub fn split_path(path: &str) -> (String, String) {
-    let trimmed = path.trim_end_matches('/');
-    if trimmed.is_empty() {
-        if path.starts_with('/') {
-            return ("/".to_owned(), "/".to_owned());
-        }
-        return (String::new(), path.to_owned());
-    }
-    match trimmed.rfind('/') {
-        Some(0) => ("/".to_owned(), trimmed[1..].to_owned()),
-        Some(index) => (trimmed[..index].to_owned(), trimmed[index + 1..].to_owned()),
-        None => (String::new(), trimmed.to_owned()),
-    }
-}
-
-pub fn readdir(path: &str, filter: &str) -> Result<NativeValue, UtilsError> {
-    let filter = match filter {
-        "all" => Filter::All,
-        "files" => Filter::Files,
-        "dirs" => Filter::Dirs,
-        "normal" => Filter::Normal,
-        _ => return Err(UtilsError),
-    };
-    let mut names = Vec::new();
-    if matches!(filter, Filter::All) {
-        names.push(".".to_owned());
-        names.push("..".to_owned());
-    }
-    let entries = fs::read_dir(path).map_err(|_| UtilsError)?;
-    for entry in entries {
-        let entry = entry.map_err(|_| UtilsError)?;
-        let name = entry.file_name().to_string_lossy().into_owned();
-        if name == "." || name == ".." {
-            continue;
-        }
-        if matches!(filter, Filter::All) {
-            names.push(name);
-            continue;
-        }
-        let metadata = entry.metadata().map_err(|_| UtilsError)?;
-        let keep = match filter {
-            Filter::Files => metadata.is_file(),
-            Filter::Dirs => metadata.is_dir(),
-            Filter::Normal => metadata.is_file() || metadata.is_dir(),
-            Filter::All => true,
-        };
-        if keep {
-            names.push(name);
-        }
-    }
-    Ok(NativeValue::Array(
-        names.into_iter().map(NativeValue::String).collect(),
-    ))
-}
-
-pub fn file_info(path: &str) -> Result<NativeValue, UtilsError> {
-    let metadata = fs::metadata(Path::new(path)).map_err(|_| UtilsError)?;
-    Ok(NativeValue::Map(vec![
-        ("mode".to_owned(), NativeValue::Int(metadata.mode() as i64)),
-        ("size".to_owned(), NativeValue::Int(metadata.size() as i64)),
-        ("atime".to_owned(), NativeValue::Int(metadata.atime())),
-        ("mtime".to_owned(), NativeValue::Int(metadata.mtime())),
-        ("ctime".to_owned(), NativeValue::Int(metadata.ctime())),
-        ("is_file".to_owned(), NativeValue::Bool(metadata.is_file())),
-        ("is_dir".to_owned(), NativeValue::Bool(metadata.is_dir())),
-    ]))
-}
-
-enum Filter {
-    All,
-    Files,
-    Dirs,
-    Normal,
-}
-
-pub fn parse_json(text: &str, allow_trailing: bool) -> Result<(NativeValue, &str), UtilsError> {
+pub fn parse_json(text: &str) -> Result<NativeValue, JsonError> {
     let mut parser = Parser {
         bytes: text.as_bytes(),
         position: 0,
@@ -92,21 +22,21 @@ pub fn parse_json(text: &str, allow_trailing: bool) -> Result<(NativeValue, &str
     parser.skip_whitespace();
     let value = parser.value(0)?;
     parser.skip_whitespace();
-    if !allow_trailing && parser.position < parser.bytes.len() {
-        return Err(UtilsError);
+    if parser.position < parser.bytes.len() {
+        return Err(JsonError);
     }
-    Ok((value, &text[parser.position..]))
+    Ok(value)
 }
 
-pub fn format_json(value: &NativeValue) -> Result<String, UtilsError> {
+pub fn format_json(value: &NativeValue) -> Result<String, JsonError> {
     let mut output = String::new();
     write_value(value, &mut output, 0)?;
     Ok(output)
 }
 
-fn write_value(value: &NativeValue, output: &mut String, depth: usize) -> Result<(), UtilsError> {
+fn write_value(value: &NativeValue, output: &mut String, depth: usize) -> Result<(), JsonError> {
     if depth > MAX_JSON_DEPTH {
-        return Err(UtilsError);
+        return Err(JsonError);
     }
     match value {
         NativeValue::None => output.push_str("null"),
@@ -116,12 +46,11 @@ fn write_value(value: &NativeValue, output: &mut String, depth: usize) -> Result
         NativeValue::Int(value) => output.push_str(&value.to_string()),
         NativeValue::Double(value) => {
             if !value.is_finite() {
-                return Err(UtilsError);
+                return Err(JsonError);
             }
             output.push_str(&value.to_string());
         }
         NativeValue::String(value) => write_string(value, output),
-        NativeValue::Bytes(_) => return Err(UtilsError),
         NativeValue::Array(values) => {
             output.push('[');
             for (index, value) in values.iter().enumerate() {
@@ -144,7 +73,6 @@ fn write_value(value: &NativeValue, output: &mut String, depth: usize) -> Result
             }
             output.push('}');
         }
-        NativeValue::Unknown => return Err(UtilsError),
     }
     Ok(())
 }
@@ -175,11 +103,11 @@ struct Parser<'a> {
 }
 
 impl Parser<'_> {
-    fn value(&mut self, depth: usize) -> Result<NativeValue, UtilsError> {
+    fn value(&mut self, depth: usize) -> Result<NativeValue, JsonError> {
         if depth > MAX_JSON_DEPTH {
-            return Err(UtilsError);
+            return Err(JsonError);
         }
-        let byte = *self.bytes.get(self.position).ok_or(UtilsError)?;
+        let byte = *self.bytes.get(self.position).ok_or(JsonError)?;
         match byte {
             b'n' => {
                 self.literal(b"null")?;
@@ -197,29 +125,29 @@ impl Parser<'_> {
             b'[' => self.array(depth),
             b'{' => self.object(depth),
             b'-' | b'0'..=b'9' => self.number(),
-            _ => Err(UtilsError),
+            _ => Err(JsonError),
         }
     }
 
-    fn literal(&mut self, literal: &[u8]) -> Result<(), UtilsError> {
+    fn literal(&mut self, literal: &[u8]) -> Result<(), JsonError> {
         if self.bytes.get(self.position..self.position + literal.len()) == Some(literal) {
             self.position += literal.len();
             Ok(())
         } else {
-            Err(UtilsError)
+            Err(JsonError)
         }
     }
 
-    fn string(&mut self) -> Result<String, UtilsError> {
+    fn string(&mut self) -> Result<String, JsonError> {
         self.position += 1;
         let mut output = String::new();
         loop {
-            let byte = *self.bytes.get(self.position).ok_or(UtilsError)?;
+            let byte = *self.bytes.get(self.position).ok_or(JsonError)?;
             self.position += 1;
             match byte {
                 b'"' => return Ok(output),
                 b'\\' => {
-                    let escape = *self.bytes.get(self.position).ok_or(UtilsError)?;
+                    let escape = *self.bytes.get(self.position).ok_or(JsonError)?;
                     self.position += 1;
                     match escape {
                         b'"' => output.push('"'),
@@ -236,32 +164,32 @@ impl Parser<'_> {
                                 if self.bytes.get(self.position..self.position + 2)
                                     != Some(b"\\u")
                                 {
-                                    return Err(UtilsError);
+                                    return Err(JsonError);
                                 }
                                 self.position += 2;
                                 let second = self.hex4()?;
                                 if !(0xdc00..0xe000).contains(&second) {
-                                    return Err(UtilsError);
+                                    return Err(JsonError);
                                 }
                                 let codepoint = 0x10000
                                     + ((first - 0xd800) << 10)
                                     + (second - 0xdc00);
-                                output.push(char::from_u32(codepoint).ok_or(UtilsError)?);
+                                output.push(char::from_u32(codepoint).ok_or(JsonError)?);
                             } else {
-                                output.push(char::from_u32(first).ok_or(UtilsError)?);
+                                output.push(char::from_u32(first).ok_or(JsonError)?);
                             }
                         }
-                        _ => return Err(UtilsError),
+                        _ => return Err(JsonError),
                     }
                 }
-                byte if byte < 0x20 => return Err(UtilsError),
+                byte if byte < 0x20 => return Err(JsonError),
                 byte if byte < 0x80 => output.push(byte as char),
                 _ => {
                     let start = self.position - 1;
-                    let length = utf8_length(byte).ok_or(UtilsError)?;
+                    let length = utf8_length(byte).ok_or(JsonError)?;
                     let end = start + length;
-                    let text = std::str::from_utf8(self.bytes.get(start..end).ok_or(UtilsError)?)
-                        .map_err(|_| UtilsError)?;
+                    let text = std::str::from_utf8(self.bytes.get(start..end).ok_or(JsonError)?)
+                        .map_err(|_| JsonError)?;
                     output.push_str(text);
                     self.position = end;
                 }
@@ -269,23 +197,23 @@ impl Parser<'_> {
         }
     }
 
-    fn hex4(&mut self) -> Result<u32, UtilsError> {
+    fn hex4(&mut self) -> Result<u32, JsonError> {
         let mut value = 0u32;
         for _ in 0..4 {
-            let byte = *self.bytes.get(self.position).ok_or(UtilsError)?;
+            let byte = *self.bytes.get(self.position).ok_or(JsonError)?;
             self.position += 1;
             value = (value << 4)
                 | match byte {
                     b'0'..=b'9' => (byte - b'0') as u32,
                     b'a'..=b'f' => (byte - b'a' + 10) as u32,
                     b'A'..=b'F' => (byte - b'A' + 10) as u32,
-                    _ => return Err(UtilsError),
+                    _ => return Err(JsonError),
                 };
         }
         Ok(value)
     }
 
-    fn number(&mut self) -> Result<NativeValue, UtilsError> {
+    fn number(&mut self) -> Result<NativeValue, JsonError> {
         let start = self.position;
         if self.bytes.get(self.position) == Some(&b'-') {
             self.position += 1;
@@ -295,7 +223,7 @@ impl Parser<'_> {
             self.position += 1;
         }
         if self.position == digits {
-            return Err(UtilsError);
+            return Err(JsonError);
         }
         let mut is_float = false;
         if self.bytes.get(self.position) == Some(&b'.') {
@@ -306,7 +234,7 @@ impl Parser<'_> {
                 self.position += 1;
             }
             if self.position == fraction {
-                return Err(UtilsError);
+                return Err(JsonError);
             }
         }
         if matches!(self.bytes.get(self.position), Some(b'e' | b'E')) {
@@ -320,20 +248,20 @@ impl Parser<'_> {
                 self.position += 1;
             }
             if self.position == exponent {
-                return Err(UtilsError);
+                return Err(JsonError);
             }
         }
-        let text = std::str::from_utf8(&self.bytes[start..self.position]).map_err(|_| UtilsError)?;
+        let text = std::str::from_utf8(&self.bytes[start..self.position]).map_err(|_| JsonError)?;
         if is_float {
-            Ok(NativeValue::Double(text.parse().map_err(|_| UtilsError)?))
+            Ok(NativeValue::Double(text.parse().map_err(|_| JsonError)?))
         } else if let Ok(value) = text.parse::<i64>() {
             Ok(NativeValue::Int(value))
         } else {
-            Ok(NativeValue::Double(text.parse().map_err(|_| UtilsError)?))
+            Ok(NativeValue::Double(text.parse().map_err(|_| JsonError)?))
         }
     }
 
-    fn array(&mut self, depth: usize) -> Result<NativeValue, UtilsError> {
+    fn array(&mut self, depth: usize) -> Result<NativeValue, JsonError> {
         self.position += 1;
         self.skip_whitespace();
         let mut values = Vec::new();
@@ -353,12 +281,12 @@ impl Parser<'_> {
                     self.position += 1;
                     return Ok(NativeValue::Array(values));
                 }
-                _ => return Err(UtilsError),
+                _ => return Err(JsonError),
             }
         }
     }
 
-    fn object(&mut self, depth: usize) -> Result<NativeValue, UtilsError> {
+    fn object(&mut self, depth: usize) -> Result<NativeValue, JsonError> {
         self.position += 1;
         self.skip_whitespace();
         let mut entries = Vec::new();
@@ -368,12 +296,12 @@ impl Parser<'_> {
         }
         loop {
             if self.bytes.get(self.position) != Some(&b'"') {
-                return Err(UtilsError);
+                return Err(JsonError);
             }
             let key = self.string()?;
             self.skip_whitespace();
             if self.bytes.get(self.position) != Some(&b':') {
-                return Err(UtilsError);
+                return Err(JsonError);
             }
             self.position += 1;
             self.skip_whitespace();
@@ -390,7 +318,7 @@ impl Parser<'_> {
                     entries.sort_by(|left, right| left.0.cmp(&right.0));
                     return Ok(NativeValue::Map(entries));
                 }
-                _ => return Err(UtilsError),
+                _ => return Err(JsonError),
             }
         }
     }
@@ -420,18 +348,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn splits_paths_like_the_c_helper() {
-        assert_eq!(split_path("/a/b"), ("/a".to_owned(), "b".to_owned()));
-        assert_eq!(split_path("/a/b/"), ("/a".to_owned(), "b".to_owned()));
-        assert_eq!(split_path("b"), (String::new(), "b".to_owned()));
-        assert_eq!(split_path("/b"), ("/".to_owned(), "b".to_owned()));
-    }
-
-    #[test]
     fn parses_and_formats_json() {
-        let (value, rest) = parse_json(r#"{"a":1,"b":[true,null,"x"],"c":1.5}"#, false)
-            .expect("json parses");
-        assert_eq!(rest, "");
+        let value = parse_json(r#"{"a":1,"b":[true,null,"x"],"c":1.5}"#).expect("json parses");
         assert_eq!(
             value,
             NativeValue::Map(vec![
@@ -448,44 +366,15 @@ mod tests {
             ])
         );
         let text = format_json(&value).unwrap();
-        let (round_trip, _) = parse_json(&text, false).unwrap();
+        let round_trip = parse_json(&text).unwrap();
         assert_eq!(round_trip, value);
     }
 
     #[test]
-    fn handles_strings_and_trailing_data() {
-        let (value, rest) = parse_json(r#""a\u00e9\n\"b" tail"#, true).unwrap();
+    fn decodes_escapes_and_rejects_trailing_data() {
+        let value = parse_json(r#""a\u00e9\n\"b""#).unwrap();
         assert_eq!(value, NativeValue::String("aé\n\"b".to_owned()));
-        assert_eq!(rest, "tail");
-        assert!(parse_json("[1,", false).is_err());
-        assert!(parse_json("true false", false).is_err());
-    }
-
-    #[test]
-    fn reads_directory_entries() {
-        let root = std::path::Path::new("../../.work/tmp/lua-utils-test");
-        let _ = std::fs::remove_dir_all(root);
-        std::fs::create_dir_all(root.join("dir")).unwrap();
-        std::fs::write(root.join("file"), b"x").unwrap();
-        let entries = readdir(root.to_str().unwrap(), "normal").unwrap();
-        let NativeValue::Array(entries) = entries else {
-            panic!("readdir did not return an array");
-        };
-        let names: Vec<&str> = entries
-            .iter()
-            .filter_map(|entry| match entry {
-                NativeValue::String(name) => Some(name.as_str()),
-                _ => None,
-            })
-            .collect();
-        assert!(names.contains(&"dir"));
-        assert!(names.contains(&"file"));
-        let info = file_info(root.join("file").to_str().unwrap()).unwrap();
-        let NativeValue::Map(entries) = info else {
-            panic!("file_info did not return a map");
-        };
-        assert!(entries.iter().any(|(key, value)| key == "is_file"
-            && value == &NativeValue::Bool(true)));
-        let _ = std::fs::remove_dir_all(root);
+        assert!(parse_json("[1,").is_err());
+        assert!(parse_json("true false").is_err());
     }
 }

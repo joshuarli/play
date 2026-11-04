@@ -8,7 +8,7 @@ ALLOWED_NEEDED=(
     libvulkan.so.1 libwayland-client.so.0 libgcc_s.so.1
     libasound.so.2 libc.musl-x86_64.so.1 libva.so.2 libva-drm.so.2
 )
-LICENSED=(FFmpeg libass libplacebo shaderc dav1d FreeType FriBiDi HarfBuzz zlib expat fontconfig Lua)
+LICENSED=(FFmpeg libass libplacebo shaderc dav1d FreeType FriBiDi HarfBuzz zlib expat fontconfig)
 FORBIDDEN_IMPORTS='^(getaddrinfo|freeaddrinfo|getnameinfo|gethostbyname2?|gethostbyaddr|SSL_.*|TLS_.*|curl_.*)$'
 
 failed=0
@@ -89,10 +89,10 @@ check "no C playback symbols" "$([ "$c_engine" = 0 ] && echo 1 || echo 0)"
 check "Rust engine symbols" "$([ "$rust_engine" = 1 ] && echo 1 || echo 0)"
 
 if [ -f "$UNSTRIPPED" ]; then
-    lua=$(nm "$UNSTRIPPED" | rg -c 'luaL_newstate' || true)
-    check "one Lua interpreter" "$([ "${lua:-0}" = 1 ] && echo 1 || echo 0)" "found ${lua:-0}"
+    lua=$(nm "$UNSTRIPPED" | rg -c '\blua(L|_)[A-Za-z]' || true)
+    check "no Lua interpreter" "$([ "${lua:-0}" = 0 ] && echo 1 || echo 0)" "found ${lua:-0} Lua symbols"
 else
-    check "one Lua interpreter" 0 "missing $UNSTRIPPED"
+    check "no Lua interpreter" 0 "missing $UNSTRIPPED"
 fi
 
 missing=()

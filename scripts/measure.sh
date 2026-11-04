@@ -347,8 +347,6 @@ def component_for(path):
         return "shaderc"
     if "dav1d" in lowered:
         return "dav1d"
-    if "lua" in lowered:
-        return "Lua"
     if name.startswith(("libfreetype", "libfribidi", "libharfbuzz")):
         return "fonts/shaping"
     return "remaining external"
@@ -418,18 +416,9 @@ def closure():
     }
 
 
-def script_host_attribution():
-    osc = ROOT / "rust" / "player-lua" / "lua" / "osc.lua"
-    target = ROOT / "rust" / "target"
-    lua_archives = sorted(target.glob("dist/build/mlua-sys/*/out/lib/liblua5.2.a"))
-    if not lua_archives:
-        lua_archives = sorted(target.glob("release/build/mlua-sys/*/out/lib/liblua5.2.a"))
-    lines = len(osc.read_text().splitlines()) if osc.exists() else 0
-    return {
-        "osc_bytes": osc.stat().st_size if osc.exists() else 0,
-        "osc_lines": lines,
-        "lua_archive_bytes": lua_archives[0].stat().st_size if lua_archives else 0,
-    }
+def osc_attribution():
+    osc = ROOT / "rust" / "player-app" / "src" / "osc.rs"
+    return {"osc_bytes": osc.stat().st_size, "osc_lines": len(osc.read_text().splitlines())}
 
 
 def stripped_sizes():
@@ -484,7 +473,7 @@ def features():
         "engine": "rust",
         "audio_decoder": "symphonia",
         "renderer": "libplacebo",
-        "script_host": "lua-5.2",
+        "osc": "native",
         "profiles": ",".join(profiles),
     }
 
@@ -509,15 +498,11 @@ def hwdec():
     }
 
 
-def lua_interpreters():
-    paths = [MPV]
-    count = 0
-    for path in paths:
-        if not path.exists():
-            continue
-        text = run(["nm", str(path)], timeout=30).stdout
-        count += text.count("luaL_newstate")
-    return count
+def lua_symbols():
+    if not MPV.exists():
+        return 0
+    text = run(["nm", str(MPV)], timeout=30).stdout
+    return len(re.findall(r"\b_?lua(?:L|_)[A-Za-z]\w*", text))
 
 
 def budget_checks(value):
@@ -533,8 +518,8 @@ def budget_checks(value):
          f"{value['playback']['1080p']['rss_mb']['median']} MB"),
         ("no network schemes", not value["protocols"]["network"],
          ",".join(value["protocols"]["network"])),
-        ("one Lua interpreter", value["lua_interpreters"] == 1,
-         str(value["lua_interpreters"])),
+        ("no Lua interpreter", value["lua_symbols"] == 0,
+         f"{value['lua_symbols']} Lua symbols"),
     ]
 
 
@@ -549,7 +534,6 @@ def timing_budget_checks(value):
 
 def license_obligations():
     return [
-        "mpv Lua client scripts: GPL-2.0-or-later; source and notice obligations on distribution.",
         "FFmpeg 9.0.2: LGPL-2.1-or-later with GPL-enabled components; source and notice obligations.",
         "libass 0.17.5: ISC; notice.",
         "libplacebo 7.387.0: LGPL-2.1-or-later; source and notice obligations.",
@@ -557,7 +541,6 @@ def license_obligations():
         "Vulkan loader/headers 1.4.363.0: Apache-2.0; notice.",
         "shaderc 2026.4: Apache-2.0; notice.",
         "dav1d 1.5.4: BSD-2-Clause; notice.",
-        "Lua 5.2.4: MIT; notice.",
     ]
 
 
@@ -671,9 +654,7 @@ if MODE == "size":
     print(f"closure: {mb(closure_data['bytes'])} MiB in {closure_data['files']} files")
     for component, value in closure_data["by_component"].items():
         print(f"  {component}: {mb(value['bytes'])} MiB / {value['files']} files")
-    host = script_host_attribution()
-    print("script host: osc.lua {osc_bytes} B / {osc_lines} lines; vendored "
-          "Lua archive {lua_archive_bytes} B (archive, not linked size)".format(**host))
+    print("osc: osc.rs {osc_bytes} B / {osc_lines} lines".format(**osc_attribution()))
     raise SystemExit(0)
 
 
@@ -717,7 +698,7 @@ result = {
     "licenses": license_obligations(),
     "mode": MODE,
     "distributable_bytes": sizes["unstripped"] + closure_data["bytes"],
-    "lua_interpreters": lua_interpreters(),
+    "lua_symbols": lua_symbols(),
 }
 RESULT_PATH.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
 

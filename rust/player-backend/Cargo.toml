@@ -11,7 +11,6 @@ crate-type = ["rlib"]
 player-audio = { path = "../player-audio" }
 player-ass = { path = "../player-ass" }
 player-engine = { path = "../player-engine" }
-player-lua = { path = "../player-lua" }
 
 [build-dependencies]
 player-build = { path = "../player-build" }

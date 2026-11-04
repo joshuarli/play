@@ -42,7 +42,6 @@ pub struct Options {
     pub term_playing_msg: Option<String>,
     pub log_file: Option<PathBuf>,
     pub osc: bool,
-    pub scripts: Vec<String>,
     pub sub_files: Vec<String>,
     pub sid: Option<String>,
     pub audio_files: Vec<String>,
@@ -83,7 +82,6 @@ impl Default for Options {
             term_playing_msg: None,
             log_file: None,
             osc: true,
-            scripts: Vec::new(),
             sub_files: Vec::new(),
             sid: None,
             audio_files: Vec::new(),
@@ -92,6 +90,16 @@ impl Default for Options {
         }
     }
 }
+
+const SCRIPTING: &[&str] = &[
+    "script",
+    "scripts",
+    "scripts-append",
+    "scripts-add",
+    "script-opts",
+    "script-opts-append",
+    "script-opts-add",
+];
 
 const REMOVED: &[&str] = &[
     "http-header-fields",
@@ -130,6 +138,9 @@ pub fn parse(args: &[String]) -> Result<Options, String> {
         if REMOVED.contains(&name.as_str()) {
             return Err(format!("unknown option '--{name}'"));
         }
+        if SCRIPTING.contains(&name.as_str()) {
+            return Err(format!("option '--{name}' is unsupported: this player has no scripting"));
+        }
         let mut value = |name: &str| -> Result<String, String> {
             if let Some(value) = inline.clone() {
                 return Ok(value);
@@ -152,7 +163,12 @@ pub fn parse(args: &[String]) -> Result<Options, String> {
         match name.as_str() {
             "version" | "v" => return Err("__version__".to_owned()),
             "help" | "h" => return Err("__help__".to_owned()),
-            "no-config" | "load-scripts" | "no-load-scripts" | "terminal" | "input-terminal" => {}
+            "no-config" | "no-load-scripts" | "terminal" | "input-terminal" => {}
+            "load-scripts" => {
+                if flag(&inline)? {
+                    return Err("option '--load-scripts' is unsupported: this player has no scripting".to_owned());
+                }
+            }
             "idle" => options.idle = flag(&inline)?,
             "no-idle" => options.idle = false,
             "pause" => options.pause = flag(&inline)?,
@@ -208,7 +224,6 @@ pub fn parse(args: &[String]) -> Result<Options, String> {
             "sub-file" => options.sub_files.push(value(&name)?),
             "sid" => options.sid = Some(value(&name)?),
             "audio-file" => options.audio_files.push(value(&name)?),
-            "script" => options.scripts.push(value(&name)?),
             "geometry" => options.geometry = parse_geometry(&value(&name)?),
             "really-quiet" | "quiet" => options.quiet = true,
             "msg-level" | "input-default-bindings"

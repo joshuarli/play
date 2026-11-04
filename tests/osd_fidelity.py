@@ -1,8 +1,10 @@
 import os
 import shutil
+import struct
 import subprocess
 import sys
 import time
+import zlib
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -11,7 +13,6 @@ from harness import ROOT, TMP, Failure, Mpv, tail  # noqa: E402
 
 WIDTH = 320
 HEIGHT = 240
-CAPTURE = ROOT / "tests" / "osd_capture.lua"
 CARGO = shutil.which("cargo") or "cargo"
 
 OSC_TEXT = "osc"
@@ -47,6 +48,54 @@ def solid_fixture():
     return path
 
 
+def read_png_rgba(path):
+    data = path.read_bytes()
+    if data[:8] != b"\x89PNG\r\n\x1a\n":
+        raise Failure(f"{path} is not a PNG")
+    offset = 8
+    header = None
+    compressed = b""
+    while offset < len(data):
+        length, kind = struct.unpack(">I4s", data[offset:offset + 8])
+        chunk = data[offset + 8:offset + 8 + length]
+        offset += 12 + length
+        if kind == b"IHDR":
+            header = struct.unpack(">IIBBBBB", chunk)
+        elif kind == b"IDAT":
+            compressed += chunk
+    if header is None or header[2:5] != (8, 6, 0):
+        raise Failure(f"{path} is not 8-bit RGBA: {header}")
+    width, height = header[0], header[1]
+    raw = zlib.decompress(compressed)
+    stride = width * 4
+    pixels = bytearray()
+    previous = bytearray(stride)
+    for row in range(height):
+        start = row * (stride + 1)
+        kind = raw[start]
+        line = bytearray(raw[start + 1:start + 1 + stride])
+        for index in range(stride):
+            left = line[index - 4] if index >= 4 else 0
+            up = previous[index]
+            corner = previous[index - 4] if index >= 4 else 0
+            if kind == 1:
+                line[index] = (line[index] + left) & 0xff
+            elif kind == 2:
+                line[index] = (line[index] + up) & 0xff
+            elif kind == 3:
+                line[index] = (line[index] + (left + up) // 2) & 0xff
+            elif kind == 4:
+                estimate = left + up - corner
+                distances = (abs(estimate - left), abs(estimate - up), abs(estimate - corner))
+                predictor = (left, up, corner)[distances.index(min(distances))]
+                line[index] = (line[index] + predictor) & 0xff
+            elif kind != 0:
+                raise Failure(f"{path} uses unknown PNG filter {kind}")
+        pixels += line
+        previous = line
+    return width, height, bytes(pixels)
+
+
 def gpu_args():
     if sys.platform.startswith("linux"):
         return [
@@ -66,7 +115,6 @@ def capture_reference(results, label, fixture, env, env_args):
     for path in directory.glob("*"):
         path.unlink()
     capture_env = os.environ.copy()
-    capture_env["OSD_CAPTURE_DIR"] = str(directory)
     if env:
         capture_env.update(env)
     with Mpv(
@@ -80,7 +128,6 @@ def capture_reference(results, label, fixture, env, env_args):
             "--start=1.0",
             f"--geometry={WIDTH}x{HEIGHT}",
             "--osd-level=0",
-            f"--script={CAPTURE}",
         ],
         env=capture_env,
     ) as player:
@@ -88,40 +135,34 @@ def capture_reference(results, label, fixture, env, env_args):
         player.wait_event("file-loaded", timeout=30)
         dims = player.wait_property(
             "osd-dimensions",
-            lambda value: value.get("w") == WIDTH and value.get("h") == HEIGHT,
+            lambda value: value.get("w", 0) > 0 and value.get("h", 0) > 0,
             timeout=15,
         )
+        scale = dims["w"] / WIDTH
         results.check(
             f"osd-fidelity {label}: window size",
-            dims.get("w") == WIDTH and dims.get("h") == HEIGHT,
+            scale in (1, 2) and dims["h"] == HEIGHT * scale,
             str(dims),
         )
+        (directory / "window").write_text(f"{dims['w']} {dims['h']}\n")
         if label == OSC_TEXT:
             time.sleep(0.8)
-            player.command("script-message-to", "osc", "osc-visibility", "always")
-            player.wait_property(
-                "user-data/osc/visibility", lambda value: value == "always", timeout=10
-            )
+            player.command("set", "osc-visibility", "always")
+            player.wait_property("osc-visibility", lambda value: value == "always", timeout=10)
             time.sleep(1.2)
-            player.command("script-message", "osd-capture", "osd")
         else:
-            time.sleep(0.4)
+            player.command("set", "osc-visibility", "never")
+            time.sleep(1.2)
             player.command("show-text", PLAIN_TEXT, 5000, 0)
             time.sleep(0.3)
-            player.command("script-message", "osd-capture", "osd")
-        deadline = time.monotonic() + 10
-        base = directory / "base.rgba"
-        overlay = directory / "overlay.rgba"
-        while time.monotonic() < deadline and not (base.is_file() and overlay.is_file()):
-            time.sleep(0.05)
+        player.command("screenshot-to-file", str(directory / "base.png"), "video")
+        player.command("screenshot-to-file", str(directory / "overlay.png"), "window")
         player.command("quit")
-    expected = WIDTH * HEIGHT * 4
-    for path in (base, overlay):
-        if not path.is_file() or path.stat().st_size != expected:
-            raise Failure(
-                f"reference capture {path} is missing or has the wrong size; "
-                "rebuild the development player so the Lua byte-array path is current"
-            )
+    for name in ("base", "overlay"):
+        width, height, pixels = read_png_rgba(directory / f"{name}.png")
+        if (width, height) != (WIDTH, HEIGHT):
+            raise Failure(f"{name} capture is {width}x{height}, expected {WIDTH}x{HEIGHT}")
+        (directory / f"{name}.rgba").write_bytes(pixels)
     return directory
 
 
@@ -131,13 +172,14 @@ def render_rust(results, label, fixture, directory):
     command = [
         CARGO, "run", "--quiet",
         "--manifest-path", str(ROOT / "rust" / "Cargo.toml"),
-        "-p", "player-backend", "--example", "osd_frame", "--",
+        "-p", "player-app", "--example", "osd_frame", "--",
         "--fixture", str(fixture),
         "--base", str(directory / "base.rgba"),
         "--output", str(output),
         "--width", str(WIDTH),
         "--height", str(HEIGHT),
         "--position", "1.0",
+        "--window", (directory / "window").read_text().strip().replace(" ", "x"),
     ]
     if label == OSC_TEXT:
         command += ["--osc", "yes"]

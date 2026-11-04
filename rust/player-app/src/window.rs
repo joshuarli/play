@@ -9,7 +9,8 @@ use player_display::{MacInput, MacWindow};
 pub enum HostEvent {
     Key { name: String, pressed: bool },
     PointerMotion { x: f64, y: f64 },
-    PointerButton { name: String, pressed: bool },
+    PointerButton { pressed: bool },
+    Wheel { up: bool },
     PointerLeave,
     OpenFiles { paths: Vec<String>, append: bool },
 }
@@ -87,11 +88,10 @@ impl HostWindow {
                     }),
                     InputEvent::PointerMotion { x, y } => Some(HostEvent::PointerMotion { x, y }),
                     InputEvent::PointerButton { button, pressed } => {
-                        (button == 0x110).then_some(HostEvent::PointerButton {
-                            name: "MBTN_LEFT".to_owned(),
-                            pressed,
-                        })
+                        (button == BTN_LEFT).then_some(HostEvent::PointerButton { pressed })
                     }
+                    InputEvent::PointerAxis { vertical, value } => (vertical && value != 0.0)
+                        .then_some(HostEvent::Wheel { up: value < 0.0 }),
                     InputEvent::PointerLeave => Some(HostEvent::PointerLeave),
                     _ => None,
                 })
@@ -99,23 +99,33 @@ impl HostWindow {
         }
         #[cfg(target_os = "macos")]
         {
-            Ok(self
-                .window
-                .drain_input()
-                .into_iter()
-                .filter_map(|event| match event {
+            let mut events = Vec::new();
+            for event in self.window.drain_input() {
+                match event {
                     MacInput::Key {
-                        key_code,
-                        pressed,
-                        ..
-                    } => gui_key_name(key_code as u32).map(|name| HostEvent::Key { name, pressed }),
-                    MacInput::PointerMotion { x, y } => Some(HostEvent::PointerMotion { x, y }),
-                    MacInput::PointerLeave => Some(HostEvent::PointerLeave),
-                    MacInput::OpenFiles { paths, append } => {
-                        Some(HostEvent::OpenFiles { paths, append })
+                        key_code, pressed, ..
+                    } => {
+                        if let Some(name) = gui_key_name(key_code as u32) {
+                            events.push(HostEvent::Key { name, pressed });
+                        }
                     }
-                })
-                .collect())
+                    MacInput::PointerMotion { x, y } => {
+                        events.push(HostEvent::PointerMotion { x, y });
+                    }
+                    MacInput::PointerButton { x, y, pressed } => {
+                        events.push(HostEvent::PointerMotion { x, y });
+                        events.push(HostEvent::PointerButton { pressed });
+                    }
+                    MacInput::Scroll { delta_y } => {
+                        events.push(HostEvent::Wheel { up: delta_y > 0.0 });
+                    }
+                    MacInput::PointerLeave => events.push(HostEvent::PointerLeave),
+                    MacInput::OpenFiles { paths, append } => {
+                        events.push(HostEvent::OpenFiles { paths, append });
+                    }
+                }
+            }
+            Ok(events)
         }
     }
 
@@ -147,6 +157,9 @@ impl HostWindow {
         Ok(())
     }
 }
+
+#[cfg(target_os = "linux")]
+const BTN_LEFT: u32 = 0x110;
 
 #[cfg(target_os = "linux")]
 fn gui_key_name(code: u32) -> Option<String> {

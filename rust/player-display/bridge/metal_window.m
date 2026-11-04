@@ -22,6 +22,8 @@ enum {
     PLAYER_MAC_EVENT_MOUSE_MOVE = 1,
     PLAYER_MAC_EVENT_MOUSE_LEAVE = 2,
     PLAYER_MAC_EVENT_OPEN_FILES = 3,
+    PLAYER_MAC_EVENT_MOUSE_BUTTON = 4,
+    PLAYER_MAC_EVENT_SCROLL = 5,
 };
 
 #define PLAYER_MAC_PATH_MAX 4096
@@ -164,16 +166,48 @@ static void player_mac_install_delegate(void) {
     }
 }
 
-- (void)mouseMoved:(NSEvent *)event {
+- (void)pushPointer:(int)kind event:(NSEvent *)event pressed:(int)pressed {
     if (!self.owner) {
         return;
     }
     NSPoint point = [self convertPoint:event.locationInWindow fromView:nil];
     CGFloat scale = self.window.backingScaleFactor;
     player_mac_push_input(self.owner, (struct PlayerMacInputEvent){
-        .kind = PLAYER_MAC_EVENT_MOUSE_MOVE,
+        .kind = kind,
+        .pressed = pressed,
         .x = point.x * scale,
         .y = (self.bounds.size.height - point.y) * scale,
+    });
+}
+
+- (BOOL)acceptsFirstMouse:(NSEvent *)event {
+    (void)event;
+    return YES;
+}
+
+- (void)mouseMoved:(NSEvent *)event {
+    [self pushPointer:PLAYER_MAC_EVENT_MOUSE_MOVE event:event pressed:0];
+}
+
+- (void)mouseDragged:(NSEvent *)event {
+    [self pushPointer:PLAYER_MAC_EVENT_MOUSE_MOVE event:event pressed:0];
+}
+
+- (void)mouseDown:(NSEvent *)event {
+    [self pushPointer:PLAYER_MAC_EVENT_MOUSE_BUTTON event:event pressed:1];
+}
+
+- (void)mouseUp:(NSEvent *)event {
+    [self pushPointer:PLAYER_MAC_EVENT_MOUSE_BUTTON event:event pressed:0];
+}
+
+- (void)scrollWheel:(NSEvent *)event {
+    if (!self.owner || event.scrollingDeltaY == 0) {
+        return;
+    }
+    player_mac_push_input(self.owner, (struct PlayerMacInputEvent){
+        .kind = PLAYER_MAC_EVENT_SCROLL,
+        .y = event.scrollingDeltaY,
     });
 }
 

@@ -19,6 +19,47 @@ pub enum Command {
     SelectTrack { kind: TrackKind, id: Option<i64> },
     SelectTrackAuto(TrackKind),
     CycleTrack(TrackKind),
+    OscVisibility(OscVisibilityChange),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OscVisibility {
+    Auto,
+    Always,
+    Never,
+}
+
+impl OscVisibility {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "auto" => Some(OscVisibility::Auto),
+            "always" => Some(OscVisibility::Always),
+            "never" => Some(OscVisibility::Never),
+            _ => None,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            OscVisibility::Auto => "auto",
+            OscVisibility::Always => "always",
+            OscVisibility::Never => "never",
+        }
+    }
+
+    pub fn next(self) -> Self {
+        match self {
+            OscVisibility::Auto => OscVisibility::Always,
+            OscVisibility::Always => OscVisibility::Never,
+            OscVisibility::Never => OscVisibility::Auto,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OscVisibilityChange {
+    Cycle,
+    Set(OscVisibility),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -117,6 +158,7 @@ fn parse_cycle(args: &[String]) -> Result<Option<Command>, CommandError> {
         "audio" => Some(Command::CycleTrack(TrackKind::Audio)),
         "sub" => Some(Command::CycleTrack(TrackKind::Subtitle)),
         "video" => Some(Command::CycleTrack(TrackKind::Video)),
+        "osc-visibility" => Some(Command::OscVisibility(OscVisibilityChange::Cycle)),
         _ => None,
     })
 }
@@ -135,6 +177,12 @@ fn parse_set(args: &[String]) -> Result<Option<Command>, CommandError> {
         "aid" => parse_track(TrackKind::Audio, value),
         "sid" => parse_track(TrackKind::Subtitle, value),
         "vid" => parse_track(TrackKind::Video, value),
+        "osc-visibility" => {
+            let mode = value
+                .and_then(OscVisibility::parse)
+                .ok_or_else(|| CommandError::new("osc-visibility is auto, always, or never"))?;
+            Ok(Some(Command::OscVisibility(OscVisibilityChange::Set(mode))))
+        }
         _ => Ok(None),
     }
 }
@@ -393,6 +441,22 @@ mod tests {
                 exact: false
             })
         );
+    }
+
+    #[test]
+    fn command_parses_osc_visibility() {
+        assert_eq!(
+            command(&["cycle", "osc-visibility"]),
+            Some(Command::OscVisibility(OscVisibilityChange::Cycle))
+        );
+        assert_eq!(
+            command(&["set", "osc-visibility", "never"]),
+            Some(Command::OscVisibility(OscVisibilityChange::Set(OscVisibility::Never)))
+        );
+        assert!(parse_args(&["set".to_owned(), "osc-visibility".to_owned(), "sometimes".to_owned()]).is_err());
+        assert_eq!(OscVisibility::Auto.next(), OscVisibility::Always);
+        assert_eq!(OscVisibility::Always.next(), OscVisibility::Never);
+        assert_eq!(OscVisibility::Never.next(), OscVisibility::Auto);
     }
 
     #[test]

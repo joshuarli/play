@@ -763,6 +763,14 @@ def gate_cli(results, args):
         results.check(f"cli: removed {option.split('=')[0]}", clean,
                       f"exit {proc.returncode}: {output.strip()}")
 
+    for option in ("--script=x.lua", "--scripts=a.lua", "--script-opts=osc-x=1",
+                   "--load-scripts=yes"):
+        proc = run([option])
+        output = (proc.stdout + proc.stderr).lower()
+        results.check(f"cli: {option.split('=')[0]} unsupported",
+                      proc.returncode != 0 and "unsupported" in output and "scripting" in output,
+                      f"exit {proc.returncode}: {output.strip()}")
+
     entry = fixture_entry("h264")
     path = fixture_path(entry)
 
@@ -1308,38 +1316,77 @@ def gate_local_only(results, args):
 
 def gate_osc(results, args):
     entry = fixture_entry("h264")
-    with Mpv(["--vo=null", "--ao=null"]) as mpv:
+    with Mpv(["--vo=null", "--ao=null", "--keep-open=yes"]) as mpv:
         mpv.load(fixture_path(entry))
         mpv.wait_event("file-loaded", timeout=10)
-        mpv.wait_property(
-            "time-pos", lambda value: isinstance(value, (int, float)) and value > 0,
-            timeout=10,
-        )
-        mpv.set_property("pause", True)
-        margins = mpv.get_property("user-data/osc/margins")
-        results.check("osc: timer/property path",
-                      isinstance(margins, dict) and {"l", "t", "r", "b"} <= set(margins),
-                      str(margins))
-        before = mpv.get_property("user-data/osc/visibility")
-        mpv.command("script-message-to", "osc", "osc-visibility", "cycle")
-        time.sleep(0.2)
-        after = mpv.get_property("user-data/osc/visibility")
-        results.check("osc: script message", after != before and after is not None,
-                      f"{before} -> {after}")
+        modes = []
+        for _ in range(3):
+            mpv.command("keypress", "o")
+            modes.append(mpv.get_property("osc-visibility"))
+        results.check("osc: o cycles visibility", modes == ["always", "never", "auto"],
+                      str(modes))
+        mpv.command("cycle", "osc-visibility")
+        mpv.set_property("osc-visibility", "never")
+        results.check("osc: visibility property",
+                      mpv.get_property("osc-visibility") == "never"
+                      and mpv.get_property("osc-visible") is False,
+                      str(mpv.get_property("osc-visibility")))
+        try:
+            mpv.command("set", "osc-visibility", "sometimes")
+        except Failure as exc:
+            results.check("osc: rejects an unknown visibility", "auto, always, or never" in str(exc),
+                          str(exc))
+        else:
+            results.check("osc: rejects an unknown visibility", False, "accepted 'sometimes'")
         bindings = mpv.get_property("input-bindings")
-        osc = [binding for binding in bindings if binding.get("owner") == "osc"]
-        results.check("osc: bindings registered", bool(osc), f"count {len(osc)}")
-        mouse = [binding for binding in osc if "MOUSE" in binding.get("key", "")]
-        keys = [binding for binding in osc if "MOUSE" not in binding.get("key", "")]
-        results.check("osc: mouse bindings", bool(mouse), f"count {len(mouse)}")
-        results.check("osc: key bindings", bool(keys), f"count {len(keys)}")
-        mpv.command("mouse", 80, 80)
+        results.check("osc: o binding listed",
+                      any(binding.get("key") == "o"
+                          and binding.get("cmd") == "cycle osc-visibility"
+                          for binding in bindings),
+                      str(bindings))
+        for command in (["script-message", "osc-visibility", "always"],
+                        ["script-message-to", "osc", "osc-show"],
+                        ["script-binding", "osc/visibility"],
+                        ["screenshot-raw"]):
+            try:
+                mpv.command(*command)
+            except Failure as exc:
+                results.check(f"osc: {command[0]} removed", "unknown command" in str(exc),
+                              str(exc))
+            else:
+                results.check(f"osc: {command[0]} removed", False, "command succeeded")
+        mpv.set_property("osc-visibility", "always")
+        areas = mpv.get_property("osc-areas")
+        mpv.command("mouse", *[int(areas["seek"][axis] + areas["seek"][size] / 2)
+                               for axis, size in (("x", "w"), ("y", "h"))])
+        mpv.command("keydown", "MBTN_LEFT")
+        started = time.monotonic()
+        try:
+            mpv.command("quit")
+        except Failure:
+            pass
+        try:
+            mpv.proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+        elapsed = time.monotonic() - started
+        results.check("osc: quit mid-drag exits promptly",
+                      mpv.proc.poll() == 0 and elapsed < 2.0,
+                      f"exit {mpv.proc.poll()} after {elapsed:.2f} s")
+
+    with Mpv(["--vo=null", "--ao=null", "--osc=no", "--pause=yes", "--keep-open=yes"]) as mpv:
+        mpv.load(fixture_path(entry))
+        mpv.wait_event("file-loaded", timeout=10)
+        for name in ("osc-visibility", "osc-visible", "osc-areas"):
+            results.check(f"osc: --osc=no has no {name}",
+                          mpv.try_get_property(name) is None, str(mpv.try_get_property(name)))
+        mpv.command("mouse", 32, 680)
         mpv.command("keypress", "MBTN_LEFT")
+        mpv.command("keypress", "o")
         time.sleep(0.2)
-        results.check("osc: mouse and key dispatch",
-                      not mpv.log_matches(r"(?i)\[osc\].*(error|failed)"),
-                      "; ".join(mpv.log_matches(r"(?i)\[osc\].*(error|failed)")[:1]))
-    results.check("osc: exit", mpv.returncode == 0, f"exit {mpv.returncode}")
+        results.check("osc: --osc=no ignores osc clicks",
+                      mpv.get_property("pause") is True, "the play area toggled pause")
+    results.check("osc: --osc=no exit", mpv.returncode == 0, f"exit {mpv.returncode}")
 
 
 def gate_osc_input(results, args):
@@ -1565,9 +1612,9 @@ def gate_build(results, args):
     nm = subprocess.run(
         ["nm", str(MPV)], capture_output=True, text=True, timeout=60,
     ).stdout
-    interpreters = [line for line in nm.splitlines() if "_luaL_newstate" in line]
-    results.check("build: single Lua interpreter", len(interpreters) == 1,
-                  f"count {len(interpreters)}")
+    interpreters = [line for line in nm.splitlines() if re.search(r"\b_?lua(L|_)\w+", line)]
+    results.check("build: no Lua interpreter", not interpreters,
+                  "; ".join(line.strip() for line in interpreters[:3]))
     engine_symbols = [line for line in nm.splitlines()
                       if "player_engine" in line or "player_app" in line]
     results.check("build: rust engine symbols", bool(engine_symbols),
@@ -1781,68 +1828,6 @@ def gate_failures(results, args):
                       f"exit {mpv.returncode}")
     except Failure as exc:
         results.check("failures unsupported", False, str(exc))
-
-
-def gate_lua_host(results, args):
-    proc = subprocess.run(
-        ["cargo", "test", "--manifest-path", str(ROOT / "rust" / "Cargo.toml"),
-         "-p", "player-lua", "lua_host", "--", "--test-threads=1"],
-        cwd=str(ROOT), capture_output=True, text=True, timeout=300,
-    )
-    results.check("lua-host", proc.returncode == 0,
-                  tail((proc.stdout + proc.stderr).splitlines(), 20))
-    lua_host_spinner_quit(results)
-
-
-SPINNER_SCRIPTS = {
-    "at load": "while true do end\n",
-    "in a callback": (
-        "mp.register_script_message('spin', function() while true do end end)\n"
-        "mp.set_property('user-data/spinner', 'ready')\n"
-    ),
-}
-
-
-def lua_host_spinner_quit(results):
-    TMP.mkdir(parents=True, exist_ok=True)
-    for label, source in SPINNER_SCRIPTS.items():
-        name = f"lua-host: quit with a script spinning {label}"
-        script = TMP / f"spinner-{os.getpid()}.lua"
-        script.write_text(source)
-        try:
-            with Mpv([f"--script={script}"]) as mpv:
-                if label == "in a callback":
-                    mpv.wait_property("user-data/spinner", lambda value: value == "ready")
-                    mpv.command("script-message", "spin")
-                    time.sleep(0.2)
-                started = time.monotonic()
-                mpv.command("quit")
-                try:
-                    mpv.proc.wait(timeout=8)
-                except subprocess.TimeoutExpired:
-                    results.check(name, False, "player did not exit")
-                    continue
-                elapsed = time.monotonic() - started
-                results.check(
-                    name,
-                    mpv.returncode == 0 and elapsed < 6
-                    and bool(mpv.log_matches(r"did not stop within 2 s")),
-                    f"exit {mpv.returncode} after {elapsed:.1f} s; log:\n{tail(mpv.lines)}",
-                )
-        except Failure as exc:
-            results.check(name, False, str(exc))
-        finally:
-            script.unlink(missing_ok=True)
-
-
-def gate_lua_api_audit(results, args):
-    proc = subprocess.run(
-        [str(ROOT / "tests" / "lua-api-audit.sh")], cwd=str(ROOT),
-        capture_output=True, text=True, timeout=60,
-    )
-    results.check("lua-api-audit", proc.returncode == 0,
-                  tail((proc.stdout + proc.stderr).splitlines(), 20))
-
 
 
 def gate_release(results, args):
@@ -2090,8 +2075,6 @@ GATES = {
     "state": gate_state,
     "build": gate_build,
     "rust-link": gate_rust_link,
-    "lua-host": gate_lua_host,
-    "lua-api-audit": gate_lua_api_audit,
     "tui": gate_tui,
     "traces": gate_traces,
     "dispatch": gate_dispatch,
@@ -2104,16 +2087,14 @@ GATES = {
 SUITE = [
     "fixtures", "corpus", "audio", "hwdec", "seek", "local-paths",
     "local-only", "osc", "osc-input", "input", "playlist", "cli", "state", "failures",
-    "rust-link",
-    "lua-host",
-    "lua-api-audit", "tui", "release", "traces", "dispatch",
+    "rust-link", "tui", "release", "traces", "dispatch",
 ]
 
 
 LINUX_SUITE = [
     "fixtures", "linux-corpus", "linux-audio", "linux-gpu-next", "linux-local-only", "linux-osc",
     "linux-mostly-static", "linux-hwdec-default", "local-paths", "seek", "input", "playlist", "cli", "state",
-    "failures", "lua-host", "lua-api-audit", "tui", "linux-rust-link", "traces", "dispatch",
+    "failures", "tui", "linux-rust-link", "traces", "dispatch",
 ]
 
 

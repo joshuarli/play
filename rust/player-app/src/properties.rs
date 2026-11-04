@@ -1,8 +1,10 @@
 use player_engine::{EngineStatus, TrackKind};
-use player_lua::{NativeValue, PlayerBackend};
+use player_core::command::{OscVisibility, OscVisibilityChange};
 use player_media::{ChapterInfo, StreamInfo, StreamKind};
 
 use crate::app::App;
+use crate::osc::Rect;
+use crate::value::NativeValue;
 
 pub struct Probe {
     pub duration: f64,
@@ -92,14 +94,14 @@ pub fn get(app: &App, name: &str) -> Result<NativeValue, String> {
         "fullscreen" => Ok(NativeValue::Bool(app.fullscreen)),
         "eof-reached" => Ok(NativeValue::Bool(app.eof_reached)),
         "vo-configured" => Ok(NativeValue::Bool(
-            app.shared.is_some()
+            app.backend.is_some()
                 && app
                     .probe
                     .as_ref()
                     .is_some_and(|probe| probe.streams.iter().any(|stream| stream.kind == StreamKind::Video)),
         )),
         "ao-configured" => Ok(NativeValue::Bool(
-            app.shared.is_some()
+            app.backend.is_some()
                 && app
                     .probe
                     .as_ref()
@@ -109,8 +111,8 @@ pub fn get(app: &App, name: &str) -> Result<NativeValue, String> {
         "audio-format" => Ok(NativeValue::String("floatp".to_owned())),
         "video-out-params" => Ok(video_params(&app.probe)),
         "audio-out-params" => Ok(audio_params(&app.probe)),
-        "idle-active" => Ok(NativeValue::Bool(app.shared.is_none())),
-        "core-idle" => Ok(NativeValue::Bool(app.shared.is_none())),
+        "idle-active" => Ok(NativeValue::Bool(app.backend.is_none())),
+        "core-idle" => Ok(NativeValue::Bool(app.backend.is_none())),
         "keep-open" => Ok(NativeValue::Bool(app.options.keep_open)),
         "path" => Ok(NativeValue::String(
             app.playlist
@@ -153,10 +155,7 @@ pub fn get(app: &App, name: &str) -> Result<NativeValue, String> {
                 .unwrap_or_else(|| aid(&status))
         }),
         "sub-visibility" => Ok(NativeValue::Bool(
-            app.shared
-                .as_ref()
-                .and_then(|shared| shared.inspect(|backend| backend.sub_visible()))
-                .unwrap_or(true),
+            app.backend.as_ref().is_none_or(|backend| backend.sub_visible()),
         )),
         "video-codec" => Ok(NativeValue::String(codec(&app.probe, StreamKind::Video))),
         "audio-codec" => Ok(NativeValue::String(codec(&app.probe, StreamKind::Audio))),
@@ -181,9 +180,9 @@ pub fn get(app: &App, name: &str) -> Result<NativeValue, String> {
             .map(|index| NativeValue::Int(index as i64))
             .unwrap_or(NativeValue::Int(-1))),
         "sub-text" => Ok(NativeValue::String(
-            app.shared
+            app.backend
                 .as_ref()
-                .and_then(|shared| shared.inspect(|backend| backend.status().subtitle_text))
+                .map(|backend| backend.status().subtitle_text)
                 .unwrap_or_default(),
         )),
         "osd-dimensions" => Ok(osd_dimensions(app)),
@@ -201,7 +200,7 @@ pub fn get(app: &App, name: &str) -> Result<NativeValue, String> {
                 .map(|dir| dir.to_string_lossy().into_owned())
                 .unwrap_or_default(),
         )),
-        "input-bindings" => Ok(input_bindings(app)),
+        "input-bindings" => Ok(input_bindings()),
         "options/ao" => Ok(NativeValue::String(if app.options.null_audio {
             "null".to_owned()
         } else {
@@ -252,24 +251,18 @@ pub fn get(app: &App, name: &str) -> Result<NativeValue, String> {
         }
         "estimated-vf-fps" | "container-fps" => Ok(NativeValue::Double(24.0)),
         "chapter-metadata" => Ok(NativeValue::Map(Vec::new())),
-        "user-data" => Ok(NativeValue::Map(Vec::new())),
-        _ if name.starts_with("user-data/") => {
-            if let Some(value) = app
-                .shared
-                .as_ref()
-                .and_then(|shared| shared.inspect(|backend| backend.user_value(name)))
-                .flatten()
-            {
-                return Ok(value);
-            }
-            Ok(app
-                .idle_properties
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner())
-                .get(name)
-                .cloned()
-                .unwrap_or(NativeValue::None))
-        }
+        "osc-visibility" => Ok(NativeValue::String(
+            osc(app)?.visibility().name().to_owned(),
+        )),
+        "osc-visible" => Ok(NativeValue::Bool(osc(app)?.visible())),
+        "osc-areas" => Ok(NativeValue::Map(
+            osc(app)?
+                .layout()
+                .controls()
+                .into_iter()
+                .map(|(name, rect)| (name.to_owned(), rect_value(rect)))
+                .collect(),
+        )),
         _ if name.starts_with("options/") => Ok(NativeValue::String(String::new())),
         _ => Err("property not found".to_owned()),
     }
@@ -303,23 +296,14 @@ pub fn set(app: &mut App, name: &str, value: &NativeValue) -> Result<(), String>
         }
         ("fullscreen", NativeValue::Bool(fullscreen)) => {
             app.fullscreen = *fullscreen;
-            app.apply_fullscreen();
             Ok(())
         }
         ("window-scale", NativeValue::Double(scale)) => {
-            let scale = scale.clamp(0.1, 10.0);
-            let width = video_dimension(&app.probe, 0);
-            let height = video_dimension(&app.probe, 1);
-            if width > 0 && height > 0 {
-                app.window_scale = scale;
-                let width = (width as f64 * scale).round() as i32;
-                let height = (height as f64 * scale).round() as i32;
-                app.logical_display = Some((width as u32, height as u32));
-                app.set_display(width as u32, height as u32);
-                if let Some(window) = app.window.as_mut() {
-                    window.resize(width, height);
-                }
-            }
+            set_window_scale(app, *scale);
+            Ok(())
+        }
+        ("window-scale", NativeValue::Int(scale)) => {
+            set_window_scale(app, *scale as f64);
             Ok(())
         }
         ("aid", NativeValue::Int(id)) => app.select_audio(*id),
@@ -339,33 +323,62 @@ pub fn set(app: &mut App, name: &str, value: &NativeValue) -> Result<(), String>
             app.disable_audio();
             Ok(())
         }
-        ("sid", NativeValue::Int(id)) => app.select_sub_id(*id),
+        ("sid", NativeValue::Int(id)) => app.select_sub(Some(*id)),
         ("sid", NativeValue::Bool(false)) => app.select_sub(None),
-        ("sid", NativeValue::String(name)) => app.select_sub_name(name),
-        ("sub-visibility", NativeValue::Bool(visible)) => {
-            if let Some(shared) = &app.shared {
-                shared.mutate(|backend| backend.set_sub_visible(*visible));
+        ("sid", NativeValue::String(name)) => match name.as_str() {
+            "auto" => {
+                app.select_first_sub();
+                Ok(())
             }
+            "no" | "off" | "none" => app.select_sub(None),
+            _ => Err(format!("unknown subtitle selection '{name}'")),
+        },
+        ("sub-visibility", NativeValue::Bool(visible)) => {
+            app.set_sub_visible(*visible);
             Ok(())
+        }
+        ("osc-visibility", NativeValue::String(mode)) => {
+            let mode = OscVisibility::parse(mode)
+                .ok_or_else(|| format!("osc-visibility is auto, always, or never, not '{mode}'"))?;
+            app.set_osc_visibility(OscVisibilityChange::Set(mode))
         }
         ("keep-open", NativeValue::Bool(keep_open)) => {
             app.options.keep_open = *keep_open;
             Ok(())
         }
-        _ if name.starts_with("user-data/") => {
-            if let Some(shared) = &app.shared {
-                shared.mutate(|backend| {
-                    let _ = backend.set_property(name, value.clone());
-                });
-            }
-            app.idle_properties
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner())
-                .insert(name.to_owned(), value.clone());
-            Ok(())
-        }
         _ => Err(format!("property is not settable: {name}")),
     }
+}
+
+fn set_window_scale(app: &mut App, scale: f64) {
+    let scale = scale.clamp(0.1, 10.0);
+    let width = video_dimension(&app.probe, 0);
+    let height = video_dimension(&app.probe, 1);
+    if width > 0 && height > 0 {
+        app.window_scale = scale;
+        let width = (width as f64 * scale).round() as i32;
+        let height = (height as f64 * scale).round() as i32;
+        app.logical_display = Some((width as u32, height as u32));
+        app.set_display(width as u32, height as u32);
+        if let Some(window) = app.window.as_mut() {
+            window.resize(width, height);
+        }
+    }
+}
+
+fn osc(app: &App) -> Result<&crate::osc::Osc, String> {
+    app.osc
+        .as_ref()
+        .ok_or_else(|| "property unavailable: the OSC is disabled".to_owned())
+}
+
+fn rect_value(rect: Rect) -> NativeValue {
+    NativeValue::Map(vec![
+        ("x".to_owned(), NativeValue::Double(rect.x)),
+        ("y".to_owned(), NativeValue::Double(rect.y)),
+        ("w".to_owned(), NativeValue::Double(rect.w)),
+        ("h".to_owned(), NativeValue::Double(rect.h)),
+    ])
 }
 
 pub fn to_bool(value: &NativeValue) -> bool {
@@ -814,7 +827,7 @@ fn osd_dimensions(app: &App) -> NativeValue {
     ])
 }
 
-fn input_bindings(app: &App) -> NativeValue {
+fn input_bindings() -> NativeValue {
     let bindings = [
         ("SPACE", "cycle pause"),
         ("f", "cycle fullscreen"),
@@ -825,8 +838,9 @@ fn input_bindings(app: &App) -> NativeValue {
         ("]", "add speed 0.1"),
         (".", "frame-step"),
         ("q", "quit"),
+        ("o", "cycle osc-visibility"),
     ];
-    let mut values: Vec<NativeValue> = bindings
+    let values: Vec<NativeValue> = bindings
         .iter()
         .map(|(key, command)| {
             NativeValue::Map(vec![
@@ -838,31 +852,5 @@ fn input_bindings(app: &App) -> NativeValue {
             ])
         })
         .collect();
-    if let Some(shared) = &app.shared {
-        let sections = shared
-            .inspect(|backend| backend.sections())
-            .unwrap_or_default();
-        for (section, contents, enabled) in sections {
-            if !enabled {
-                continue;
-            }
-            for line in contents.lines() {
-                let line = line.trim();
-                if line.is_empty() || line.starts_with('#') {
-                    continue;
-                }
-                let Some((key, command)) = line.split_once(char::is_whitespace) else {
-                    continue;
-                };
-                values.push(NativeValue::Map(vec![
-                    ("key".to_owned(), NativeValue::String(key.to_ascii_uppercase())),
-                    ("cmd".to_owned(), NativeValue::String(command.trim().to_owned())),
-                    ("section".to_owned(), NativeValue::String(section.clone())),
-                    ("is_weak".to_owned(), NativeValue::Bool(false)),
-                    ("owner".to_owned(), NativeValue::String("osc".to_owned())),
-                ]));
-            }
-        }
-    }
     NativeValue::Array(values)
 }

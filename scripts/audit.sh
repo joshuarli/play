@@ -48,23 +48,22 @@ if ! nm "$ROOT/build/mpv" | rg 'player_engine' >/dev/null; then
     exit 1
 fi
 
-if rg -n 'lua_State|luaL_newstate' "$ROOT/rust" --glob '!**/player-lua/**' >/dev/null; then
-    echo "audit: Lua API remnants outside player-lua" >&2
+if [ -e "$ROOT/rust/player-lua" ] || rg -n -i 'mlua|lua-src|luajit' "$ROOT/rust/Cargo.lock" >/dev/null; then
+    echo "audit: the Lua crate or its dependencies remain" >&2
     exit 1
 fi
-
-interpreters=$(nm "$ROOT/build/mpv" | rg -c 'luaL_newstate' || true)
-if [ "$interpreters" != "1" ]; then
-    echo "audit: expected one Lua interpreter, found ${interpreters:-0}" >&2
+if rg -n 'lua_State|luaL_newstate' "$ROOT/rust" >/dev/null; then
+    echo "audit: Lua API references remain in the Rust tree" >&2
     exit 1
 fi
 
 release_binary="$ROOT/dist/Player.app/Contents/MacOS/player"
-release_interpreters=$(nm "$release_binary" | rg -c 'luaL_newstate' || true)
-if [ "$release_interpreters" != "1" ]; then
-    echo "audit: release expected one Lua interpreter, found ${release_interpreters:-0}" >&2
-    exit 1
-fi
+for binary in "$ROOT/build/mpv" "$release_binary"; do
+    if nm "$binary" | rg -q '\b_?lua(L|_)[A-Za-z]'; then
+        echo "audit: Lua symbols linked into $binary" >&2
+        exit 1
+    fi
+done
 if [ -e "$ROOT/dist/Player.app/Contents/Frameworks/libplayer_release.dylib" ]; then
     echo "audit: release carries the retired C ABI dylib" >&2
     exit 1

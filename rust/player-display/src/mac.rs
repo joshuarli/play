@@ -96,6 +96,14 @@ pub enum MacInput {
         y: f64,
     },
     PointerLeave,
+    PointerButton {
+        x: f64,
+        y: f64,
+        pressed: bool,
+    },
+    Scroll {
+        delta_y: f64,
+    },
     OpenFiles {
         paths: Vec<String>,
         append: bool,
@@ -213,6 +221,12 @@ impl MacWindow {
                 }),
                 1 => events.push(MacInput::PointerMotion { x, y }),
                 2 => events.push(MacInput::PointerLeave),
+                4 => events.push(MacInput::PointerButton {
+                    x,
+                    y,
+                    pressed: pressed != 0,
+                }),
+                5 => events.push(MacInput::Scroll { delta_y: y }),
                 3 => {
                     // SAFETY: the bridge wrote a NUL-terminated path.
                     let name = unsafe { CStr::from_ptr(path.as_ptr()) }

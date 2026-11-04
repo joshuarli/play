@@ -1,3 +1,4 @@
 pub mod engine;
-mod format;
 mod osd;
+
+pub use osd::AssOverlay;

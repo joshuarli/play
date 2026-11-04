@@ -1,8 +1,4 @@
-use std::collections::HashMap;
-
 use player_ass::{Library, RenderedImage, Renderer, Track};
-
-use crate::engine::OsdOverlay;
 
 const OSD_SYMBOLS_NAME: &str = "mpv-osd-symbols";
 const OSD_SYMBOLS_FONT: &[u8] = include_bytes!("../fonts/osd_font.otf");
@@ -65,16 +61,12 @@ fn script_info(playres_x: i64, playres_y: i64, styles: &str) -> String {
     )
 }
 
-fn frame_aspect(width: i64, height: i64, par: f64) -> f64 {
-    let mut aspect = if height > 0 {
+fn frame_aspect(width: i64, height: i64) -> f64 {
+    if height > 0 {
         width as f64 / height as f64
     } else {
         0.0
-    };
-    if par > 0.0 {
-        aspect /= par;
     }
-    aspect
 }
 
 fn overlay_playres(res_x: i64, res_y: i64, aspect: f64) -> (i64, i64) {
@@ -89,8 +81,8 @@ fn overlay_playres(res_x: i64, res_y: i64, aspect: f64) -> (i64, i64) {
     (playres_x, playres_y)
 }
 
-fn overlay_content(data: &str, res_x: i64, res_y: i64, width: i64, height: i64, par: f64) -> String {
-    let (playres_x, playres_y) = overlay_playres(res_x, res_y, frame_aspect(width, height, par));
+fn overlay_content(data: &str, res_x: i64, res_y: i64, width: i64, height: i64) -> String {
+    let (playres_x, playres_y) = overlay_playres(res_x, res_y, frame_aspect(width, height));
     let scale = playres_y as f64 / PLAYRES_BASE;
     let mut content = script_info(playres_x, playres_y, &styles(scale));
     for line in data.split('\n') {
@@ -135,8 +127,8 @@ fn escape_osd_text(text: &str) -> String {
     escaped
 }
 
-fn message_content(text: &str, width: i64, height: i64, par: f64) -> (String, (i64, i64)) {
-    let aspect = frame_aspect(width, height, par);
+fn message_content(text: &str, width: i64, height: i64) -> (String, (i64, i64)) {
+    let aspect = frame_aspect(width, height);
     let playres_y = FONT_PLAYRES_Y as i64;
     let playres_x = if aspect > 0.0 {
         (playres_y as f64 * aspect) as i64
@@ -160,7 +152,13 @@ fn message_content(text: &str, width: i64, height: i64, par: f64) -> (String, (i
     (content, (playres_x, playres_y))
 }
 
-struct OverlayTrack {
+pub struct AssOverlay {
+    pub events: String,
+    pub res_x: u32,
+    pub res_y: u32,
+}
+
+struct CachedTrack {
     content: String,
     playres: (i64, i64),
     track: Track,
@@ -169,8 +167,8 @@ struct OverlayTrack {
 pub struct OsdState {
     library: Library,
     renderer: Renderer,
-    overlays: HashMap<i64, OverlayTrack>,
-    message: Option<(String, (i64, i64), Track)>,
+    osc: Option<CachedTrack>,
+    message: Option<CachedTrack>,
 }
 
 impl OsdState {
@@ -181,112 +179,61 @@ impl OsdState {
         Ok(OsdState {
             library,
             renderer,
-            overlays: HashMap::new(),
+            osc: None,
             message: None,
         })
     }
 
     pub fn render(
         &mut self,
-        overlays: &[&OsdOverlay],
+        osc: Option<&AssOverlay>,
         message: Option<&str>,
         width: i64,
         height: i64,
-        par: f64,
     ) -> Result<Vec<RenderedImage>, String> {
         let mut images = Vec::new();
-        let mut order: Vec<usize> = (0..overlays.len()).collect();
-        order.sort_by_key(|&index| (overlays[index].z, overlays[index].id));
-        let live: Vec<i64> = order.iter().map(|&index| overlays[index].id).collect();
-        self.overlays.retain(|id, _| live.contains(id));
-
-        if let Some(text) = message {
-            let (content, playres) = message_content(text, width, height, par);
-            let stale = match &self.message {
-                Some((key, _, _)) => key != &content,
-                None => true,
-            };
-            if stale {
-                let mut track = Track::new(&self.library)?;
-                track.process_data(&content)?;
-                if self
-                    .message
-                    .as_ref()
-                    .is_some_and(|(_, stored, _)| *stored != playres)
-                {
-                    self.renderer.clear_cache();
-                }
-                self.message = Some((content, playres, track));
+        match message {
+            Some(text) => {
+                let (content, playres) = message_content(text, width, height);
+                let track = refresh(&self.library, &mut self.renderer, &mut self.message, content, playres)?;
+                images.extend(self.renderer.render(track, width as i32, height as i32, None, 1.0, 0)?);
             }
-            let (_, _, track) = self.message.as_mut().expect("message track is stored");
-            images.extend(self.renderer.render(
-                track,
-                width as i32,
-                height as i32,
-                None,
-                par,
-                0,
-            )?);
-        } else {
-            self.message = None;
+            None => self.message = None,
         }
-
-        for index in order {
-            let overlay = overlays[index];
-            if overlay.hidden || overlay.format != "ass-events" || overlay.data.is_empty() {
-                continue;
+        match osc {
+            Some(overlay) => {
+                let (res_x, res_y) = (overlay.res_x as i64, overlay.res_y as i64);
+                let content = overlay_content(&overlay.events, res_x, res_y, width, height);
+                let playres = overlay_playres(res_x, res_y, frame_aspect(width, height));
+                let track = refresh(&self.library, &mut self.renderer, &mut self.osc, content, playres)?;
+                images.extend(self.renderer.render(track, width as i32, height as i32, None, 1.0, 0)?);
             }
-            let content = overlay_content(
-                &overlay.data,
-                overlay.res_x,
-                overlay.res_y,
-                width,
-                height,
-                par,
-            );
-            let playres = overlay_playres(
-                overlay.res_x,
-                overlay.res_y,
-                frame_aspect(width, height, par),
-            );
-            let stale = match self.overlays.get(&overlay.id) {
-                Some(stored) => stored.content != content,
-                None => true,
-            };
-            if stale {
-                let mut track = Track::new(&self.library)?;
-                track.process_data(&content)?;
-                if self
-                    .overlays
-                    .get(&overlay.id)
-                    .is_some_and(|stored| stored.playres != playres)
-                {
-                    self.renderer.clear_cache();
-                }
-                self.overlays.insert(
-                    overlay.id,
-                    OverlayTrack {
-                        content,
-                        playres,
-                        track,
-                    },
-                );
-            }
-            let stored = self
-                .overlays
-                .get_mut(&overlay.id)
-                .expect("stored overlay renders");
-            images.extend(self.renderer.render(
-                &mut stored.track,
-                width as i32,
-                height as i32,
-                None,
-                par,
-                0,
-            )?);
+            None => self.osc = None,
         }
         Ok(images)
     }
+}
+
+fn refresh<'a>(
+    library: &Library,
+    renderer: &mut Renderer,
+    slot: &'a mut Option<CachedTrack>,
+    content: String,
+    playres: (i64, i64),
+) -> Result<&'a Track, String> {
+    if slot.as_ref().is_none_or(|cached| cached.content != content) {
+        let mut track = Track::new(library)?;
+        track.process_data(&content)?;
+        if slot.as_ref().is_some_and(|cached| cached.playres != playres) {
+            renderer.clear_cache();
+        }
+        *slot = Some(CachedTrack {
+            content,
+            playres,
+            track,
+        });
+    }
+    Ok(&slot.as_ref().expect("track was just stored").track)
 }
 
 pub fn composite(
@@ -294,7 +241,8 @@ pub fn composite(
     width: u32,
     height: u32,
     images: &[RenderedImage],
-) -> Result<(), String> {    let expected = width as usize * height as usize * 4;
+) -> Result<(), String> {
+    let expected = width as usize * height as usize * 4;
     if frame.len() < expected {
         return Err(format!(
             "overlay target holds {} bytes, needs {expected}",
@@ -397,19 +345,14 @@ pub fn composite_straight(
 
 #[cfg(test)]
 mod tests {
-    use super::{composite, composite_straight, OsdState};
-    use crate::engine::OsdOverlay;
+    use super::{composite, composite_straight, AssOverlay, OsdState};
     use player_ass::RenderedImage;
 
-    fn overlay(data: &str) -> OsdOverlay {
-        OsdOverlay {
-            id: 1,
-            format: "ass-events".to_owned(),
-            data: data.to_owned(),
+    fn overlay(events: &str) -> AssOverlay {
+        AssOverlay {
+            events: events.to_owned(),
             res_x: 320,
             res_y: 240,
-            z: 0,
-            hidden: false,
         }
     }
 
@@ -429,7 +372,7 @@ mod tests {
         let mut state = OsdState::new().expect("osd starts");
         let overlay = overlay("{\\an7\\pos(40,30)\\fs40\\bord0\\shad0}Hi");
         let images = state
-            .render(&[&overlay], None, 320, 240, 1.0)
+            .render(Some(&overlay), None, 320, 240)
             .expect("overlay renders");
         assert!(!images.is_empty(), "overlay produced no images");
         let mut frame = vec![0u8; 320 * 240 * 4];
@@ -451,13 +394,9 @@ mod tests {
     }
 
     #[test]
-    fn hidden_overlay_and_empty_message_render_nothing() {
+    fn nothing_to_show_renders_nothing() {
         let mut state = OsdState::new().expect("osd starts");
-        let mut hidden = overlay("{\\an7}hidden");
-        hidden.hidden = true;
-        let images = state
-            .render(&[&hidden], None, 320, 240, 1.0)
-            .expect("hidden overlay renders");
+        let images = state.render(None, None, 320, 240).expect("empty osd renders");
         assert!(images.is_empty());
     }
 
@@ -465,7 +404,7 @@ mod tests {
     fn osd_message_renders_at_the_top_left() {
         let mut state = OsdState::new().expect("osd starts");
         let images = state
-            .render(&[], Some("probe text"), 320, 240, 1.0)
+            .render(None, Some("probe text"), 320, 240)
             .expect("message renders");
         assert!(!images.is_empty(), "message produced no images");
         let mut frame = vec![0u8; 320 * 240 * 4];
@@ -504,7 +443,8 @@ mod tests {
     }
 
     #[test]
-    fn composite_matches_mpv_blending() {        let image = RenderedImage {
+    fn composite_matches_mpv_blending() {
+        let image = RenderedImage {
             width: 1,
             height: 1,
             stride: 1,
