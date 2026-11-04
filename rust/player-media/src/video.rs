@@ -93,11 +93,13 @@ unsafe extern "C" fn pick_format(ctx: *mut AvCodecContext, formats: *const c_int
     first
 }
 
+const FRAME_THREADS_MAX: usize = 8;
+
 fn thread_count() -> i64 {
     let parallelism = std::thread::available_parallelism()
         .map(|count| count.get())
         .unwrap_or(1);
-    (parallelism + 1).min(16).max(1) as i64
+    (parallelism + 1).min(FRAME_THREADS_MAX).max(1) as i64
 }
 
 fn set_option(context: *mut AvCodecContext, name: &str, value: i64) -> Result<(), String> {
