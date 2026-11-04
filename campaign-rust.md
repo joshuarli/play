@@ -4,10 +4,10 @@
 
 Goal: replace the remaining mpv-derived C playback engine with a small Rust-owned engine. No loss of supported local playback. Both release artifacts keep building.
 
-- Last accepted: S7e (Rust GUI host on the scheduler engine; `gui` gate on macOS and in the Linux container, `linux-gpu-next` 41/41). S7d (`tui` 18/18) and earlier S7 slices landed before it.
-- Red: none. Workspace green on macOS; `lua-host`, `osc`, `osc-input`, `lua-api-audit`, `ffi`, `rust-link`, `build`, `osd-fidelity`, `tui`, `audio`, `play`, and `gui` green; Linux container build, TUI, OSD fidelity, GUI, and `linux-gpu-next` green.
-- Next: S8 (remove the legacy engine, make Cargo authoritative, switch both artifacts).
-- Open: the standalone GUI host opens one file; Finder open, drag-and-drop, playlist replacement, remote command center, and touchbar belong to S8 artifact integration. Ordered chapters stay open for S7 (no fixture, needs linking design).
+- Last accepted: S8a (Rust `player` application core: CLI, IPC, playlists, chapters, track switching, properties/events, OSC dispatch, traces; named gates green on macOS and in the Alpine container). S7e (Rust GUI host; `gui` 3/3, `linux-gpu-next` 41/41) and earlier slices landed before it.
+- Red: none. Workspace green on macOS and in the Linux container; `cli`, `input`, `playlist`, `state`, `play`, `seek`, `corpus`, `osc`, `osc-input`, `traces`, `dispatch`, `failures`, `lua-host`, `osc`, `tui`, `osd-fidelity`, `ffi`, and `gui` green.
+- Next: S8b (wire GUI and TUI modes into the Rust `player` binary and restore native open/drag/screenshot behavior), then S9 (retire the legacy engine and make Cargo authoritative). The C engine stays the development reference and release until the Rust binary passes the suite.
+- Open: the standalone `player-gui` host still opens one file; the Rust `player` binary has no TUI/GUI mode yet. Finder open, drag-and-drop, playlist replacement, remote command center, and touchbar stay for S8b. Ordered chapters stay open (no fixture, needs linking design).
 - Resume: read this doc and `docs/RUST-PORT.md`, then run the next open slice. If the tree moved, adapt. Never overwrite newer work.
 
 ## Charter
@@ -338,9 +338,31 @@ cargo test --manifest-path rust/Cargo.toml && tests/run.sh lua-host && tests/run
 
 GUI and TUI share one playback core. Lua no longer touches the old mpv client API. No C application framework remains for scripting or input. No clipboard path remains anywhere.
 
-### S8 Remove the legacy engine, Cargo takes over
+### S8 Rust application layer
 
-Owns: remaining mpv C playback sources, `meson.build` player rows, build and release scripts, CI workflows, docs. Prerequisite: S7. Full `suite` milestone on both platforms plus release and audit gates.
+Owns: new `rust/player-app` and `player` binary, `rust/player-ffi` app-facing modules, `rust/player-engine` metadata/track surfaces, IPC, GUI and TUI dispatch. Prerequisite: S7. Owner-extended scope (2026-11-03).
+
+The engine owns playback; this slice owns the application around it. Build one Rust `player` executable that replaces the C host for every supported entry point while the C engine stays the development reference.
+
+- CLI: parse the supported mpv option surface, reject removed options, and forward only genuinely unsupported development switches. No implicit config or script loading.
+- IPC: Unix socket JSON line protocol with the existing command, property, observe, event, and reply shapes. One dispatcher shared with keyboard, OSC, and scripts.
+- Playlists: Rust-owned entries, append/insert/remove/move/clear, next/previous, loadlist, and transitions that tear down and recreate the engine cleanly. Preserve order and IDs.
+- Chapters and tracks: expose chapter enumeration and selection, audio and subtitle track lists, and audio/subtitle switching through the engine.
+- Properties and events: the properties the suite and Lua/OSC observe, with one authoritative state and the existing event names and ordering.
+- GUI and TUI: both run on the same engine and dispatcher; Finder open, drag-and-drop, screenshots, and native platform behavior return here.
+- Harness: a `PLAYER_BIN` override runs gates against the Rust binary before it becomes the default. Never weaken a gate to accommodate a missing behavior.
+
+Acceptance:
+
+```sh
+cargo test --manifest-path rust/Cargo.toml && tests/run.sh cli && tests/run.sh input && tests/run.sh playlist && tests/run.sh state && tests/run.sh play && tests/run.sh seek && tests/run.sh corpus && tests/run.sh osc && tests/run.sh osc-input && tests/run.sh traces
+```
+
+plus the same gates in the Alpine container with `PLAYER_BIN` pointed at the Rust binary. The Rust binary passes them; the C engine remains the default until S9.
+
+### S9 Remove the legacy engine, Cargo takes over
+
+Owns: remaining mpv C playback sources, `meson.build` player rows, build and release scripts, CI workflows, docs. Prerequisite: S8. Full `suite` milestone on both platforms plus release and audit gates.
 
 Delete or retire: playback-loop sources, demux wrappers, filter framework, packet and frame representations, audio and video output abstractions, command and property implementations, client event framework, stream and playlist machinery, mpv-specific allocators and compat utilities, old C build registrations, obsolete headers, dead platform variants, unused build tools and test fixtures, transitional FFI adapters, legacy build switches and feature probes. Keep third-party sources and license notices the release needs.
 

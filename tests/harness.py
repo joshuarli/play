@@ -26,7 +26,11 @@ ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / ".work" / "fixtures"
 TMP = ROOT / ".work" / "tmp"
 MANIFEST_PATH = ROOT / "tests" / "fixtures" / "manifest.json"
-MPV = ROOT / ("build-linux" if sys.platform.startswith("linux") else "build") / "mpv"
+_default_player = ROOT / ("build-linux" if sys.platform.startswith("linux") else "build") / "mpv"
+_override = os.environ.get("PLAYER_BIN")
+MPV = Path(_override) if _override else _default_player
+if not MPV.is_absolute():
+    MPV = ROOT / MPV
 
 
 class Failure(Exception):

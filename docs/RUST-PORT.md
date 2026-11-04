@@ -10,8 +10,48 @@ S7b complete (Rust engine Lua adapter, property and event pump,
 command surface, headless osc.lua). S7c complete (libass wrapper,
 subtitle pipeline, OSD composition, pixel-diff gate). S7d complete
 (TUI on the Rust engine). S7e complete (Rust GUI host, OSC overlay,
-paused-seek subtitle priming). Next: S8 (retire the legacy engine,
-Cargo becomes authoritative).
+paused-seek subtitle priming). S8a complete (Rust `player`
+application core: CLI, IPC, playlists, chapters, track switching,
+properties and events, OSC dispatch, traces). Next: S8b (GUI and
+TUI modes in the Rust `player` binary, native integration), then S9
+(legacy removal, Cargo-authoritative release).
+
+## S8a record
+
+`rust/player-app` builds the `player` executable used only through
+`PLAYER_BIN`; the C host remains the default. The app owns argument
+parsing, local-only playlist expansion, the Unix-socket JSON IPC
+server, property and observer delivery, command dispatch, chapters,
+playlist operations, OSC lifecycle, and engine session reloads.
+
+- Engine prerequisites: `SchedulerEngine` now exposes speed, real
+  audio-track switching (decoder reconfiguration plus output flush),
+  video-only sessions, and reference-shaped track and media metadata.
+  The audio sink opens with the decoder's target layout, so 5.1 PCM
+  downmixes instead of failing the whole-frame check.
+- Command path: `player-core::command` parses `set`, `cycle`, `seek`,
+  `add`, `loadfile`, and track commands for keyboard, IPC, and
+  `input.conf`; bindings run atomically (a failing command in a
+  multi-command binding runs none of them).
+- OSC: the vendored `osc.lua` runs headless. `input-bindings` merges
+  script sections, `mouse`/`script-binding`/`script-message-to`
+  dispatch through `client-message`, and `user-data/osc/*` reads the
+  engine backend. OSD composition stays off for null output so libass
+  does not emit errors into headless logs.
+- Events: `start-file`, `file-loaded`, `end-file`, `seek`,
+  `playback-restart`, `idle`, and stream `audio-reconfig` /
+  `video-reconfig` follow the reference order; lifecycle events are
+  deferred one tick so command replies precede them. Traces match
+  34/34 goldens on macOS.
+- Verification (macOS): `cli` 23, `input` 9, `playlist` 6, `state` 13,
+  `play` 8, `seek` 5, `corpus` 109, `osc` 7, `osc-input` 9,
+  `dispatch` 13, `failures` 8, `traces` 2, all green. The same named
+  gates run in the Alpine container against `rust/target/debug/player`.
+- Build: Cargo profiles match the `ish` workspace (`dev` line tables,
+  dependency opt-level 2, thin-LTO release, fat-LTO `dist`); release
+  and Linux artifact scripts build `dist`. The Linux image reads the
+  Rust channel from `rust-toolchain.toml` and builds with the repo
+  root as context.
 
 ## S7e record
 

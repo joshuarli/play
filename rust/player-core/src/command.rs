@@ -156,7 +156,7 @@ fn parse_seek(args: &[String]) -> Result<Option<Command>, CommandError> {
         return Err(CommandError::new("seek requires an amount"));
     };
     let amount = parse_time(amount)
-        .ok_or_else(|| CommandError::new(format!("invalid seek amount '{amount}'")))?;
+        .ok_or_else(|| CommandError::new("invalid parameter"))?;
     let mut mode = SeekMode::Relative;
     let mut exact = false;
     if let Some(value) = args.get(1) {
