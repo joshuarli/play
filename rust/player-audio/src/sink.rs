@@ -24,7 +24,8 @@ pub struct NullSink {
     peak: f32,
     energy: f64,
     paused: bool,
-    anchor: Option<(std::time::Instant, u64)>,
+    played_base: u64,
+    anchor: Option<std::time::Instant>,
 }
 
 impl NullSink {
@@ -36,6 +37,7 @@ impl NullSink {
             peak: 0.0,
             energy: 0.0,
             paused: false,
+            played_base: 0,
             anchor: None,
         }
     }
@@ -57,24 +59,12 @@ impl NullSink {
 }
 
 impl NullSink {
-    fn pace(&mut self) {
-        if self.rate == 0 {
-            return;
-        }
-        let now = std::time::Instant::now();
-        let (start, base) = match self.anchor {
-            Some(anchor) => anchor,
-            None => {
-                self.anchor = Some((now, self.frames));
-                return;
-            }
+    fn played(&self) -> u64 {
+        let Some(start) = self.anchor else {
+            return self.played_base;
         };
-        let expected =
-            std::time::Duration::from_secs_f64((self.frames - base) as f64 / self.rate as f64);
-        let elapsed = now.duration_since(start);
-        if let Some(lag) = expected.checked_sub(elapsed + std::time::Duration::from_millis(2)) {
-            std::thread::sleep(lag.min(std::time::Duration::from_secs(1)));
-        }
+        let elapsed = (start.elapsed().as_secs_f64() * self.rate as f64) as u64;
+        (self.played_base + elapsed).min(self.frames)
     }
 }
 
@@ -89,6 +79,10 @@ impl AudioSink for NullSink {
         if self.paused {
             return Err("sink is paused".to_string());
         }
+        if self.played() >= self.frames {
+            self.played_base = self.frames;
+            self.anchor = Some(std::time::Instant::now());
+        }
         self.frames += (frames.len() / self.channels) as u64;
         for sample in frames {
             let value = sample.abs();
@@ -97,7 +91,6 @@ impl AudioSink for NullSink {
             }
             self.energy += (value * value) as f64;
         }
-        self.pace();
         Ok(())
     }
 
@@ -110,21 +103,24 @@ impl AudioSink for NullSink {
     }
 
     fn queued_frames(&self) -> u64 {
-        0
+        self.frames - self.played()
     }
 
     fn pause(&mut self) -> Result<(), String> {
+        self.played_base = self.played();
+        self.anchor = None;
         self.paused = true;
         Ok(())
     }
 
     fn resume(&mut self) -> Result<(), String> {
         self.paused = false;
-        self.anchor = None;
+        self.anchor = Some(std::time::Instant::now());
         Ok(())
     }
 
     fn flush(&mut self) -> Result<(), String> {
+        self.played_base = self.frames;
         self.anchor = None;
         Ok(())
     }
@@ -141,6 +137,23 @@ mod tests {
         assert_eq!(sink.frames_written(), 2);
         assert_eq!(sink.peak(), 0.5);
         assert!((sink.rms() - 0.3535).abs() < 0.001);
+        assert_eq!(sink.queued_frames(), 2, "written frames queue until played");
+        sink.flush().unwrap();
+        assert_eq!(sink.queued_frames(), 0);
+    }
+
+    #[test]
+    fn null_sink_plays_queued_frames_in_real_time_and_holds_while_paused() {
+        let mut sink = NullSink::new(1, 1000);
+        sink.write(&[0.0; 200]).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        let queued = sink.queued_frames();
+        assert!((80..=110).contains(&queued), "about 100 of 200 frames left, got {queued}");
+        sink.pause().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        assert_eq!(sink.queued_frames(), queued, "a paused sink plays nothing");
+        sink.resume().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(150));
         assert_eq!(sink.queued_frames(), 0);
     }
 
