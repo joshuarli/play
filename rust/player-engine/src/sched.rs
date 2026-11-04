@@ -176,6 +176,10 @@ where
     }
 
     pub fn send(&mut self, command: Command) {
+        if let (Command::Seek(_), Some(pending @ Command::Seek(_))) = (&command, self.commands.last_mut()) {
+            *pending = command;
+            return;
+        }
         self.commands.push(command);
     }
 

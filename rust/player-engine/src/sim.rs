@@ -502,7 +502,7 @@ mod tests {
         h.sim.send(Command::Seek(0.7));
         h.sim.step(h.now);
         h.now += DT;
-        assert_eq!(h.sim.stats().seeks_completed, 6);
+        assert_eq!(h.sim.stats().seeks_completed, 2, "queued seeks collapse to the last target");
         for _ in 0..600 {
             h.sim.audio_output_mut().consume(DT);
             h.sim.step(h.now);
