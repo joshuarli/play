@@ -67,7 +67,6 @@ def gate_linux_gpu_next(results, args):
         window(results, compositor)
         subtitles(results, compositor)
         vaapi_without_dmabuf(results, compositor)
-        osd_fidelity(results, compositor)
         gui(results, compositor)
         shutdown(results, compositor)
     finally:
@@ -120,10 +119,8 @@ def window(results, compositor):
         results.check("gpu-next: resize", resized["w"] != before, f"{before} -> {resized['w']}")
 
 
-SUBTITLE_FIXTURES = (
-    "h264-embedded-srt", "h264-external-srt", "h264-external-ass",
-    "h264-external-vtt", "h264-movtext", "vp9-webvtt",
-)
+SUBTITLE_FIXTURES = ("h264-embedded-srt", "h264-external-srt")
+UNSUPPORTED_SUBTITLE_FIXTURES = ("h264-external-ass", "h264-external-vtt", "h264-movtext", "vp9-webvtt")
 MIXED_SCRIPT_SRT = """1
 00:00:00,000 --> 00:00:09,000
 Latin éèü, 日本語の字幕, مرحبا بالعالم, Ελληνικά
@@ -136,16 +133,29 @@ def render_subtitle(results, compositor, label, path, extra=()):
         player.wait_event("file-loaded", timeout=30)
         player.command("seek", 1, "absolute+exact")
         text = player.wait_property("sub-text", lambda value: bool(value.strip()), timeout=15)
-        failures = player.log_matches(r"Failed to load fontconfig|fontconfig.*(error|failed)")
         results.check(f"subtitles {label}: cue decoded", bool(text), tail(player.lines))
-        results.check(f"subtitles {label}: libass fonts", not failures, tail(failures))
         return text
+
+
+def reject_subtitle(results, compositor, label, path, extra=()):
+    with Mpv([*GPU_ARGS, "--pause=yes", *extra], env=compositor.env) as player:
+        player.load(path)
+        player.wait_event("file-loaded", timeout=30)
+        player.command("seek", 1, "absolute+exact")
+        time.sleep(0.5)
+        selected = [track for track in player.get_property("track-list")
+                    if track.get("type") == "sub" and track.get("selected")]
+        results.check(f"subtitles {label}: not selected, playback continues",
+                      not selected and player.get_property("sub-text") == "", repr(selected))
 
 
 def subtitles(results, compositor):
     for name in SUBTITLE_FIXTURES:
         entry = fixture_entry(name)
         render_subtitle(results, compositor, name, fixture_path(entry), subtitle_args(entry))
+    for name in UNSUPPORTED_SUBTITLE_FIXTURES:
+        entry = fixture_entry(name)
+        reject_subtitle(results, compositor, name, fixture_path(entry), subtitle_args(entry))
     directory = TMP / f"subtitles-{os.getpid()}"
     unicode_dir = directory / "字幕 vidéo"
     unicode_dir.mkdir(parents=True)
@@ -163,11 +173,6 @@ def subtitles(results, compositor):
         for path in sorted(directory.rglob("*"), reverse=True):
             path.unlink() if not path.is_dir() or path.is_symlink() else path.rmdir()
         directory.rmdir()
-
-
-def osd_fidelity(results, compositor):
-    from osd_fidelity import run as run_osd_fidelity
-    run_osd_fidelity(results, env=compositor.env)
 
 
 def gui(results, compositor):

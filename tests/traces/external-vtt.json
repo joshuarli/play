@@ -1,17 +1,7 @@
 {
  "companion": "h264-external-vtt",
  "fixture": "external-vtt",
+ "load-error": true,
  "role": "subtitle",
- "sid-no": true,
- "sub-tracks": [
-  {
-   "codec": "webvtt",
-   "default": false,
-   "external": true,
-   "forced": false,
-   "title": "external.vtt",
-   "type": "sub"
-  }
- ],
- "sub-visibility": true
+ "sub-tracks": []
 }

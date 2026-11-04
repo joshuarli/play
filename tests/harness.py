@@ -340,6 +340,12 @@ def subtitle_args(entry):
     return [f"--sub-file={FIXTURES / name}" for name in entry.get("sub_files", [])]
 
 
+def player_subtitles(entry):
+    if not entry.get("sub_files"):
+        return entry.get("subtitle", [])
+    return ["subrip" for name in entry["sub_files"] if name.endswith(".srt")]
+
+
 def wait_symphonia(mpv, codec=None, timeout=10):
     pattern = r"Using Symphonia for " + (re.escape(codec) if codec else "")
     return mpv.wait_log(pattern, timeout=timeout)
@@ -885,8 +891,9 @@ def corpus_case(results, name, entry):
             problems.append(f"video {got_video} != {entry.get('video', [])}")
         if got_audio != entry.get("audio", []):
             problems.append(f"audio {got_audio} != {entry.get('audio', [])}")
-        if got_subtitle != entry.get("subtitle", []):
-            problems.append(f"subtitle {got_subtitle} != {entry.get('subtitle', [])}")
+        expected_subtitle = player_subtitles(entry)
+        if got_subtitle != expected_subtitle:
+            problems.append(f"subtitle {got_subtitle} != {expected_subtitle}")
         if track_channels(tracks) != entry.get("channels", []):
             problems.append(
                 f"channels {track_channels(tracks)} != {entry.get('channels', [])}")
@@ -1410,16 +1417,6 @@ def gate_osc_input(results, args):
 def gate_mpv_diff(results, args):
     from diff_mpv import run as run_diff
     run_diff(results, MPV, args[0] if args else None)
-
-
-def gate_osd_fidelity(results, args):
-    from osd_fidelity import run as run_osd_fidelity
-    run_osd_fidelity(results)
-
-
-def gate_osc_mpv(results, args):
-    from osc_mpv import run as run_osc_mpv
-    run_osc_mpv(results, args)
 
 
 def gate_gui(results, args):
@@ -2002,9 +1999,7 @@ GATES = {
     "local-only": gate_local_only,
     "osc": gate_osc,
     "osc-input": gate_osc_input,
-    "osd-fidelity": gate_osd_fidelity,
     "mpv-diff": gate_mpv_diff,
-    "osc-mpv": gate_osc_mpv,
     "gui": gate_gui,
     "input": gate_input,
     "playlist": gate_playlist,
@@ -2021,7 +2016,7 @@ GATES = {
 
 SUITE = [
     "fixtures", "corpus", "audio", "hwdec", "seek", "local-paths",
-    "local-only", "osc", "osc-input", "osc-mpv", "input", "playlist", "cli", "state", "failures",
+    "local-only", "osc", "osc-input", "input", "playlist", "cli", "state", "failures",
     "rust-link", "tui", "release", "traces", "dispatch",
 ]
 

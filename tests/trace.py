@@ -231,6 +231,9 @@ def trace_subtitle(name, entry, companion_name, companion_entry):
                                if t.get("type") == "sub"]
         # Default sid sampling races auto-resolution, so the trace drives
         # explicit selection instead: both round-trips are deterministic.
+        if not trace["sub-tracks"]:
+            trace["load-error"] = bool(mpv.log_matches(r"cannot load subtitle"))
+            return trace
         mpv.command("set", "sid", "no")
         trace["sid-no"] = mpv.wait_until(
             lambda: mpv.try_get_property("sid") is False,
