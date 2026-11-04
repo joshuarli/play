@@ -13,7 +13,7 @@ The mpv-derived C playback engine is gone. Cargo builds the player on both platf
 - **Output:** `player-ass` renders subtitles and the OSD bitmaps; `player-output` renders through libplacebo and Vulkan; `player-display` owns the macOS Cocoa/Metal window and the Linux Wayland window.
 - **Application:** `player-app` owns the executable, CLI, IPC, playlists, chapters, track switching, properties and events, command dispatch, OSC, scripts, GUI and TUI modes, Finder open, drag-and-drop, and screenshots.
 - **Lua:** one mlua 0.12.2 Lua 5.2 host with embedded built-in modules and one interpreter. The sources live in `rust/player-lua/lua/`.
-- **Native:** the Objective-C window bridge, the vendored Lua C sources, and the pinned native dependency closure. There is no mpv playloop, libmpv, or C player process.
+- **Native:** the Objective-C window bridge, Lua 5.2.4 vendored through `mlua`, and the pinned native dependency closure. There is no mpv playloop, libmpv, or C player process.
 
 ## Verification
 
