@@ -6,6 +6,7 @@ const FONT_PLAYRES_X: f64 = 384.0;
 const FONT_PLAYRES_Y: f64 = 288.0;
 const PLAYRES_BASE: f64 = 720.0;
 const WORD_JOINER: char = '\u{2060}';
+const BLEND_ROUNDING: u32 = 255 * 255 / 2;
 
 fn ass_color(red: u8, green: u8, blue: u8, alpha: u8) -> String {
     format!("&H{:02X}{:02X}{:02X}{:02X}", 255 - alpha, blue, green, red)
@@ -85,18 +86,17 @@ fn overlay_content(data: &str, res_x: i64, res_y: i64, width: i64, height: i64) 
     let (playres_x, playres_y) = overlay_playres(res_x, res_y, frame_aspect(width, height));
     let scale = playres_y as f64 / PLAYRES_BASE;
     let mut content = script_info(playres_x, playres_y, &styles(scale));
-    for line in data.split('\n') {
-        if line.is_empty() {
-            continue;
-        }
-        content.push_str("Dialogue: 0,0:00:00.00,0:00:00.10,OSD,,0,0,0,,");
+    for (layer, line) in data.split('\n').filter(|line| !line.is_empty()).enumerate() {
+        content.push_str(&format!(
+            "Dialogue: {layer},0:00:00.00,0:00:00.10,OSD,,0,0,0,,"
+        ));
         content.push_str(line);
         content.push('\n');
     }
     content
 }
 
-fn escape_osd_text(text: &str) -> String {
+pub fn escape_ass(text: &str) -> String {
     let mut escaped = String::with_capacity(text.len());
     let mut line_start = true;
     for character in text.chars() {
@@ -140,7 +140,7 @@ fn message_content(text: &str, width: i64, height: i64) -> (String, (i64, i64)) 
         playres_y,
         &styles(playres_y as f64 / PLAYRES_BASE),
     );
-    let escaped = escape_osd_text(text);
+    let escaped = escape_ass(text);
     for line in escaped.split('\n') {
         if line.is_empty() {
             continue;
@@ -276,12 +276,16 @@ pub fn composite(
                     [source_red, source_green, source_blue].into_iter().enumerate()
                 {
                     let target = frame[offset + channel] as u32;
-                    frame[offset + channel] =
-                        ((source * coverage_alpha + target * inverse) / (255 * 255)) as u8;
+                    frame[offset + channel] = ((source * coverage_alpha
+                        + target * inverse
+                        + BLEND_ROUNDING)
+                        / (255 * 255)) as u8;
                 }
                 let target_alpha = frame[offset + 3] as u32;
-                frame[offset + 3] =
-                    ((coverage_alpha * 255 + target_alpha * inverse) / (255 * 255)) as u8;
+                frame[offset + 3] = ((coverage_alpha * 255
+                    + target_alpha * inverse
+                    + BLEND_ROUNDING)
+                    / (255 * 255)) as u8;
             }
         }
     }
@@ -394,6 +398,26 @@ mod tests {
     }
 
     #[test]
+    fn overlay_events_stack_in_submission_order() {
+        let mut state = OsdState::new().expect("osd starts");
+        let shape = |color: &str, x0: u32, x1: u32| {
+            format!(
+                "{{\\an7\\pos(0,0)\\bord0\\shad0\\1c&H{color}&\\p1}}m {x0} 0 l {x1} 0 l {x1} 40 l {x0} 40{{\\p0}}"
+            )
+        };
+        let events = (0..12)
+            .map(|index| shape(if index % 2 == 0 { "000000" } else { "FFFFFF" }, 0, 100 + index))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let images = state
+            .render(Some(&overlay(&events)), None, 320, 240)
+            .expect("overlay renders");
+        let mut frame = vec![128u8; 320 * 240 * 4];
+        composite(&mut frame, 320, 240, &images).expect("overlay composites");
+        assert_eq!(&frame[(20 * 320 + 10) * 4..(20 * 320 + 10) * 4 + 3], &[255, 255, 255]);
+    }
+
+    #[test]
     fn nothing_to_show_renders_nothing() {
         let mut state = OsdState::new().expect("osd starts");
         let images = state.render(None, None, 320, 240).expect("empty osd renders");
@@ -458,7 +482,7 @@ mod tests {
         let alpha = (255 - 0x20) * 128;
         let inverse = 255 * 255 - alpha;
         let expected = |source: u32, target: u32| {
-            ((source * alpha + target * inverse) / (255 * 255)) as u8
+            ((source * alpha + target * inverse + 255 * 255 / 2) / (255 * 255)) as u8
         };
         assert_eq!(frame[0], expected(0x40, 100));
         assert_eq!(frame[1], expected(0x20, 50));
