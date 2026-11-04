@@ -140,42 +140,132 @@ fn fft_forward(input: &[(f32, f32)], output: &mut [(f32, f32)]) {
 }
 
 /// Un-normalised inverse complex FFT: `out[n] = Σ_k in[k]·e^{+2πi kn/N}`.
-///
-/// The seam for an accelerated backend; the built-in evaluation is O(n²).
 #[cfg(not(feature = "spectrograms"))]
 fn fft_inverse(input: &[(f32, f32)], output: &mut [(f32, f32)]) {
-    let n = input.len();
-    let step = 2.0 * core::f64::consts::PI / n as f64;
-    for (k, out) in output.iter_mut().enumerate() {
-        let mut re = 0.0f64;
-        let mut im = 0.0f64;
-        for (j, &(xr, xi)) in input.iter().enumerate() {
-            let phase = step * (k * j % n) as f64;
-            let (s, c) = phase.sin_cos();
-            re += f64::from(xr) * c - f64::from(xi) * s;
-            im += f64::from(xr) * s + f64::from(xi) * c;
-        }
-        *out = (re as f32, im as f32);
-    }
+    mixed_radix_fft(input, output, 1.0, 1.0);
 }
 
 /// Forward complex FFT scaled by `1/N` (kiss_fft's forward convention in
 /// Opus): `out[k] = (1/N)·Σ_n in[n]·e^{-2πi kn/N}`.
 #[cfg(not(feature = "spectrograms"))]
 fn fft_forward(input: &[(f32, f32)], output: &mut [(f32, f32)]) {
+    mixed_radix_fft(input, output, -1.0, 1.0 / input.len() as f64);
+}
+
+/// Recursive mixed-radix (2, 3, 5) Cooley-Tukey FFT in `f64`, falling back
+/// to a direct DFT for any other prime factor. CELT transform sizes factor
+/// into 2, 3, and 5, so every size here runs in O(n log n).
+#[cfg(not(feature = "spectrograms"))]
+fn mixed_radix_fft(input: &[(f32, f32)], output: &mut [(f32, f32)], sign: f64, scale: f64) {
     let n = input.len();
+    if n == 0 {
+        return;
+    }
     let step = 2.0 * core::f64::consts::PI / n as f64;
-    let scale = 1.0 / n as f64;
-    for (k, out) in output.iter_mut().enumerate() {
-        let mut re = 0.0f64;
-        let mut im = 0.0f64;
-        for (j, &(xr, xi)) in input.iter().enumerate() {
-            let phase = step * (k * j % n) as f64;
-            let (s, c) = phase.sin_cos();
-            re += f64::from(xr) * c + f64::from(xi) * s;
-            im += -f64::from(xr) * s + f64::from(xi) * c;
-        }
+    let twiddles: Vec<(f64, f64)> = (0..n)
+        .map(|k| {
+            let (s, c) = (step * k as f64).sin_cos();
+            (c, sign * s)
+        })
+        .collect();
+    let samples: Vec<(f64, f64)> = input.iter().map(|&(re, im)| (f64::from(re), f64::from(im))).collect();
+    let mut spectrum = vec![(0.0f64, 0.0f64); n];
+    fft_recurse(&samples, 0, 1, &mut spectrum, &twiddles);
+    for (out, &(re, im)) in output.iter_mut().zip(spectrum.iter()) {
         *out = ((re * scale) as f32, (im * scale) as f32);
+    }
+}
+
+#[cfg(not(feature = "spectrograms"))]
+fn fft_recurse(
+    samples: &[(f64, f64)],
+    offset: usize,
+    stride: usize,
+    out: &mut [(f64, f64)],
+    twiddles: &[(f64, f64)],
+) {
+    let n = out.len();
+    let total = twiddles.len();
+    let at = |index: usize| samples[offset + index * stride];
+    if n == 1 {
+        out[0] = at(0);
+        return;
+    }
+    let Some(radix) = [2usize, 3, 5].into_iter().find(|radix| n % radix == 0) else {
+        let unit = total / n;
+        for (k, slot) in out.iter_mut().enumerate() {
+            let mut acc = (0.0f64, 0.0f64);
+            for j in 0..n {
+                let (wr, wi) = twiddles[(j * k % n) * unit];
+                let (xr, xi) = at(j);
+                acc.0 += xr * wr - xi * wi;
+                acc.1 += xr * wi + xi * wr;
+            }
+            *slot = acc;
+        }
+        return;
+    };
+    let m = n / radix;
+    let mut subs = vec![(0.0f64, 0.0f64); n];
+    for r in 0..radix {
+        fft_recurse(samples, offset + r * stride, stride * radix, &mut subs[r * m..(r + 1) * m], twiddles);
+    }
+    let unit = total / n;
+    for q in 0..radix {
+        for k in 0..m {
+            let bin = k + q * m;
+            let mut acc = (0.0f64, 0.0f64);
+            for r in 0..radix {
+                let (wr, wi) = twiddles[(r * bin % n) * unit];
+                let (xr, xi) = subs[r * m + k];
+                acc.0 += xr * wr - xi * wi;
+                acc.1 += xr * wi + xi * wr;
+            }
+            out[bin] = acc;
+        }
+    }
+}
+
+#[cfg(all(test, not(feature = "spectrograms")))]
+mod fft_tests {
+    use super::{fft_forward, fft_inverse};
+
+    fn direct(input: &[(f32, f32)], sign: f64, scale: f64) -> Vec<(f64, f64)> {
+        let n = input.len();
+        let step = 2.0 * core::f64::consts::PI / n as f64;
+        (0..n)
+            .map(|k| {
+                let mut acc = (0.0f64, 0.0f64);
+                for (j, &(xr, xi)) in input.iter().enumerate() {
+                    let (s, c) = (step * (k * j % n) as f64).sin_cos();
+                    let s = sign * s;
+                    acc.0 += f64::from(xr) * c - f64::from(xi) * s;
+                    acc.1 += f64::from(xr) * s + f64::from(xi) * c;
+                }
+                (acc.0 * scale, acc.1 * scale)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn mixed_radix_matches_the_direct_transform_for_celt_sizes() {
+        for n in [1usize, 2, 7, 15, 30, 60, 120, 240, 480, 49] {
+            let input: Vec<(f32, f32)> = (0..n)
+                .map(|i| ((i as f32 * 0.37).sin(), (i as f32 * 0.91).cos()))
+                .collect();
+            let mut inverse = vec![(0.0, 0.0); n];
+            fft_inverse(&input, &mut inverse);
+            let mut forward = vec![(0.0, 0.0); n];
+            fft_forward(&input, &mut forward);
+            for ((got, want), (fgot, fwant)) in inverse
+                .iter()
+                .zip(direct(&input, 1.0, 1.0))
+                .zip(forward.iter().zip(direct(&input, -1.0, 1.0 / n as f64)))
+            {
+                assert!((f64::from(got.0) - want.0).abs() < 1e-3 && (f64::from(got.1) - want.1).abs() < 1e-3, "n={n} inverse {got:?} vs {want:?}");
+                assert!((f64::from(fgot.0) - fwant.0).abs() < 1e-5 && (f64::from(fgot.1) - fwant.1).abs() < 1e-5, "n={n} forward {fgot:?} vs {fwant:?}");
+            }
+        }
     }
 }
 
