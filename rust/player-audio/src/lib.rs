@@ -13,6 +13,38 @@ pub mod resample;
 pub mod session;
 pub mod sink;
 
+pub fn open_sink(
+    kind: &sink::SinkKind,
+    channels: usize,
+    rate: u32,
+    channel_mask: u64,
+) -> Result<Box<dyn sink::AudioSink>, String> {
+    match kind {
+        sink::SinkKind::Null => Ok(Box::new(sink::NullSink::new(channels, rate))),
+        sink::SinkKind::Default => open_default_sink(channels, rate, channel_mask),
+        sink::SinkKind::Device(device) => {
+            #[cfg(target_os = "linux")]
+            {
+                let _ = channel_mask;
+                backend_alsa::AlsaSink::open(device, channels, rate)
+                    .map(|sink| Box::new(sink) as Box<dyn sink::AudioSink>)
+            }
+            #[cfg(target_os = "macos")]
+            {
+                let _ = channel_mask;
+                Err(format!(
+                    "audio device '{device}' is not supported by the CoreAudio backend"
+                ))
+            }
+            #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+            {
+                let _ = (device, channels, rate, channel_mask);
+                Err("no native audio backend on this platform".to_string())
+            }
+        }
+    }
+}
+
 pub fn open_default_sink(
     channels: usize,
     rate: u32,

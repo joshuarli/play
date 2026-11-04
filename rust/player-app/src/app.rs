@@ -3,12 +3,18 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use player_audio::sink::SinkKind;
-use player_core::command::{parse_string, Adjust, Command as CoreCommand, Toggle, TrackKind as CoreTrackKind};
+use player_core::command::{
+    parse_string, Adjust, Command as CoreCommand, Toggle, TrackKind as CoreTrackKind,
+};
+use player_core::input::{classify_input, InputPath};
 use player_engine::video::PresentedFrame;
 use player_engine::{EngineStatus, SchedulerEngine};
 use player_ffi::engine::{EngineBackend, SharedEngine};
 use player_lua::queue::EventSender;
-use player_lua::{CommandRequest, NativeValue, PlayerBackend, ScriptEvent, ScriptHost, ScriptModule};
+use player_lua::{
+    CommandRequest, NativeValue, PlayerBackend, PropertyFormat, ScriptEvent, ScriptHost,
+    ScriptModule,
+};
 use player_output::{Overlay, OverlayRect};
 use player_tui::{Control, Cover, Player as TuiPlayer, Snapshot, Track};
 
@@ -20,6 +26,7 @@ use crate::window::{HostEvent, HostWindow};
 
 const ASSDRAW: &str = include_str!("../../../player/lua/assdraw.lua");
 const OPTIONS: &str = include_str!("../../../player/lua/options.lua");
+const INPUT: &str = include_str!("../../../player/lua/input.lua");
 const OSC: &str = include_str!("../../../player/lua/osc.lua");
 
 const GATE_FRAMES: u64 = 24;
@@ -30,13 +37,19 @@ struct Observer {
     last: Option<NativeValue>,
 }
 
+struct ScriptInstance {
+    name: String,
+    host: ScriptHost,
+    sender: EventSender,
+}
+
 pub struct App {
     pub options: Options,
     pub playlist: Playlist,
     pub probe: Option<Probe>,
     pub shared: Option<SharedEngine>,
-    pub host: Option<ScriptHost>,
-    pub sender: Option<EventSender>,
+    hosts: Vec<ScriptInstance>,
+    pub(crate) idle_properties: std::sync::Arc<std::sync::Mutex<HashMap<String, NativeValue>>>,
     pub ipc: Option<IpcServer>,
     pub paused: bool,
     pub speed: f64,
@@ -88,8 +101,8 @@ impl App {
             playlist: Playlist::new(),
             probe: None,
             shared: None,
-            host: None,
-            sender: None,
+            hosts: Vec::new(),
+            idle_properties: std::sync::Arc::new(std::sync::Mutex::new(HashMap::new())),
             ipc: None,
             eof_reached: false,
             display: None,
@@ -294,8 +307,7 @@ impl App {
     }
 
     fn unload(&mut self) {
-        self.host = None;
-        self.sender = None;
+        self.hosts.clear();
         self.shared = None;
         self.probe = None;
         self.end_sent = false;
@@ -321,14 +333,82 @@ impl App {
             shared,
         ) {
             Ok(host) => {
-                self.sender = Some(host.event_sender().sender());
-                self.host = Some(host);
+                let sender = host.event_sender().sender();
+                self.hosts.push(ScriptInstance {
+                    name: "osc".to_owned(),
+                    host,
+                    sender,
+                });
             }
-            Err(_) => {
-                self.sender = None;
-                self.host = None;
+            Err(_) => {}
+        }
+    }
+
+    fn spawn_scripts(&mut self) {
+        let scripts = self.options.scripts.clone();
+        if scripts.is_empty() {
+            return;
+        }
+        match self.shared.clone() {
+            Some(shared) => {
+                for path in scripts {
+                    self.spawn_script_file(&path, shared.clone());
+                }
+            }
+            None => {
+                for path in scripts {
+                    self.spawn_script_file(
+                        &path,
+                        IdleBackend::new(self.idle_properties.clone()),
+                    );
+                }
             }
         }
+    }
+
+    fn spawn_script_file<B: PlayerBackend>(&mut self, path: &str, backend: B) {
+        let source = match std::fs::read_to_string(path) {
+            Ok(source) => source,
+            Err(error) => {
+                eprintln!("player: cannot read {path}: {error}");
+                return;
+            }
+        };
+        let name = Path::new(path)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(path)
+            .to_owned();
+        match ScriptHost::spawn_with_modules(
+            name.clone(),
+            format!("@{path}"),
+            source,
+            vec![
+                ScriptModule::new("mp.assdraw", ASSDRAW),
+                ScriptModule::new("mp.options", OPTIONS),
+                ScriptModule::new("mp.input", INPUT),
+            ],
+            backend,
+        ) {
+            Ok(host) => {
+                let sender = host.event_sender().sender();
+                self.hosts.push(ScriptInstance {
+                    name,
+                    host,
+                    sender,
+                });
+            }
+            Err(error) => eprintln!("player: cannot start {path}: {error}"),
+        }
+    }
+
+    fn stop_scripts(&mut self) {
+        for instance in &mut self.hosts {
+            if let Err(error) = instance.host.stop() {
+                eprintln!("player: {}: {error}", instance.name);
+            }
+        }
+        self.hosts.clear();
     }
 
     pub fn load_current(&mut self) -> Result<(), String> {
@@ -352,6 +432,9 @@ impl App {
             .any(|stream| stream.kind == player_media::StreamKind::Video);
         let sink = if self.options.null_audio || self.options.no_audio {
             SinkKind::Null
+        } else if let Some(device) = &self.options.audio_device {
+            let device = device.strip_prefix("alsa/").unwrap_or(device);
+            SinkKind::Device(device.to_owned())
         } else {
             SinkKind::Default
         };
@@ -406,6 +489,10 @@ impl App {
             .map(|_| 1);
         if !self.options.tui {
             self.spawn_osc();
+            self.spawn_scripts();
+        }
+        if !self.options.quiet {
+            println!("Playing: {}", entry.path);
         }
         if self.paused {
             self.set_paused(true)?;
@@ -443,6 +530,9 @@ impl App {
             Start::Unset => {}
         }
         self.log_streams();
+        if let Some(template) = &self.options.term_playing_msg {
+            println!("{}", expand_message(self, template));
+        }
         self.defer_event(ipc::event("file-loaded", Vec::new()));
         let attached_video = self.probe.as_ref().is_some_and(|probe| {
             probe
@@ -475,15 +565,42 @@ impl App {
         let Some(probe) = &self.probe else {
             return;
         };
-        if probe.streams.iter().any(|stream| stream.kind == player_media::StreamKind::Video) {
-            println!("VO: [null]");
+        if probe
+            .streams
+            .iter()
+            .any(|stream| stream.kind == player_media::StreamKind::Video)
+        {
+            let output = if self.options.null_video || self.options.no_video {
+                "null"
+            } else {
+                "gpu-next"
+            };
+            println!("VO: [{output}]");
+        }
+        if self.options.no_audio {
+            return;
         }
         if let Some(audio) = probe
             .streams
             .iter()
             .find(|stream| stream.kind == player_media::StreamKind::Audio)
         {
-            println!("AO: [null]");
+            let output = if self.options.null_audio {
+                "null"
+            } else if cfg!(target_os = "macos") {
+                "coreaudio"
+            } else {
+                "alsa"
+            };
+            println!("AO: [{output}]");
+            if let Some(device) = self
+                .options
+                .audio_device
+                .as_deref()
+                .and_then(|device| device.strip_prefix("alsa/"))
+            {
+                println!("[ao/alsa] opening device '{device}'");
+            }
             println!("Using Symphonia for {}", audio.codec_name);
         }
     }
@@ -544,12 +661,13 @@ impl App {
     }
 
     fn loadfile(&mut self, path: &str, mode: &str) -> Result<(), String> {
-        let entry = playlist::local_entry(path)?;
+        let entries = playlist::entries_for_path(path)?;
         match mode {
             "append" | "append-play" => {
-                self.playlist.append(vec![entry]);
+                let first = self.playlist.count();
+                self.playlist.append(entries);
                 if mode == "append-play" && self.shared.is_none() {
-                    self.playlist.set_current(Some(self.playlist.count() - 1));
+                    self.playlist.set_current(Some(first));
                     self.load_current()?;
                 }
             }
@@ -558,18 +676,18 @@ impl App {
                     .parse::<usize>()
                     .map_err(|_| "bad insert index".to_owned())?;
                 if self.playlist.count() == 0 {
-                    self.playlist.push(entry);
+                    self.playlist.append(entries);
                 } else {
-                    self.playlist.insert(index, vec![entry]);
+                    self.playlist.insert(index, entries);
                 }
             }
             "insert-next" => {
                 let index = self.playlist.current().map(|index| index + 1).unwrap_or(0);
-                self.playlist.insert(index, vec![entry]);
+                self.playlist.insert(index, entries);
             }
             _ => {
                 self.playlist.clear();
-                self.playlist.push(entry);
+                self.playlist.append(entries);
                 self.playlist.set_current(Some(0));
                 self.load_current()?;
             }
@@ -592,6 +710,8 @@ impl App {
     }
 
     pub fn run(&mut self) -> Result<(), String> {
+        self.options.sub_files = local_inputs(std::mem::take(&mut self.options.sub_files));
+        self.options.audio_files = local_inputs(std::mem::take(&mut self.options.audio_files));
         if let Some(path) = &self.options.input_conf {
             self.bindings = read_bindings(path)?;
         }
@@ -601,7 +721,8 @@ impl App {
         }
         let bundled = std::env::var("MPVBUNDLE").as_deref() == Ok("true");
         if self.options.files.is_empty() && self.options.playlists.is_empty() {
-            if self.options.idle || self.options.tui || bundled {
+            if self.options.idle || self.options.tui || bundled || !self.options.scripts.is_empty()
+            {
                 self.options.idle = true;
             } else {
                 print!("{}", options::help());
@@ -611,16 +732,7 @@ impl App {
         for item in self.options.items.clone() {
             match item {
                 options::Item::File(file) => {
-                    let extension = Path::new(&file)
-                        .extension()
-                        .and_then(|extension| extension.to_str())
-                        .unwrap_or("")
-                        .to_ascii_lowercase();
-                    if matches!(extension.as_str(), "m3u" | "m3u8" | "pls") {
-                        self.playlist.append(playlist::read_playlist(&file)?);
-                    } else {
-                        self.playlist.push(playlist::local_entry(&file)?);
-                    }
+                    self.playlist.append(playlist::entries_for_path(&file)?);
                 }
                 options::Item::Playlist(list) => {
                     self.playlist.append(playlist::read_playlist(&list)?);
@@ -641,6 +753,9 @@ impl App {
         if self.playlist.count() > 0 {
             self.playlist.set_current(Some(0));
             self.load_current()?;
+        }
+        if self.shared.is_none() {
+            self.spawn_scripts();
         }
         if let Some(path) = &self.options.ipc {
             self.ipc = Some(IpcServer::bind(path)?);
@@ -684,16 +799,7 @@ impl App {
     fn open_files(&mut self, paths: Vec<String>, append: bool) -> Result<(), String> {
         let mut entries = Vec::new();
         for path in paths {
-            let extension = Path::new(&path)
-                .extension()
-                .and_then(|extension| extension.to_str())
-                .unwrap_or("")
-                .to_ascii_lowercase();
-            if matches!(extension.as_str(), "m3u" | "m3u8" | "pls") {
-                entries.extend(playlist::read_playlist(&path)?);
-            } else {
-                entries.push(playlist::local_entry(&path)?);
-            }
+            entries.extend(playlist::entries_for_path(&path)?);
         }
         if entries.is_empty() {
             return Ok(());
@@ -906,6 +1012,7 @@ impl App {
         if !self.options.quiet {
             println!("Exiting... (Quit)");
         }
+        self.stop_scripts();
         self.send_event(ipc::event("shutdown", Vec::new()));
         self.unload();
     }
@@ -930,17 +1037,26 @@ impl App {
             }
             return Ok(());
         };
-        if let Some(sender) = &self.sender {
-            shared
-                .pump(sender)
-                .map_err(|error| format!("engine pump failed: {error}"))?;
-        } else {
+        if self.hosts.is_empty() {
             shared.pump_frames();
+        } else {
+            for instance in &self.hosts {
+                shared
+                    .pump(&instance.sender)
+                    .map_err(|error| format!("script pump failed: {error}"))?;
+            }
         }
-        if let Some(host) = self.host.as_mut()
-            && let Some(result) = host.poll()
-        {
-            result.map_err(|error| format!("osc stopped: {error}"))?;
+        let mut index = 0;
+        while index < self.hosts.len() {
+            match self.hosts[index].host.poll() {
+                Some(Ok(())) => {
+                    self.hosts.remove(index);
+                }
+                Some(Err(error)) => {
+                    return Err(format!("{}: {error}", self.hosts[index].name));
+                }
+                None => index += 1,
+            }
         }
         if let Some(frames) = shared.mutate(|backend| backend.take_frames())
             && let Some(frame) = frames.into_iter().last()
@@ -951,6 +1067,13 @@ impl App {
         let status = shared
             .inspect(|backend| backend.status())
             .unwrap_or_default();
+        if self
+            .options
+            .frames
+            .is_some_and(|limit| status.presented >= limit)
+        {
+            self.quit = true;
+        }
         self.paused = match self.pending_pause {
             Some(target) if status.paused == target => {
                 self.pending_pause = None;
@@ -1294,7 +1417,7 @@ impl App {
                 Ok(NativeValue::None)
             }
             "script-message" => {
-                self.script_message(rest)?;
+                self.post_script_message(rest)?;
                 Ok(NativeValue::None)
             }
             "script-message-to" => {
@@ -1616,32 +1739,37 @@ impl App {
         }
     }
 
-    fn script_message(&mut self, args: &[String]) -> Result<(), String> {
-        if let Some(shared) = &self.shared {
-            let mut argv = vec!["script-message".to_owned()];
-            argv.extend(args.iter().cloned());
-            shared
-                .mutate(|backend| backend.command(CommandRequest::Args(argv)))
-                .ok_or_else(|| "engine backend lock failed".to_owned())??;
-        }
-        Ok(())
-    }
-
-    fn script_message_to(&mut self, _target: &str, args: &[String]) -> Result<(), String> {
-        self.post_script_message(args)
-    }
-
-    fn post_script_message(&mut self, args: &[String]) -> Result<(), String> {
-        let Some(host) = self.host.as_ref() else {
-            return Ok(());
-        };
+    fn script_message_to(&mut self, target: &str, args: &[String]) -> Result<(), String> {
         let args = NativeValue::Array(
             args.iter()
                 .map(|value| NativeValue::String(value.clone()))
                 .collect(),
         );
-        host.post_event(ScriptEvent::new("client-message").with_field("args", args))
-            .map_err(|error| error.to_string())?;
+        let event = ScriptEvent::new("client-message").with_field("args", args);
+        for instance in &self.hosts {
+            if instance.name == target {
+                instance
+                    .host
+                    .post_event(event.clone())
+                    .map_err(|error| error.to_string())?;
+            }
+        }
+        Ok(())
+    }
+
+    fn post_script_message(&mut self, args: &[String]) -> Result<(), String> {
+        let args = NativeValue::Array(
+            args.iter()
+                .map(|value| NativeValue::String(value.clone()))
+                .collect(),
+        );
+        let event = ScriptEvent::new("client-message").with_field("args", args);
+        for instance in &self.hosts {
+            instance
+                .host
+                .post_event(event.clone())
+                .map_err(|error| error.to_string())?;
+        }
         Ok(())
     }
 
@@ -1818,6 +1946,146 @@ impl TuiPlayer for App {
     }
 }
 
+struct IdleBackend {
+    properties: std::sync::Arc<std::sync::Mutex<HashMap<String, NativeValue>>>,
+}
+
+impl IdleBackend {
+    fn new(properties: std::sync::Arc<std::sync::Mutex<HashMap<String, NativeValue>>>) -> Self {
+        IdleBackend { properties }
+    }
+}
+
+impl PlayerBackend for IdleBackend {
+    fn log(&mut self, level: &str, message: &str) {
+        eprintln!("[{level}] {message}");
+    }
+
+    fn command(&mut self, command: CommandRequest) -> Result<NativeValue, String> {
+        let name = match &command {
+            CommandRequest::String(text) => text.split_whitespace().next(),
+            CommandRequest::Args(args) => args.first().map(String::as_str),
+            CommandRequest::Native(_) => None,
+        };
+        match name {
+            Some("define-section" | "enable-section" | "disable-section" | "script-message"
+            | "script-message-to" | "quit") => Ok(NativeValue::None),
+            Some(other) => Err(format!("no file is loaded; cannot run '{other}'")),
+            None => Err("no file is loaded".to_owned()),
+        }
+    }
+
+    fn get_property(
+        &mut self,
+        name: &str,
+        _format: PropertyFormat,
+    ) -> Result<NativeValue, String> {
+        if let Some(value) = self
+            .properties
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .get(name)
+        {
+            return Ok(value.clone());
+        }
+        match name {
+            "pause" | "mute" | "eof-reached" | "vo-configured" => Ok(NativeValue::Bool(false)),
+            "idle-active" => Ok(NativeValue::Bool(true)),
+            "volume" => Ok(NativeValue::Double(100.0)),
+            "time-pos" | "duration" => Ok(NativeValue::Double(0.0)),
+            "path" | "filename" => Ok(NativeValue::String(String::new())),
+            "playlist-count" => Ok(NativeValue::Int(0)),
+            _ => Err(format!("property not found: {name}")),
+        }
+    }
+
+    fn set_property(&mut self, name: &str, value: NativeValue) -> Result<(), String> {
+        self.properties
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .insert(name.to_owned(), value);
+        Ok(())
+    }
+
+    fn del_property(&mut self, name: &str) -> Result<(), String> {
+        self.properties
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .remove(name);
+        Ok(())
+    }
+
+    fn observe_property(
+        &mut self,
+        _id: u64,
+        _name: &str,
+        _format: PropertyFormat,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+
+    fn unobserve_property(&mut self, _id: u64) -> i32 {
+        0
+    }
+
+    fn request_event(&mut self, _name: &str, enable: bool) -> bool {
+        enable
+    }
+
+    fn find_config_file(&mut self, _name: &str) -> Option<String> {
+        None
+    }
+
+    fn format_time(&mut self, seconds: f64, _format: &str) -> Result<String, String> {
+        Ok(format!("{seconds:.2}"))
+    }
+
+    fn input_set_section_mouse_area(
+        &mut self,
+        _section: &str,
+        _x0: f64,
+        _y0: f64,
+        _x1: f64,
+        _y1: f64,
+    ) {
+    }
+}
+
+fn expand_message(app: &App, template: &str) -> String {
+    let mut out = String::new();
+    let mut rest = template;
+    while let Some(start) = rest.find("${") {
+        out.push_str(&rest[..start]);
+        let after = &rest[start + 2..];
+        let Some(end) = after.find('}') else {
+            out.push_str(&rest[start..]);
+            return out;
+        };
+        let name = &after[..end];
+        match properties::get(app, name) {
+            Ok(NativeValue::String(value)) => out.push_str(&value),
+            Ok(NativeValue::Int(value)) => out.push_str(&value.to_string()),
+            Ok(NativeValue::Double(value)) => out.push_str(&value.to_string()),
+            Ok(NativeValue::Bool(value)) => out.push_str(if value { "yes" } else { "no" }),
+            _ => {}
+        }
+        rest = &after[end + 1..];
+    }
+    out.push_str(rest);
+    out
+}
+
+fn local_inputs(paths: Vec<String>) -> Vec<String> {
+    let mut kept = Vec::new();
+    for path in paths {
+        match classify_input(&path, false) {
+            Ok(InputPath::Local(path)) => kept.push(path.to_string_lossy().into_owned()),
+            Err(error) => eprintln!("{error}"),
+        }
+    }
+    kept
+}
+
 fn metadata_value(probe: Option<&Probe>, name: &str) -> Option<String> {
     probe.and_then(|probe| {
         probe
@@ -1939,6 +2207,10 @@ pub fn run(args: &[String]) -> Result<(), String> {
         }
         Err(message) => return Err(message),
     };
+    if options.list_protocols {
+        println!("file://");
+        return Ok(());
+    }
     let mut app = App::new(options);
     app.run()
 }

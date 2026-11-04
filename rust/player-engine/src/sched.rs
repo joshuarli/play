@@ -77,6 +77,9 @@ pub trait AudioOutput {
     fn device_position(&self) -> f64;
     fn set_paused(&mut self, paused: bool);
     fn flush(&mut self);
+    fn finish(&mut self) -> Result<(), String> {
+        Ok(())
+    }
     fn drained(&self) -> bool;
 }
 
@@ -728,6 +731,10 @@ where
     }
 
     fn pump_draining(&mut self, now: f64) {
+        if let Err(message) = self.audio_out.finish() {
+            self.fail(message);
+            return;
+        }
         if self.drain_preroll() {
             return;
         }

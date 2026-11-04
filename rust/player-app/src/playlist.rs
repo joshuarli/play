@@ -110,6 +110,20 @@ pub fn local_entry(path: &str) -> Result<Entry, String> {
     }
 }
 
+pub fn entries_for_path(path: &str) -> Result<Vec<Entry>, String> {
+    classify_input(path, false).map_err(|error| error.to_string())?;
+    let extension = Path::new(path)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if matches!(extension.as_str(), "m3u" | "m3u8" | "pls") {
+        read_playlist(path)
+    } else {
+        local_entry(path).map(|entry| vec![entry])
+    }
+}
+
 pub fn read_playlist(path: &str) -> Result<Vec<Entry>, String> {
     let source = match classify_input(path, false) {
         Ok(InputPath::Local(path)) => path,
@@ -176,10 +190,8 @@ fn parse_pls(text: &str, base: &Path) -> Vec<Entry> {
 }
 
 fn resolve_entry(value: &str, base: &Path, title: Option<String>) -> Option<Entry> {
-    if value.starts_with("http://")
-        || value.starts_with("https://")
-        || value.starts_with("file://")
-    {
+    if let Err(error) = classify_input(value, false) {
+        eprintln!("Refusing non-local playlist entry: {error}");
         return None;
     }
     let path = PathBuf::from(value);

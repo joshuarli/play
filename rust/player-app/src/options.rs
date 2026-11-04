@@ -35,6 +35,10 @@ pub struct Options {
     pub tui: bool,
     pub gui: bool,
     pub gui_gate: bool,
+    pub list_protocols: bool,
+    pub frames: Option<u64>,
+    pub audio_device: Option<String>,
+    pub term_playing_msg: Option<String>,
     pub log_file: Option<PathBuf>,
     pub osc: bool,
     pub scripts: Vec<String>,
@@ -66,6 +70,10 @@ impl Default for Options {
             tui: false,
             gui: false,
             gui_gate: false,
+            list_protocols: false,
+            frames: None,
+            audio_device: None,
+            term_playing_msg: None,
             log_file: None,
             osc: true,
             scripts: Vec::new(),
@@ -150,6 +158,15 @@ pub fn parse(args: &[String]) -> Result<Options, String> {
             "gui" => options.gui = flag(&inline)?,
             "no-gui" => options.gui = false,
             "gate" => options.gui_gate = true,
+            "list-protocols" => options.list_protocols = true,
+            "frames" => {
+                let count: u64 = value(&name)?
+                    .parse()
+                    .map_err(|_| "invalid --frames".to_owned())?;
+                options.frames = (count > 0).then_some(count);
+            }
+            "audio-device" => options.audio_device = Some(value(&name)?),
+            "term-playing-msg" => options.term_playing_msg = Some(value(&name)?),
             "log-file" => options.log_file = Some(PathBuf::from(value(&name)?)),
             "osc" => options.osc = flag(&inline)?,
             "no-osc" => options.osc = false,
@@ -188,8 +205,8 @@ pub fn parse(args: &[String]) -> Result<Options, String> {
             | "input-vo-keyboard" | "force-window" | "osd-level" | "screenshot-sw"
             | "config-dir" | "gpu-context" | "gpu-sw" | "vulkan-swap-mode"
             | "demuxer-max-bytes" | "cache" | "cache-secs" | "sub-auto"
-            | "audio-channels" | "audio-device" | "audio-client-name" | "title"
-            | "no-border" | "border" | "autofit" | "force-seekable" | "frames"
+            | "audio-channels" | "audio-client-name" | "title"
+            | "no-border" | "border" | "autofit" | "force-seekable"
             | "length" | "end" | "ab-loop-a" | "ab-loop-b" | "speed"
             | "watch-later-directory" | "resume-playback" | "save-position-on-quit" => {
                 if inline.is_none() && needs_value(&name) {

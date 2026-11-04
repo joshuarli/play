@@ -17,10 +17,16 @@ pub enum InputError {
 impl fmt::Display for InputError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            InputError::Empty => write!(f, "empty input"),
-            InputError::RemoteScheme(scheme) => write!(f, "remote scheme: {scheme}"),
-            InputError::Wrapper(wrapper) => write!(f, "protocol wrapper: {wrapper}"),
-            InputError::InvalidFileUri => write!(f, "invalid file URI"),
+            InputError::Empty => write!(f, "Refusing non-local input: empty input"),
+            InputError::RemoteScheme(scheme) => {
+                write!(f, "Refusing non-local input: remote scheme: {scheme}")
+            }
+            InputError::Wrapper(wrapper) => {
+                write!(f, "Refusing non-local input: protocol wrapper: {wrapper}")
+            }
+            InputError::InvalidFileUri => {
+                write!(f, "Refusing non-local input: invalid file URI")
+            }
         }
     }
 }

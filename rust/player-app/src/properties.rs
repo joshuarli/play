@@ -1,5 +1,5 @@
 use player_engine::{EngineStatus, TrackKind};
-use player_lua::NativeValue;
+use player_lua::{NativeValue, PlayerBackend};
 use player_media::{ChapterInfo, StreamInfo, StreamKind};
 
 use crate::app::App;
@@ -209,7 +209,12 @@ pub fn get(app: &App, name: &str) -> Result<NativeValue, String> {
             ("name".to_owned(), NativeValue::String("auto".to_owned())),
             ("description".to_owned(), NativeValue::String("Autoselect".to_owned())),
         ])])),
-        "audio-device" => Ok(NativeValue::String("auto".to_owned())),
+        "audio-device" => Ok(NativeValue::String(
+            app.options
+                .audio_device
+                .clone()
+                .unwrap_or_else(|| "auto".to_owned()),
+        )),
         "seekable" => Ok(NativeValue::Bool(true)),
         "partially-seekable" => Ok(NativeValue::Bool(false)),
         "cache-buffering-state" => Ok(NativeValue::Int(100)),
@@ -236,12 +241,23 @@ pub fn get(app: &App, name: &str) -> Result<NativeValue, String> {
         "estimated-vf-fps" | "container-fps" => Ok(NativeValue::Double(24.0)),
         "chapter-metadata" => Ok(NativeValue::Map(Vec::new())),
         "user-data" => Ok(NativeValue::Map(Vec::new())),
-        _ if name.starts_with("user-data/") => Ok(app
-            .shared
-            .as_ref()
-            .and_then(|shared| shared.inspect(|backend| backend.user_value(name)))
-            .flatten()
-            .unwrap_or(NativeValue::None)),
+        _ if name.starts_with("user-data/") => {
+            if let Some(value) = app
+                .shared
+                .as_ref()
+                .and_then(|shared| shared.inspect(|backend| backend.user_value(name)))
+                .flatten()
+            {
+                return Ok(value);
+            }
+            Ok(app
+                .idle_properties
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .get(name)
+                .cloned()
+                .unwrap_or(NativeValue::None))
+        }
         _ if name.starts_with("options/") => Ok(NativeValue::String(String::new())),
         _ => Err("property not found".to_owned()),
     }
@@ -308,7 +324,18 @@ pub fn set(app: &mut App, name: &str, value: &NativeValue) -> Result<(), String>
             app.options.keep_open = *keep_open;
             Ok(())
         }
-        _ if name.starts_with("user-data/") => Ok(()),
+        _ if name.starts_with("user-data/") => {
+            if let Some(shared) = &app.shared {
+                shared.mutate(|backend| {
+                    let _ = backend.set_property(name, value.clone());
+                });
+            }
+            app.idle_properties
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .insert(name.to_owned(), value.clone());
+            Ok(())
+        }
         _ => Err(format!("property is not settable: {name}")),
     }
 }

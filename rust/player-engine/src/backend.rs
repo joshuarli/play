@@ -8,7 +8,6 @@ use crate::video::{EngineVideo, EngineVideoOutput, PresentedFrame};
 use player_ass::{Library, RenderedImage};
 use player_audio::decode::PacketDecoder;
 use player_audio::sink::{AudioSink, NullSink, SinkKind};
-use player_audio::open_default_sink;
 use player_media::{MediaError, MediaSession, Packet as MediaPacket, StreamInfo, StreamKind as MediaKind};
 use std::collections::VecDeque;
 use std::sync::{mpsc, Arc, Mutex};
@@ -345,6 +344,10 @@ impl AudioOutput for EngineOutput {
         let _ = self.sink.flush();
     }
 
+    fn finish(&mut self) -> Result<(), String> {
+        self.sink.finish()
+    }
+
     fn drained(&self) -> bool {
         self.sink.queued_frames() == 0
     }
@@ -601,12 +604,13 @@ fn run_worker(
                     format!("{path} has no usable audio format")
                 })?;
                 let layout = player_audio::decode::target_layout(&info)?;
-                let sink: Box<dyn AudioSink> = match kind {
+                let sink: Box<dyn AudioSink> = match &kind {
                     SinkKind::Null => Box::new(NullSink::new(
                         layout.channels(),
                         info.sample_rate.max(1) as u32,
                     )),
-                    SinkKind::Default => open_default_sink(
+                    SinkKind::Default | SinkKind::Device(_) => player_audio::open_sink(
+                        &kind,
                         layout.channels(),
                         info.sample_rate.max(1) as u32,
                         layout.channel_mask(),
@@ -708,28 +712,28 @@ fn run_worker(
     let start = Instant::now();
     let mut stopped = false;
     while !stopped {
+        let now = start.elapsed().as_secs_f64();
         while let Ok(command) = commands.try_recv() {
             if matches!(command, WorkerCommand::Stop) {
                 stopped = true;
                 break;
             }
-            worker.apply(command);
+            worker.apply(&state, now, command);
         }
         if stopped {
             break;
         }
-        let now = start.elapsed().as_secs_f64();
         worker.scheduler.step(now);
         worker.publish(&state, now);
         if parked(worker.scheduler.state()) {
             match commands.recv() {
                 Ok(WorkerCommand::Stop) => stopped = true,
-                Ok(command) => worker.apply(command),
+                Ok(command) => worker.apply(&state, start.elapsed().as_secs_f64(), command),
                 Err(_) => stopped = true,
             }
             worker.publish(&state, start.elapsed().as_secs_f64());
-        } else if worker.scheduler.audio_output().queued_seconds() > 0.5 {
-            thread::sleep(Duration::from_millis(5));
+        } else if worker.scheduler.audio_output().queued_seconds() > 0.005 {
+            thread::sleep(Duration::from_millis(2));
         }
     }
     guard.clean = true;
@@ -748,7 +752,7 @@ struct Worker {
 }
 
 impl Worker {
-    fn apply(&mut self, command: WorkerCommand) {
+    fn apply(&mut self, state: &Arc<Mutex<EngineStatus>>, now: f64, command: WorkerCommand) {
         match command {
             WorkerCommand::SetPaused(paused) => self.scheduler.send(Command::Pause(paused)),
             WorkerCommand::Seek(seconds) => self.scheduler.send(Command::Seek(seconds)),
@@ -769,6 +773,7 @@ impl Worker {
                     .map(|sub| {
                         self.scheduler.add_sub(sub);
                     });
+                self.publish(state, now);
                 let _ = reply.send(result);
             }
             WorkerCommand::SetSubVisible(visible) => self.scheduler.set_sub_visible(visible),

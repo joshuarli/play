@@ -1,6 +1,7 @@
 pub enum SinkKind {
     Null,
     Default,
+    Device(String),
 }
 
 pub trait AudioSink {
