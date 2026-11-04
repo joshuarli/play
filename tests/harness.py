@@ -1407,6 +1407,11 @@ def gate_osc_input(results, args):
     run_osc_input(results, Mpv, fixture_entry, fixture_path)
 
 
+def gate_mpv_diff(results, args):
+    from diff_mpv import run as run_diff
+    run_diff(results, MPV, args[0] if args else None)
+
+
 def gate_osd_fidelity(results, args):
     from osd_fidelity import run as run_osd_fidelity
     run_osd_fidelity(results)
@@ -1998,6 +2003,7 @@ GATES = {
     "osc": gate_osc,
     "osc-input": gate_osc_input,
     "osd-fidelity": gate_osd_fidelity,
+    "mpv-diff": gate_mpv_diff,
     "osc-mpv": gate_osc_mpv,
     "gui": gate_gui,
     "input": gate_input,
