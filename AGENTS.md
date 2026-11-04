@@ -18,10 +18,11 @@ Player is a local-only media player built on a Rust playback engine, a minimal p
 ## Invariants
 
 - Linux is x86-64 musl only. glibc is explicitly out of scope; do not add a glibc build or fallback.
+- Subtitles are SubRip only, external `.srt` or embedded `subrip`. There is no ASS renderer, libass, FriBidi, or bundled font; text goes through Core Text on macOS and the system Fontconfig, HarfBuzz, and FreeType on Linux.
 - Local input only. Network schemes, TLS, and network protocols are not built. The classifier is `rust/player-core/src/input.rs`.
 - The player does not auto-load user config. There is no scripting: no interpreter, script host, or script API. The on-screen controller is native Rust in `rust/player-app/src/osc.rs`.
 - Rust owns the playback pipeline (demux, decode, scheduling, audio, video rendering, subtitles, OSD), startup configuration, playlist, command validation, playback state, local file I/O, the application surface, and the OSC. The only C in-tree code is the macOS window bridge; everything else is a pinned native dependency.
-- Native-boundary `unsafe` lives in `player-media`, `player-output`, `player-display`, `player-ass`, `player-engine`, and `player-audio`. Each block states its safety argument.
+- Native-boundary `unsafe` lives in `player-media`, `player-output`, `player-display`, `player-overlay`, `player-engine`, and `player-audio`. Each block states its safety argument.
 - CI builds both release artifacts on GitHub. A `v*` tag runs `.github/workflows/release.yml`, which publishes the macOS app zip and the Linux tarball with `SHA256SUMS`. Gates are local commands. Do not notarize.
 - `TODO.md` holds open work. Delete a ticket when it is done; git history is the record.
 

@@ -6,7 +6,7 @@ Player opens local filesystem paths and local playlist files. It does not implem
 
 - Ordinary paths, including relative and absolute paths, spaces, `:`, Unicode, symlinks, and mounted volumes.
 - Local playlists in M3U, M3U8, and PLS form. A network URL in a playlist is rejected while the local entries continue.
-- External audio and subtitle files beside a local file.
+- External audio files and SubRip (`.srt`) subtitle files beside a local file. Subtitles are SubRip only, external or embedded.
 - `file://` from drag-and-drop when it resolves to an existing local path. The CLI, `--playlist`, `loadlist`, IPC `loadfile`, playlist entries, and external files reject `file://`.
 
 `player-core::input::classify_input` rejects every other `scheme://` URL and the protocol wrappers `data:`, `lavfi:`, `edl:`, `memory:`, `fd:`, `fdclose:`, `av:`, `avdevice:`, `mf:`, `null:`, `slice:`, `appending:`, `mpv:`, `ffmpeg:`, and `lavf:`. A mounted network volume is an ordinary filesystem path; the player makes no network connection of its own. The network scheme set is `scripts/network-schemes.txt`; the manifest, measure, audit, and protocol-list gates read it.
@@ -20,7 +20,8 @@ The local-only gate creates a hostile temporary `HOME` with `mpv.conf`, `input.c
 - `player-media`: FFmpeg demuxing for the allowlisted local containers, video decode through FFmpeg, and the embedded album-art decode path.
 - `player-audio`: Symphonia audio decode, channel mixing, resampling, the audio clock, and the CoreAudio and ALSA sinks.
 - `player-engine`: the session scheduler, packet and frame queues, seek and pause state machine, frame pacing, subtitle tracks, and the engine worker.
-- `player-ass`: libass library, renderer, tracks, and bitmap output.
+- `player-overlay`: the overlay display list, rasterizer, and native text shaping (Core Text; Fontconfig, HarfBuzz, and FreeType).
+- `player-backend`: the engine-facing backend and the subtitle, OSD, and OSC overlay layers.
 - `player-output`: libplacebo/Vulkan renderer, swapchain, overlays, and frame download.
 - `player-display`: Cocoa/Metal window bridge on macOS and Wayland window/input on Linux.
 - `player-tui`: the terminal renderer and input surface.

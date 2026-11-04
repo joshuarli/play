@@ -1,5 +1,5 @@
 Prefix: PLAY
-Next: 26
+Next: 29
 
 # Backlog
 
@@ -12,5 +12,9 @@ Next: 26
 - PLAY-25: Audio files with embedded cover art show a black GUI window. The attached-picture frame never reaches the window (also in the Lua release); the TUI shows the cover through its own decode.
 
 ## P3
+
+- PLAY-26: SubRip `<i>`, `<b>`, `<u>`, and `<font color>` are stripped, not styled. `player-overlay::TextBlock` carries one style; styled spans need per-run attributes in both text backends (Core Text attributed ranges; HarfBuzz runs per span on Linux).
+- PLAY-27: A right-to-left paragraph with `Align::Start` starts at the left edge. Subtitles centre, so only OSD messages and the OSC title see it; base direction should pick the start edge.
+- PLAY-28: Line height is the tallest font's ascent plus descent across every fallback font on the block, on both platforms, so one CJK or Thai character spreads all lines apart; on Linux Noto Sans CJK makes it visibly wider than macOS. Line spacing should come from the primary font, with tall glyphs kept inside the inset.
 
 ## P4

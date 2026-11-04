@@ -33,6 +33,8 @@ The extracted tree is `FFmpeg-n9.0.2/`. The script writes a `VERSION` file conta
 
 A line prefixed `macos/` or `linux/` applies to that platform only. macOS carries the VideoToolbox hwaccels. Linux carries the `h264_vaapi`, `hevc_vaapi`, `vp9_vaapi`, and `av1_vaapi` hwaccels and the native `av1` decoder they attach to (software AV1 still uses `libdav1d`), drops `--enable-videotoolbox`, and adds `--enable-pic --arch=x86_64 --enable-vaapi`. Platform lines add to the common categories. `scripts/build-deps-linux.sh` puts the Linux build at `.work/deps/linux/ffmpeg`, and the manifest gate reads that tree on Linux.
 
+No subtitle decoder or subtitle demuxer is built: the player reads SubRip itself, and embedded `subrip` packets come from the container demuxers.
+
 Add a component only after a named fixture fails without it; remove components in groups while the corpus stays green. Do not start from a guessed allowlist, and do not respond to a failure by enabling everything.
 
 The terminal UI adds the `png` and `mjpeg` picture decoders for embedded album art. The `audio-cover` and `audio-cover-jpeg` fixtures fail without them. FFmpeg is also configured with `--enable-zlib` because its PNG decoder needs it; zlib was already part of the player's dependency set, so the release closure gains no new runtime library.
@@ -49,7 +51,7 @@ The release build puts FFmpeg at `.work/deps/release/ffmpeg`; a standalone `scri
 - `build/mpv --version` reports `FFmpeg version: 9.0.2`.
 - `build/mpv --list-protocols` reports one protocol, `file`.
 - `otool -L build/mpv` contains no `libav*`, curl, or SSL library.
-- Direct non-system libraries are libass, dav1d, libplacebo, and the Vulkan loader.
+- Direct non-system libraries are dav1d, libplacebo, and the Vulkan loader.
 
 The configure auto-selects `h263` (pulled in by the MPEG-4 path) and `vp9_superframe_split` (pulled in by `vp9_superframe`). The manifest records both under `auto_selected`; they are not in the requested allowlist.
 
@@ -57,7 +59,7 @@ The configure auto-selects `h263` (pulled in by the MPEG-4 path) and `vp9_superf
 
 `scripts/ffmpeg-manifest.sh --generate` writes a manifest from the build tree (`config_components.h` and `config.mak`) to `.work/deps/ffmpeg-manifest.json`. The file is generated, not tracked.
 
-`tests/run.sh ffmpeg-audit` regenerates the manifest in memory and checks the allowlist. It fails on any encoder, muxer, device, network protocol, decoder outside the video and subtitle allowlist, or external library outside `dav1d`.
+`tests/run.sh ffmpeg-audit` regenerates the manifest in memory and checks the allowlist. It fails on any encoder, muxer, device, network protocol, decoder outside the video allowlist, or external library outside `dav1d`.
 
 Current result: 19 passed, 0 failed. The allowlist now includes the two picture decoders; the manifest records them. A temporary manifest with `http` added to the protocols fails two cases (`protocols allowed`, `no network protocols`) and exits nonzero; the temporary file is removed after the check.
 
