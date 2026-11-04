@@ -7,20 +7,25 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from harness import ROOT, Failure, fixture_entry, fixture_path, tail  # noqa: E402
+from harness import MPV, ROOT, Failure, fixture_entry, fixture_path, tail  # noqa: E402
 
 CARGO = shutil.which("cargo") or "cargo"
 PASS_LINE = re.compile(r"player-gui gate: PASS frames=(\d+) overlay_ink=(\d+)")
 
 
-def run(results, env=None):
-    compositor = None
-    if env is None and sys.platform.startswith("linux"):
-        from wayland import Compositor
-
-        compositor = Compositor()
-        env = compositor.env
-    command = [
+def gate_command():
+    fixture = str(fixture_path(fixture_entry("h264")))
+    if os.environ.get("PLAYER_BIN"):
+        return [
+            str(MPV),
+            "--no-config",
+            "--gui",
+            "--gate",
+            "--ao=null",
+            "--geometry=640x480",
+            fixture,
+        ]
+    return [
         CARGO,
         "run",
         "--quiet",
@@ -35,8 +40,18 @@ def run(results, env=None):
         "640",
         "--height",
         "480",
-        str(fixture_path(fixture_entry("h264"))),
+        fixture,
     ]
+
+
+def run(results, env=None):
+    compositor = None
+    if env is None and sys.platform.startswith("linux"):
+        from wayland import Compositor
+
+        compositor = Compositor()
+        env = compositor.env
+    command = gate_command()
     process_env = os.environ.copy()
     if env:
         process_env.update(env)

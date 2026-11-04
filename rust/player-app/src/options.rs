@@ -33,6 +33,9 @@ pub struct Options {
     pub null_video: bool,
     pub fullscreen: bool,
     pub tui: bool,
+    pub gui: bool,
+    pub gui_gate: bool,
+    pub log_file: Option<PathBuf>,
     pub osc: bool,
     pub scripts: Vec<String>,
     pub sub_files: Vec<String>,
@@ -61,6 +64,9 @@ impl Default for Options {
             null_video: false,
             fullscreen: false,
             tui: false,
+            gui: false,
+            gui_gate: false,
+            log_file: None,
             osc: true,
             scripts: Vec::new(),
             sub_files: Vec::new(),
@@ -141,6 +147,10 @@ pub fn parse(args: &[String]) -> Result<Options, String> {
             "no-fullscreen" | "no-fs" => options.fullscreen = false,
             "tui" => options.tui = flag(&inline)?,
             "no-tui" => options.tui = false,
+            "gui" => options.gui = flag(&inline)?,
+            "no-gui" => options.gui = false,
+            "gate" => options.gui_gate = true,
+            "log-file" => options.log_file = Some(PathBuf::from(value(&name)?)),
             "osc" => options.osc = flag(&inline)?,
             "no-osc" => options.osc = false,
             "audio" => options.no_audio = !flag(&inline)?,
@@ -174,7 +184,7 @@ pub fn parse(args: &[String]) -> Result<Options, String> {
             "script" => options.scripts.push(value(&name)?),
             "geometry" => options.geometry = parse_geometry(&value(&name)?),
             "really-quiet" | "quiet" => options.quiet = true,
-            "msg-level" | "log-file" | "input-default-bindings"
+            "msg-level" | "input-default-bindings"
             | "input-vo-keyboard" | "force-window" | "osd-level" | "screenshot-sw"
             | "config-dir" | "gpu-context" | "gpu-sw" | "vulkan-swap-mode"
             | "demuxer-max-bytes" | "cache" | "cache-secs" | "sub-auto"

@@ -291,10 +291,12 @@ dependencies = [
  "player-audio",
  "player-build",
  "player-core",
+ "player-display",
  "player-engine",
  "player-ffi",
  "player-lua",
  "player-media",
+ "player-output",
  "player-tui",
 ]
 
@@ -360,13 +362,8 @@ dependencies = [
 name = "player-gui"
 version = "0.1.0"
 dependencies = [
- "player-audio",
+ "player-app",
  "player-build",
- "player-display",
- "player-engine",
- "player-ffi",
- "player-lua",
- "player-output",
 ]
 
 [[package]]

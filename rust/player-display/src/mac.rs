@@ -2,7 +2,7 @@ use player_output::{
     render_to_target, ColorSpec, Instance, Overlay, PixelLayout, Plane, Renderer, Surface,
     Swapchain, Vulkan,
 };
-use std::ffi::{c_char, c_int, c_void, CString};
+use std::ffi::{c_char, c_int, c_void, CStr, CString};
 
 unsafe extern "C" {
     fn player_mac_window_open(
@@ -22,8 +22,11 @@ unsafe extern "C" {
         flags: *mut c_int,
         pressed: *mut c_int,
         repeat: *mut c_int,
+        append: *mut c_int,
         x: *mut f64,
         y: *mut f64,
+        path: *mut c_char,
+        path_cap: c_int,
     ) -> c_int;
     fn player_mac_window_close(handle: *mut c_void);
 }
@@ -87,6 +90,10 @@ pub enum MacInput {
         y: f64,
     },
     PointerLeave,
+    OpenFiles {
+        paths: Vec<String>,
+        append: bool,
+    },
 }
 
 pub struct MacWindow {
@@ -164,8 +171,10 @@ impl MacWindow {
             let mut flags = 0;
             let mut pressed = 0;
             let mut repeat = 0;
+            let mut append = 0;
             let mut x = 0.0;
             let mut y = 0.0;
+            let mut path = [0 as c_char; 4096];
             // SAFETY: the handle is live and the out-pointers are valid.
             let present = unsafe {
                 player_mac_window_next_input(
@@ -175,8 +184,11 @@ impl MacWindow {
                     &mut flags,
                     &mut pressed,
                     &mut repeat,
+                    &mut append,
                     &mut x,
                     &mut y,
+                    path.as_mut_ptr(),
+                    path.len() as c_int,
                 )
             };
             if present == 0 {
@@ -191,6 +203,18 @@ impl MacWindow {
                 }),
                 1 => events.push(MacInput::PointerMotion { x, y }),
                 2 => events.push(MacInput::PointerLeave),
+                3 => {
+                    // SAFETY: the bridge wrote a NUL-terminated path.
+                    let name = unsafe { CStr::from_ptr(path.as_ptr()) }
+                        .to_string_lossy()
+                        .into_owned();
+                    if !name.is_empty() {
+                        events.push(MacInput::OpenFiles {
+                            paths: vec![name],
+                            append: append != 0,
+                        });
+                    }
+                }
                 _ => {}
             }
         }

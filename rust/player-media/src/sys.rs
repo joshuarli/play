@@ -67,6 +67,10 @@ pub enum AvCodec {}
 
 pub enum AvBufferRef {}
 
+pub enum SwsContext {}
+
+pub const SWS_BILINEAR: c_int = 1 << 1;
+
 pub enum AvFrameSideData {}
 
 /// Prefix of `AVFrame` through `hw_frames_ctx`, transcribed from
@@ -520,4 +524,26 @@ unsafe extern "C" {
         value: *const c_char,
         search_flags: c_int,
     ) -> c_int;
+    pub fn sws_getContext(
+        src_w: c_int,
+        src_h: c_int,
+        src_format: c_int,
+        dst_w: c_int,
+        dst_h: c_int,
+        dst_format: c_int,
+        flags: c_int,
+        src_filter: *const c_void,
+        dst_filter: *const c_void,
+        param: *const f64,
+    ) -> *mut SwsContext;
+    pub fn sws_scale(
+        context: *mut SwsContext,
+        src_slice: *const *const u8,
+        src_stride: *const c_int,
+        src_slice_y: c_int,
+        src_slice_h: c_int,
+        dst: *const *mut u8,
+        dst_stride: *const c_int,
+    ) -> c_int;
+    pub fn sws_freeContext(context: *mut SwsContext);
 }

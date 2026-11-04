@@ -56,6 +56,9 @@ fn main() {
     println!("cargo:rustc-link-search=native={}", lib.display());
     println!("cargo:rustc-link-lib=static=avformat");
     println!("cargo:rustc-link-lib=static=avcodec");
+    // Album art decodes to RGB24 at thumbnail size. libswscale is already part
+    // of the pinned FFmpeg closure; no new runtime library is added.
+    println!("cargo:rustc-link-lib=static=swscale");
     println!("cargo:rustc-link-lib=static=avutil");
     // The static libavcodec pulls the bundled dav1d decoder objects, so the
     // same decoder closure as the C link is required even though demuxing

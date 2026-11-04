@@ -21,7 +21,10 @@ enum {
     PLAYER_MAC_EVENT_KEY = 0,
     PLAYER_MAC_EVENT_MOUSE_MOVE = 1,
     PLAYER_MAC_EVENT_MOUSE_LEAVE = 2,
+    PLAYER_MAC_EVENT_OPEN_FILES = 3,
 };
+
+#define PLAYER_MAC_PATH_MAX 4096
 
 struct PlayerMacInputEvent {
     int kind;
@@ -29,8 +32,10 @@ struct PlayerMacInputEvent {
     int flags;
     int pressed;
     int repeat;
+    int append;
     double x;
     double y;
+    char path[PLAYER_MAC_PATH_MAX];
 };
 
 #define PLAYER_MAC_INPUT_QUEUE 64
@@ -53,6 +58,58 @@ static void player_mac_push_input(struct PlayerMacWindow *win,
     }
     win->input[win->input_head] = event;
     win->input_head = next;
+}
+
+static struct PlayerMacWindow *player_mac_main_window;
+
+static void player_mac_enqueue_files(NSArray<NSURL *> *urls, BOOL append) {
+    if (!player_mac_main_window) {
+        return;
+    }
+    for (NSUInteger index = 0; index < urls.count; index++) {
+        NSURL *url = urls[index];
+        if (!url.isFileURL) {
+            continue;
+        }
+        const char *path = url.path.UTF8String;
+        if (!path) {
+            continue;
+        }
+        struct PlayerMacInputEvent event = {0};
+        event.kind = PLAYER_MAC_EVENT_OPEN_FILES;
+        event.append = (append || index > 0) ? 1 : 0;
+        strlcpy(event.path, path, PLAYER_MAC_PATH_MAX);
+        player_mac_push_input(player_mac_main_window, event);
+    }
+}
+
+@interface PlayerMacAppDelegate : NSObject <NSApplicationDelegate>
+@end
+
+@implementation PlayerMacAppDelegate
+- (void)application:(NSApplication *)sender openFiles:(NSArray<NSString *> *)filenames {
+    NSMutableArray<NSURL *> *urls = [NSMutableArray arrayWithCapacity:filenames.count];
+    for (NSString *name in filenames) {
+        [urls addObject:[NSURL fileURLWithPath:name]];
+    }
+    player_mac_enqueue_files(urls, NO);
+    [sender replyToOpenOrPrint:NSApplicationDelegateReplySuccess];
+}
+
+- (void)application:(NSApplication *)sender openURLs:(NSArray<NSURL *> *)urls {
+    player_mac_enqueue_files(urls, NO);
+    [sender replyToOpenOrPrint:NSApplicationDelegateReplySuccess];
+}
+@end
+
+static PlayerMacAppDelegate *player_mac_delegate;
+
+static void player_mac_install_delegate(void) {
+    if (player_mac_delegate) {
+        return;
+    }
+    player_mac_delegate = [[PlayerMacAppDelegate alloc] init];
+    [NSApplication sharedApplication].delegate = player_mac_delegate;
 }
 
 @interface PlayerMacView : NSView
@@ -128,6 +185,22 @@ static void player_mac_push_input(struct PlayerMacWindow *win,
         });
     }
 }
+
+- (NSDragOperation)draggingEntered:(id<NSDraggingInfo>)sender {
+    (void)sender;
+    return NSDragOperationCopy;
+}
+
+- (BOOL)performDragOperation:(id<NSDraggingInfo>)sender {
+    NSArray<NSURL *> *urls = [sender.draggingPasteboard
+        readObjectsForClasses:@[ [NSURL class] ]
+                      options:@{NSPasteboardURLReadingFileURLsOnlyKey : @YES}];
+    if (urls.count == 0) {
+        return NO;
+    }
+    player_mac_enqueue_files(urls, NO);
+    return YES;
+}
 @end
 
 void *player_mac_window_open(const char *title, int width, int height) {
@@ -161,6 +234,7 @@ void *player_mac_window_open(const char *title, int width, int height) {
     view.wantsLayer = YES;
     view.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
     window.contentView = view;
+    [view registerForDraggedTypes:@[ NSPasteboardTypeFileURL ]];
 
     PlayerMacCloseWatcher *watcher = [[PlayerMacCloseWatcher alloc] init];
     window.delegate = watcher;
@@ -189,6 +263,8 @@ void *player_mac_window_open(const char *title, int width, int height) {
     handle->layer = layer;
     handle->watcher = watcher;
     ((PlayerMacView *)view).owner = handle;
+    player_mac_main_window = handle;
+    player_mac_install_delegate();
     return handle;
 }
 
@@ -237,7 +313,8 @@ void player_mac_window_set_fullscreen(void *handle, int fullscreen) {
 }
 
 int player_mac_window_next_input(void *handle, int *kind, int *key_code, int *flags,
-                                 int *pressed, int *repeat, double *x, double *y) {
+                                 int *pressed, int *repeat, int *append, double *x, double *y,
+                                 char *path, int path_cap) {
     struct PlayerMacWindow *win = (struct PlayerMacWindow *)handle;
     if (win->input_tail == win->input_head) {
         return 0;
@@ -259,11 +336,21 @@ int player_mac_window_next_input(void *handle, int *kind, int *key_code, int *fl
     if (repeat) {
         *repeat = event.repeat;
     }
+    if (append) {
+        *append = event.append;
+    }
     if (x) {
         *x = event.x;
     }
     if (y) {
         *y = event.y;
+    }
+    if (path && path_cap > 0) {
+        if (event.kind == PLAYER_MAC_EVENT_OPEN_FILES) {
+            strlcpy(path, event.path, (size_t)path_cap);
+        } else {
+            path[0] = '\0';
+        }
     }
     return 1;
 }

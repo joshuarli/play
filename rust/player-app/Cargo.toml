@@ -16,10 +16,12 @@ path = "src/main.rs"
 [dependencies]
 player-audio = { path = "../player-audio" }
 player-core = { path = "../player-core" }
+player-display = { path = "../player-display" }
 player-engine = { path = "../player-engine" }
 player-ffi = { path = "../player-ffi" }
 player-lua = { path = "../player-lua" }
 player-media = { path = "../player-media" }
+player-output = { path = "../player-output" }
 player-tui = { path = "../player-tui" }
 
 [build-dependencies]

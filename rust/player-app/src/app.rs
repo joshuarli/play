@@ -4,19 +4,26 @@ use std::time::{Duration, Instant};
 
 use player_audio::sink::SinkKind;
 use player_core::command::{parse_string, Adjust, Command as CoreCommand, Toggle, TrackKind as CoreTrackKind};
+use player_engine::video::PresentedFrame;
 use player_engine::{EngineStatus, SchedulerEngine};
 use player_ffi::engine::{EngineBackend, SharedEngine};
 use player_lua::queue::EventSender;
 use player_lua::{CommandRequest, NativeValue, PlayerBackend, ScriptEvent, ScriptHost, ScriptModule};
+use player_output::{Overlay, OverlayRect};
+use player_tui::{Control, Cover, Player as TuiPlayer, Snapshot, Track};
 
 use crate::ipc::{self, IpcServer};
 use crate::options::{self, Options, Start};
 use crate::playlist::{self, Entry, Playlist};
 use crate::properties::{self, Probe};
+use crate::window::{HostEvent, HostWindow};
 
 const ASSDRAW: &str = include_str!("../../../player/lua/assdraw.lua");
 const OPTIONS: &str = include_str!("../../../player/lua/options.lua");
 const OSC: &str = include_str!("../../../player/lua/osc.lua");
+
+const GATE_FRAMES: u64 = 24;
+const GATE_OVERLAY_INK: usize = 100;
 
 struct Observer {
     name: String,
@@ -40,6 +47,20 @@ pub struct App {
     pub aid_disabled: bool,
     pub eof_reached: bool,
     pub display: Option<(u32, u32)>,
+    window: Option<HostWindow>,
+    last_frame: Option<PresentedFrame>,
+    frame_serial: u64,
+    presented_serial: u64,
+    osd: Option<Vec<u8>>,
+    osd_size: (i32, i32),
+    osd_hash: u64,
+    last_osd: Instant,
+    gui: bool,
+    applied_fullscreen: bool,
+    presented_size: (i32, i32),
+    gate_ready_at: Option<Instant>,
+    last_gate_report: Instant,
+    last_gate_visibility: Instant,
     bindings: HashMap<String, String>,
     observers: HashMap<u64, Observer>,
     end_sent: bool,
@@ -53,6 +74,7 @@ pub struct App {
 
 impl App {
     pub fn new(options: Options) -> Self {
+        let fullscreen = options.fullscreen;
         App {
             paused: options.pause,
             speed: 1.0,
@@ -70,6 +92,24 @@ impl App {
             ipc: None,
             eof_reached: false,
             display: None,
+            window: None,
+            last_frame: None,
+            frame_serial: 0,
+            presented_serial: 0,
+            osd: None,
+            osd_size: (0, 0),
+            osd_hash: 0,
+            last_osd: Instant::now()
+                .checked_sub(Duration::from_millis(50))
+                .unwrap_or_else(Instant::now),
+            gui: false,
+            applied_fullscreen: fullscreen,
+            presented_size: (0, 0),
+            gate_ready_at: None,
+            last_gate_report: Instant::now(),
+            last_gate_visibility: Instant::now()
+                .checked_sub(Duration::from_secs(1))
+                .unwrap_or_else(Instant::now),
             bindings: HashMap::new(),
             observers: HashMap::new(),
             end_sent: false,
@@ -313,7 +353,7 @@ impl App {
         } else {
             SinkKind::Default
         };
-        let engine = if self.options.no_video {
+        let engine = if self.options.tui || self.options.no_video {
             SchedulerEngine::load_audio_only(&entry.path, sink)
         } else if self.options.null_video {
             SchedulerEngine::load_null_video(&entry.path, sink)
@@ -335,7 +375,7 @@ impl App {
             self.defer_event(ipc::event("audio-reconfig", Vec::new()));
         }
         let mut backend = EngineBackend::open(engine);
-        if self.options.null_video || self.options.no_video {
+        if self.options.null_video || self.options.no_video || self.gui {
             backend.set_overlay_mode();
         }
         backend.set_display_size(
@@ -362,7 +402,9 @@ impl App {
                     .position(|_| true)
             })
             .map(|_| 1);
-        self.spawn_osc();
+        if !self.options.tui {
+            self.spawn_osc();
+        }
         if self.paused {
             self.set_paused(true)?;
         }
@@ -425,7 +467,7 @@ impl App {
     }
 
     fn log_streams(&self) {
-        if self.options.quiet {
+        if self.options.quiet || self.options.tui {
             return;
         }
         let Some(probe) = &self.probe else {
@@ -551,8 +593,13 @@ impl App {
         if let Some(path) = &self.options.input_conf {
             self.bindings = read_bindings(path)?;
         }
+        if let Some(path) = &self.options.log_file {
+            std::fs::File::create(path)
+                .map_err(|error| format!("cannot create {}: {error}", path.display()))?;
+        }
+        let bundled = std::env::var("MPVBUNDLE").as_deref() == Ok("true");
         if self.options.files.is_empty() && self.options.playlists.is_empty() {
-            if self.options.idle || self.options.tui {
+            if self.options.idle || self.options.tui || bundled {
                 self.options.idle = true;
             } else {
                 print!("{}", options::help());
@@ -578,12 +625,29 @@ impl App {
                 }
             }
         }
+        if self.options.gui_gate {
+            self.options.gui = true;
+            self.options.keep_open = true;
+        }
+        let wants_gui = self.options.gui
+            || bundled
+            || (!self.options.tui && !self.options.null_video && !self.options.no_video);
+        if wants_gui && (self.playlist.count() > 0 || bundled) {
+            self.open_window()?;
+            self.gui = true;
+        }
         if self.playlist.count() > 0 {
             self.playlist.set_current(Some(0));
             self.load_current()?;
         }
         if let Some(path) = &self.options.ipc {
             self.ipc = Some(IpcServer::bind(path)?);
+        }
+        if self.options.tui {
+            self.options.quiet = true;
+            let result = player_tui::run(self);
+            self.shutdown();
+            return result;
         }
         let mut last_status = Instant::now();
         loop {
@@ -597,7 +661,11 @@ impl App {
                 }
                 self.deliver_observers();
             }
-            self.tick()?;
+            if self.gui {
+                self.present_window()?;
+            } else {
+                self.tick()?;
+            }
             if self.shared.is_none() && !self.options.idle && !self.options.tui {
                 break;
             }
@@ -608,6 +676,227 @@ impl App {
             std::thread::sleep(Duration::from_millis(5));
         }
         self.shutdown();
+        Ok(())
+    }
+
+    fn open_files(&mut self, paths: Vec<String>, append: bool) -> Result<(), String> {
+        let mut entries = Vec::new();
+        for path in paths {
+            let extension = Path::new(&path)
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            if matches!(extension.as_str(), "m3u" | "m3u8" | "pls") {
+                entries.extend(playlist::read_playlist(&path)?);
+            } else {
+                entries.push(playlist::local_entry(&path)?);
+            }
+        }
+        if entries.is_empty() {
+            return Ok(());
+        }
+        if append && self.playlist.count() > 0 {
+            for entry in entries {
+                self.playlist.push(entry);
+            }
+            if self.shared.is_none() {
+                let index = self.playlist.count() - 1;
+                self.playlist.set_current(Some(index));
+                self.load_current()?;
+            }
+            return Ok(());
+        }
+        self.playlist = Playlist::new();
+        for entry in entries {
+            self.playlist.push(entry);
+        }
+        self.playlist.set_current(Some(0));
+        if let Err(error) = self.load_current() {
+            eprintln!("player: {error}");
+            self.unload();
+        }
+        Ok(())
+    }
+
+    fn open_window(&mut self) -> Result<(), String> {
+        let (width, height) = self.options.geometry.unwrap_or((1280, 720));
+        let title = self
+            .playlist
+            .current_entry()
+            .and_then(|entry| Path::new(&entry.path).file_name())
+            .and_then(|name| name.to_str())
+            .unwrap_or("player");
+        let mut window = HostWindow::open(title, width.max(64), height.max(64))?;
+        if self.options.fullscreen {
+            window.set_fullscreen(true);
+        }
+        self.display = Some((window.width().max(1) as u32, window.height().max(1) as u32));
+        self.window = Some(window);
+        Ok(())
+    }
+
+    fn present_window(&mut self) -> Result<(), String> {
+        let events = {
+            let Some(window) = self.window.as_mut() else {
+                return self.tick();
+            };
+            if window.poll()? {
+                self.quit = true;
+                return Ok(());
+            }
+            window.drain_input()?
+        };
+        for event in events {
+            match event {
+                HostEvent::Key { name, pressed } => {
+                    if !pressed {
+                        continue;
+                    }
+                    if name == "ESCAPE" {
+                        if self.fullscreen {
+                            self.keypress("f")?;
+                        } else {
+                            self.quit = true;
+                        }
+                    } else {
+                        self.keypress(&name)?;
+                    }
+                }
+                HostEvent::PointerMotion { x, y } => self.mouse_move(x, y)?,
+                HostEvent::PointerButton { name, pressed } => {
+                    if pressed {
+                        self.keypress(&name)?;
+                    }
+                }
+                HostEvent::PointerLeave => {
+                    self.script_message_to("osc", &["osc-hide".to_owned()])?;
+                }
+                HostEvent::OpenFiles { paths, append } => {
+                    self.open_files(paths, append)?;
+                }
+            }
+        }
+        self.tick()?;
+        let wanted = self.fullscreen;
+        if wanted != self.applied_fullscreen
+            && let Some(window) = self.window.as_mut()
+        {
+            window.set_fullscreen(wanted);
+            self.applied_fullscreen = wanted;
+        }
+        let new_frames = self.frame_serial != self.presented_serial;
+        let (width, height) = self
+            .window
+            .as_ref()
+            .map(|window| (window.width().max(1), window.height().max(1)))
+            .unwrap_or((1, 1));
+        let size = (width, height);
+        let now = Instant::now();
+        let mut osd_changed = false;
+        if size != self.osd_size || now.duration_since(self.last_osd) >= Duration::from_millis(50) {
+            self.last_osd = now;
+            let rendered = self
+                .shared
+                .as_ref()
+                .and_then(|shared| {
+                    shared.mutate(|backend| {
+                        backend.set_display_size(width as u32, height as u32);
+                        backend
+                            .render_overlay(width as u32, height as u32, 1.0)
+                            .ok()
+                            .flatten()
+                    })
+                })
+                .flatten();
+            let hash = rendered.as_deref().map(hash_bytes).unwrap_or(0);
+            osd_changed = hash != self.osd_hash || size != self.osd_size;
+            self.osd = rendered;
+            self.osd_size = size;
+            self.osd_hash = hash;
+        }
+        if let Some(frame) = self.last_frame.as_ref()
+            && (new_frames || osd_changed || size != self.presented_size)
+        {
+            let overlay = self
+                .osd
+                .as_ref()
+                .filter(|data| data.len() == width as usize * height as usize * 4)
+                .map(|data| Overlay {
+                    data,
+                    stride: width as usize * 4,
+                    width,
+                    height,
+                    dst: OverlayRect {
+                        x0: 0.0,
+                        y0: 0.0,
+                        x1: width as f32,
+                        y1: height as f32,
+                    },
+                });
+            if let Some(window) = self.window.as_mut() {
+                window.present(frame, overlay.as_ref())?;
+                self.presented_serial = self.frame_serial;
+                self.presented_size = size;
+            }
+        }
+        if self.options.gui_gate {
+            self.gui_gate(width, height)?;
+        }
+        Ok(())
+    }
+
+    fn gui_gate(&mut self, width: i32, height: i32) -> Result<(), String> {
+        if self.last_gate_visibility.elapsed() >= Duration::from_millis(200) {
+            self.last_gate_visibility = Instant::now();
+            let visibility = self
+                .shared
+                .as_ref()
+                .and_then(|shared| shared.inspect(|backend| backend.user_value("user-data/osc/visibility")))
+                .flatten();
+            if visibility != Some(NativeValue::String("always".to_owned())) {
+                self.script_message_to("osc", &["osc-hide".to_owned()])?;
+                self.script_message_to("osc", &["osc-visibility".to_owned(), "always".to_owned()])?;
+            }
+        }
+        let ink = self
+            .osd
+            .as_deref()
+            .map(|data| data.chunks_exact(4).filter(|pixel| pixel[3] > 0).count())
+            .unwrap_or(0);
+        let status = self.status();
+        if self.last_gate_report.elapsed() >= Duration::from_secs(1) {
+            self.last_gate_report = Instant::now();
+            let frames = self.window.as_ref().map(HostWindow::presented).unwrap_or(0);
+            eprintln!(
+                "player-gui gate: frames={frames} drained={} pos={:.2} ended={} error={:?} \
+                 dims={}x{} tracks={} osd={}",
+                status.presented,
+                status.position,
+                status.ended,
+                status.error,
+                status.video_width,
+                status.video_height,
+                status.tracks.len(),
+                self.osd.as_ref().map(Vec::len).unwrap_or(0),
+            );
+        }
+        let frames = self.window.as_ref().map(HostWindow::presented).unwrap_or(0);
+        let played_to_end = status.ended || status.position >= 2.5;
+        if frames >= GATE_FRAMES && ink >= GATE_OVERLAY_INK && played_to_end {
+            if self.gate_ready_at.is_none() {
+                self.gate_ready_at = Some(Instant::now());
+            } else if self
+                .gate_ready_at
+                .is_some_and(|ready| ready.elapsed() >= Duration::from_millis(200))
+            {
+                println!("player-gui gate: PASS frames={frames} overlay_ink={ink}");
+                self.quit = true;
+            }
+        }
+        if self.presented_size != (width, height) && self.gate_ready_at.is_some() {
+            self.gate_ready_at = None;
+        }
         Ok(())
     }
 
@@ -651,7 +940,12 @@ impl App {
         {
             result.map_err(|error| format!("osc stopped: {error}"))?;
         }
-        let _ = shared.mutate(|backend| backend.take_frames());
+        if let Some(frames) = shared.mutate(|backend| backend.take_frames())
+            && let Some(frame) = frames.into_iter().last()
+        {
+            self.last_frame = Some(frame);
+            self.frame_serial += 1;
+        }
         let status = shared
             .inspect(|backend| backend.status())
             .unwrap_or_default();
@@ -1305,6 +1599,36 @@ impl App {
         Ok(())
     }
 
+    fn tui_pump(&mut self) {
+        let messages = self.ipc.as_mut().map(IpcServer::poll).unwrap_or_default();
+        if !messages.is_empty() {
+            for message in messages {
+                self.handle_ipc(message);
+            }
+            self.deliver_observers();
+        }
+        if let Err(error) = self.tick() {
+            eprintln!("player: {error}");
+            self.quit = true;
+        }
+    }
+
+    fn playlist_next(&mut self) -> Result<(), String> {
+        if let Some(next) = self.playlist.next_index() {
+            self.playlist.set_current(Some(next));
+            self.load_current()?;
+        }
+        Ok(())
+    }
+
+    fn playlist_previous(&mut self) -> Result<(), String> {
+        if let Some(previous) = self.playlist.previous_index() {
+            self.playlist.set_current(Some(previous));
+            self.load_current()?;
+        }
+        Ok(())
+    }
+
     fn mouse_move(&mut self, x: f64, y: f64) -> Result<(), String> {
         if let Some(shared) = &self.shared {
             shared.mutate(|backend| backend.set_mouse_pos(x, y));
@@ -1364,6 +1688,101 @@ impl App {
     }
 }
 
+impl TuiPlayer for App {
+    fn snapshot(&mut self) -> Snapshot {
+        self.tui_pump();
+        let status = self.status();
+        let path = self
+            .playlist
+            .current_entry()
+            .map(|entry| entry.path.clone())
+            .unwrap_or_default();
+        let probe = self.probe.as_ref();
+        let title = metadata_value(probe, "title").unwrap_or_else(|| {
+            Path::new(&path)
+                .file_stem()
+                .map(|stem| stem.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "NO FILE".to_owned())
+        });
+        let artist = ["artist", "album_artist", "albumartist"]
+            .iter()
+            .find_map(|key| metadata_value(probe, key))
+            .unwrap_or_default();
+        let album = metadata_value(probe, "album").unwrap_or_default();
+        let year = ["date", "year"]
+            .iter()
+            .find_map(|key| metadata_value(probe, key))
+            .map(|date| date.chars().take(4).collect())
+            .unwrap_or_default();
+        let format = probe
+            .map(|probe| probe.format.clone())
+            .unwrap_or_default();
+        let duration = probe.map(|probe| probe.duration).unwrap_or(0.0);
+        Snapshot {
+            path: path.clone(),
+            track: Track {
+                title,
+                artist,
+                album,
+                year,
+                format,
+            },
+            pos: status.position,
+            duration,
+            playing: !self.paused && !path.is_empty(),
+            volume: status.volume as f64,
+            muted: status.muted,
+        }
+    }
+
+    fn control(&mut self, control: Control) -> Result<(), String> {
+        match control {
+            Control::Pause => self.set_paused(!self.paused),
+            Control::Seek(delta) => {
+                self.seek_relative(delta as f64);
+                Ok(())
+            }
+            Control::Volume(delta) => {
+                self.set_volume((self.volume + delta as f64).clamp(0.0, 100.0) as f32);
+                Ok(())
+            }
+            Control::Mute => {
+                self.set_muted(!self.muted);
+                Ok(())
+            }
+            Control::Next => self.playlist_next(),
+            Control::Previous => self.playlist_previous(),
+            Control::Restart => {
+                self.seek_absolute(0.0);
+                Ok(())
+            }
+            Control::Quit => {
+                self.quit = true;
+                Ok(())
+            }
+        }
+    }
+
+    fn cover_art(&mut self, path: &str) -> Option<Cover> {
+        crate::art::cover_art(path)
+    }
+
+    fn shutdown(&mut self) -> bool {
+        self.quit
+    }
+}
+
+fn metadata_value(probe: Option<&Probe>, name: &str) -> Option<String> {
+    probe.and_then(|probe| {
+        probe
+            .metadata
+            .iter()
+            .find(|(key, _)| key.eq_ignore_ascii_case(name))
+            .map(|(_, value)| value.clone())
+            .filter(|value| !value.is_empty())
+    })
+}
+
 fn parse_value(value: &str) -> NativeValue {
     match value {
         "yes" | "true" => NativeValue::Bool(true),
@@ -1391,6 +1810,15 @@ fn parse_time(value: &str) -> Result<f64, String> {
         return Ok(-rest.parse::<f64>().map_err(|_| "invalid time".to_owned())?);
     }
     value.parse().map_err(|_| "invalid time".to_owned())
+}
+
+fn hash_bytes(data: &[u8]) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325u64;
+    for byte in data {
+        hash ^= *byte as u64;
+        hash = hash.wrapping_mul(0x100_0000_01b3);
+    }
+    hash
 }
 
 fn toggle_value(toggle: Toggle, current: bool) -> bool {

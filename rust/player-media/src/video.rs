@@ -22,6 +22,8 @@ const AV_CODEC_ID_H264: c_int = 27;
 const AV_CODEC_ID_HEVC: c_int = 172;
 const AV_CODEC_ID_VP9: c_int = 166;
 const AV_CODEC_ID_AV1: c_int = 222;
+const AV_CODEC_ID_MJPEG: c_int = 7;
+const AV_CODEC_ID_PNG: c_int = 61;
 
 const AV_NOPTS_VALUE: i64 = i64::MIN;
 
@@ -133,6 +135,8 @@ fn codec_id_for_name(name: &str) -> Result<c_int, String> {
         "hevc" => Ok(AV_CODEC_ID_HEVC),
         "vp9" => Ok(AV_CODEC_ID_VP9),
         "av1" => Ok(AV_CODEC_ID_AV1),
+        "mjpeg" => Ok(AV_CODEC_ID_MJPEG),
+        "png" => Ok(AV_CODEC_ID_PNG),
         _ => Err(format!("video codec '{name}' is not in the FFmpeg closure")),
     }
 }
@@ -230,6 +234,67 @@ impl VideoFrame {
                 Some(handle as *mut c_void)
             }
         }
+    }
+
+    pub fn to_rgb24(&self, width: i32, height: i32) -> Result<Vec<u8>, String> {
+        if width <= 0 || height <= 0 {
+            return Err("target image has no size".to_string());
+        }
+        let mut source: [*const u8; 4] = [ptr::null(); 4];
+        let mut stride: [c_int; 4] = [0; 4];
+        let mut planes = 0;
+        for index in 0..4 {
+            if let Some((data, linesize)) = self.plane(index) {
+                source[index] = data.as_ptr();
+                stride[index] = linesize as c_int;
+                planes += 1;
+            }
+        }
+        if planes == 0 {
+            return Err("decoded frame has no planes".to_string());
+        }
+        let mut pixels = vec![0u8; width as usize * height as usize * 3];
+        let mut destination: [*mut u8; 4] = [ptr::null_mut(); 4];
+        destination[0] = pixels.as_mut_ptr();
+        let destination_stride: [c_int; 4] = [width * 3, 0, 0, 0];
+        // SAFETY: the frame owns its planes and stays alive for the call; the
+        // destination buffer holds width * height * 3 writable bytes.
+        let context = unsafe {
+            sws_getContext(
+                self.width(),
+                self.height(),
+                self.format(),
+                width,
+                height,
+                AV_PIX_FMT_RGB24,
+                SWS_BILINEAR,
+                ptr::null(),
+                ptr::null(),
+                ptr::null(),
+            )
+        };
+        if context.is_null() {
+            return Err("sws_getContext failed".to_string());
+        }
+        // SAFETY: context, source planes, and destination are live and match
+        // the sizes passed to sws_getContext.
+        let scaled = unsafe {
+            sws_scale(
+                context,
+                source.as_ptr(),
+                stride.as_ptr(),
+                0,
+                self.height(),
+                destination.as_ptr(),
+                destination_stride.as_ptr(),
+            )
+        };
+        // SAFETY: context came from sws_getContext and is not used again.
+        unsafe { sws_freeContext(context) };
+        if scaled <= 0 {
+            return Err("sws_scale produced no pixels".to_string());
+        }
+        Ok(pixels)
     }
 
     pub fn transfer_to_software(&self) -> Result<VideoFrame, String> {
@@ -902,14 +967,26 @@ mod tests {
     }
 
     #[test]
-    fn rejects_image_codecs_and_bad_streams() {
-        let path = fixture("audio-cover.flac");
-        let index = video_index(&path);
-        let err = match VideoSession::open(&path, index, HwRequest::None) {
-            Ok(_) => panic!("png must be rejected"),
-            Err(err) => err,
-        };
-        assert!(err.contains("not in the FFmpeg closure"), "unexpected: {err}");
+    fn decodes_embedded_cover_art() {
+        for name in ["audio-cover.flac", "audio-cover-jpeg.mp3"] {
+            let path = fixture(name);
+            let index = video_index(&path);
+            let mut session = VideoSession::open(&path, index, HwRequest::None)
+                .unwrap_or_else(|error| panic!("{name}: cover art must decode: {error}"));
+            let attachments = MediaSession::open(&path)
+                .expect("fixture opens")
+                .attachments()
+                .expect("attachments read");
+            let art = attachments.first().expect("cover art");
+            assert!(session.send(&art.data, Some(0.0)).expect("send art"));
+            let frame = session
+                .receive()
+                .expect("receive art")
+                .unwrap_or_else(|| panic!("{name}: no decoded cover art"));
+            let pixels = frame.to_rgb24(64, 64).expect("scale cover art");
+            assert_eq!(pixels.len(), 64 * 64 * 3, "{name}: thumbnail size");
+            assert!(pixels.chunks_exact(3).any(|pixel| pixel != [0, 0, 0]));
+        }
         let h264 = fixture("h264.mp4");
         assert!(VideoSession::open(&h264, 99, HwRequest::None).is_err());
     }
