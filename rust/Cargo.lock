@@ -313,6 +313,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "player-overlay"
+version = "0.1.0"
+
+[[package]]
 name = "player-tui"
 version = "0.1.0"
 dependencies = [

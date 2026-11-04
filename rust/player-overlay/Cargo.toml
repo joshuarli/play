@@ -1,0 +1,8 @@
+[package]
+name = "player-overlay"
+version = "0.1.0"
+edition = "2024"
+description = "Typed overlay display list, shape rasterizer, and native text for subtitles, OSD, and OSC"
+
+[lib]
+crate-type = ["rlib"]
