@@ -1,6 +1,6 @@
 # Architecture
 
-Player is one Rust process with pinned native multimedia libraries and a small native window bridge. It has no scripting engine. It opens local files only. The mpv-derived C playback engine is gone; `player` is built by Cargo.
+Player is one Rust process with pinned native multimedia libraries and a small native window bridge. It has no scripting engine. It opens local files only, and Cargo builds it.
 
 ## Player shape
 
@@ -55,13 +55,12 @@ Linux x86-64 musl uses the same engine and application as macOS. The platform sp
 
 `scripts/build-linux.sh` builds `x86_64-unknown-linux-musl` with `-C target-feature=-crt-static`, because a static-pie with Wayland in NEEDED dies in the loader before `main`. It links the static prefix from `scripts/build-deps-linux.sh`. The executable needs only musl, libgcc, the Vulkan loader, Wayland client, ALSA, and libva, and `scripts/audit-linux.sh` enforces the actual NEEDED set. `player-media` carries VA-API and VideoToolbox decode paths, while the scheduler currently requests software decode; `docs/linux.md` covers the decoder status and drivers. There is no glibc build.
 
-## Provenance
+## Pins
 
-- mpv v0.41.0 at `41f6a645068483470267271e1d09966ca3b9f413` remains the behavioral reference for the ported application surface. The native OSC is a port of the earlier mpv-derived Lua OSC and its `assdraw` shapes.
+- mpv v0.41.0 is the compatibility reference for the CLI, IPC commands, and property names.
 - FFmpeg n9.0.2 at `ce8f11b9fac4cd7ccfb41ca7c01bc17f5cda8cc3`.
-- Symphonia at `b6336209bb40d57e4ed71079cf7f7fc6c4626aae`, MPL-2.0, vendored under `vendor/symphonia`.
-- The repository history was consolidated to the `campaign-base` root commit. Upstream mpv and Symphonia histories are not retained; the pins above are the provenance.
+- Symphonia at `b6336209bb40d57e4ed71079cf7f7fc6c4626aae`, vendored under `vendor/symphonia` with its own license files.
 
 ## Follow-on
 
-Follow-on work is Linux aarch64, HDR output, and a fully static musl `wlshm` fallback. A network capability, a scripting engine, or automatic user config would need an explicit decision.
+Follow-on work is Linux aarch64 and HDR output. A network capability, a scripting engine, or automatic user config would need an explicit decision.

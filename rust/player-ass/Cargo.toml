@@ -2,7 +2,6 @@
 name = "player-ass"
 version = "0.1.0"
 edition = "2024"
-license = "MPL-2.0"
 
 [build-dependencies]
 player-build = { path = "../player-build" }

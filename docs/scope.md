@@ -27,7 +27,7 @@ The local-only gate creates a hostile temporary `HOME` with `mpv.conf`, `input.c
 - `player-app`: CLI, IPC, playlist, chapters, track switching, properties and events, command dispatch, the native OSC, GUI and TUI modes, Finder open, drag-and-drop, and screenshots.
 - `player-gui`: a compatibility launcher over `player-app`.
 
-The mpv-derived C playback loop, demux wrappers, filter framework, packet and frame representations, audio and video output abstractions, command and property implementation, client event framework, stream and playlist machinery, allocators, and Meson player build are removed.
+There is no C playback loop or Meson player build.
 
 ## Removed
 
@@ -58,5 +58,4 @@ The player has no scripting. It does not read `mpv.conf`, `input.conf`, or scrip
 ## Remaining debt
 
 - The UTF-8-only path API.
-- The playback scheduler does not yet request VideoToolbox or VA-API decode. `player-media` carries the decoder paths and their tests; wiring the scheduler and reporting `hwdec-current` is follow-on work.
-- There is no C ABI, header, or C host left in the tree. `player-backend` is the Rust engine backend used by the app, not a C boundary.
+- The playback scheduler does not yet request VideoToolbox or VA-API decode (`PLAY-20`).

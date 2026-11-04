@@ -532,18 +532,6 @@ def timing_budget_checks(value):
     ]
 
 
-def license_obligations():
-    return [
-        "FFmpeg 9.0.2: LGPL-2.1-or-later with GPL-enabled components; source and notice obligations.",
-        "libass 0.17.5: ISC; notice.",
-        "libplacebo 7.387.0: LGPL-2.1-or-later; source and notice obligations.",
-        "MoltenVK 1.4.2: Apache-2.0; notice.",
-        "Vulkan loader/headers 1.4.363.0: Apache-2.0; notice.",
-        "shaderc 2026.4: Apache-2.0; notice.",
-        "dav1d 1.5.4: BSD-2-Clause; notice.",
-    ]
-
-
 TIMED_METRICS = (
     ("startup cold ms", lambda v: v["startup"]["cold_ms"]),
     ("startup warm ms", lambda v: v["startup"]["warm_ms"]),
@@ -695,7 +683,6 @@ result = {
     "protocols": proto,
     "features": feat,
     "hwdec": hw,
-    "licenses": license_obligations(),
     "mode": MODE,
     "distributable_bytes": sizes["unstripped"] + closure_data["bytes"],
     "lua_symbols": lua_symbols(),

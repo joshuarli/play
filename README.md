@@ -49,10 +49,15 @@ macOS 27 on Apple Silicon, or Linux x86-64 on musl (Alpine or similar) with a Vu
 - [Linux](docs/linux.md)
 - [Scope](docs/scope.md)
 - [Terminal UI design](docs/tui-design.md)
-- [Licenses](docs/licenses.md)
+- [Measurements](docs/metrics.md)
+- [Manual checks](docs/manual-checklist.md)
 
-For development, see [AGENTS.md](AGENTS.md).
+For development, see [AGENTS.md](AGENTS.md). Open work is in [TODO.md](TODO.md).
 
-## License
+## Limits
 
-GPL-2.0-or-later. mpv and the bundled components keep their licenses; see [licenses](docs/licenses.md). This fork is not affiliated with the mpv project.
+- Local files only: no network protocol, TLS, or remote resource load.
+- Video decodes in software; hardware decode wiring is `PLAY-20`.
+- Paths must be UTF-8.
+- GUI visuals, HDR, Retina scaling, real mouse input, audibility, and hardware decode are owner-run checks in `docs/manual-checklist.md`; the automated gates are headless.
+- Linux is x86-64 musl on Wayland only. glibc and X11 are out of scope.

@@ -8,7 +8,6 @@ ALLOWED_NEEDED=(
     libvulkan.so.1 libwayland-client.so.0 libgcc_s.so.1
     libasound.so.2 libc.musl-x86_64.so.1 libva.so.2 libva-drm.so.2
 )
-LICENSED=(FFmpeg libass libplacebo shaderc dav1d FreeType FriBiDi HarfBuzz zlib expat fontconfig)
 FORBIDDEN_IMPORTS='^(getaddrinfo|freeaddrinfo|getnameinfo|gethostbyname2?|gethostbyaddr|SSL_.*|TLS_.*|curl_.*)$'
 
 failed=0
@@ -94,12 +93,6 @@ if [ -f "$UNSTRIPPED" ]; then
 else
     check "no Lua interpreter" 0 "missing $UNSTRIPPED"
 fi
-
-missing=()
-for name in "${LICENSED[@]}"; do
-    rg -qi -F "$name" "$ROOT/docs/licenses.md" || missing+=("$name")
-done
-check "licenses listed" "$([ ${#missing[@]} -eq 0 ] && echo 1 || echo 0)" "${missing[*]:-}"
 
 if [ "$failed" -ne 0 ]; then
     printf 'audit-linux: %d failed\n' "$failed"

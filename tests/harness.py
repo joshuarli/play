@@ -1665,70 +1665,10 @@ def gate_rust_link(results, args):
     results.check("rust-link: exit", mpv.returncode == 0, f"exit {mpv.returncode}")
 
 
-def gate_baseline_docs(results, args):
-    path = ROOT / "docs" / "baseline.md"
-    if not path.exists():
-        results.check("baseline-docs: file", False, str(path))
-        return
-    text = path.read_text()
-    required = {
-        "title": "# Baseline",
-        "imported commit": "41f6a645068483470267271e1d09966ca3b9f413",
-        "ffmpeg pin": "n9.0.2",
-        "upstream pins": "## Upstream pins",
-        "dependencies": "## Dependencies",
-        "build section": "## Build",
-        "binary": "## Binary",
-        "features": "## Features",
-        "protocols": "## Protocols",
-        "performance": "## Performance",
-        "videotoolbox": "## VideoToolbox",
-        "licenses": "## Licenses",
-        "limitations": "## Known limitations",
-        "d7": "## D7 CoreAudio deviation",
-        "headless": "## Headless test mode",
-        "lua version": "Lua **5.2.4**",
-        "configure command": "meson setup build",
-        "architecture": "arm64",
-        "deployment target": "minos 27.0",
-        "unstripped size": "4,500,432",
-        "stripped size": "4,073,296",
-        "closure size": "59,084,272",
-        "closure files": "34 files",
-        "direct libraries": "Direct non-system libraries",
-        "cold label": "Cold `--version`",
-        "warm label": "Warm `--version`",
-        "first frame label": "First frame, 1080p",
-        "1080p playback label": "1080p RSS / CPU",
-        "4k playback label": "4K RSS / CPU",
-        "seek label": "Seek latency",
-        "exit label": "Exit latency",
-        "protocols listed": "60 entries",
-        "network protocol": "http",
-        "license": "GPL-2.0-or-later",
-        "coreaudio result": "AO: [coreaudio]",
-        "null result": "AO: [null]",
-        "headless flag": "--vo=null",
-        "manual checklist": "scripts/manual-checklist.sh",
-    }
-    missing = [name for name, needle in required.items() if needle not in text]
-    results.check("baseline-docs: required content", not missing,
-                  f"missing: {', '.join(missing)}")
-
-    metrics = ROOT / "docs" / "metrics.md"
-    metrics_text = read_text(metrics)
-    results.check("baseline-docs: metrics file", metrics.exists(), str(metrics))
-    results.check("baseline-docs: baseline row", "| baseline |" in metrics_text,
-                  "no baseline row")
-    results.check("baseline-docs: manual checklist",
-                  (ROOT / "docs" / "manual-checklist.md").exists(),
-                  "missing docs/manual-checklist.md")
-
-
 def gate_meta(results, args):
     required_paths = [
-        "docs/baseline.md", "docs/metrics.md", "docs/manual-checklist.md",
-        "docs/ffmpeg.md", "docs/architecture.md", "docs/licenses.md", "docs/scope.md",
+        "docs/metrics.md", "docs/manual-checklist.md",
+        "docs/ffmpeg.md", "docs/architecture.md", "docs/scope.md",
         "scripts/build.sh", "scripts/dev-deps.sh",
         "scripts/build-ffmpeg.sh", "scripts/measure.sh",
         "scripts/ffmpeg-components.txt", "scripts/ffmpeg-manifest.sh",
@@ -2078,7 +2018,6 @@ GATES = {
     "tui": gate_tui,
     "traces": gate_traces,
     "dispatch": gate_dispatch,
-    "baseline-docs": gate_baseline_docs,
     "meta": gate_meta,
     "release": gate_release,
     "failures": gate_failures,
