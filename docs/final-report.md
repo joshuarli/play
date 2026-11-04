@@ -74,7 +74,7 @@ The development loop is `scripts/build.sh` plus `tests/run.sh suite`. Scratch ar
 
 ### Outcome
 
-The Linux build is a mostly static `x86_64-unknown-linux-musl` executable with the same Rust engine, application layer, and Lua host as macOS: `vo=gpu-next` over Vulkan and Wayland, ALSA audio, and libva for hardware decode support. The release is `dist/player-x86_64-linux-musl.tar.gz` (player and README) with a SHA-256 file. The stripped executable is 24,471,888 B and needs seven shared libraries: musl, `libgcc_s.so.1`, `libvulkan.so.1`, `libwayland-client.so.0`, `libasound.so.2`, `libva.so.2`, and `libva-drm.so.2`. The final container measurement records cold 13.73 ms, warm 13.59 ms, first frame 76.3 ms, 1080p RSS 215.99 MB, seek 36.02 ms, and one `file` protocol.
+The Linux build is a mostly static `x86_64-unknown-linux-musl` executable with the same Rust engine, application layer, and Lua host as macOS: `vo=gpu-next` over Vulkan and Wayland, ALSA audio, and libva for hardware decode support. The release is `dist/player-x86_64-linux-musl.tar.gz` (player and README) with a SHA-256 file. The stripped executable is 24,471,888 B and needs seven shared libraries: musl, `libgcc_s.so.1`, `libvulkan.so.1`, `libwayland-client.so.0`, `libasound.so.2`, `libva.so.2`, and `libva-drm.so.2`. The final container measurement records cold 10.57 ms, warm 8.82 ms, first frame 74.44 ms, 1080p RSS 216.15 MB, seek 35.91 ms, and one `file` protocol.
 
 ### Verification
 
@@ -91,7 +91,7 @@ The Linux build is a mostly static `x86_64-unknown-linux-musl` executable with t
 | Direct dynamic libraries | 7 | 7 |
 | Network schemes | 0 | 0 |
 | Duplicate Lua interpreters | 0 | 0 |
-| 1080p RSS | 300 MB | 215.99 MB |
+| 1080p RSS | 300 MB | 216.15 MB |
 
 ### Provenance
 

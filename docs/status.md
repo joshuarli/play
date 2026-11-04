@@ -34,7 +34,7 @@ Player is a local-only media player. The macOS release artifact is `dist/Player.
 
 - `scripts/linux-container.sh tests/run.sh suite`: 334 passed, 0 failed.
 - `scripts/audit-linux.sh`: ok. `dist/player` needs seven shared libraries: musl, libgcc, Vulkan loader, Wayland client, ALSA, libva, and libva-drm. The tarball lists six Alpine runtime packages.
-- `scripts/measure-linux.sh final`: stripped 24,471,888 B; 1080p RSS 215.99 MB; first frame 76.3 ms; seek 36.02 ms.
+- `scripts/measure-linux.sh final`: stripped 24,471,888 B; 1080p RSS 216.15 MB; first frame 74.44 ms; seek 35.91 ms.
 - `--hwdec` defaults to the compatibility value `auto` and `hwdec-current` reports `no` while the scheduler decodes in software.
 - `tests/run.sh linux-gpu-next` passes 41/41 on headless Weston with lavapipe, including the OSD pixel diff, subtitles, window scaling, and the GUI gate.
 - `tests/run.sh linux-vaapi` (needs a GPU render node, not part of `suite`) is an owner check.

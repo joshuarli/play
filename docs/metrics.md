@@ -102,6 +102,6 @@ Medians of 7 runs with the spread (max − min). `scripts/measure-linux.sh`; col
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | baseline | 2026-11-01 | 2681555-dirty | 6,643,680 | 18 | 62.3 ± 60.95 | 62.5 ± 6.16 | 187.43 ± 45.29 | 39.6 | 156.33 | 0.57 | 1.65 ± 35.14 | 11.42 ± 1.37 | 1 |
 | final (host busy: timings are not a gate) | 2026-11-01 | 646198c | 26,355,208 | 6 | 5.14 ± 1.53 | 4.3 ± 1.53 | 105.41 ± 48.74 | 15.7 | 128.94 | 0.36 | 1.07 ± 30.4 | 2.6 ± 1.67 | 1 |
-| final | 2026-11-04 | cdb159a-dirty | 24,475,984 | 7 | 13.73 ± 17.86 | 13.59 ± 4.69 | 76.3 ± 15.15 | 9.6 | 215.99 | 3.05 | 36.02 ± 3.14 | 20.02 ± 8.88 | 1 |
+| final | 2026-11-04 | f209ffe | 24,471,888 | 7 | 10.57 ± 14.45 | 8.82 ± 3.88 | 74.44 ± 13.19 | 9.6 | 216.15 | 3.06 | 35.91 ± 2.01 | 12.07 ± 9.96 | 1 |
 
-The `final` row is the post-cleanup Rust player at `cdb159a`: 24,475,984 B stripped, seven `NEEDED` entries, and 215.99 MB at 1080p. Its timings come from the container and are not a gate. The published v0.41.0 tarball predates S9: it adds VA-API (three libraries and the `--hwdec=auto` default) to the `646198c` build, with a 26,465,800 B stripped binary and nine `NEEDED` entries.
+The `final` row is the post-cleanup Rust player at `f209ffe`: 24,471,888 B stripped, seven `NEEDED` entries, and 216.15 MB at 1080p. Its timings come from the container and are not a gate. The published v0.41.0 tarball predates S9: it adds VA-API (three libraries and the `--hwdec=auto` default) to the `646198c` build, with a 26,465,800 B stripped binary and nine `NEEDED` entries.
