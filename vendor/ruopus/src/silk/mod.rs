@@ -1,0 +1,39 @@
+//! The SILK decoder (RFC 6716 §4.2).
+//!
+//! SILK is the linear-prediction half of Opus: an LP layer carrying
+//! 10 or 20 ms frames at an internal rate of 8, 12 or 16 kHz
+//! (narrowband/mediumband/wideband), used alone or under CELT in hybrid
+//! mode. Decoding a frame runs, in bitstream order:
+//! header flags (VAD/LBRR), stereo prediction weights and mid-only flag for
+//! stereo, frame type, quantisation gains, normalised LSF indices (two-stage
+//! VQ), pitch lags and LTP filter coefficients for voiced frames, the LTP
+//! scaling factor, the noise seed, and the shell-coded excitation; synthesis
+//! then runs LTP and short-term LPC filters over the excitation, followed by
+//! stereo unmixing and resampling to the output rate.
+//!
+//! Unlike CELT's float build, the normative SILK decoder is entirely
+//! fixed-point - every operation here is integer arithmetic and must be
+//! bit-exact, not only the entropy decoding.
+//!
+//! Build order: static tables first (mechanically extracted), then the
+//! entropy layer bottom-up, then synthesis, validated per stage and finally
+//! against the official test vectors' final-range and PCM oracles.
+
+pub mod api;
+pub(crate) mod decoder;
+// The encoder's analysis is the reference float build, so it needs `std`
+// for float math (matching the CELT modules).
+#[cfg(feature = "std")]
+pub(crate) mod encode;
+pub(crate) mod gains;
+pub(crate) mod indices;
+pub(crate) mod lpc;
+pub(crate) mod math;
+pub(crate) mod nlsf;
+pub(crate) mod params;
+pub(crate) mod pitch;
+pub(crate) mod plc;
+pub(crate) mod pulses;
+pub(crate) mod resampler;
+pub(crate) mod stereo;
+pub mod tables;

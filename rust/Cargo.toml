@@ -22,3 +22,6 @@ inherits = "release"
 lto = "fat"
 codegen-units = 1
 strip = "debuginfo"
+
+[patch.crates-io]
+ruopus = { path = "../vendor/ruopus" }
