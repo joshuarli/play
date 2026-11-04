@@ -5,6 +5,15 @@ use std::time::{Duration, Instant};
 
 pub const DEFAULT_OSD_DURATION: Duration = Duration::from_millis(1000);
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OverlayImage {
+    pub rgba: Vec<u8>,
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
 pub struct EngineBackend {
     engine: SchedulerEngine,
     sub_visible: bool,
@@ -173,19 +182,47 @@ impl EngineBackend {
         width: u32,
         height: u32,
         osc: Option<&AssOverlay>,
-    ) -> Result<Option<Vec<u8>>, String> {
-        let images = self.render_images(width, height, osc)?;
-        if images.is_empty() {
+    ) -> Result<Option<OverlayImage>, String> {
+        let mut images = self.render_images(width, height, osc)?;
+        let Some((x, y, crop_width, crop_height)) = inked_bounds(&images, width, height) else {
             return Ok(None);
+        };
+        for image in &mut images {
+            image.dst_x -= x as i32;
+            image.dst_y -= y as i32;
         }
-        let mut rgba = vec![0u8; width as usize * height as usize * 4];
-        composite_straight(&mut rgba, width, height, &images)?;
-        Ok(Some(rgba))
+        let mut rgba = vec![0u8; crop_width as usize * crop_height as usize * 4];
+        composite_straight(&mut rgba, crop_width, crop_height, &images)?;
+        Ok(Some(OverlayImage {
+            rgba,
+            x,
+            y,
+            width: crop_width,
+            height: crop_height,
+        }))
     }
 
     pub fn latest_frame(&self) -> Option<PresentedFrame> {
         self.engine.drain_frames().pop()
     }
+}
+
+fn inked_bounds(images: &[RenderedImage], width: u32, height: u32) -> Option<(u32, u32, u32, u32)> {
+    let mut bounds: Option<(i32, i32, i32, i32)> = None;
+    for image in images.iter().filter(|image| image.width > 0 && image.height > 0) {
+        let x0 = image.dst_x.max(0);
+        let y0 = image.dst_y.max(0);
+        let x1 = (image.dst_x + image.width as i32).min(width as i32);
+        let y1 = (image.dst_y + image.height as i32).min(height as i32);
+        if x0 >= x1 || y0 >= y1 {
+            continue;
+        }
+        bounds = Some(match bounds {
+            None => (x0, y0, x1, y1),
+            Some((a, b, c, d)) => (a.min(x0), b.min(y0), c.max(x1), d.max(y1)),
+        });
+    }
+    bounds.map(|(x0, y0, x1, y1)| (x0 as u32, y0 as u32, (x1 - x0) as u32, (y1 - y0) as u32))
 }
 
 fn subtitles_selected(status: &EngineStatus) -> bool {
@@ -324,6 +361,14 @@ mod tests {
         assert!(inked(&frame) > 0, "overlay drew no ink");
         assert_eq!(&frame[..3], &[0, 0, 0], "corner stays untouched");
         assert_eq!(backend.render_overlay(320, 240, None), Ok(None));
+        let cropped = backend
+            .render_overlay(320, 240, Some(&osc))
+            .expect("overlay renders")
+            .expect("overlay has ink");
+        assert!(cropped.x >= 40 && cropped.y >= 30, "crop starts at the text: {cropped:?}");
+        assert!(cropped.width < 120 && cropped.height < 80, "crop hugs the text");
+        assert_eq!(cropped.rgba.len(), cropped.width as usize * cropped.height as usize * 4);
+        assert!(cropped.rgba.chunks_exact(4).any(|pixel| pixel[3] > 0));
     }
 
     #[test]

@@ -10,7 +10,7 @@ use player_core::command::{
 use player_core::input::{classify_input, InputPath};
 use player_engine::video::PresentedFrame;
 use player_engine::{EngineStatus, SchedulerEngine, TrackKind};
-use player_backend::engine::{EngineBackend, DEFAULT_OSD_DURATION};
+use player_backend::engine::{EngineBackend, OverlayImage, DEFAULT_OSD_DURATION};
 use player_output::{Overlay, OverlayRect};
 use player_tui::{Control, Cover, Player as TuiPlayer, Snapshot, Track};
 
@@ -55,7 +55,8 @@ pub struct App {
     last_frame: Option<PresentedFrame>,
     frame_serial: u64,
     presented_serial: u64,
-    osd: Option<Vec<u8>>,
+    frames_shown: u64,
+    osd: Option<OverlayImage>,
     osd_size: (i32, i32),
     last_osd: Instant,
     rendered_osc: Option<u64>,
@@ -106,6 +107,7 @@ impl App {
             last_frame: None,
             frame_serial: 0,
             presented_serial: 0,
+            frames_shown: 0,
             osd: None,
             osd_size: (0, 0),
             last_osd: Instant::now()
@@ -267,7 +269,18 @@ impl App {
         self.quit
     }
 
+    pub fn dropped_frames(&self) -> u64 {
+        let status = self.status();
+        let unshown = if self.gui {
+            status.presented.saturating_sub(self.frames_shown)
+        } else {
+            0
+        };
+        status.dropped_late + unshown
+    }
+
     fn unload(&mut self) {
+        self.frames_shown = 0;
         self.backend = None;
         self.probe = None;
         self.end_sent = false;
@@ -776,24 +789,23 @@ impl App {
         if let Some(frame) = self.last_frame.as_ref()
             && (new_frames || osd_changed || size != self.presented_size)
         {
-            let overlay = self
-                .osd
-                .as_ref()
-                .filter(|data| data.len() == width as usize * height as usize * 4)
-                .map(|data| Overlay {
-                    data,
-                    stride: width as usize * 4,
-                    width,
-                    height,
-                    dst: OverlayRect {
-                        x0: 0.0,
-                        y0: 0.0,
-                        x1: width as f32,
-                        y1: height as f32,
-                    },
-                });
+            let overlay = self.osd.as_ref().map(|image| Overlay {
+                data: &image.rgba,
+                stride: image.width as usize * 4,
+                width: image.width as i32,
+                height: image.height as i32,
+                dst: OverlayRect {
+                    x0: image.x as f32,
+                    y0: image.y as f32,
+                    x1: (image.x + image.width) as f32,
+                    y1: (image.y + image.height) as f32,
+                },
+            });
             if let Some(window) = self.window.as_mut() {
                 window.present(frame, overlay.as_ref())?;
+                if new_frames {
+                    self.frames_shown += 1;
+                }
                 self.presented_serial = self.frame_serial;
                 self.presented_size = size;
             }
@@ -854,8 +866,8 @@ impl App {
         }
         let ink = self
             .osd
-            .as_deref()
-            .map(|data| data.chunks_exact(4).filter(|pixel| pixel[3] > 0).count())
+            .as_ref()
+            .map(|image| image.rgba.chunks_exact(4).filter(|pixel| pixel[3] > 0).count())
             .unwrap_or(0);
         let status = self.status();
         if self.last_gate_report.elapsed() >= Duration::from_secs(1) {
@@ -871,7 +883,7 @@ impl App {
                 status.video_width,
                 status.video_height,
                 status.tracks.len(),
-                self.osd.as_ref().map(Vec::len).unwrap_or(0),
+                self.osd.as_ref().map(|image| image.rgba.len()).unwrap_or(0),
             );
         }
         let frames = self.window.as_ref().map(HostWindow::presented).unwrap_or(0);

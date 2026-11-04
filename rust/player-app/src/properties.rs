@@ -246,9 +246,10 @@ pub fn get(app: &App, name: &str) -> Result<NativeValue, String> {
         } else {
             "coreaudio".to_owned()
         })),
-        "frame-drop-count" | "vo-drop-frame-count" | "decoder-frame-drop-count" => {
-            Ok(NativeValue::Int(0))
+        "frame-drop-count" | "vo-drop-frame-count" => {
+            Ok(NativeValue::Int(app.dropped_frames() as i64))
         }
+        "decoder-frame-drop-count" => Ok(NativeValue::Int(0)),
         "estimated-vf-fps" | "container-fps" => Ok(NativeValue::Double(24.0)),
         "chapter-metadata" => Ok(NativeValue::Map(Vec::new())),
         "osc-visibility" => Ok(NativeValue::String(
