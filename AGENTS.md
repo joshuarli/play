@@ -1,6 +1,6 @@
 # Repository guide
 
-Player is a local-only media player built on the mpv v0.41.0 playback pipeline, a minimal pinned FFmpeg n9.0.2, and a Rust-owned control plane. The macOS release artifact is `dist/Player.app`; the Linux x86-64 musl artifact is `dist/player-x86_64-linux-musl.tar.gz`.
+Player is a local-only media player built on a Rust playback engine, a minimal pinned FFmpeg n9.0.2, libplacebo, and an mpv-compatible application surface. The macOS release artifact is `dist/Player.app`; the Linux x86-64 musl artifact is `dist/player-x86_64-linux-musl.tar.gz`.
 
 ## Commands
 
@@ -21,8 +21,8 @@ Player is a local-only media player built on the mpv v0.41.0 playback pipeline, 
 - Local input only. Network schemes, TLS, and network protocols are not built. The classifier is `rust/player-core/src/input.rs`.
 - The player does not auto-load user config or scripts. Explicit scripts are trusted code with the full command table, including `subprocess` and `run`.
 - One Lua implementation: the vendored Lua 5.2 in `rust/player-lua`.
-- Rust owns startup configuration, playlist, command validation, scalar playback state, local file I/O, and the Lua host. C owns the playback pipeline, platform glue, and multimedia integration.
-- `unsafe` is confined to `rust/player-ffi` and `rust/player-audio`. Each block states its safety argument.
+- Rust owns the playback pipeline (demux, decode, scheduling, audio, video rendering, subtitles, OSD), startup configuration, playlist, command validation, playback state, local file I/O, the application surface, and the Lua host. The only C in-tree code is the macOS window bridge and the vendored Lua interpreter; everything else is a pinned native dependency.
+- Native-boundary `unsafe` lives in `player-media`, `player-output`, `player-display`, `player-ass`, `player-engine`, `player-ffi`, and `player-audio`. Each block states its safety argument.
 - CI builds both release artifacts on GitHub. A `v*` tag runs `.github/workflows/release.yml`, which publishes the macOS app zip and the Linux tarball with `SHA256SUMS`. Gates are local commands. Do not notarize.
 - `TODO.md` holds open work. Delete a ticket when it is done; git history is the record.
 
@@ -30,7 +30,7 @@ Player is a local-only media player built on the mpv v0.41.0 playback pipeline, 
 
 - [docs/install.md](docs/install.md): build, run, release artifacts, and owner checks.
 - [docs/linux.md](docs/linux.md): Linux runtime set, container, headless gates, ALSA, fixtures.
-- [docs/architecture.md](docs/architecture.md): ownership boundaries, FFI, script host, renderer, release closure.
+- [docs/architecture.md](docs/architecture.md): ownership boundaries, playback pipeline, script host, renderer, release closure.
 - [docs/scope.md](docs/scope.md): input boundary, retained and removed modules, CLI, debt.
 - [docs/ffmpeg.md](docs/ffmpeg.md): FFmpeg pin, allowlist, manifest gate.
 - [docs/metrics.md](docs/metrics.md): measurement history and release budgets.

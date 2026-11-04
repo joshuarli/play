@@ -65,6 +65,7 @@ impl Vulkan {
         }
         // SAFETY: vk is live; gpu is its first field.
         let gpu = unsafe { (*vk).gpu };
+        eprintln!("libplacebo: GPU 0: Vulkan device (libplacebo {version})");
         Ok(Vulkan { log, vk, gpu })
     }
 

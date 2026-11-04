@@ -280,6 +280,14 @@ where
         self.clock.position(now)
     }
 
+    pub fn subtitle_text(&self, now: f64) -> String {
+        let position_ms = (self.clock.position(now) * 1000.0).round() as i64;
+        self.selected_sub
+            .and_then(|index| self.subs.get(index))
+            .map(|sub| sub.text_at(position_ms))
+            .unwrap_or_default()
+    }
+
     pub fn audio_output(&self) -> &AO {
         &self.audio_out
     }

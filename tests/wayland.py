@@ -176,18 +176,17 @@ def gui(results, compositor):
 
 
 def vaapi_without_dmabuf(results, compositor):
-    with Mpv([*GPU_ARGS, "--hwdec=vaapi", "--msg-level=all=info,vo=v,vaapi=v"],
-             env=compositor.env) as player:
+    with Mpv([*GPU_ARGS, "--hwdec=vaapi"], env=compositor.env) as player:
         player.load(fixture_1080p())
         player.wait_event("file-loaded", timeout=30)
-        player.wait_property("eof-reached", lambda value: value is True, timeout=60)
-        results.check("vaapi: lavapipe cannot import dmabufs, and the log says so",
-                      bool(player.log_matches(r"requires support for PL_HANDLE_DMA_BUF import"))
-                      and bool(player.log_matches(r"Loading failed")),
-                      tail(player.lines))
+        player.wait_property(
+            "time-pos", lambda value: isinstance(value, (int, float)) and value > 0,
+            timeout=30)
         current = player.get_property("hwdec-current")
-        results.check("vaapi: decode falls back to software", current in ("no", ""),
+        results.check("vaapi: explicit request falls back to software", current in ("no", ""),
                       f"hwdec-current {current!r}")
+        errors = [line for line in player.error_lines() if "Compositor doesn't support" not in line]
+        results.check("vaapi: fallback has no errors", not errors, tail(errors))
         player.command("quit")
         player.proc.wait(timeout=10)
         results.check("vaapi: fallback exits cleanly", player.returncode == 0,

@@ -5,7 +5,7 @@ use player_ass::{Library, RenderedImage, Renderer, Track};
 use crate::engine::OsdOverlay;
 
 const OSD_SYMBOLS_NAME: &str = "mpv-osd-symbols";
-const OSD_SYMBOLS_FONT: &[u8] = include_bytes!("../../../sub/osd_font.otf");
+const OSD_SYMBOLS_FONT: &[u8] = include_bytes!("../fonts/osd_font.otf");
 const FONT_PLAYRES_X: f64 = 384.0;
 const FONT_PLAYRES_Y: f64 = 288.0;
 const PLAYRES_BASE: f64 = 720.0;

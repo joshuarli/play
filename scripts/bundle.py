@@ -108,7 +108,7 @@ def main():
     (ICD_DIR / "MoltenVK_icd.json").write_text(json.dumps(icd, indent=4) + "\n")
 
     shutil.copy2(
-        ROOT / "TOOLS/osxbundle/mpv.app/Contents/Resources/icon.icns",
+        ROOT / "packaging/icon.icns",
         RESOURCES / "icon.icns",
     )
 

@@ -36,6 +36,7 @@ pub struct EngineBackend {
     shutdown_sent: bool,
     quit: bool,
     pending_frames: Vec<PresentedFrame>,
+    last_frame: Option<PresentedFrame>,
     osd: Option<OsdState>,
     osd_error: Option<String>,
     compose_frames: bool,
@@ -83,6 +84,7 @@ impl EngineBackend {
             shutdown_sent: false,
             quit: false,
             pending_frames: Vec::new(),
+            last_frame: None,
             osd: None,
             osd_error: None,
             compose_frames: true,
@@ -91,6 +93,10 @@ impl EngineBackend {
 
     pub fn set_display_size(&mut self, width: u32, height: u32) {
         self.display = Some((width, height));
+    }
+
+    pub fn select_sub_position(&mut self, position: usize) {
+        self.engine.select_sub_position(position);
     }
 
     /// Hands OSD pixels to the consumer instead of blending them into video
@@ -297,6 +303,9 @@ impl EngineBackend {
         let mut fresh = self.engine.drain_frames();
         let status = self.engine.snapshot();
         self.composite_frames(&status, &mut fresh);
+        if let Some(frame) = fresh.last() {
+            self.last_frame = Some(frame.clone());
+        }
         self.pending_frames.extend(fresh);
         while self.pending_frames.len() > 8 {
             self.pending_frames.remove(0);
@@ -678,11 +687,32 @@ impl EngineBackend {
         self.enabled_events.iter().any(|known| known == name)
     }
 
+    fn screenshot_raw(&mut self, flags: &str) -> Result<NativeValue, String> {
+        let mut frame = self
+            .last_frame
+            .clone()
+            .ok_or_else(|| "no video frame is available for a screenshot".to_owned())?;
+        if flags.contains("osd") || flags.contains("subtitles") {
+            self.compose(&mut frame.rgba, frame.width, frame.height, 1.0)?;
+        }
+        Ok(NativeValue::Map(vec![
+            ("w".to_owned(), NativeValue::Int(frame.width as i64)),
+            ("h".to_owned(), NativeValue::Int(frame.height as i64)),
+            (
+                "stride".to_owned(),
+                NativeValue::Int(frame.width as i64 * 4),
+            ),
+            ("format".to_owned(), NativeValue::String("rgba".to_owned())),
+            ("data".to_owned(), NativeValue::Bytes(frame.rgba)),
+        ]))
+    }
+
     fn run_argv(&mut self, args: &[String]) -> Result<NativeValue, String> {
         let Some((name, rest)) = args.split_first() else {
             return Err("empty command".to_owned());
         };
         match name.as_str() {
+            "screenshot-raw" => self.screenshot_raw(""),
             "seek" => {
                 let seconds: f64 = rest
                     .first()
@@ -856,6 +886,13 @@ impl EngineBackend {
             .ok_or_else(|| "native commands need a string name".to_owned())?;
         let field = |key: &str| entries.iter().find(|(name, _)| name == key).map(|(_, value)| value);
         match name.as_str() {
+            "screenshot-raw" => {
+                let flags = match field("flags") {
+                    Some(NativeValue::String(flags)) => flags.as_str(),
+                    _ => "",
+                };
+                self.screenshot_raw(flags)
+            }
             "osd-overlay" => {
                 let id = match field("id") {
                     Some(NativeValue::Int(id)) => *id,
@@ -1993,9 +2030,9 @@ mod tests {
         assert!(shutdown_seen, "shutdown posted after quit");
     }
 
-    const ASSDRAW: &str = include_str!("../../../player/lua/assdraw.lua");
-    const OPTIONS: &str = include_str!("../../../player/lua/options.lua");
-    const OSC: &str = include_str!("../../../player/lua/osc.lua");
+    const ASSDRAW: &str = include_str!("../../player-lua/lua/assdraw.lua");
+    const OPTIONS: &str = include_str!("../../player-lua/lua/options.lua");
+    const OSC: &str = include_str!("../../player-lua/lua/osc.lua");
 
     fn drive_while(
         shared: &SharedEngine,

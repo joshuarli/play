@@ -161,6 +161,9 @@ fn transition(state: &State, event: Event) -> Option<State> {
         (State::Draining, Event::Close) => Some(State::Closing),
 
         (State::Ended, Event::Open) => Some(State::Opening),
+        (State::Ended, Event::Pause) => Some(State::Paused {
+            resume: PlayResume::Playing,
+        }),
         (State::Ended, Event::Seek) => Some(State::Seeking {
             resume: SeekResume::Playing,
         }),
@@ -309,6 +312,34 @@ mod tests {
     }
 
     #[test]
+    fn pause_at_end_keeps_a_seek_paused_at_the_target() {
+        let mut machine = drive(&[
+            Event::Open,
+            Event::Opened,
+            Event::Buffered,
+            Event::Eof,
+            Event::Drained,
+            Event::Pause,
+        ]);
+        assert_eq!(
+            *machine.state(),
+            State::Paused {
+                resume: PlayResume::Playing
+            }
+        );
+        machine.apply(Event::Seek).expect("legal seek");
+        machine.apply(Event::SeekDone).expect("legal seek done");
+        assert_eq!(
+            *machine.state(),
+            State::Paused {
+                resume: PlayResume::Playing
+            }
+        );
+        machine.apply(Event::Resume).expect("legal resume");
+        assert_eq!(*machine.state(), State::Playing);
+    }
+
+    #[test]
     fn seek_from_draining_and_ended_restarts_playback() {
         for tail in [Event::Eof, Event::Drained] {
             let mut machine = drive(&[Event::Open, Event::Opened, Event::Buffered, Event::Eof]);
@@ -419,16 +450,6 @@ mod tests {
             (
                 &[Event::Open, Event::Opened, Event::Buffered],
                 Event::Resume,
-            ),
-            (
-                &[
-                    Event::Open,
-                    Event::Opened,
-                    Event::Buffered,
-                    Event::Eof,
-                    Event::Drained,
-                ],
-                Event::Pause,
             ),
             (&[Event::Open, Event::Fail], Event::SeekDone),
             (&[Event::Close], Event::Close),

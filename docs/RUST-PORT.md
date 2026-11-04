@@ -14,8 +14,52 @@ paused-seek subtitle priming). S8a complete (Rust `player`
 application core: CLI, IPC, playlists, chapters, track switching,
 properties and events, OSC dispatch, traces). S8b complete (GUI and
 TUI modes in the Rust `player` binary, Finder open and drag-and-drop,
-PNG screenshots). Next: S9 (legacy removal, Cargo-authoritative
-release).
+PNG screenshots). S9 complete: the mpv-derived C engine and Meson
+player build are deleted, Cargo builds both artifacts, and the full
+macOS and Linux suites, audits, and budgets pass.
+
+## S9 record
+
+The C playback engine is gone. `scripts/build.sh` builds `player-app`
+with Cargo and installs it at `build/mpv`; `scripts/release.sh` builds
+the `dist` profile and bundles `dist/Player.app`; `scripts/build-linux.sh`
+builds the musl `dist` profile and writes `build-linux/mpv` plus the
+stripped `dist/player`. The Meson player build, the C source tree, the
+retired test and tool sources, and the release cdylib are removed. The
+Lua modules moved to `rust/player-lua/lua/`, the OSD font to
+`rust/player-ffi/fonts/`, the app icon to `packaging/`, and the test
+input bindings to `tests/`.
+
+`scripts/audit.sh` now checks the Rust engine and the release executable
+directly: no C playback symbols, no second Lua interpreter, no Meson
+tree, no retired C source roots, and no libmpv dylib. `scripts/audit-linux.sh`
+checks the same on the musl binary, and `scripts/release-linux.sh`
+packages the six runtime packages the executable actually needs.
+
+Decisions with reasons:
+
+- The Linux binary uses `-C target-feature=-crt-static`. A static-pie
+  with Wayland in `NEEDED` dies in the musl loader before `main`.
+- `libgcc_s.so.1` is part of the documented runtime set. Alpine's
+  `libgcc` provides it, `-static-libgcc` does not remove the entry on
+  this toolchain, and the seven-library set is still audited.
+- The `dist` profile strips debug info but keeps the symbol table so the
+  audit can count one `luaL_newstate` and identify the Rust engine.
+- `player-ffi` keeps its C ABI, headers, and tests as a library contract
+  even though no C host links it. That is recorded debt in `docs/scope.md`.
+- The app keeps the mpv-compatible command and property surface, but the
+  process, playback loop, renderer, audio output, and Lua host are Rust.
+
+Verified at S9: `cargo test` green; macOS `tests/run.sh suite` 343
+passed, 0 failed; Linux `tests/run.sh suite` 334 passed, 0 failed;
+`scripts/audit.sh` ok; `scripts/audit-linux.sh` ok; `scripts/release.sh`
+and `make linux` build both artifacts; `scripts/measure.sh final` passes
+the budgets.
+
+Known limit: the scheduler still opens video decoders in software.
+`player-media` carries VideoToolbox and VA-API paths and their tests,
+and the owner checklist covers a real GPU; the automated corpus does not
+claim hardware decode.
 
 ## S8b record
 
@@ -602,9 +646,11 @@ Scoped deviations from `campaign-rust.md`:
 
 ## Remaining mpv C dependencies
 
-Everything else: `player/` playloop, audio, video, command, demux orchestration,
-`demux/`, `stream/`, `sub/`, `video/`, `audio/`, `filters/`, `osdep/` platform
-glue, client API, IPC, OSD/OSC delivery.
+None. The playback loop, demux orchestration, audio and video paths, command
+and property implementation, client event delivery, stream and playlist
+machinery, allocators, and platform glue are Rust or pinned native libraries.
+The only in-tree C is the Objective-C window bridge and the vendored Lua
+interpreter.
 
 ## S0 baseline (reference: legacy engine at `ee5021c`)
 

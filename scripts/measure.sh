@@ -190,7 +190,7 @@ def startup_times():
             proc = run([str(MPV), "--version"], timeout=30)
             values.append((time.monotonic() - start) * 1000)
             if proc.returncode != 0:
-                raise SystemExit("mpv --version failed")
+                raise SystemExit("player --version failed")
         return stat(values)
     return {
         "cold_ms": sample(True),
@@ -349,8 +349,6 @@ def component_for(path):
         return "dav1d"
     if "lua" in lowered:
         return "Lua"
-    if "player_release" in lowered:
-        return "Rust"
     if name.startswith(("libfreetype", "libfribidi", "libharfbuzz")):
         return "fonts/shaping"
     return "remaining external"
@@ -421,15 +419,15 @@ def closure():
 
 
 def script_host_attribution():
-    osc = ROOT / "player" / "lua" / "osc.lua"
-    ffi = ROOT / ".work" / "deps" / "player-audio" / "target" / "release" / "libplayer_ffi.a"
-    lua_archives = sorted((ROOT / ".work" / "deps" / "player-audio" / "target" / "release" / "build").glob(
-        "mlua-sys/*/out/lib/liblua5.2.a"))
+    osc = ROOT / "rust" / "player-lua" / "lua" / "osc.lua"
+    target = ROOT / "rust" / "target"
+    lua_archives = sorted(target.glob("dist/build/mlua-sys/*/out/lib/liblua5.2.a"))
+    if not lua_archives:
+        lua_archives = sorted(target.glob("release/build/mlua-sys/*/out/lib/liblua5.2.a"))
     lines = len(osc.read_text().splitlines()) if osc.exists() else 0
     return {
         "osc_bytes": osc.stat().st_size if osc.exists() else 0,
         "osc_lines": lines,
-        "ffi_archive_bytes": ffi.stat().st_size if ffi.exists() else 0,
         "lua_archive_bytes": lua_archives[0].stat().st_size if lua_archives else 0,
     }
 
@@ -497,17 +495,17 @@ def hwdec():
                 "-hwaccel", "videotoolbox", "-i", str(fixture), "-f", "null", "-"],
                timeout=60)
     ffmpeg_ok = proc.returncode == 0
-    mpv_ok = False
+    player_ok = False
     with Mpv(["--vo=null", "--ao=null", "--hwdec=videotoolbox"]) as player:
         player.load(fixture)
         player.wait_event("file-loaded", timeout=10)
         player.wait_property(
             "time-pos", lambda value: isinstance(value, (int, float)) and value > 0,
             timeout=10)
-        mpv_ok = True
+        player_ok = True
     return {
         "ffmpeg_videotoolbox": ffmpeg_ok,
-        "mpv_headless_playback": mpv_ok,
+        "player_headless_playback": player_ok,
     }
 
 
@@ -551,7 +549,7 @@ def timing_budget_checks(value):
 
 def license_obligations():
     return [
-        "mpv: GPL-2.0-or-later; source and notice obligations on distribution.",
+        "mpv Lua client scripts: GPL-2.0-or-later; source and notice obligations on distribution.",
         "FFmpeg 9.0.2: LGPL-2.1-or-later with GPL-enabled components; source and notice obligations.",
         "libass 0.17.5: ISC; notice.",
         "libplacebo 7.387.0: LGPL-2.1-or-later; source and notice obligations.",
@@ -674,9 +672,8 @@ if MODE == "size":
     for component, value in closure_data["by_component"].items():
         print(f"  {component}: {mb(value['bytes'])} MiB / {value['files']} files")
     host = script_host_attribution()
-    print("script host: osc.lua {osc_bytes} B / {osc_lines} lines; "
-          "player-ffi archive {ffi_archive_bytes} B; vendored Lua archive "
-          "{lua_archive_bytes} B (archives, not linked size)".format(**host))
+    print("script host: osc.lua {osc_bytes} B / {osc_lines} lines; vendored "
+          "Lua archive {lua_archive_bytes} B (archive, not linked size)".format(**host))
     raise SystemExit(0)
 
 
@@ -793,7 +790,7 @@ print(f"audio underruns: {underruns}")
 print(f"protocols: {proto['listed']} listed, {proto['unique']} unique; "
       f"network {len(proto['network'])}")
 print(f"hwdec ffmpeg videotoolbox: {hw['ffmpeg_videotoolbox']}; "
-      f"mpv headless playback: {hw['mpv_headless_playback']}")
+      f"player headless playback: {hw['player_headless_playback']}")
 
 if MODE == "final":
     checks = budget_checks(result)

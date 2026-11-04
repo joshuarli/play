@@ -67,6 +67,10 @@ impl HostWindow {
         self.window.set_fullscreen(fullscreen);
     }
 
+    pub fn resize(&mut self, width: i32, height: i32) {
+        self.window.resize(width, height);
+    }
+
     pub fn poll(&mut self) -> Result<bool, String> {
         self.window.poll()
     }

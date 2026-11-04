@@ -4,6 +4,7 @@ use player_ass::{Library, RenderedImage, Renderer, Track};
 pub enum SubCodec {
     Ass,
     SubRip,
+    MovText,
     WebVtt,
 }
 
@@ -11,7 +12,8 @@ impl SubCodec {
     pub fn for_name(name: &str) -> Option<SubCodec> {
         match name {
             "ass" | "ssa" => Some(SubCodec::Ass),
-            "subrip" | "srt" => Some(SubCodec::SubRip),
+            "subrip" | "srt" | "text" => Some(SubCodec::SubRip),
+            "mov_text" => Some(SubCodec::MovText),
             "webvtt" | "web_vtt" | "vtt" => Some(SubCodec::WebVtt),
             _ => None,
         }
@@ -31,6 +33,7 @@ impl SubCodec {
         match self {
             SubCodec::Ass => "ass",
             SubCodec::SubRip => "subrip",
+            SubCodec::MovText => "mov_text",
             SubCodec::WebVtt => "webvtt",
         }
     }
@@ -83,6 +86,7 @@ struct Retained {
     start_ms: i64,
     end_ms: i64,
     payload: Vec<u8>,
+    text: String,
 }
 
 #[derive(Clone)]
@@ -138,7 +142,7 @@ impl EngineSub {
                 sub.track.process_data(&header)?;
                 Ok(sub)
             }
-            SubCodec::SubRip | SubCodec::WebVtt => {
+            SubCodec::SubRip | SubCodec::MovText | SubCodec::WebVtt => {
                 Self::open(library, source, &text_header(playres))
             }
         }
@@ -173,7 +177,7 @@ impl EngineSub {
                 sub.external = Some(ExternalSource::Ass(text));
                 Ok(sub)
             }
-            SubCodec::SubRip | SubCodec::WebVtt => {
+            SubCodec::SubRip | SubCodec::MovText | SubCodec::WebVtt => {
                 let mut sub = Self::open(library, source, &text_header(playres))?;
                 let cues = parse_cues(&text, codec)?;
                 for (start, end, event) in &cues {
@@ -212,14 +216,20 @@ impl EngineSub {
         match self.source.codec {
             SubCodec::Ass => {
                 self.track.process_chunk(payload, start_ms, duration_ms);
+                let text = String::from_utf8_lossy(payload).into_owned();
                 self.retained.push(Retained {
                     start_ms,
                     end_ms: start_ms + duration_ms,
                     payload: payload.to_vec(),
+                    text: ass_event_text(&text),
                 });
                 Ok(())
             }
-            SubCodec::SubRip | SubCodec::WebVtt => {
+            SubCodec::SubRip | SubCodec::MovText | SubCodec::WebVtt => {
+                let payload = match self.source.codec {
+                    SubCodec::MovText => mov_text_body(payload),
+                    _ => payload,
+                };
                 let text = String::from_utf8_lossy(payload);
                 let event = dialogue_event(&text, start, start + duration);
                 self.track
@@ -229,6 +239,7 @@ impl EngineSub {
                     start_ms,
                     end_ms: start_ms + duration_ms,
                     payload: event.into_bytes(),
+                    text: text.trim().to_owned(),
                 });
                 Ok(())
             }
@@ -299,6 +310,30 @@ impl EngineSub {
         }
     }
 
+    pub fn text_at(&self, position_ms: i64) -> String {
+        if !self.visible {
+            return String::new();
+        }
+        match &self.external {
+            Some(ExternalSource::Ass(text)) => ass_text_at(text, position_ms),
+            Some(ExternalSource::Cues(cues)) => cues
+                .iter()
+                .filter(|(start, end, _)| *start <= position_ms && position_ms < *end)
+                .map(|(_, _, text)| text.trim())
+                .filter(|text| !text.is_empty())
+                .collect::<Vec<_>>()
+                .join("\n"),
+            None => self
+                .retained
+                .iter()
+                .filter(|event| event.start_ms <= position_ms && position_ms < event.end_ms)
+                .map(|event| event.text.trim())
+                .filter(|text| !text.is_empty())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        }
+    }
+
     pub fn render(
         &mut self,
         width: i32,
@@ -318,6 +353,64 @@ impl EngineSub {
             now_ms,
         )
     }
+}
+
+fn mov_text_body(payload: &[u8]) -> &[u8] {
+    if payload.len() < 2 {
+        return payload;
+    }
+    let length = u16::from_be_bytes([payload[0], payload[1]]) as usize;
+    payload
+        .get(2..2 + length)
+        .unwrap_or(&payload[2..])
+}
+
+fn strip_ass_tags(text: &str) -> String {
+    let mut out = String::new();
+    let mut depth = 0;
+    for character in text.chars() {
+        match character {
+            '{' => depth += 1,
+            '}' if depth > 0 => depth -= 1,
+            _ if depth == 0 => out.push(character),
+            _ => {}
+        }
+    }
+    out.replace("\\N", "\n").replace("\\n", "\n")
+}
+
+fn ass_event_text(payload: &str) -> String {
+    let line = payload
+        .lines()
+        .find(|line| line.trim_start().starts_with("Dialogue:"))
+        .unwrap_or(payload);
+    let text = line.splitn(10, ',').nth(9).unwrap_or("");
+    strip_ass_tags(text)
+}
+
+fn ass_text_at(content: &str, position_ms: i64) -> String {
+    let mut visible = Vec::new();
+    for line in content.lines() {
+        let Some(rest) = line.trim_start().strip_prefix("Dialogue:") else {
+            continue;
+        };
+        let fields: Vec<&str> = rest.splitn(10, ',').collect();
+        if fields.len() < 10 {
+            continue;
+        }
+        let start = parse_timestamp(fields[1]).map(|value| (value * 1000.0) as i64);
+        let end = parse_timestamp(fields[2]).map(|value| (value * 1000.0) as i64);
+        if let (Some(start), Some(end)) = (start, end)
+            && start <= position_ms
+            && position_ms < end
+        {
+            let text = strip_ass_tags(fields[9]);
+            if !text.trim().is_empty() {
+                visible.push(text);
+            }
+        }
+    }
+    visible.join("\n")
 }
 
 fn ass_header(playres: (i32, i32)) -> String {
@@ -434,7 +527,7 @@ fn parse_cues(content: &str, codec: SubCodec) -> Result<Vec<(i64, i64, String)>,
 
 #[cfg(test)]
 mod tests {
-    use super::{ass_time, dialogue_event, parse_cues, parse_timestamp, SubCodec};
+    use super::{ass_time, dialogue_event, mov_text_body, parse_cues, parse_timestamp, SubCodec};
 
     const SRT: &str = "1\n00:00:00,200 --> 00:00:01,500\nHello from SubRip.\n\n2\n00:00:01,600 --> 00:00:02,800\nSecond cue.\n";
 
@@ -473,6 +566,22 @@ mod tests {
         assert_eq!(cues.len(), 2);
         assert_eq!(cues[0], (200, 1500, "Hello from WebVTT.".to_owned()));
         assert_eq!(cues[1].2, "Second cue.");
+    }
+
+    #[test]
+    fn mov_text_has_its_own_codec_and_bitmap_codecs_stay_unsupported() {
+        assert_eq!(SubCodec::for_name("mov_text"), Some(SubCodec::MovText));
+        assert_eq!(SubCodec::for_name("text"), Some(SubCodec::SubRip));
+        assert_eq!(SubCodec::for_name("hdmv_pgs_subtitle"), None);
+        assert_eq!(SubCodec::for_name("dvd_subtitle"), None);
+    }
+
+    #[test]
+    fn mov_text_strips_the_length_prefix() {
+        let payload = [0, 16, b'H', b'e', b'l', b'l', b'o', b',', b' ', b'w', b'o', b'r', b'l', b'd', b'!', b'\n'];
+        assert_eq!(mov_text_body(&payload), b"Hello, world!\n");
+        assert_eq!(mov_text_body(&[0]), &[0]);
+        assert_eq!(mov_text_body(&[0xFF, 4, b'a']), b"a");
     }
 
     #[test]

@@ -52,7 +52,7 @@ jobs:
         with:
           path: |
             .work/deps/release
-            .work/deps/player-audio/target
+            rust/target
           key: player-macos-deps-${{ github.workspace }}-${{ hashFiles('scripts/build-deps.sh', 'scripts/build-ffmpeg.sh', 'scripts/ffmpeg-components.txt', 'rust/Cargo.lock', 'rust-toolchain.toml') }}
           restore-keys: |
             player-macos-deps-${{ github.workspace }}-
@@ -66,7 +66,7 @@ jobs:
           test -x "$app/Contents/MacOS/player"
           test "$(lipo -archs "$app/Contents/MacOS/player")" = arm64
           "$app/Contents/MacOS/player" --version > version.txt
-          grep -q '^mpv ' version.txt
+          grep -q '0.41.0' version.txt
           codesign --verify --deep --strict "$app"
           {
             otool -L "$app/Contents/MacOS/player"

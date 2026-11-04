@@ -7,9 +7,9 @@ use player_ffi::engine::{EngineBackend, SharedEngine};
 use player_lua::queue::EventSender;
 use player_lua::{PlayerBackend, ScriptHost, ScriptModule};
 
-const ASSDRAW: &str = include_str!("../../../player/lua/assdraw.lua");
-const OPTIONS: &str = include_str!("../../../player/lua/options.lua");
-const OSC: &str = include_str!("../../../player/lua/osc.lua");
+const ASSDRAW: &str = include_str!("../../player-lua/lua/assdraw.lua");
+const OPTIONS: &str = include_str!("../../player-lua/lua/options.lua");
+const OSC: &str = include_str!("../../player-lua/lua/osc.lua");
 
 struct Options {
     fixture: String,

@@ -4,7 +4,7 @@ The macOS release app is assembled from the pinned sources in `scripts/build-dep
 
 | Component | Version | License |
 | --- | --- | --- |
-| mpv | 0.41.0 (`-Dgpl=true`) | GPL-2.0-or-later |
+| Player Rust code (this repository) | this revision | MPL-2.0 |
 | FFmpeg (minimal build) | 9.0.2 | LGPL-2.1-or-later |
 | libass | 0.17.5 | ISC |
 | libplacebo | 7.387.0 | LGPL-2.1-or-later |
@@ -20,7 +20,7 @@ The macOS release app is assembled from the pinned sources in `scripts/build-dep
 | HarfBuzz | 15.0.0 | MIT |
 | MoltenVK (binary) | 1.4.2 | Apache-2.0 |
 | Lua (vendored by mlua) | 5.2.4 | MIT |
-| `player-release` Rust cdylib | this repository | MPL-2.0 |
+| mpv Lua client scripts (`defaults`, `assdraw`, `options`, `input`, `osc`) | 0.41.0 | GPL-2.0-or-later |
 | Symphonia (vendored) | `b6336209` | MPL-2.0 |
 | Rust crates | `Cargo.lock` | MIT/Apache-2.0/MPL-2.0/Zlib/Unicode-3.0 |
 
@@ -32,8 +32,6 @@ The Linux build adds these components, linked statically by `scripts/build-deps-
 | expat | 2.9.0 | MIT |
 | fontconfig | 2.18.1 | HPND-sell-variant |
 
-The musl runtime libraries come from the Alpine image and are not shipped: musl 1.2.6-r6 (MIT), vulkan-loader 1.4.360-r0 (Apache-2.0), wayland-libs-client and wayland-libs-cursor 1.26.0-r0 (MIT), libxkbcommon 1.13.2-r0 (MIT), alsa-lib 1.2.16.1-r0 (LGPL-2.1-or-later), and libva 2.24.1-r0 (MIT).
+The musl runtime libraries come from the Alpine image and are not shipped: musl (MIT), libgcc (GPL-3.0-or-later WITH GCC-exception-3.1), vulkan-loader (Apache-2.0), wayland-libs-client (MIT), alsa-lib (LGPL-2.1-or-later), and libva (MIT).
 
-The Linux build restores `video/out/wayland_common.c`, `video/out/wayland_common.h`, `video/out/vulkan/context_wayland.c`, `audio/out/ao_alsa.c`, `osdep/als-linux.c`, `osdep/timer-linux.c`, `osdep/language-posix.c`, `video/out/hwdec/hwdec_vaapi.c`, and `video/filter/vf_vavpp.c` byte-identical to mpv v0.41.0; their GPL-2.0-or-later headers are unchanged.
-
-`cargo audit` reports no RustSec vulnerabilities for the 73 locked crates. The release audit checked `cargo metadata` license fields. The set is MIT OR Apache-2.0, MPL-2.0, MIT, Apache-2.0 OR MIT, Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT, Apache-2.0/MIT, Zlib OR Apache-2.0 OR MIT, Unlicense OR MIT, and (MIT OR Apache-2.0) AND Unicode-3.0. Symphonia's MPL-2.0 notice is preserved under `vendor/symphonia`; mpv, FFmpeg, libass, and libplacebo notices and source obligations remain with the repository and pinned sources.
+`cargo audit` reports no RustSec vulnerabilities for the locked crates. The release audit checked `cargo metadata` license fields. The set is MIT OR Apache-2.0, MPL-2.0, MIT, Apache-2.0 OR MIT, Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT, Apache-2.0/MIT, Zlib OR Apache-2.0 OR MIT, Unlicense OR MIT, and (MIT OR Apache-2.0) AND Unicode-3.0. Symphonia's MPL-2.0 notice is preserved under `vendor/symphonia`; FFmpeg, libass, and libplacebo notices and source obligations remain with the repository and pinned sources. The bundled Lua scripts retain their mpv provenance and GPL-2.0-or-later headers.

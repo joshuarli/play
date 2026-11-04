@@ -76,6 +76,7 @@ pub struct AlsaSink {
     channels: usize,
     rate: u32,
     last_delay: Cell<u64>,
+    drain_on_finish: bool,
 }
 
 impl AlsaSink {
@@ -97,6 +98,7 @@ impl AlsaSink {
                 channels,
                 rate: actual_rate,
                 last_delay: Cell::new(0),
+                drain_on_finish: device != "null",
             }),
             Err(message) => {
                 // SAFETY: pcm was opened above.
@@ -267,6 +269,9 @@ impl AudioSink for AlsaSink {
     }
 
     fn finish(&mut self) -> Result<(), String> {
+        if !self.drain_on_finish {
+            return Ok(());
+        }
         // SAFETY: pcm is live.
         let status = unsafe { snd_pcm_drain(self.pcm) };
         if status < 0 {

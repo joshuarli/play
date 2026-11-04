@@ -12,7 +12,7 @@ ROOT = Path(sys.argv[1])
 WRITE = sys.argv[2:] == ["--write"]
 if sys.argv[2:] not in ([], ["--write"]):
     raise SystemExit("usage: tests/lua-api-audit.sh [--write]")
-LUA = ROOT / "player" / "lua"
+LUA = ROOT / "rust" / "player-lua" / "lua"
 DOC = ROOT / "docs" / "lua-api.md"
 FILES = ["defaults.lua", "assdraw.lua", "options.lua", "input.lua", "osc.lua"]
 PROVIDERS = {"host", "defaults.lua", "assdraw.lua", "options.lua", "input.lua", "data"}

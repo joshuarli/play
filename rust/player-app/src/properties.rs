@@ -180,7 +180,14 @@ pub fn get(app: &App, name: &str) -> Result<NativeValue, String> {
             .current()
             .map(|index| NativeValue::Int(index as i64))
             .unwrap_or(NativeValue::Int(-1))),
+        "sub-text" => Ok(NativeValue::String(
+            app.shared
+                .as_ref()
+                .and_then(|shared| shared.inspect(|backend| backend.status().subtitle_text))
+                .unwrap_or_default(),
+        )),
         "osd-dimensions" => Ok(osd_dimensions(app)),
+        "window-scale" => Ok(NativeValue::Double(app.window_scale)),
         "osd-width" => Ok(NativeValue::Int(dimensions(app).0)),
         "osd-height" => Ok(NativeValue::Int(dimensions(app).1)),
         "mouse-pos" => Ok(NativeValue::Map(vec![
@@ -215,6 +222,11 @@ pub fn get(app: &App, name: &str) -> Result<NativeValue, String> {
                 .clone()
                 .unwrap_or_else(|| "auto".to_owned()),
         )),
+        "hwdec" => Ok(NativeValue::Array(vec![NativeValue::String(
+            app.options.hwdec.clone(),
+        )])),
+        "hwdec-current" => Ok(NativeValue::String("no".to_owned())),
+        "hwdec-software-fallback" => Ok(NativeValue::String("yes".to_owned())),
         "seekable" => Ok(NativeValue::Bool(true)),
         "partially-seekable" => Ok(NativeValue::Bool(false)),
         "cache-buffering-state" => Ok(NativeValue::Int(100)),
@@ -292,6 +304,22 @@ pub fn set(app: &mut App, name: &str, value: &NativeValue) -> Result<(), String>
         ("fullscreen", NativeValue::Bool(fullscreen)) => {
             app.fullscreen = *fullscreen;
             app.apply_fullscreen();
+            Ok(())
+        }
+        ("window-scale", NativeValue::Double(scale)) => {
+            let scale = scale.clamp(0.1, 10.0);
+            let width = video_dimension(&app.probe, 0);
+            let height = video_dimension(&app.probe, 1);
+            if width > 0 && height > 0 {
+                app.window_scale = scale;
+                let width = (width as f64 * scale).round() as i32;
+                let height = (height as f64 * scale).round() as i32;
+                app.logical_display = Some((width as u32, height as u32));
+                app.set_display(width as u32, height as u32);
+                if let Some(window) = app.window.as_mut() {
+                    window.resize(width, height);
+                }
+            }
             Ok(())
         }
         ("aid", NativeValue::Int(id)) => app.select_audio(*id),

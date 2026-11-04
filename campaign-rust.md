@@ -4,10 +4,10 @@
 
 Goal: replace the remaining mpv-derived C playback engine with a small Rust-owned engine. No loss of supported local playback. Both release artifacts keep building.
 
-- Last accepted: S8b (GUI and TUI modes in the Rust `player` binary; Finder open, drag-and-drop, playlist replacement, and PNG screenshots). S8a (Rust application core), S7e (GUI host; `gui` 3/3, `linux-gpu-next` 41/41), and earlier slices landed before it.
-- Red: none. Workspace green on macOS and in the Alpine container; `cli`, `input`, `playlist`, `state`, `play`, `seek`, `corpus`, `osc`, `osc-input`, `traces`, `dispatch`, `failures`, `lua-host`, `tui` (18), `gui` (3), `osd-fidelity`, `ffi`, and `rust-link` green.
-- Next: S9 (retire the legacy engine and make Cargo authoritative). The C engine stays the development reference and release until the Rust binary passes the suite.
-- Open: remote command center and touchbar were already disabled in the C build, so they have no behavior to port. Ordered chapters stay open (no fixture, needs linking design). The release app is 32,079,071 B while both engines are linked, 2.54 MB over the 29,542,136 B budget; S9 removes the C engine. The Alpine development binary must be built with `-C target-feature=-crt-static`; a static-pie with Wayland in NEEDED dies in the loader.
+- Last accepted: S9 (the mpv-derived C engine and Meson player build are deleted; Cargo builds both artifacts; both suites, audits, release packaging, and budgets pass). S8b (GUI and TUI modes in the Rust `player` binary), S8a, S7e, and earlier slices landed before it.
+- Red: none. `cargo test`, the macOS suite, the Alpine suite, `build`, `rust-link`, `ffi`, `release`, `audit`, `audit-linux`, and `measure.sh final` pass.
+- Next: none. The campaign is complete. Open work is `TODO.md` (`PLAY-20` hardware-decode wiring) and the owner-run checks in `docs/manual-checklist.md`.
+- Open: remote command center and touchbar were already disabled in the C build, so they have no behavior to port. Ordered chapters stay open (no fixture, needs linking design). The Linux binary must be built with `-C target-feature=-crt-static`; a static-pie with Wayland in NEEDED dies in the loader.
 - Resume: read this doc and `docs/RUST-PORT.md`, then run the next open slice. If the tree moved, adapt. Never overwrite newer work.
 
 ## Charter

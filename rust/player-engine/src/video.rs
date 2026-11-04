@@ -16,7 +16,7 @@ use std::sync::{mpsc, Arc, Mutex};
 const NO_TIMESTAMP: i64 = i64::MIN;
 const MAX_QUEUED_FRAMES: usize = 64;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PresentedFrame {
     pub pts: f64,
     pub id: u64,

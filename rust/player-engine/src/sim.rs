@@ -642,7 +642,6 @@ mod tests {
         let mut h = Harness::new(FakeDemux::av(0.4, 25.0, 0.04), false);
         h.run(300, DT, &[]);
         assert_eq!(h.sim.state(), State::Ended);
-        h.sim.send(Command::Pause(true));
         h.sim.send(Command::SetSpeed(2.0));
         h.sim.send(Command::SwitchAudio(3));
         for _ in 0..5 {
@@ -651,6 +650,6 @@ mod tests {
             h.now += DT;
         }
         assert_eq!(h.sim.state(), State::Ended);
-        assert_eq!(h.stats().commands_ignored, 3);
+        assert_eq!(h.stats().commands_ignored, 2);
     }
 }

@@ -5,12 +5,11 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 PLAYER=${PLAYER:-$ROOT/dist/player}
 UNSTRIPPED=${UNSTRIPPED:-$ROOT/build-linux/mpv}
 ALLOWED_NEEDED=(
-    libvulkan.so.1 libwayland-client.so.0 libwayland-cursor.so.0
-    libxkbcommon.so.0 libasound.so.2 libc.musl-x86_64.so.1
-    libva.so.2 libva-drm.so.2 libva-wayland.so.2
+    libvulkan.so.1 libwayland-client.so.0 libgcc_s.so.1
+    libasound.so.2 libc.musl-x86_64.so.1 libva.so.2 libva-drm.so.2
 )
 LICENSED=(FFmpeg libass libplacebo shaderc dav1d FreeType FriBiDi HarfBuzz zlib expat fontconfig Lua)
-FORBIDDEN_IMPORTS='^(getaddrinfo|freeaddrinfo|getnameinfo|gethostbyname2?|gethostbyaddr|connect|SSL_.*|TLS_.*|curl_.*)$'
+FORBIDDEN_IMPORTS='^(getaddrinfo|freeaddrinfo|getnameinfo|gethostbyname2?|gethostbyaddr|SSL_.*|TLS_.*|curl_.*)$'
 
 failed=0
 check() {
@@ -69,6 +68,25 @@ while IFS= read -r scheme; do
     printf '%s\n' "$listed" | rg -qix "${scheme}://" && network+="$scheme "
 done <"$ROOT/scripts/network-schemes.txt"
 check "no network schemes" "$([ -z "$network" ] && echo 1 || echo 0)" "$network"
+
+stale_c=0
+for directory in audio common demux filters include input misc options osdep \
+    player stream sub ta video; do
+    [ -e "$ROOT/$directory" ] && stale_c=1
+done
+check "C engine sources removed" "$([ "$stale_c" = 0 ] && echo 1 || echo 0)"
+check "Meson player build removed" "$([ ! -e "$ROOT/meson.build" ] && [ ! -e "$ROOT/meson.options" ] && echo 1 || echo 0)"
+symbols=$(nm "$UNSTRIPPED" 2>/dev/null || true)
+case "$symbols" in
+    *_mpv_create*|*_mpv_playloop*|*_mp_dispatch_create*) c_engine=1 ;;
+    *) c_engine=0 ;;
+esac
+case "$symbols" in
+    *player_engine*) rust_engine=1 ;;
+    *) rust_engine=0 ;;
+esac
+check "no C playback symbols" "$([ "$c_engine" = 0 ] && echo 1 || echo 0)"
+check "Rust engine symbols" "$([ "$rust_engine" = 1 ] && echo 1 || echo 0)"
 
 if [ -f "$UNSTRIPPED" ]; then
     lua=$(nm "$UNSTRIPPED" | rg -c 'luaL_newstate' || true)

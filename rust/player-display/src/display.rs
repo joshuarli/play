@@ -284,6 +284,8 @@ pub struct Window {
     _shell: Shell,
     width: i32,
     height: i32,
+    windowed_size: (i32, i32),
+    constraint: Option<(i32, i32)>,
     presented: u64,
 }
 
@@ -355,6 +357,7 @@ impl Window {
         let width = app_width(&app, width);
         let height = app_height(&app, height);
         let swapchain = Swapchain::open(&vulkan, &surface, width, height)?;
+        eprintln!("vo/gpu-next/wayland: Registered output {width}x{height}");
         Ok(Window {
             swapchain,
             surface,
@@ -366,6 +369,8 @@ impl Window {
             _shell: shell,
             width,
             height,
+            windowed_size: (width, height),
+            constraint: None,
             presented: 0,
         })
     }
@@ -386,12 +391,29 @@ impl Window {
         self.app.fullscreen
     }
 
-    pub fn set_fullscreen(&self, fullscreen: bool) {
+    pub fn set_fullscreen(&mut self, fullscreen: bool) {
         if fullscreen {
+            if !self.app.fullscreen {
+                self.windowed_size = (self.width, self.height);
+            }
             self._shell.toplevel.set_fullscreen(None);
+            self._shell.surface.commit();
         } else {
             self._shell.toplevel.unset_fullscreen();
+            self._shell.surface.commit();
+            self.resize(self.windowed_size.0, self.windowed_size.1);
         }
+    }
+
+    pub fn resize(&mut self, width: i32, height: i32) {
+        if width <= 0 || height <= 0 {
+            return;
+        }
+        if self.constraint != Some((width, height)) {
+            self.constraint = Some((width, height));
+        }
+        self._shell.toplevel.set_min_size(width, height);
+        self._shell.toplevel.set_max_size(width, height);
         self._shell.surface.commit();
     }
 
@@ -429,6 +451,14 @@ impl Window {
             self.swapchain.resize(width, height)?;
             self.width = width;
             self.height = height;
+        }
+        if let Some((target_width, target_height)) = self.constraint
+            && (self.width, self.height) == (target_width, target_height)
+        {
+            self._shell.toplevel.set_min_size(0, 0);
+            self._shell.toplevel.set_max_size(0, 0);
+            self._shell.surface.commit();
+            self.constraint = None;
         }
         Ok(false)
     }

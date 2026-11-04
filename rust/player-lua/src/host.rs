@@ -15,7 +15,7 @@ use crate::new_interpreter;
 use crate::queue::{event_queue, EventReceiver, EventSender, Posted, Received};
 use crate::value::{NativeValue, Sentinels};
 
-const DEFAULTS: &str = include_str!("../../../player/lua/defaults.lua");
+const DEFAULTS: &str = include_str!("../lua/defaults.lua");
 pub const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 const MAX_WAIT_SECONDS: f64 = 86_400.0;
 

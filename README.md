@@ -1,6 +1,6 @@
 # Player
 
-Player is a local-only media player for macOS on Apple Silicon and for Linux x86-64 on musl. It uses the mpv v0.41.0 playback pipeline, a pinned FFmpeg n9.0.2, and a Rust-owned control plane. It plays local video, audio, subtitles, and playlists. It does not open network streams.
+Player is a local-only media player for macOS on Apple Silicon and for Linux x86-64 on musl. It uses a Rust playback engine, a pinned FFmpeg n9.0.2, libplacebo, and the mpv-compatible application surface ported in this repository. It plays local video, audio, subtitles, and playlists. It does not open network streams.
 
 ## Install and run
 
@@ -12,9 +12,9 @@ Unzip the macOS app and open `Player.app` from Finder, or run a file directly:
 Player.app/Contents/MacOS/player FILE
 ```
 
-The bundle carries its own dylibs, Vulkan loader, MoltenVK, and the Rust cdylib. It does not use Homebrew at runtime. It is ad-hoc signed and not notarized; macOS may require the Finder context-menu Open on first launch, or clearing the quarantine attribute.
+The bundle carries its own dylibs, Vulkan loader, and MoltenVK. It does not use Homebrew at runtime. It is ad-hoc signed and not notarized; macOS may require the Finder context-menu Open on first launch, or clearing the quarantine attribute.
 
-On Linux, unpack the tarball and run `./player FILE`. The executable is mostly static and needs only musl, the Vulkan loader, Wayland, xkbcommon, ALSA, and libva at run time; the bundled README lists the runtime packages. See [Linux](docs/linux.md).
+On Linux, unpack the tarball and run `./player FILE`. The executable is mostly static and needs only musl, libgcc, the Vulkan loader, Wayland client, ALSA, and libva at run time; the bundled README lists the runtime packages. See [Linux](docs/linux.md).
 
 To build either artifact from source, see [Install and run](docs/install.md).
 
@@ -28,7 +28,7 @@ The player does not read `mpv.conf`, `input.conf`, or scripts from user director
 
 ## Controls
 
-The on-screen controls provide play and pause, seek, volume and mute, fullscreen, and track selection. The macOS menu provides the same playback controls, file opening, screenshots, and window sizing.
+The on-screen controls provide play and pause, seek, volume and mute, fullscreen, and track selection. Open a file from the command line, Finder, or drag-and-drop; screenshots are available over IPC.
 
 ## Terminal UI
 

@@ -9,8 +9,8 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 "$ROOT/tests/run.sh" release
 
 protocols=$("$ROOT/build/mpv" --no-config --list-protocols)
-if ! printf '%s\n' "$protocols" | rg -q 'file://'; then
-    echo "audit: file:// protocol missing" >&2
+if ! printf '%s\n' "$protocols" | rg -q '^file://$'; then
+    echo "audit: file:// is not the only protocol" >&2
     exit 1
 fi
 while IFS= read -r scheme; do
@@ -27,12 +27,28 @@ if otool -L "$ROOT/build/mpv" | rg -qi 'libmpv|curl|libssl|libcrypto|liblua|mlua
     exit 1
 fi
 
-if rg -n 'lua_State|luaL_newstate' \
-    "$ROOT/player" "$ROOT/include" "$ROOT/common" "$ROOT/input" \
-    "$ROOT/options" "$ROOT/stream" "$ROOT/demux" "$ROOT/sub" \
-    "$ROOT/video" "$ROOT/audio" "$ROOT/filters" "$ROOT/osdep" \
-    "$ROOT/misc" "$ROOT/ta" "$ROOT/rust/player-ffi" \
-    "$ROOT/rust/player-core" "$ROOT/rust/player-audio" >/dev/null; then
+for directory in audio common demux filters include input misc options osdep \
+    player stream sub ta video; do
+    if [ -e "$ROOT/$directory" ]; then
+        echo "audit: C engine source tree remains: $directory" >&2
+        exit 1
+    fi
+done
+if [ -e "$ROOT/meson.build" ] || [ -e "$ROOT/meson.options" ]; then
+    echo "audit: Meson player build remains" >&2
+    exit 1
+fi
+
+if nm "$ROOT/build/mpv" | rg '_(mpv_create|mpv_playloop|mp_dispatch_create)$' >/dev/null; then
+    echo "audit: C playback symbols present" >&2
+    exit 1
+fi
+if ! nm "$ROOT/build/mpv" | rg 'player_engine' >/dev/null; then
+    echo "audit: Rust engine symbols missing" >&2
+    exit 1
+fi
+
+if rg -n 'lua_State|luaL_newstate' "$ROOT/rust" --glob '!**/player-lua/**' >/dev/null; then
     echo "audit: Lua API remnants outside player-lua" >&2
     exit 1
 fi
@@ -47,6 +63,10 @@ release_binary="$ROOT/dist/Player.app/Contents/MacOS/player"
 release_interpreters=$(nm "$release_binary" | rg -c 'luaL_newstate' || true)
 if [ "$release_interpreters" != "1" ]; then
     echo "audit: release expected one Lua interpreter, found ${release_interpreters:-0}" >&2
+    exit 1
+fi
+if [ -e "$ROOT/dist/Player.app/Contents/Frameworks/libplayer_release.dylib" ]; then
+    echo "audit: release carries the retired C ABI dylib" >&2
     exit 1
 fi
 

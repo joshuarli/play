@@ -14,6 +14,7 @@ pub struct IpcServer {
 struct Client {
     stream: UnixStream,
     buffer: Vec<u8>,
+    outbound: Vec<u8>,
 }
 
 impl IpcServer {
@@ -57,6 +58,7 @@ impl IpcServer {
             self.client = None;
             return messages;
         }
+        client.flush();
         while let Some(newline) = client.buffer.iter().position(|byte| *byte == b'\n') {
             let line: Vec<u8> = client.buffer.drain(..=newline).collect();
             let Ok(text) = std::str::from_utf8(&line[..line.len() - 1]) else {
@@ -86,6 +88,7 @@ impl IpcServer {
                 self.client = Some(Client {
                     stream,
                     buffer: Vec::new(),
+                    outbound: Vec::new(),
                 });
             }
             Err(error) if error.kind() == ErrorKind::WouldBlock => {}
@@ -105,8 +108,31 @@ impl IpcServer {
             return;
         };
         text.push('\n');
-        if client.stream.write_all(text.as_bytes()).is_err() {
+        client.outbound.extend_from_slice(text.as_bytes());
+        client.flush();
+        if client.outbound.len() > 8 * 1024 * 1024 {
             self.client = None;
+        }
+    }
+}
+
+impl Client {
+    fn flush(&mut self) {
+        while !self.outbound.is_empty() {
+            match self.stream.write(&self.outbound) {
+                Ok(0) => {
+                    self.outbound.clear();
+                    break;
+                }
+                Ok(count) => {
+                    self.outbound.drain(..count);
+                }
+                Err(error) if error.kind() == ErrorKind::WouldBlock => break,
+                Err(_) => {
+                    self.outbound.clear();
+                    break;
+                }
+            }
         }
     }
 }

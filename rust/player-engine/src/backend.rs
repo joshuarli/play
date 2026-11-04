@@ -367,6 +367,7 @@ pub struct EngineStatus {
     pub video_width: u32,
     pub video_height: u32,
     pub error: Option<String>,
+    pub subtitle_text: String,
     pub tracks: Vec<TrackInfo>,
 }
 
@@ -385,6 +386,7 @@ impl Default for EngineStatus {
             video_width: 0,
             video_height: 0,
             error: None,
+            subtitle_text: String::new(),
             tracks: Vec::new(),
         }
     }
@@ -507,6 +509,10 @@ impl SchedulerEngine {
 
     pub fn select_sub(&self, selected: Option<usize>) {
         self.send(WorkerCommand::SelectSub(selected));
+    }
+
+    pub fn select_sub_position(&self, position: usize) {
+        self.select_sub(Some(position));
     }
 
     pub fn add_sub(&self, path: &str) -> Result<(), String> {
@@ -801,6 +807,7 @@ impl Worker {
         let dropped_late = self.scheduler.stats().dropped_late;
         let (volume, muted) = (self.volume, self.muted);
         let tracks = track_list(&self.scheduler);
+        let subtitle_text = self.scheduler.subtitle_text(now);
         update(state, |status| {
             status.position = position;
             status.speed = self.scheduler.speed();
@@ -811,6 +818,7 @@ impl Worker {
             status.dropped_late = dropped_late;
             status.volume = volume;
             status.muted = muted;
+            status.subtitle_text = subtitle_text;
             status.tracks = tracks;
         });
     }
@@ -1238,30 +1246,33 @@ mod tests {
         target_os = "linux",
         ignore = "static-pie test binaries cannot call the container Vulkan loader; run with RUSTFLAGS=\"-C target-feature=-crt-static\""
     )]
-    fn unsupported_sub_codec_lists_but_never_selects() {
+    fn mov_text_subs_select_and_render() {
         let engine = SchedulerEngine::load(&fixture("h264-movtext.mp4"), SinkKind::Null)
             .expect("engine loads video with movtext");
-        pause_and_seek(&engine, 0.0);
-        let status = engine.snapshot();
+        let status = poll_until(&engine, StdDuration::from_secs(10), |status| {
+            status
+                .tracks
+                .iter()
+                .any(|track| track.kind == TrackKind::Subtitle)
+        });
         let sub = status
             .tracks
             .iter()
             .find(|track| track.kind == TrackKind::Subtitle)
             .expect("movtext listed");
         assert_eq!(sub.codec, "mov_text");
-        assert!(!sub.selected, "unsupported codec auto-selects");
-        assert_eq!(sub.sub_index, None);
-        engine.select_sub(Some(0));
-        let still = engine.snapshot();
-        assert!(
-            still
-                .tracks
-                .iter()
-                .filter(|track| track.kind == TrackKind::Subtitle && track.selected)
-                .next()
-                .is_none(),
-            "unsupported codec selected"
-        );
+        let sub_index = sub.sub_index.expect("movtext has a decoder");
+        engine.select_sub(Some(sub_index));
+        pause_and_seek(&engine, 1.0);
+        let during = engine
+            .render_subtitles(640, 480, 1.0, 1000)
+            .expect("subs render");
+        assert!(!during.is_empty(), "no bitmaps during the movtext cue");
+        assert!(inked(&during) > 50, "no ink during the movtext cue");
+        let outside = engine
+            .render_subtitles(640, 480, 1.0, 2900)
+            .expect("subs render");
+        assert!(outside.is_empty(), "bitmaps outside the movtext cue");
     }
 
     #[test]

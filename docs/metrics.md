@@ -22,45 +22,46 @@ Automated playback is headless (`--vo=null --ao=null`), so GUI and renderer beha
 | 2026-11-03 | cfd4d827ecc4-dirty | final | 9707328 | 9707328 | 17334096 | 13 | 64.74 | 72.02 | 157.86 | 83.98 | 216.14 | 0.18 | 0.46 | 23.73 | 5.12 | 1 | headless, 3 s clips |
 | 2026-11-03 | ee5021c5256e-dirty | final | 9440304 | 9440304 | 17334096 | 13 | 68.31 | 66.83 | 154.31 | 83.84 | 213.31 | 0.26 | 0.61 | 28.99 | 6.37 | 1 | headless, 3 s clips |
 | 2026-11-03 | 7e9f4ba571d9 | final | 9440304 | 9440304 | 17334096 | 13 | 58.2 | 53.85 | 139.61 | 83.94 | 215.83 | 0.17 | 0.44 | 25.33 | 3.21 | 1 | headless, 3 s clips |
+| 2026-11-03 | ab74141fcb7a-dirty | final | 7617088 | 7617088 | 15127360 | 12 | 18.2 | 17.63 | 35.11 | 14.33 | 219.75 | 2.96 | 2.98 | 42.21 | 11.4 | 1 | headless, 3 s clips |
 <!-- measure:end -->
 
 The `baseline` row is the P0 comparison point. The P8 budget is half of its unique closure size, 29,542,136 B.
 
 ## Final release
 
-Measured at `96331a9` on 2026-11-02 with `scripts/measure.sh final`. The host was quiet before and after the run (`perf-gate-ready` exited 0).
+Measured on the S9b working tree at `ab74141` on 2026-11-03 with `scripts/measure.sh final`. The host was quiet before and after the run (`perf-gate-ready` exited 0).
 
 | Metric | Value |
 |---|---:|
-| `Player.app` total | 27,041,616 B |
-| executable | 9,707,520 B |
-| framework closure | 17,334,096 B in 13 files |
-| cold startup | 65.47 ms |
-| warm startup | 63.14 ms |
-| first frame, 1080p | 150.12 ms |
-| idle RSS | 83.92 MB |
-| 1080p RSS | 215.83 MB |
-| 1080p CPU | 0.18 s |
-| 4K CPU | 0.44 s |
-| seek | 23.68 ms |
-| exit | 3.06 ms |
+| `Player.app` total | 24,140,241 B |
+| executable | 7,617,088 B |
+| framework closure | 15,127,360 B in 12 files |
+| cold startup | 18.20 ms |
+| warm startup | 17.63 ms |
+| first frame, 1080p | 35.11 ms |
+| idle RSS | 14.33 MB |
+| 1080p RSS | 219.75 MB |
+| 1080p CPU | 2.96 s |
+| 4K CPU | 2.98 s |
+| seek | 42.21 ms |
+| exit | 11.40 ms |
 | audio underruns | 0 |
 | protocols | 1 (`file`) |
 | Lua interpreters | 1 |
 
 | Budget | Limit | Actual | Result |
 |---|---:|---:|---|
-| Distributable | 29,542,136 B | 27,041,616 B | pass |
-| Executable | 10,000,000 B | 9,707,520 B | pass |
-| First frame | 1 s | 150.12 ms | pass |
-| 1080p RSS | 300 MB | 215.83 MB | pass |
-| Seek | 250 ms | 23.68 ms | pass |
+| Distributable | 29,542,136 B | 22,744,448 B | pass |
+| Executable | 10,000,000 B | 7,617,088 B | pass |
+| First frame | 1 s | 35.11 ms | pass |
+| 1080p RSS | 300 MB | 219.75 MB | pass |
+| Seek | 250 ms | 42.21 ms | pass |
 | Network schemes | 0 | 0 | pass |
 | Duplicate Lua interpreters | 0 | 0 | pass |
 
-The 1080p CPU result is not a fixed budget. A hardcoded copy of the baseline could not be told apart from run noise: the metric ranged from 0.16 s to 0.23 s across the runs above. `scripts/measure.sh cpu BASELINE_PLAYER` now runs seven interleaved baseline and candidate pairs, reports both medians and spreads, and fails only when the candidate exceeds the baseline by more than 10% and by more than the larger spread. `scripts/measure.sh compare BEFORE AFTER` applies the same rule to startup, first frame, seek, exit, and CPU between two labels. Both print `perf gate deferred: host busy` and exit 75 when `perf-gate-ready` reports load, which is never a pass. Frame drops are no longer measured: under `--vo=null` there is no renderer clock, so the count is zero by construction. The renderer check is in `docs/manual-checklist.md`.
+The 1080p CPU result is not a fixed budget. The S9 row is real-time headless playback: with `--vo=null --ao=null` the Rust engine still advances the clock at wall time, so a 3 s clip costs about 3 s of CPU. It is not comparable to the older C rows, which finished null output ahead of wall time. The gated budgets are size, RSS, first frame, seek, protocols, and Lua count. `scripts/measure.sh cpu BASELINE_PLAYER` runs seven interleaved baseline and candidate pairs, reports both medians and spreads, and fails only when the candidate exceeds the baseline by more than 10% and by more than the larger spread. `scripts/measure.sh compare BEFORE AFTER` applies the same rule to startup, first frame, seek, exit, and CPU between two labels. Both print `perf gate deferred: host busy` and exit 75 when `perf-gate-ready` reports load, which is never a pass. Frame drops are no longer measured: under `--vo=null` there is no renderer clock, so the count is zero by construction. The renderer check is in `docs/manual-checklist.md`.
 
-The `96331a9` build carries the terminal UI and its PNG/MJPEG decoders on top of the `cbb4ec2` build, which added the 1,387,652 B bundle icon. The app is 28,437,647 B on disk with a 9,707,520 B executable and a 17,334,096 B closure, still under the 29,542,136 B distributable budget.
+The S9 build removes the C engine and the Rust cdylib. The app is 24,140,241 B on disk with a 7,617,088 B executable and a 15,127,360 B closure, under the 29,542,136 B distributable budget.
 
 ## Optimization history
 
@@ -88,7 +89,7 @@ Measured with `scripts/measure.sh size` and nine interleaved first-frame runs.
 | `build/mpv` stripped | 13,990,240 B |
 | closure | 20.06 MiB in 17 files |
 
-First-frame medians: default 169.23 ms; `--osc=no` 164.91 ms; a third run with the then-current `--load-select=no` 169.60 ms, an option removed with `select.lua`. The spread across nine runs was 158.74 to 215.92 ms, so no isolated script-host cost above noise was measurable. Symbol-level attribution is not available: macOS `nm -S` reports zero sizes, and archive sizes include Rust `std` rather than the linked contribution.
+First-frame medians: default 169.23 ms; `--osc=no` 164.91 ms; a third run with the then-current `--load-select=no` 169.60 ms, an option removed with `select.lua`. The spread across nine runs was 158.74 to 215.92 ms, so no isolated script-host cost above noise was measurable. Symbol-level attribution is not available: macOS `nm -S` reports zero sizes, and archive sizes include Rust `std` rather than the linked contribution. S9 removed the Rust cdylib and its `libplayer_ffi.a` archive; `scripts/measure.sh size` now reports `osc.lua` and the vendored Lua archive only.
 
 ## Linux
 
@@ -98,5 +99,6 @@ Medians of 7 runs with the spread (max − min). `scripts/measure-linux.sh`; col
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | baseline | 2026-11-01 | 2681555-dirty | 6,643,680 | 18 | 62.3 ± 60.95 | 62.5 ± 6.16 | 187.43 ± 45.29 | 39.6 | 156.33 | 0.57 | 1.65 ± 35.14 | 11.42 ± 1.37 | 1 |
 | final (host busy: timings are not a gate) | 2026-11-01 | 646198c | 26,355,208 | 6 | 5.14 ± 1.53 | 4.3 ± 1.53 | 105.41 ± 48.74 | 15.7 | 128.94 | 0.36 | 1.07 ± 30.4 | 2.6 ± 1.67 | 1 |
+| final | 2026-11-04 | ab74141-dirty | 24,475,984 | 7 | 12.14 ± 8.98 | 12.62 ± 4.06 | 75.34 ± 13.98 | 9.7 | 216.09 | 3.05 | 36.05 ± 1.85 | 20.11 ± 10.41 | 1 |
 
-The published v0.41.0 tarball adds VA-API (three libraries and the `--hwdec=auto` default) to the `646198c` build: its stripped binary is 26,465,800 B with nine `NEEDED` entries. Its timings are the deferred ones above, not a gate.
+The S9 `final` row is the Rust player: 24,475,984 B stripped, seven `NEEDED` entries, and 216.09 MB at 1080p. Its timings come from the container and are not a gate. The published v0.41.0 tarball predates S9: it adds VA-API (three libraries and the `--hwdec=auto` default) to the `646198c` build, with a 26,465,800 B stripped binary and nine `NEEDED` entries.

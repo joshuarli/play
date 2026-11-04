@@ -1,7 +1,7 @@
 # Lua API Closure
 
 This file is the authoritative `mp` API closure for the retained built-in Lua
-modules: `player/lua/defaults.lua`, `assdraw.lua`, `options.lua`, `input.lua`,
+modules: `rust/player-lua/lua/defaults.lua`, `assdraw.lua`, `options.lua`, `input.lua`,
 and `osc.lua`. The Rust host implements this closure. Do not implement from a
 guessed list; extend the sources and rerun the audit instead.
 

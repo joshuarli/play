@@ -38,10 +38,10 @@ const CLIENT_CLOSED: &str = "script client is closed";
 const CLIENT_CLOSED_CODE: c_int = -1;
 const EVENT_POLL_SECONDS: f64 = 0.2;
 
-const ASSDRAW: &str = include_str!("../../../player/lua/assdraw.lua");
-const OPTIONS: &str = include_str!("../../../player/lua/options.lua");
-const INPUT: &str = include_str!("../../../player/lua/input.lua");
-const OSC: &str = include_str!("../../../player/lua/osc.lua");
+const ASSDRAW: &str = include_str!("../../player-lua/lua/assdraw.lua");
+const OPTIONS: &str = include_str!("../../player-lua/lua/options.lua");
+const INPUT: &str = include_str!("../../player-lua/lua/input.lua");
+const OSC: &str = include_str!("../../player-lua/lua/osc.lua");
 
 #[repr(C)]
 pub union MpvNodeValue {

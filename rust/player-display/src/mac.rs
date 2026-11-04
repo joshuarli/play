@@ -13,6 +13,7 @@ unsafe extern "C" {
     fn player_mac_window_layer(handle: *mut c_void) -> *mut c_void;
     fn player_mac_window_poll(handle: *mut c_void) -> c_int;
     fn player_mac_window_size(handle: *mut c_void, width: *mut c_int, height: *mut c_int);
+    fn player_mac_window_resize(handle: *mut c_void, width: c_int, height: c_int);
     fn player_mac_window_fullscreen(handle: *mut c_void) -> c_int;
     fn player_mac_window_set_fullscreen(handle: *mut c_void, fullscreen: c_int);
     fn player_mac_window_next_input(
@@ -58,6 +59,11 @@ impl Bridge {
         // SAFETY: the handle is live and the out-pointers are valid.
         unsafe { player_mac_window_size(self.handle, &mut width, &mut height) };
         (width as i32, height as i32)
+    }
+
+    fn resize(&self, width: i32, height: i32) {
+        // SAFETY: the handle is live.
+        unsafe { player_mac_window_resize(self.handle, width as c_int, height as c_int) };
     }
 
     fn fullscreen(&self) -> bool {
@@ -161,6 +167,10 @@ impl MacWindow {
 
     pub fn set_fullscreen(&self, fullscreen: bool) {
         self.bridge.set_fullscreen(fullscreen);
+    }
+
+    pub fn resize(&mut self, width: i32, height: i32) {
+        self.bridge.resize(width, height);
     }
 
     pub fn drain_input(&mut self) -> Vec<MacInput> {

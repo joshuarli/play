@@ -299,6 +299,15 @@ void player_mac_window_size(void *handle, int *width, int *height) {
     }
 }
 
+void player_mac_window_resize(void *handle, int width, int height) {
+    struct PlayerMacWindow *win = (struct PlayerMacWindow *)handle;
+    CGFloat scale = win->window.backingScaleFactor;
+    if (scale <= 0) {
+        scale = 1;
+    }
+    [win->window setContentSize:NSMakeSize(width / scale, height / scale)];
+}
+
 int player_mac_window_fullscreen(void *handle) {
     struct PlayerMacWindow *win = (struct PlayerMacWindow *)handle;
     return (win->window.styleMask & NSWindowStyleMaskFullScreen) != 0 ? 1 : 0;

@@ -38,11 +38,13 @@ pub struct Options {
     pub list_protocols: bool,
     pub frames: Option<u64>,
     pub audio_device: Option<String>,
+    pub hwdec: String,
     pub term_playing_msg: Option<String>,
     pub log_file: Option<PathBuf>,
     pub osc: bool,
     pub scripts: Vec<String>,
     pub sub_files: Vec<String>,
+    pub sid: Option<String>,
     pub audio_files: Vec<String>,
     pub geometry: Option<(i32, i32)>,
     pub quiet: bool,
@@ -73,11 +75,17 @@ impl Default for Options {
             list_protocols: false,
             frames: None,
             audio_device: None,
+            hwdec: if cfg!(target_os = "linux") {
+                "auto".to_owned()
+            } else {
+                "no".to_owned()
+            },
             term_playing_msg: None,
             log_file: None,
             osc: true,
             scripts: Vec::new(),
             sub_files: Vec::new(),
+            sid: None,
             audio_files: Vec::new(),
             geometry: None,
             quiet: false,
@@ -176,7 +184,8 @@ pub fn parse(args: &[String]) -> Result<Options, String> {
             "no-video" => options.no_video = true,
             "vo" => options.null_video = value(&name)? == "null",
             "ao" => options.null_audio = value(&name)? == "null",
-            "hwdec" | "hwdec-codecs" => {
+            "hwdec" => options.hwdec = value(&name)?,
+            "hwdec-codecs" => {
                 let _ = value(&name)?;
             }
             "input-ipc-server" | "input-ipc-server-raw" => {
@@ -197,6 +206,7 @@ pub fn parse(args: &[String]) -> Result<Options, String> {
                 options.items.push(Item::Playlist(path));
             }
             "sub-file" => options.sub_files.push(value(&name)?),
+            "sid" => options.sid = Some(value(&name)?),
             "audio-file" => options.audio_files.push(value(&name)?),
             "script" => options.scripts.push(value(&name)?),
             "geometry" => options.geometry = parse_geometry(&value(&name)?),

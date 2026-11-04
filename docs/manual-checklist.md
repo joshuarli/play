@@ -25,6 +25,5 @@ Owner-run checks before a release and after a platform change. Automated gates a
 | Linux | Keyboard and pointer input reach the OSC; click and drag seek | not run |
 | Linux | ALSA audible on a hardware PCM; channel placement for stereo and 5.1 | not run |
 | Linux | Subtitle shaping and system-font fallback for CJK, Arabic, and Greek | not run |
-| Linux | The default `--hwdec=auto` plays zero-copy on a real compositor with a Vulkan device that imports dmabufs (`hwdec-current` is `vaapi`) | not run |
-| Linux | 10-bit HEVC and AV1 with `--hwdec=vaapi`; decode GPU differs from display GPU | not run |
+| Linux | VA-API decode through the scheduler, including 10-bit HEVC and AV1 and a separate decode GPU, once `PLAY-20` wires it | not run |
 | Linux | Tarball runs on a second musl host, if distributed | not run |

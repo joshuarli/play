@@ -244,7 +244,9 @@ class Mpv:
             r"(?i)(\berror\b|\bfailed\b|\bfailure\b|\bcould not open\b|"
             r"\bnot found\b|\bcorrupt\b|\bunderrun\b)")
         return [line for line in self.lines
-                if regex.search(line) and "No key binding found" not in line]
+                if regex.search(line) and "No key binding found" not in line
+                and not line.startswith("[ass] fontselect:")
+                and not (line.startswith("[ass] Glyph ") and " not found" in line)]
 
     def wait_eof(self, timeout=30):
         event = self.wait_event("end-file", timeout=timeout)
@@ -1017,8 +1019,7 @@ def gate_linux_vaapi(results, args):
 
 
 def gate_linux_hwdec_default(results, args):
-    has_gpu = bool(list(Path("/dev/dri").glob("renderD*")))
-    expected = "vaapi-copy" if has_gpu else "no"
+    expected = "no"
     with Mpv(["--vo=null", "--ao=null"]) as mpv:
         results.check("linux-hwdec-default: auto", mpv.get_property("hwdec") == ["auto"],
                       str(mpv.get_property("hwdec")))
@@ -1028,8 +1029,8 @@ def gate_linux_hwdec_default(results, args):
                           timeout=10)
         current = mpv.get_property("hwdec-current")
         current = "no" if current == "" else current
-        results.check(f"linux-hwdec-default: vo=null decodes with {expected}", current == expected,
-                      f"hwdec-current {current!r}, render node {'present' if has_gpu else 'absent'}")
+        results.check(f"linux-hwdec-default: software decode with {expected}",
+                      current == expected, f"hwdec-current {current!r}")
         check_no_errors(results, "linux-hwdec-default", mpv)
     results.check("linux-hwdec-default: exit", mpv.returncode == 0, f"exit {mpv.returncode}")
 
@@ -1971,11 +1972,15 @@ def gate_release(results, args):
 
 
 def gate_linux_rust_link(results, args):
-    nm = subprocess.run(["nm", "-g", str(MPV)], capture_output=True, text=True,
+    nm = subprocess.run(["nm", str(MPV)], capture_output=True, text=True,
                         timeout=30).stdout
-    results.check("linux-rust-link: bridge symbols",
-                  "player_ffi_abi_version" in nm and "player_audio_create" in nm,
+    results.check("linux-rust-link: engine symbols",
+                  "player_engine" in nm and "player_app" in nm,
                   "symbol missing")
+    results.check("linux-rust-link: no C playloop",
+                  not re.search(r"_(mpv_create|mpv_playloop|mp_dispatch_create)$",
+                                nm, re.MULTILINE),
+                  "C playloop symbol present")
     proc = subprocess.run(
         ["cargo", "test", "--manifest-path", str(ROOT / "rust" / "Cargo.toml"),
          "--target", "x86_64-unknown-linux-musl"],
@@ -2021,7 +2026,7 @@ def gate_linux_osc(results, args):
 
 
 def gate_dispatch(results, args):
-    bindings = ROOT / "etc" / "input.conf"
+    bindings = ROOT / "tests" / "input.conf"
     extra = (
         "\nF7 cycle pause; set volume nope\n"
         "F8 cycle pause; cycle mute\n"

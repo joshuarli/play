@@ -24,10 +24,10 @@ use crate::playlist::{self, Entry, Playlist};
 use crate::properties::{self, Probe};
 use crate::window::{HostEvent, HostWindow};
 
-const ASSDRAW: &str = include_str!("../../../player/lua/assdraw.lua");
-const OPTIONS: &str = include_str!("../../../player/lua/options.lua");
-const INPUT: &str = include_str!("../../../player/lua/input.lua");
-const OSC: &str = include_str!("../../../player/lua/osc.lua");
+const ASSDRAW: &str = include_str!("../../player-lua/lua/assdraw.lua");
+const OPTIONS: &str = include_str!("../../player-lua/lua/options.lua");
+const INPUT: &str = include_str!("../../player-lua/lua/input.lua");
+const OSC: &str = include_str!("../../player-lua/lua/osc.lua");
 
 const GATE_FRAMES: u64 = 24;
 const GATE_OVERLAY_INK: usize = 100;
@@ -60,7 +60,10 @@ pub struct App {
     pub aid_disabled: bool,
     pub eof_reached: bool,
     pub display: Option<(u32, u32)>,
-    window: Option<HostWindow>,
+    pub window_scale: f64,
+    pub(crate) window: Option<HostWindow>,
+    pub(crate) windowed_display: Option<(u32, u32)>,
+    pub(crate) logical_display: Option<(u32, u32)>,
     last_frame: Option<PresentedFrame>,
     frame_serial: u64,
     presented_serial: u64,
@@ -106,7 +109,10 @@ impl App {
             ipc: None,
             eof_reached: false,
             display: None,
+            window_scale: 1.0,
             window: None,
+            windowed_display: None,
+            logical_display: None,
             last_frame: None,
             frame_serial: 0,
             presented_serial: 0,
@@ -412,6 +418,15 @@ impl App {
     }
 
     pub fn load_current(&mut self) -> Result<(), String> {
+        if !self.gui
+            && !self.options.tui
+            && !self.options.null_video
+            && !self.options.no_video
+            && self.window.is_none()
+        {
+            self.open_window()?;
+            self.gui = true;
+        }
         self.unload();
         self.defer_event(ipc::event(
             "start-file",
@@ -487,6 +502,21 @@ impl App {
                     .position(|_| true)
             })
             .map(|_| 1);
+        if let Some(shared) = &self.shared {
+            match self.options.sid.as_deref() {
+                Some("no") => {}
+                Some(value) if value != "auto" => {
+                    if let Ok(id) = value.parse::<i64>()
+                        && id > 0
+                    {
+                        shared.mutate(|backend| backend.select_sub_position(id as usize - 1));
+                    }
+                }
+                _ => {
+                    shared.mutate(|backend| backend.select_sub_position(0));
+                }
+            }
+        }
         if !self.options.tui {
             self.spawn_osc();
             self.spawn_scripts();
@@ -890,16 +920,37 @@ impl App {
         if wanted != self.applied_fullscreen
             && let Some(window) = self.window.as_mut()
         {
+            if wanted {
+                self.windowed_display = self.display;
+                self.logical_display = None;
+            } else {
+                self.logical_display = self.windowed_display;
+            }
             window.set_fullscreen(wanted);
             self.applied_fullscreen = wanted;
         }
         let new_frames = self.frame_serial != self.presented_serial;
-        let (width, height) = self
+        let actual = self
             .window
             .as_ref()
             .map(|window| (window.width().max(1), window.height().max(1)))
             .unwrap_or((1, 1));
+        if self.fullscreen {
+            self.logical_display = None;
+        }
+        if let Some(logical) = self.logical_display
+            && actual == (logical.0 as i32, logical.1 as i32)
+        {
+            self.logical_display = None;
+        }
+        let (width, height) = self
+            .logical_display
+            .map(|(width, height)| (width as i32, height as i32))
+            .unwrap_or(actual);
         let size = (width, height);
+        if self.display != Some((width as u32, height as u32)) {
+            self.set_display(width as u32, height as u32);
+        }
         let now = Instant::now();
         let mut osd_changed = false;
         if size != self.osd_size || now.duration_since(self.last_osd) >= Duration::from_millis(50) {

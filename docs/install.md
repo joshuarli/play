@@ -26,7 +26,7 @@ make linux
 
 ## Release app
 
-The macOS build needs the Xcode command-line tools, Meson, Ninja, pkg-config, CMake, Python 3, curl, and `shasum`; `scripts/dev-deps.sh` installs the pinned Homebrew packages. Build the dependency closure and the app:
+The macOS build needs the Xcode command-line tools, the pinned Rust toolchain, Meson, Ninja, pkg-config, CMake, Python 3, curl, and `shasum`; `scripts/dev-deps.sh` installs the pinned Homebrew packages. Build the dependency closure and the app:
 
 ```sh
 scripts/build-deps.sh
@@ -51,13 +51,13 @@ dist/Player.app/Contents/MacOS/player --tui FILE
 
 Kitty-capable terminals show the embedded cover at full resolution; others use truecolor half-blocks. See [Terminal UI](tui-design.md).
 
-The bundle carries its own pinned dylibs, Vulkan loader, MoltenVK, and the Rust cdylib. It does not use Homebrew at runtime. It is ad-hoc signed and not notarized. Do not distribute the build without a signing identity. It declares `MPVBUNDLE`, the supported document types, and the application icon in `Info.plist`.
+The bundle carries its own pinned dylibs, Vulkan loader, and MoltenVK. It does not use Homebrew at runtime. It is ad-hoc signed and not notarized. Do not distribute the build without a signing identity. It declares `MPVBUNDLE`, the supported document types, and the application icon in `Info.plist`.
 
 ## Local-only contract
 
 Local paths are supported. Drag-and-drop converts a `file://` URL for an existing path; the CLI, `--playlist`, `loadlist`, IPC `loadfile`, playlists, and external files reject `file://`. Network URLs are rejected before the stream layer with `Refusing non-local input`. The player does not include network protocols, TLS, or a CA bundle.
 
-Clipboard commands are compiled and reachable. Encoding, recording, and the lavfi filter graph are compiled but have no reachable path in the release build.
+Clipboard support is removed. Encoding, recording, and the lavfi filter graph are not built.
 
 ## Development
 
