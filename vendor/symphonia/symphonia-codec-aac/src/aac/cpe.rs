@@ -164,18 +164,19 @@ impl ChannelPair {
         dsp: &mut dsp::Dsp,
         abuf: &mut AudioBuffer<f32>,
         rate_idx: usize,
+        planes: &[usize],
     ) {
         self.ics0.synth_channel(
             dsp,
             rate_idx,
-            abuf.plane_mut(self.channel).expect("channel index is valid"),
+            abuf.plane_mut(planes[self.channel]).expect("channel index is valid"),
         );
 
         if self.is_pair {
             self.ics1.synth_channel(
                 dsp,
                 rate_idx,
-                abuf.plane_mut(self.channel + 1).expect("channel+1 index is valid"),
+                abuf.plane_mut(planes[self.channel + 1]).expect("channel+1 index is valid"),
             );
         }
     }

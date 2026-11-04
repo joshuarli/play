@@ -12,7 +12,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use symphonia_core::audio::{
-    AsGenericAudioBufferRef, AudioBuffer, AudioSpec, GenericAudioBufferRef,
+    AsGenericAudioBufferRef, AudioBuffer, AudioSpec, Channels, GenericAudioBufferRef, Position,
 };
 use symphonia_core::codecs::CodecInfo;
 use symphonia_core::codecs::audio::well_known::CODEC_ID_AAC;
@@ -39,10 +39,67 @@ use common::*;
 ///
 /// Implements a decoder for Advanced Audio Decoding Low-Complexity (AAC-LC) as defined in
 /// ISO/IEC 13818-7 and ISO/IEC 14496-3.
+/// Map the bitstream element order of a standard channel configuration (ISO/IEC 14496-3,
+/// Table 1.19) to planes of a buffer laid out in speaker-position order.
+fn element_planes(channels: &Channels) -> Option<Vec<usize>> {
+    let mask = match channels {
+        Channels::Positioned(mask) => mask,
+        Channels::Discrete(count @ 1..=2) => return Some((0..*count as usize).collect()),
+        _ => return None,
+    };
+    let order: &[Position] = match channels.count() {
+        1 => &[Position::FRONT_CENTER],
+        2 => &[Position::FRONT_LEFT, Position::FRONT_RIGHT],
+        3 => &[Position::FRONT_CENTER, Position::FRONT_LEFT, Position::FRONT_RIGHT],
+        4 => &[
+            Position::FRONT_CENTER,
+            Position::FRONT_LEFT,
+            Position::FRONT_RIGHT,
+            Position::REAR_CENTER,
+        ],
+        5 => &[
+            Position::FRONT_CENTER,
+            Position::FRONT_LEFT,
+            Position::FRONT_RIGHT,
+            Position::REAR_LEFT,
+            Position::REAR_RIGHT,
+        ],
+        6 => &[
+            Position::FRONT_CENTER,
+            Position::FRONT_LEFT,
+            Position::FRONT_RIGHT,
+            Position::REAR_LEFT,
+            Position::REAR_RIGHT,
+            Position::LFE1,
+        ],
+        8 => &[
+            Position::FRONT_CENTER,
+            Position::FRONT_LEFT_CENTER,
+            Position::FRONT_RIGHT_CENTER,
+            Position::FRONT_LEFT,
+            Position::FRONT_RIGHT,
+            Position::REAR_LEFT,
+            Position::REAR_RIGHT,
+            Position::LFE1,
+        ],
+        _ => return None,
+    };
+    let expected = order.iter().fold(Position::empty(), |all, position| all | *position);
+    if expected != *mask && channels.count() > 1 {
+        return None;
+    }
+    if channels.count() == 1 {
+        return Some(vec![0]);
+    }
+    Some(order.iter().map(|position| (mask.bits() & (position.bits() - 1)).count_ones() as usize).collect())
+}
+
 pub struct AacDecoder {
     // info: NACodecInfoRef,
     asc: AudioSpecificConfig,
     pairs: Vec<cpe::ChannelPair>,
+    /// Output buffer plane for each channel in bitstream element order.
+    planes: Vec<usize>,
     dsp: dsp::Dsp,
     sbinfo: GASubbandInfo,
     params: AudioCodecParameters,
@@ -88,11 +145,11 @@ impl AacDecoder {
         };
 
         // Check complexity.
-        if asc.object_type != AudioObjectType::Lc
-            || asc.sbr_present
-            || channels.count() > 2
-            || asc.samples != 1024
-        {
+        let planes = match element_planes(&channels) {
+            Some(planes) => planes,
+            None => return unsupported_error("aac: channel layout has no standard element order"),
+        };
+        if asc.object_type != AudioObjectType::Lc || asc.sbr_present || asc.samples != 1024 {
             return unsupported_error("aac: aac too complex");
         }
 
@@ -105,7 +162,7 @@ impl AacDecoder {
 
         let buf = AudioBuffer::new(AudioSpec::new(asc.sample_rate, channels), asc.samples);
 
-        Ok(AacDecoder { asc, pairs: Vec::new(), dsp: dsp::Dsp::new(), sbinfo, params, buf })
+        Ok(AacDecoder { asc, pairs: Vec::new(), planes, dsp: dsp::Dsp::new(), sbinfo, params, buf })
     }
 
     fn set_pair(&mut self, pair_no: usize, channel: usize, pair: bool) -> Result<()> {
@@ -216,7 +273,7 @@ impl AacDecoder {
         }
         let rate_idx = GASubbandInfo::find_idx(self.asc.sample_rate);
         for pair in 0..cur_pair {
-            self.pairs[pair].synth_audio(&mut self.dsp, &mut self.buf, rate_idx);
+            self.pairs[pair].synth_audio(&mut self.dsp, &mut self.buf, rate_idx, &self.planes);
         }
         Ok(())
     }
