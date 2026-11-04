@@ -64,7 +64,7 @@ Measured on the clean tree at `f41bb50` on 2026-11-03 after the C ABI, probe, an
 
 The 1080p CPU result is not a fixed budget. The current row is real-time headless playback: with `--vo=null --ao=null` the Rust engine still advances the clock at wall time, so a 3 s clip costs about 3 s of CPU. It is not comparable to the older C rows, which finished null output ahead of wall time. The gated budgets are size, RSS, first frame, seek, protocols, and Lua count. `scripts/measure.sh cpu BASELINE_PLAYER` runs seven interleaved baseline and candidate pairs, reports both medians and spreads, and fails only when the candidate exceeds the baseline by more than 10% and by more than the larger spread. `scripts/measure.sh compare BEFORE AFTER` applies the same rule to startup, first frame, seek, exit, and CPU between two labels. Both print `perf gate deferred: host busy` and exit 75 when `perf-gate-ready` reports load, which is never a pass. Frame drops are no longer measured: under `--vo=null` there is no renderer clock, so the count is zero by construction. The renderer check is in `docs/manual-checklist.md`.
 
-The post-S9 cleanup removes the C engine, the C ABI and its headers, and the Rust cdylib archive. The app is 24,123,793 B on disk with a 7,600,640 B executable and a 15,127,360 B closure, under the 29,542,136 B distributable budget.
+The post-S9 cleanup removes the C engine, the C ABI and its headers, the unused probe and static archive, and the Rust cdylib archive. The app is 24,123,793 B on disk with a 7,600,640 B executable and a 15,127,360 B closure, under the 29,542,136 B distributable budget.
 
 ## Optimization history
 
