@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 
 use player_audio::sink::SinkKind;
 use player_engine::SchedulerEngine;
-use player_ffi::engine::{EngineBackend, SharedEngine};
+use player_backend::engine::{EngineBackend, SharedEngine};
 use player_lua::queue::EventSender;
 use player_lua::{PlayerBackend, ScriptHost, ScriptModule};
 

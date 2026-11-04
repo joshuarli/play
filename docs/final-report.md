@@ -2,7 +2,7 @@
 
 ## Outcome
 
-This fork is a local-only media player built on a Rust playback engine, a minimal FFmpeg n9.0.2, libplacebo, and the mpv-compatible application surface ported in this repository. The release artifact is `dist/Player.app`: a self-contained app with a 7,617,088 B executable, a 15,127,360 B framework closure in 12 dylibs, a bundled icon, an arm64-thinned MoltenVK, and no Homebrew runtime dependency. The app is 24,140,241 B on disk.
+This fork is a local-only media player built on a Rust playback engine, a minimal FFmpeg n9.0.2, libplacebo, and the mpv-compatible application surface ported in this repository. The release artifact is `dist/Player.app`: a self-contained app with a 7,600,656 B executable, a 15,127,360 B framework closure in 12 dylibs, a bundled icon, an arm64-thinned MoltenVK, and no Homebrew runtime dependency. The app is 24,123,809 B on disk.
 
 The mpv-derived C playback engine is gone. Cargo builds the player on both platforms.
 
@@ -20,7 +20,7 @@ The mpv-derived C playback engine is gone. Cargo builds the player on both platf
 | Command | Result |
 |---|---|
 | `cargo test --manifest-path rust/Cargo.toml` | pass |
-| macOS `tests/run.sh suite` | 343 passed, 0 failed |
+| macOS `tests/run.sh suite` | 340 passed, 0 failed |
 | Linux `tests/run.sh suite` | 334 passed, 0 failed |
 | `scripts/audit.sh` | ok |
 | `scripts/audit-linux.sh` | ok |
@@ -31,7 +31,7 @@ The mpv-derived C playback engine is gone. Cargo builds the player on both platf
 | Budget | Limit | Actual |
 |---|---:|---:|
 | Distributable | 29,542,136 B | 22,744,448 B |
-| Executable | 10,000,000 B | 7,617,088 B |
+| Executable | 10,000,000 B | 7,600,656 B |
 | First frame | 1 s | 35.11 ms |
 | 1080p CPU | no fixed gate | 2.960 s |
 | 1080p RSS | 300 MB | 219.75 MB |
@@ -56,7 +56,6 @@ The final measurement is the S9b working tree on top of `ab74141`: cold 18.20 ms
 - The scheduler currently opens video decoders in software. `player-media` carries VideoToolbox and VA-API paths and tests; wiring the scheduler and reporting `hwdec-current` is `PLAY-20`.
 - GUI visual quality, HDR and 10-bit color, subtitle shaping on real fonts, Retina scaling, audible audio, hardware decode, real mouse and drag, and signing or notarization are owner-run. See `docs/manual-checklist.md`.
 - The UTF-8-only path API remains.
-- `player-ffi` keeps its C ABI, headers, and tests as a library contract even though no C host links it.
 - No known reproducible correctness or memory-safety regression remains in the supported paths.
 
 ## Reproduction

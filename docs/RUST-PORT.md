@@ -27,7 +27,7 @@ builds the musl `dist` profile and writes `build-linux/mpv` plus the
 stripped `dist/player`. The Meson player build, the C source tree, the
 retired test and tool sources, and the release cdylib are removed. The
 Lua modules moved to `rust/player-lua/lua/`, the OSD font to
-`rust/player-ffi/fonts/`, the app icon to `packaging/`, and the test
+`rust/player-backend/fonts/`, the app icon to `packaging/`, and the test
 input bindings to `tests/`.
 
 `scripts/audit.sh` now checks the Rust engine and the release executable
@@ -45,12 +45,13 @@ Decisions with reasons:
   this toolchain, and the seven-library set is still audited.
 - The `dist` profile strips debug info but keeps the symbol table so the
   audit can count one `luaL_newstate` and identify the Rust engine.
-- `player-ffi` keeps its C ABI, headers, and tests as a library contract
-  even though no C host links it. That is recorded debt in `docs/scope.md`.
+- The C ABI, its headers, its C test harness, and the `player-release` and
+  `player-swap` crates were removed after S9. `player-backend` is now only the
+  Rust engine backend used by the app.
 - The app keeps the mpv-compatible command and property surface, but the
   process, playback loop, renderer, audio output, and Lua host are Rust.
 
-Verified at S9: `cargo test` green; macOS `tests/run.sh suite` 343
+Verified at S9: `cargo test` green; macOS `tests/run.sh suite` 340
 passed, 0 failed; Linux `tests/run.sh suite` 334 passed, 0 failed;
 `scripts/audit.sh` ok; `scripts/audit-linux.sh` ok; `scripts/release.sh`
 and `make linux` build both artifacts; `scripts/measure.sh final` passes

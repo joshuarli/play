@@ -5,7 +5,7 @@
 Goal: replace the remaining mpv-derived C playback engine with a small Rust-owned engine. No loss of supported local playback. Both release artifacts keep building.
 
 - Last accepted: S9 (the mpv-derived C engine and Meson player build are deleted; Cargo builds both artifacts; both suites, audits, release packaging, and budgets pass). S8b (GUI and TUI modes in the Rust `player` binary), S8a, S7e, and earlier slices landed before it.
-- Red: none. `cargo test`, the macOS suite, the Alpine suite, `build`, `rust-link`, `ffi`, `release`, `audit`, `audit-linux`, and `measure.sh final` pass.
+- Red: none. `cargo test`, the macOS suite, the Alpine suite, `build`, `rust-link`, `release`, `audit`, `audit-linux`, and `measure.sh final` pass.
 - Next: none. The campaign is complete. Open work is `TODO.md` (`PLAY-20` hardware-decode wiring) and the owner-run checks in `docs/manual-checklist.md`.
 - Open: remote command center and touchbar were already disabled in the C build, so they have no behavior to port. Ordered chapters stay open (no fixture, needs linking design). The Linux binary must be built with `-C target-feature=-crt-static`; a static-pie with Wayland in NEEDED dies in the loader.
 - Resume: read this doc and `docs/RUST-PORT.md`, then run the next open slice. If the tree moved, adapt. Never overwrite newer work.
@@ -39,7 +39,7 @@ Prescribed (settled here, with the reason; a reversal needs the stated evidence)
 - No Tokio, no large async runtime. Threads plus bounded channels already cover the design. A lightweight event mechanism is allowed only with a measurement that justifies it.
 - The FFmpeg component allowlist stays frozen. Broaden it only with a fixture-backed justification recorded in `docs/RUST-PORT.md`.
 - Budgets gate S0 and S8, not the middle. Between them they are measured and logged. Two engines coexist mid-campaign, so transient growth is expected. Uncontrolled growth (over 25% above baseline without a recorded cause) stops the slice.
-- `unsafe` stays in `player-ffi` and `player-audio` for production code. Each block states its safety argument. Test-only `unsafe` (for example `env::set_var` in `rust/player-tui`) is allowed.
+- `unsafe` stays in the native-boundary crates for production code. Each block states its safety argument. Test-only `unsafe` (for example `env::set_var` in `rust/player-tui`) is allowed.
 - Keep the UTF-8 path boundary. Startup parsing and the classifier take UTF-8. This matches `docs/scope.md`. Widening it is a separate campaign.
 - No second Lua interpreter. The vendored Lua 5.2 through `mlua` is the only one.
 - Follow-on work stays out: Linux aarch64, HDR output, fully static musl `wlshm`, and any network capability. `docs/architecture.md` already lists these as follow-on.

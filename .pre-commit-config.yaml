@@ -8,10 +8,8 @@ repos:
     - id: check-json
     - id: check-shebang-scripts-are-executable
     - id: check-xml
-      exclude: ^TOOLS/mpv-osd-symbols.sfdir/font.props$
     - id: check-yaml
     - id: end-of-file-fixer
-      exclude: ^TOOLS/osxbundle/mpv.app/Contents/PkgInfo$
     - id: fix-byte-order-marker
     - id: mixed-line-ending
     - id: trailing-whitespace
@@ -20,4 +18,3 @@ repos:
   hooks:
     - id: codespell
       args: ["--ignore-words-list", "ALS,als,datas,DNE,enew,HDA,numer,ontop,optionA,Paeth,pathc,inout,requestor"]
-      exclude: ^misc/language.c$

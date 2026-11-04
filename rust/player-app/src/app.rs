@@ -9,7 +9,7 @@ use player_core::command::{
 use player_core::input::{classify_input, InputPath};
 use player_engine::video::PresentedFrame;
 use player_engine::{EngineStatus, SchedulerEngine};
-use player_ffi::engine::{EngineBackend, SharedEngine};
+use player_backend::engine::{EngineBackend, SharedEngine};
 use player_lua::queue::EventSender;
 use player_lua::{
     CommandRequest, NativeValue, PlayerBackend, PropertyFormat, ScriptEvent, ScriptHost,

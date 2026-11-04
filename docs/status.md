@@ -5,11 +5,11 @@ Player is a local-only media player. The macOS release artifact is `dist/Player.
 ## Current state
 
 - The Rust port is complete through S9. The C playback engine and Meson player build are gone; Cargo builds both artifacts. The Rust engine owns scheduling, demux, decode, audio, video rendering, Lua, subtitles, OSD, OSC composition, GUI, and TUI. The `player-app` binary owns the application layer (CLI, IPC, playlists, chapters, track switching, properties/events, OSC dispatch, native GUI window, TUI, Finder open, drag-and-drop, and PNG screenshots).
-- `tests/run.sh suite` on macOS: 343 passed, 0 failed.
+- `tests/run.sh suite` on macOS: 340 passed, 0 failed.
 - `tests/run.sh suite` in the Alpine container: 334 passed, 0 failed.
 - `scripts/audit.sh`: ok. `scripts/audit-linux.sh`: ok.
 - `scripts/measure.sh final`: final: ok. Distributable 22,744,448 B; first frame 35.11 ms; 1080p RSS 219.75 MB; seek 42.21 ms.
-- App: 24,140,241 B on disk; executable 7,617,088 B; framework closure 15,127,360 B in 12 dylibs; bundled icon 1,387,652 B.
+- App: 24,123,809 B on disk; executable 7,600,656 B; framework closure 15,127,360 B in 12 dylibs; bundled icon 1,387,652 B.
 - One `file` protocol and one Lua interpreter.
 - `--tui` plays in the terminal with centered embedded cover art. Kitty graphics are used on Ghostty, kitty, and WezTerm; other terminals use truecolor half-blocks. The TUI is audio-first and keeps `vo=null`.
 

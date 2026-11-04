@@ -60,4 +60,4 @@ Removed: `--ytdl*`, `--hls-bitrate`, `--lavfi-complex`, `--stream-dump`, `--stre
 
 - The UTF-8-only path API.
 - The playback scheduler does not yet request VideoToolbox or VA-API decode. `player-media` carries the decoder paths and their tests; wiring the scheduler and reporting `hwdec-current` is follow-on work.
-- `player-ffi` still carries the old C ABI entry points and headers as a tested library surface, even though no C host links them. The release binary does not export or link that surface.
+- There is no C ABI, header, or C host left in the tree. `player-backend` is the Rust engine backend used by the app, not a C boundary.

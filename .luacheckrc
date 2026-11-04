@@ -104,6 +104,5 @@ local mp_internal = {
 std = "min+mp"
 stds = { mp = { read_globals = mp_globals } }
 -- mp_internal seems to be merged with mp for other files too...
-files["player/lua/defaults.lua"] = { globals = mp_internal }
-files["player/lua/auto_profiles.lua"] = { globals = { "p", "get" } }
+files["rust/player-lua/lua/defaults.lua"] = { globals = mp_internal }
 max_line_length = 100

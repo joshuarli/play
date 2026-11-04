@@ -22,7 +22,7 @@ Player is a local-only media player built on a Rust playback engine, a minimal p
 - The player does not auto-load user config or scripts. Explicit scripts are trusted code with the full command table, including `subprocess` and `run`.
 - One Lua implementation: the vendored Lua 5.2 in `rust/player-lua`.
 - Rust owns the playback pipeline (demux, decode, scheduling, audio, video rendering, subtitles, OSD), startup configuration, playlist, command validation, playback state, local file I/O, the application surface, and the Lua host. The only C in-tree code is the macOS window bridge and the vendored Lua interpreter; everything else is a pinned native dependency.
-- Native-boundary `unsafe` lives in `player-media`, `player-output`, `player-display`, `player-ass`, `player-engine`, `player-ffi`, and `player-audio`. Each block states its safety argument.
+- Native-boundary `unsafe` lives in `player-media`, `player-output`, `player-display`, `player-ass`, `player-engine`, and `player-audio`. Each block states its safety argument.
 - CI builds both release artifacts on GitHub. A `v*` tag runs `.github/workflows/release.yml`, which publishes the macOS app zip and the Linux tarball with `SHA256SUMS`. Gates are local commands. Do not notarize.
 - `TODO.md` holds open work. Delete a ticket when it is done; git history is the record.
 

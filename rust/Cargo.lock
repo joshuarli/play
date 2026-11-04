@@ -289,11 +289,11 @@ name = "player-app"
 version = "0.1.0"
 dependencies = [
  "player-audio",
+ "player-backend",
  "player-build",
  "player-core",
  "player-display",
  "player-engine",
- "player-ffi",
  "player-lua",
  "player-media",
  "player-output",
@@ -313,6 +313,17 @@ version = "0.1.0"
 dependencies = [
  "player-media",
  "symphonia",
+]
+
+[[package]]
+name = "player-backend"
+version = "0.1.0"
+dependencies = [
+ "player-ass",
+ "player-audio",
+ "player-build",
+ "player-engine",
+ "player-lua",
 ]
 
 [[package]]
@@ -346,19 +357,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "player-ffi"
-version = "0.1.0"
-dependencies = [
- "player-ass",
- "player-audio",
- "player-build",
- "player-core",
- "player-engine",
- "player-lua",
- "player-tui",
-]
-
-[[package]]
 name = "player-gui"
 version = "0.1.0"
 dependencies = [
@@ -385,26 +383,6 @@ name = "player-output"
 version = "0.1.0"
 dependencies = [
  "player-build",
-]
-
-[[package]]
-name = "player-release"
-version = "0.1.0"
-dependencies = [
- "player-audio",
- "player-engine",
- "player-ffi",
-]
-
-[[package]]
-name = "player-swap"
-version = "0.1.0"
-dependencies = [
- "player-audio",
- "player-build",
- "player-display",
- "player-engine",
- "player-output",
 ]
 
 [[package]]

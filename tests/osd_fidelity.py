@@ -131,7 +131,7 @@ def render_rust(results, label, fixture, directory):
     command = [
         CARGO, "run", "--quiet",
         "--manifest-path", str(ROOT / "rust" / "Cargo.toml"),
-        "-p", "player-ffi", "--example", "osd_frame", "--",
+        "-p", "player-backend", "--example", "osd_frame", "--",
         "--fixture", str(fixture),
         "--base", str(directory / "base.rgba"),
         "--output", str(output),

@@ -23,6 +23,7 @@ Automated playback is headless (`--vo=null --ao=null`), so GUI and renderer beha
 | 2026-11-03 | ee5021c5256e-dirty | final | 9440304 | 9440304 | 17334096 | 13 | 68.31 | 66.83 | 154.31 | 83.84 | 213.31 | 0.26 | 0.61 | 28.99 | 6.37 | 1 | headless, 3 s clips |
 | 2026-11-03 | 7e9f4ba571d9 | final | 9440304 | 9440304 | 17334096 | 13 | 58.2 | 53.85 | 139.61 | 83.94 | 215.83 | 0.17 | 0.44 | 25.33 | 3.21 | 1 | headless, 3 s clips |
 | 2026-11-03 | ab74141fcb7a-dirty | final | 7617088 | 7617088 | 15127360 | 12 | 18.2 | 17.63 | 35.11 | 14.33 | 219.75 | 2.96 | 2.98 | 42.21 | 11.4 | 1 | headless, 3 s clips |
+| 2026-11-03 | e5d6ddd4c3bd | final | 7617088 | 7617088 | 15127360 | 12 | 17.17 | 14.75 | 34.25 | 14.33 | 219.62 | 2.97 | 2.98 | 36.09 | 10.69 | 1 | headless, 3 s clips |
 <!-- measure:end -->
 
 The `baseline` row is the P0 comparison point. The P8 budget is half of its unique closure size, 29,542,136 B.
@@ -33,8 +34,8 @@ Measured on the S9b working tree at `ab74141` on 2026-11-03 with `scripts/measur
 
 | Metric | Value |
 |---|---:|
-| `Player.app` total | 24,140,241 B |
-| executable | 7,617,088 B |
+| `Player.app` total | 24,123,809 B |
+| executable | 7,600,656 B |
 | framework closure | 15,127,360 B in 12 files |
 | cold startup | 18.20 ms |
 | warm startup | 17.63 ms |
@@ -52,7 +53,7 @@ Measured on the S9b working tree at `ab74141` on 2026-11-03 with `scripts/measur
 | Budget | Limit | Actual | Result |
 |---|---:|---:|---|
 | Distributable | 29,542,136 B | 22,744,448 B | pass |
-| Executable | 10,000,000 B | 7,617,088 B | pass |
+| Executable | 10,000,000 B | 7,600,656 B | pass |
 | First frame | 1 s | 35.11 ms | pass |
 | 1080p RSS | 300 MB | 219.75 MB | pass |
 | Seek | 250 ms | 42.21 ms | pass |
@@ -61,7 +62,7 @@ Measured on the S9b working tree at `ab74141` on 2026-11-03 with `scripts/measur
 
 The 1080p CPU result is not a fixed budget. The S9 row is real-time headless playback: with `--vo=null --ao=null` the Rust engine still advances the clock at wall time, so a 3 s clip costs about 3 s of CPU. It is not comparable to the older C rows, which finished null output ahead of wall time. The gated budgets are size, RSS, first frame, seek, protocols, and Lua count. `scripts/measure.sh cpu BASELINE_PLAYER` runs seven interleaved baseline and candidate pairs, reports both medians and spreads, and fails only when the candidate exceeds the baseline by more than 10% and by more than the larger spread. `scripts/measure.sh compare BEFORE AFTER` applies the same rule to startup, first frame, seek, exit, and CPU between two labels. Both print `perf gate deferred: host busy` and exit 75 when `perf-gate-ready` reports load, which is never a pass. Frame drops are no longer measured: under `--vo=null` there is no renderer clock, so the count is zero by construction. The renderer check is in `docs/manual-checklist.md`.
 
-The S9 build removes the C engine and the Rust cdylib. The app is 24,140,241 B on disk with a 7,617,088 B executable and a 15,127,360 B closure, under the 29,542,136 B distributable budget.
+The S9 build removes the C engine and the Rust cdylib. The app is 24,123,809 B on disk with a 7,600,656 B executable and a 15,127,360 B closure, under the 29,542,136 B distributable budget.
 
 ## Optimization history
 

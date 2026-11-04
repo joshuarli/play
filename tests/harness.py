@@ -1600,7 +1600,7 @@ def gate_rust_link(results, args):
 
     proc = subprocess.run(
         ["cargo", "test", "--manifest-path", str(ROOT / "rust" / "Cargo.toml"),
-         "-p", "player-core", "-p", "player-ffi"],
+         "-p", "player-core", "-p", "player-backend"],
         cwd=str(ROOT), capture_output=True, text=True, timeout=300,
     )
     results.check("rust-link: cargo test", proc.returncode == 0,
@@ -1616,41 +1616,6 @@ def gate_rust_link(results, args):
         )
         results.check("rust-link: playback", True)
     results.check("rust-link: exit", mpv.returncode == 0, f"exit {mpv.returncode}")
-
-
-def gate_ffi(results, args):
-    target = ROOT / ".work" / "deps" / "player-audio" / "target"
-    env = os.environ.copy()
-    env["CARGO_TARGET_DIR"] = str(target)
-    ffmpeg = ROOT / ".work" / "deps" / "ffmpeg-full"
-    if (ffmpeg / "lib/pkgconfig").is_dir():
-        env["PKG_CONFIG_PATH"] = (
-            f"{ffmpeg / 'lib/pkgconfig'}:{env.get('PKG_CONFIG_PATH', '')}"
-        ).rstrip(":")
-    proc = subprocess.run(
-        ["cargo", "build", "--release",
-         "--manifest-path", str(ROOT / "rust" / "Cargo.toml"), "-p", "player-ffi"],
-        cwd=str(ROOT), capture_output=True, text=True, timeout=900, env=env,
-    )
-    results.check("ffi: build", proc.returncode == 0,
-                  tail((proc.stdout + proc.stderr).splitlines(), 20))
-    ffi_lib = target / "release" / "libplayer_ffi.a"
-    binary = ROOT / "build" / "ffi_test"
-    proc = subprocess.run(
-        ["cc", "-std=c11", "-Wall", "-Wextra",
-         "-I", str(ROOT / "rust" / "player-ffi" / "include"),
-         str(ROOT / "tests" / "ffi_test.c"), str(ffi_lib),
-         "-Wl,-undefined,dynamic_lookup", "-Wl,-dead_strip", "-o", str(binary)],
-        cwd=str(ROOT), capture_output=True, text=True, timeout=120,
-    )
-    results.check("ffi: compile", proc.returncode == 0,
-                  tail((proc.stdout + proc.stderr).splitlines(), 20))
-    if proc.returncode != 0:
-        return
-    proc = subprocess.run([str(binary)], cwd=str(ROOT), capture_output=True,
-                          text=True, timeout=30)
-    results.check("ffi: run", proc.returncode == 0 and "ffi ok" in proc.stdout,
-                  f"exit {proc.returncode}: {(proc.stdout + proc.stderr).strip()}")
 
 
 def gate_baseline_docs(results, args):
@@ -1724,7 +1689,7 @@ def gate_meta(results, args):
         "scripts/manual-checklist.sh", "tests/run.sh", "tests/harness.py",
         "tests/fixtures/gen.sh", "tests/fixtures/manifest.json",
         "rust/Cargo.toml", "rust/Cargo.lock",
-        "rust/player-audio/Cargo.toml", "rust/player-audio/include/player_audio.h",
+        "rust/player-audio/Cargo.toml",
         "vendor/symphonia/LICENSE", "vendor/symphonia/symphonia/Cargo.toml",
     ]
     missing = [name for name in required_paths if not (ROOT / name).exists()]
@@ -2125,7 +2090,6 @@ GATES = {
     "state": gate_state,
     "build": gate_build,
     "rust-link": gate_rust_link,
-    "ffi": gate_ffi,
     "lua-host": gate_lua_host,
     "lua-api-audit": gate_lua_api_audit,
     "tui": gate_tui,
@@ -2140,7 +2104,7 @@ GATES = {
 SUITE = [
     "fixtures", "corpus", "audio", "hwdec", "seek", "local-paths",
     "local-only", "osc", "osc-input", "input", "playlist", "cli", "state", "failures",
-    "rust-link", "ffi",
+    "rust-link",
     "lua-host",
     "lua-api-audit", "tui", "release", "traces", "dispatch",
 ]

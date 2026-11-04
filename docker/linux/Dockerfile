@@ -4,7 +4,7 @@ RUN apk add --no-cache \
         bash build-base clang cmake meson ninja samurai pkgconf python3 \
         linux-headers git curl xz bzip2 tar perl nasm patchelf file \
         util-linux coreutils findutils diffutils time \
-        wayland-dev wayland-protocols libxkbcommon-dev alsa-lib-dev \
+        wayland-dev wayland-protocols alsa-lib-dev \
         vulkan-loader-dev vulkan-headers \
         mesa-vulkan-swrast weston weston-backend-headless weston-clients weston-shell-desktop font-dejavu fontconfig \
         libva-dev libdrm-dev mesa-va-gallium libva-utils \

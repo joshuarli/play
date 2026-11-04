@@ -403,7 +403,7 @@ impl EngineBackend {
             ("time-pos" | "duration" | "playback-time", NativeValue::Double(seconds)) => {
                 let whole = seconds.abs() as i64;
                 let format = if whole >= 3600 { "%h:%M:%S" } else { "%M:%S" };
-                super::lua::format_time_fmt(format, *seconds)
+                crate::format::format_time_fmt(format, *seconds)
             }
             ("percent-pos", NativeValue::Double(percent)) => Ok(format!("{:.0}%", percent)),
             ("volume", NativeValue::Double(volume)) => {
@@ -625,7 +625,7 @@ impl PlayerBackend for EngineBackend {
     }
 
     fn format_time(&mut self, seconds: f64, format: &str) -> Result<String, String> {
-        super::lua::format_time_fmt(format, seconds)
+        crate::format::format_time_fmt(format, seconds)
     }
 
     fn input_set_section_mouse_area(

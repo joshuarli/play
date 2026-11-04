@@ -13,7 +13,7 @@ Recorded 2026-11-03 at S9: the C playback engine is retired and Cargo is the onl
 - `rust/player-lua`: the only Lua 5.2 interpreter and the embedded built-in modules.
 - `rust/player-tui`: the terminal renderer and input surface.
 - `rust/player-app`: the player executable, CLI, IPC, playlists, properties and events, commands, scripts, GUI and TUI modes, Finder open, drag-and-drop, and screenshots.
-- `rust/player-ffi` and `rust/player-release`: the retained C ABI surface and its test and compatibility crates. No C host links them.
+- `rust/player-backend`: the Rust engine backend used by `player-app`. The retired C ABI, its headers, and its C test harness are gone.
 - `tests/`: the IPC harness, suite gates, fixtures, and audit scripts.
 - `scripts/`: build, release, measure, audit, and checklist entry points.
 - `docs/`: baseline, architecture, FFmpeg, scope, Lua API, metrics, licenses, and status.
@@ -34,18 +34,18 @@ Recorded 2026-11-03 at S9: the C playback engine is retired and Cargo is the onl
 - **Unexpected resources:** built-in Lua modules are embedded from `rust/player-lua/lua/`; there is no runtime resource extraction. User config and scripts are disabled by default and the gates pass `--no-config` where they can.
 - **Subprocess:** the retained `subprocess` command and `.run` script backend can spawn a local process. Both are reachable only from an explicit script or an IPC client. No built-in module uses them. This is a local process capability, not a network capability.
 - **Clipboard:** removed in S7a. No clipboard property, command, backend, bridge, binding, or Wayland selection sync remains in the tree.
-- **Dependencies:** `cargo audit` reports no RustSec vulnerabilities for the 92 locked crates.
+- **Dependencies:** `cargo audit` reports no RustSec vulnerabilities for the 90 locked crates.
 - **Licenses:** `docs/licenses.md` lists the shipped components. The Rust dependency graph is MIT/Apache-2.0/MPL-2.0/Zlib/Unicode-3.0; Symphonia is MPL-2.0 and its notices are preserved under `vendor/symphonia`.
 - **Signature:** the app and every bundled dylib are ad-hoc signed; `codesign --verify --deep --strict` passes. Notarization and distribution signing are owner-run.
 - **Local-only audit:** `scripts/audit.sh` checks the source tree and the linked symbols for a retired C engine, a second Lua, unsupported libraries, and network protocols. `scripts/audit-linux.sh` does the same for the musl artifact and rejects any `NEEDED` entry outside the documented set.
 
 ## Complexity accounting
 
-- Rust: 30,768 lines in 97 files under `rust/`.
-- FFI: 64 `#[unsafe(no_mangle)]` declarations across `player-ffi`, `player-audio`, and `player-engine`. No C host links them.
+- Rust: 26,576 lines in 82 files under `rust/`.
+- C ABI: none. No `extern "C"` export, header, or C test harness remains.
 - In-tree C: the Objective-C window bridge and the vendored Lua interpreter only.
-- Tests: 38 gates in `tests/harness.py`; the suite passes on the recorded host.
-- Distributable: 24.1 MB on disk; the executable is 7,617,088 B, the framework closure is 15,127,360 B in 12 dylibs, and the bundled icon is 1.39 MB.
+- Tests: 37 gates in `tests/harness.py`; the suite passes on the recorded host.
+- Distributable: 24.1 MB on disk; the executable is 7,600,656 B, the framework closure is 15,127,360 B in 12 dylibs, and the bundled icon is 1.39 MB.
 - Linux: the stripped musl executable is 24,475,984 B and needs seven shared libraries.
 
 ## Known limits
