@@ -45,8 +45,8 @@ Recorded 2026-11-03 after S9 and the C ABI cleanup: the C playback engine is ret
 - C ABI: none. No `extern "C"` export, header, or C test harness remains.
 - In-tree C: only the Objective-C window bridge. Lua 5.2.4 is vendored through `mlua`.
 - Tests: 37 gates in `tests/harness.py`; the suite passes on the recorded host.
-- Distributable: 24.1 MB on disk; the executable is 7,600,656 B, the framework closure is 15,127,360 B in 12 dylibs, and the bundled icon is 1.39 MB.
-- Linux: the stripped musl executable is 24,475,984 B and needs seven shared libraries.
+- Distributable: 24.1 MB on disk; the executable is 7,600,640 B, the framework closure is 15,127,360 B in 12 dylibs, and the bundled icon is 1.39 MB.
+- Linux: the stripped musl executable is 24,471,888 B and needs seven shared libraries.
 
 ## Known limits
 

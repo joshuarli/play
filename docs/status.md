@@ -8,8 +8,8 @@ Player is a local-only media player. The macOS release artifact is `dist/Player.
 - `tests/run.sh suite` on macOS: 340 passed, 0 failed.
 - `tests/run.sh suite` in the Alpine container: 334 passed, 0 failed.
 - `scripts/audit.sh`: ok. `scripts/audit-linux.sh`: ok.
-- `scripts/measure.sh final`: final: ok. Distributable 22,728,016 B; first frame 33.93 ms; 1080p RSS 219.62 MB; seek 41.08 ms.
-- App: 24,123,809 B on disk; executable 7,600,656 B; framework closure 15,127,360 B in 12 dylibs; bundled icon 1,387,652 B.
+- `scripts/measure.sh final`: final: ok. Distributable 22,728,000 B; first frame 36.43 ms; 1080p RSS 219.78 MB; seek 40.45 ms.
+- App: 24,123,793 B on disk; executable 7,600,640 B; framework closure 15,127,360 B in 12 dylibs; bundled icon 1,387,652 B.
 - One `file` protocol and one Lua interpreter.
 - `--tui` plays in the terminal with centered embedded cover art. Kitty graphics are used on Ghostty, kitty, and WezTerm; other terminals use truecolor half-blocks. The TUI is audio-first and keeps `vo=null`.
 
@@ -34,7 +34,7 @@ Player is a local-only media player. The macOS release artifact is `dist/Player.
 
 - `scripts/linux-container.sh tests/run.sh suite`: 334 passed, 0 failed.
 - `scripts/audit-linux.sh`: ok. `dist/player` needs seven shared libraries: musl, libgcc, Vulkan loader, Wayland client, ALSA, libva, and libva-drm. The tarball lists six Alpine runtime packages.
-- `scripts/measure-linux.sh final`: stripped 24,475,984 B; 1080p RSS 215.99 MB; first frame 76.3 ms; seek 36.02 ms.
+- `scripts/measure-linux.sh final`: stripped 24,471,888 B; 1080p RSS 215.99 MB; first frame 76.3 ms; seek 36.02 ms.
 - `--hwdec` defaults to the compatibility value `auto` and `hwdec-current` reports `no` while the scheduler decodes in software.
 - `tests/run.sh linux-gpu-next` passes 41/41 on headless Weston with lavapipe, including the OSD pixel diff, subtitles, window scaling, and the GUI gate.
 - `tests/run.sh linux-vaapi` (needs a GPU render node, not part of `suite`) is an owner check.

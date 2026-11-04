@@ -2,7 +2,7 @@
 
 ## Outcome
 
-This fork is a local-only media player built on a Rust playback engine, a minimal FFmpeg n9.0.2, libplacebo, and the mpv-compatible application surface ported in this repository. The release artifact is `dist/Player.app`: a self-contained app with a 7,600,656 B executable, a 15,127,360 B framework closure in 12 dylibs, a bundled icon, an arm64-thinned MoltenVK, and no Homebrew runtime dependency. The app is 24,123,809 B on disk.
+This fork is a local-only media player built on a Rust playback engine, a minimal FFmpeg n9.0.2, libplacebo, and the mpv-compatible application surface ported in this repository. The release artifact is `dist/Player.app`: a self-contained app with a 7,600,640 B executable, a 15,127,360 B framework closure in 12 dylibs, a bundled icon, an arm64-thinned MoltenVK, and no Homebrew runtime dependency. The app is 24,123,793 B on disk.
 
 The mpv-derived C playback engine is gone. Cargo builds the player on both platforms.
 
@@ -30,16 +30,16 @@ The mpv-derived C playback engine is gone. Cargo builds the player on both platf
 
 | Budget | Limit | Actual |
 |---|---:|---:|
-| Distributable | 29,542,136 B | 22,728,016 B |
-| Executable | 10,000,000 B | 7,600,656 B |
-| First frame | 1 s | 33.93 ms |
-| 1080p CPU | no fixed gate | 2.970 s |
-| 1080p RSS | 300 MB | 219.62 MB |
-| Seek | 250 ms | 41.08 ms |
+| Distributable | 29,542,136 B | 22,728,000 B |
+| Executable | 10,000,000 B | 7,600,640 B |
+| First frame | 1 s | 36.43 ms |
+| 1080p CPU | no fixed gate | 2.980 s |
+| 1080p RSS | 300 MB | 219.78 MB |
+| Seek | 250 ms | 40.45 ms |
 | Network schemes | 0 | 0 |
 | Duplicate Lua interpreters | 0 | 0 |
 
-The final measurement is the clean tree at `cdb159a`, after the C ABI and port-scaffolding removal: cold 16.31 ms, warm 14.37 ms, idle RSS 14.39 MB, 1080p RSS 219.62 MB, 1080p CPU 2.97 s, 4K CPU 2.98 s, seek 41.08 ms, exit 9.01 ms, no audio underruns. These are headless timings. The 1080p CPU figure is real-time headless playback, not a fixed gate. The host was quiet before and after the run (`perf-gate-ready` exited 0).
+The final measurement is the clean tree at `f41bb50`, after the C ABI, probe, and static-archive cleanup: cold 17.94 ms, warm 16.42 ms, idle RSS 14.34 MB, 1080p RSS 219.78 MB, 1080p CPU 2.98 s, 4K CPU 2.99 s, seek 40.45 ms, exit 10.88 ms, no audio underruns. These are headless timings. The 1080p CPU figure is real-time headless playback, not a fixed gate. The host was quiet before and after the run (`perf-gate-ready` exited 0).
 
 ## Build and provenance
 
@@ -74,7 +74,7 @@ The development loop is `scripts/build.sh` plus `tests/run.sh suite`. Scratch ar
 
 ### Outcome
 
-The Linux build is a mostly static `x86_64-unknown-linux-musl` executable with the same Rust engine, application layer, and Lua host as macOS: `vo=gpu-next` over Vulkan and Wayland, ALSA audio, and libva for hardware decode support. The release is `dist/player-x86_64-linux-musl.tar.gz` (player and README) with a SHA-256 file. The stripped executable is 24,475,984 B and needs seven shared libraries: musl, `libgcc_s.so.1`, `libvulkan.so.1`, `libwayland-client.so.0`, `libasound.so.2`, `libva.so.2`, and `libva-drm.so.2`. The final container measurement records cold 13.73 ms, warm 13.59 ms, first frame 76.3 ms, 1080p RSS 215.99 MB, seek 36.02 ms, and one `file` protocol.
+The Linux build is a mostly static `x86_64-unknown-linux-musl` executable with the same Rust engine, application layer, and Lua host as macOS: `vo=gpu-next` over Vulkan and Wayland, ALSA audio, and libva for hardware decode support. The release is `dist/player-x86_64-linux-musl.tar.gz` (player and README) with a SHA-256 file. The stripped executable is 24,471,888 B and needs seven shared libraries: musl, `libgcc_s.so.1`, `libvulkan.so.1`, `libwayland-client.so.0`, `libasound.so.2`, `libva.so.2`, and `libva-drm.so.2`. The final container measurement records cold 13.73 ms, warm 13.59 ms, first frame 76.3 ms, 1080p RSS 215.99 MB, seek 36.02 ms, and one `file` protocol.
 
 ### Verification
 
@@ -87,7 +87,7 @@ The Linux build is a mostly static `x86_64-unknown-linux-musl` executable with t
 
 | Budget | Limit | Actual |
 |---|---:|---:|
-| Stripped binary | 50,000,000 B | 24,475,984 B |
+| Stripped binary | 50,000,000 B | 24,471,888 B |
 | Direct dynamic libraries | 7 | 7 |
 | Network schemes | 0 | 0 |
 | Duplicate Lua interpreters | 0 | 0 |

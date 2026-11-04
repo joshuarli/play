@@ -25,45 +25,46 @@ Automated playback is headless (`--vo=null --ao=null`), so GUI and renderer beha
 | 2026-11-03 | ab74141fcb7a-dirty | final | 7617088 | 7617088 | 15127360 | 12 | 18.2 | 17.63 | 35.11 | 14.33 | 219.75 | 2.96 | 2.98 | 42.21 | 11.4 | 1 | headless, 3 s clips |
 | 2026-11-03 | e5d6ddd4c3bd | final | 7617088 | 7617088 | 15127360 | 12 | 17.17 | 14.75 | 34.25 | 14.33 | 219.62 | 2.97 | 2.98 | 36.09 | 10.69 | 1 | headless, 3 s clips |
 | 2026-11-03 | cdb159a1e2b2 | final | 7600656 | 7600656 | 15127360 | 12 | 16.31 | 14.37 | 33.93 | 14.39 | 219.62 | 2.97 | 2.98 | 41.08 | 9.01 | 1 | headless, 3 s clips |
+| 2026-11-03 | f41bb506e60d | final | 7600640 | 7600640 | 15127360 | 12 | 17.94 | 16.42 | 36.43 | 14.34 | 219.78 | 2.98 | 2.99 | 40.45 | 10.88 | 1 | headless, 3 s clips |
 <!-- measure:end -->
 
 The `baseline` row is the P0 comparison point. The P8 budget is half of its unique closure size, 29,542,136 B.
 
 ## Final release
 
-Measured on the clean tree at `cdb159a` on 2026-11-03 after the C ABI and port-scaffolding removal, with `scripts/measure.sh final`. The host was quiet before and after the run (`perf-gate-ready` exited 0).
+Measured on the clean tree at `f41bb50` on 2026-11-03 after the C ABI, probe, and static-archive cleanup, with `scripts/measure.sh final`. The host was quiet before and after the run (`perf-gate-ready` exited 0).
 
 | Metric | Value |
 |---|---:|
-| `Player.app` total | 24,123,809 B |
-| executable | 7,600,656 B |
+| `Player.app` total | 24,123,793 B |
+| executable | 7,600,640 B |
 | framework closure | 15,127,360 B in 12 files |
-| cold startup | 16.31 ms |
-| warm startup | 14.37 ms |
-| first frame, 1080p | 33.93 ms |
-| idle RSS | 14.39 MB |
-| 1080p RSS | 219.62 MB |
-| 1080p CPU | 2.97 s |
-| 4K CPU | 2.98 s |
-| seek | 41.08 ms |
-| exit | 9.01 ms |
+| cold startup | 17.94 ms |
+| warm startup | 16.42 ms |
+| first frame, 1080p | 36.43 ms |
+| idle RSS | 14.34 MB |
+| 1080p RSS | 219.78 MB |
+| 1080p CPU | 2.98 s |
+| 4K CPU | 2.99 s |
+| seek | 40.45 ms |
+| exit | 10.88 ms |
 | audio underruns | 0 |
 | protocols | 1 (`file`) |
 | Lua interpreters | 1 |
 
 | Budget | Limit | Actual | Result |
 |---|---:|---:|---|
-| Distributable | 29,542,136 B | 22,728,016 B | pass |
-| Executable | 10,000,000 B | 7,600,656 B | pass |
-| First frame | 1 s | 33.93 ms | pass |
-| 1080p RSS | 300 MB | 219.62 MB | pass |
-| Seek | 250 ms | 41.08 ms | pass |
+| Distributable | 29,542,136 B | 22,728,000 B | pass |
+| Executable | 10,000,000 B | 7,600,640 B | pass |
+| First frame | 1 s | 36.43 ms | pass |
+| 1080p RSS | 300 MB | 219.78 MB | pass |
+| Seek | 250 ms | 40.45 ms | pass |
 | Network schemes | 0 | 0 | pass |
 | Duplicate Lua interpreters | 0 | 0 | pass |
 
 The 1080p CPU result is not a fixed budget. The current row is real-time headless playback: with `--vo=null --ao=null` the Rust engine still advances the clock at wall time, so a 3 s clip costs about 3 s of CPU. It is not comparable to the older C rows, which finished null output ahead of wall time. The gated budgets are size, RSS, first frame, seek, protocols, and Lua count. `scripts/measure.sh cpu BASELINE_PLAYER` runs seven interleaved baseline and candidate pairs, reports both medians and spreads, and fails only when the candidate exceeds the baseline by more than 10% and by more than the larger spread. `scripts/measure.sh compare BEFORE AFTER` applies the same rule to startup, first frame, seek, exit, and CPU between two labels. Both print `perf gate deferred: host busy` and exit 75 when `perf-gate-ready` reports load, which is never a pass. Frame drops are no longer measured: under `--vo=null` there is no renderer clock, so the count is zero by construction. The renderer check is in `docs/manual-checklist.md`.
 
-The post-S9 cleanup removes the C engine, the C ABI and its headers, and the Rust cdylib archive. The app is 24,123,809 B on disk with a 7,600,656 B executable and a 15,127,360 B closure, under the 29,542,136 B distributable budget.
+The post-S9 cleanup removes the C engine, the C ABI and its headers, and the Rust cdylib archive. The app is 24,123,793 B on disk with a 7,600,640 B executable and a 15,127,360 B closure, under the 29,542,136 B distributable budget.
 
 ## Optimization history
 
