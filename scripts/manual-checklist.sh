@@ -59,8 +59,11 @@ Audio:
   [ ] No clicks, dropouts, or persistent underruns.
 
 Interaction:
-  [ ] OSC appears on pointer move and auto-hides.
-  [ ] OSC play/pause, seek, volume/mute, fullscreen, and track selector work.
+  [ ] OSC appears on pointer move, stays while the pointer rests on the bar, and fades out
+      0.5 s after the pointer stops elsewhere, including in fullscreen.
+  [ ] OSC play/pause, click and drag seek, volume/mute, fullscreen, and track selector work
+      with a real mouse; hit areas line up with the drawn controls on a Retina display.
+  [ ] The scroll wheel over the volume control changes volume, and over the seek bar seeks.
   [ ] Keyboard bindings match the shipped help.
   [ ] Drag-and-drop and external subtitle loading work.
   [ ] Quit and repeated open/close are clean.

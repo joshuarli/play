@@ -24,7 +24,7 @@ To build either artifact from source, see [Install and run](docs/install.md).
 - Local playlists (M3U, M3U8, PLS) and external audio or subtitle files.
 - Network URLs are rejected before the stream layer with `Refusing non-local input`. The player makes no network connection.
 
-The player does not read `mpv.conf`, `input.conf`, or scripts from user directories. Pass options on the command line and load scripts explicitly with `--script=FILE`.
+The player does not read `mpv.conf`, `input.conf`, or scripts from user directories, and it has no scripting. Pass options on the command line and key bindings with `--input-conf=FILE`.
 
 ## Controls
 

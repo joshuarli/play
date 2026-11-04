@@ -23,9 +23,8 @@ The local-only gate creates a hostile temporary `HOME` with `mpv.conf`, `input.c
 - `player-ass`: libass library, renderer, tracks, and bitmap output.
 - `player-output`: libplacebo/Vulkan renderer, swapchain, overlays, and frame download.
 - `player-display`: Cocoa/Metal window bridge on macOS and Wayland window/input on Linux.
-- `player-lua`: the only Lua interpreter, the mp-compatible script host, and the embedded `defaults`, `assdraw`, `options`, `input`, and `osc` modules.
 - `player-tui`: the terminal renderer and input surface.
-- `player-app`: CLI, IPC, playlist, chapters, track switching, properties and events, command dispatch, OSC, scripts, GUI and TUI modes, Finder open, drag-and-drop, and screenshots.
+- `player-app`: CLI, IPC, playlist, chapters, track switching, properties and events, command dispatch, the native OSC, GUI and TUI modes, Finder open, drag-and-drop, and screenshots.
 - `player-gui`: a compatibility launcher over `player-app`.
 
 The mpv-derived C playback loop, demux wrappers, filter framework, packet and frame representations, audio and video output abstractions, command and property implementation, client event framework, stream and playlist machinery, allocators, and Meson player build are removed.
@@ -39,8 +38,8 @@ The mpv-derived C playback loop, demux wrappers, filter framework, packet and fr
 - The yt-dlp hook and the option tables for stream-lavf, raw demuxers, discs, and capture.
 - Windows and Android audio outputs, video outputs, and window systems; GL and OpenGL; and all Linux audio outputs other than ALSA and window systems other than Wayland.
 - Video outputs other than libplacebo, including image, X11, DRM, SDL, VA-API output, VDPAU, Direct3D, and MediaCodec. VA-API and VideoToolbox decoder support is retained in `player-media`; the scheduler currently opens decoders in software. The `--tui` frontend is not a video output: it renders audio metadata and cover art to the terminal and keeps `vo=null`.
+- Scripting: the Lua 5.2 interpreter, the `mp` script API, the bundled `defaults`, `assdraw`, `options`, `input`, and `osc` Lua modules, script threads and event queues, and the commands and properties that only scripts used (`script-message`, `script-message-to`, `script-binding`, `define-section`, `enable-section`, `disable-section`, `osd-overlay`, `expand-text`, `run`, `subprocess`, `screenshot-raw`, and `user-data/*`). A Rust OSC replaces the Lua one.
 - JavaScript, VapourSynth, C plugins, Touch Bar, and Media Player integration.
-- Built-in Lua modules that the player no longer loads: `auto_profiles`, `commands`, `console`, `context_menu`, `fzy`, `positioning`, and `stats`.
 - Encoding, stream recording, the lavfi filter graph, and the encoding option group. The release FFmpeg has no encoders or muxers.
 - FFmpeg audio fallback and SPDIF passthrough. Symphonia handles supported audio decoding.
 - Playlist shuffle and loop commands and options. A-B loop remains.
@@ -48,13 +47,13 @@ The mpv-derived C playback loop, demux wrappers, filter framework, packet and fr
 
 ## CLI
 
-Supported: `player FILE...`, `--tui`, `--gui`, `--gate` (GUI gate), `--fullscreen` and `--fs`, `--start`, `--playlist`, `--audio-file` and `--audio-files`, `--sub-file` and `--sub-files`, `--script`, `--input-conf`, `--input-ipc-server`, `--audio-device` (Linux ALSA), `--geometry`, `--frames`, `--term-playing-msg`, `--list-protocols`, `--version`, `--help`, and the playback, track, and OSD controls used by the OSC and local playback. `--tui` is audio-first and keeps `vo=null`; it is not a terminal video output.
+Supported: `player FILE...`, `--tui`, `--gui`, `--gate` (GUI gate), `--fullscreen` and `--fs`, `--start`, `--playlist`, `--audio-file` and `--audio-files`, `--sub-file` and `--sub-files`, `--osc` and `--no-osc`, `--input-conf`, `--input-ipc-server`, `--audio-device` (Linux ALSA), `--geometry`, `--frames`, `--term-playing-msg`, `--list-protocols`, `--version`, `--help`, and the playback, track, and OSD controls used by the OSC and local playback. `--tui` is audio-first and keeps `vo=null`; it is not a terminal video output.
 
-Removed: `--ytdl*`, `--hls-bitrate`, `--lavfi-complex`, `--stream-dump`, `--stretch-dvd-subs`, the encoding group (`--o`, `--of`, `--ovc`, `--oac`, their option tables, `--orawts`, and metadata flags), the Windows window and capture group, options for deleted Lua overlay modules, `--audio-spdif`, and `--ad-lavc-*`. `--http-header-fields` and the other network groups were removed with the network modules.
+Removed: `--ytdl*`, `--hls-bitrate`, `--lavfi-complex`, `--stream-dump`, `--stretch-dvd-subs`, the encoding group (`--o`, `--of`, `--ovc`, `--oac`, their option tables, `--orawts`, and metadata flags), the Windows window and capture group, the scripting options (`--script`, `--scripts`, `--script-opts`, and `--load-scripts=yes` fail with an unsupported-option error), `--audio-spdif`, and `--ad-lavc-*`. `--http-header-fields` and the other network groups were removed with the network modules.
 
-## Explicit scripts
+## Configuration
 
-`--script=FILE` loads a trusted Lua file. The script can open files, run processes with `os.execute`, and send the full mpv command table. The player does not read scripts, `mpv.conf`, or `input.conf` from user directories.
+The player has no scripting. It does not read `mpv.conf`, `input.conf`, or scripts from user directories; `--input-conf=FILE` loads key bindings explicitly.
 
 ## Remaining debt
 

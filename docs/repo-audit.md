@@ -10,13 +10,12 @@ Recorded 2026-11-03 after S9 and the C ABI cleanup: the C playback engine is ret
 - `rust/player-engine`: scheduler, playback state machine, frame pacing, subtitles, and the session worker.
 - `rust/player-ass` and `rust/player-output`: libass tracks and rendering, and the libplacebo/Vulkan renderer.
 - `rust/player-display`: the macOS Cocoa/Metal bridge and the Linux Wayland window.
-- `rust/player-lua`: the only Lua 5.2 interpreter and the embedded built-in modules.
 - `rust/player-tui`: the terminal renderer and input surface.
-- `rust/player-app`: the player executable, CLI, IPC, playlists, properties and events, commands, scripts, GUI and TUI modes, Finder open, drag-and-drop, and screenshots.
+- `rust/player-app`: the player executable, CLI, IPC, playlists, properties and events, commands, the native OSC, GUI and TUI modes, Finder open, drag-and-drop, and screenshots.
 - `rust/player-backend`: the Rust engine backend used by `player-app`. The retired C ABI, its headers, and its C test harness are gone.
 - `tests/`: the IPC harness, suite gates, fixtures, and audit scripts.
 - `scripts/`: build, release, measure, audit, and checklist entry points.
-- `docs/`: baseline, architecture, FFmpeg, scope, Lua API, metrics, licenses, and status.
+- `docs/`: baseline, architecture, FFmpeg, scope, metrics, licenses, and status.
 
 ## Build and test
 
@@ -28,11 +27,11 @@ Recorded 2026-11-03 after S9 and the C ABI cleanup: the C playback engine is ret
 
 ## Security and correctness
 
-- **Protocols:** `--list-protocols` reports one scheme, `file`. FFmpeg is configured `--disable-network`; no curl, TLS, CA, or network demuxer is linked. `player-core::input::classify_input` rejects every remote URL and protocol wrapper at startup, IPC and script `loadfile`, playlist loading, playlist entries, and external files.
+- **Protocols:** `--list-protocols` reports one scheme, `file`. FFmpeg is configured `--disable-network`; no curl, TLS, CA, or network demuxer is linked. `player-core::input::classify_input` rejects every remote URL and protocol wrapper at startup, IPC `loadfile`, playlist loading, playlist entries, and external files.
 - **Dylibs:** the release closure contains no `/opt/homebrew` path and no `.work` build path. The app bundles the pinned closure, Vulkan loader, and MoltenVK. There is no Rust dylib and no libmpv.
-- **Lua:** exactly one `luaL_newstate` exists in the release executable. The interpreter opens `io`, `os`, and `package`; it does not open `debug`.
-- **Unexpected resources:** built-in Lua modules are embedded from `rust/player-lua/lua/`; there is no runtime resource extraction. User config and scripts are disabled by default and the gates pass `--no-config` where they can.
-- **Subprocess:** the retained `subprocess` command and `.run` script backend can spawn a local process. Both are reachable only from an explicit script or an IPC client. No built-in module uses them. This is a local process capability, not a network capability.
+- **Scripting:** none. `scripts/audit.sh` fails on any `lua_`/`luaL_` symbol in the development or release executable, any `mlua`, `lua-src`, or `luajit` crate in `Cargo.lock`, and any Lua API reference in `rust/`; `scripts/audit-linux.sh` checks the Linux executable.
+- **Unexpected resources:** the only embedded resource is the OSD symbol font; there is no runtime resource extraction. User config is never read, and the gates pass `--no-config` where they can.
+- **Subprocess:** the player spawns no process. The `subprocess` and `run` commands were removed with scripting.
 - **Clipboard:** removed in S7a. No clipboard property, command, backend, bridge, binding, or Wayland selection sync remains in the tree.
 - **Dependencies:** `cargo audit` reports no RustSec vulnerabilities for the 90 locked crates.
 - **Licenses:** `docs/licenses.md` lists the shipped components. The Rust dependency graph is MIT/Apache-2.0/MPL-2.0/Zlib/Unicode-3.0; Symphonia is MPL-2.0 and its notices are preserved under `vendor/symphonia`.
@@ -43,7 +42,7 @@ Recorded 2026-11-03 after S9 and the C ABI cleanup: the C playback engine is ret
 
 - Rust: 26,576 lines in 82 files under `rust/`.
 - C ABI: none. No `extern "C"` export, header, or C test harness remains.
-- In-tree C: only the Objective-C window bridge. Lua 5.2.4 is vendored through `mlua`.
+- In-tree C: only the Objective-C window bridge.
 - Tests: 37 gates in `tests/harness.py`; the suite passes on the recorded host.
 - Distributable: 24.1 MB on disk; the executable is 7,600,640 B, the framework closure is 15,127,360 B in 12 dylibs, and the bundled icon is 1.39 MB.
 - Linux: the stripped musl executable is 24,471,888 B and needs seven shared libraries.

@@ -19,9 +19,8 @@ Player is a local-only media player built on a Rust playback engine, a minimal p
 
 - Linux is x86-64 musl only. glibc is explicitly out of scope; do not add a glibc build or fallback.
 - Local input only. Network schemes, TLS, and network protocols are not built. The classifier is `rust/player-core/src/input.rs`.
-- The player does not auto-load user config or scripts. Explicit scripts are trusted code with the full command table, including `subprocess` and `run`.
-- One Lua implementation: the vendored Lua 5.2.4 through `mlua` in `rust/player-lua`.
-- Rust owns the playback pipeline (demux, decode, scheduling, audio, video rendering, subtitles, OSD), startup configuration, playlist, command validation, playback state, local file I/O, the application surface, and the Lua host. The only C in-tree code is the macOS window bridge; Lua 5.2.4 is vendored through `mlua`, and everything else is a pinned native dependency.
+- The player does not auto-load user config. There is no scripting: no interpreter, script host, or script API. The on-screen controller is native Rust in `rust/player-app/src/osc.rs`.
+- Rust owns the playback pipeline (demux, decode, scheduling, audio, video rendering, subtitles, OSD), startup configuration, playlist, command validation, playback state, local file I/O, the application surface, and the OSC. The only C in-tree code is the macOS window bridge; everything else is a pinned native dependency.
 - Native-boundary `unsafe` lives in `player-media`, `player-output`, `player-display`, `player-ass`, `player-engine`, and `player-audio`. Each block states its safety argument.
 - CI builds both release artifacts on GitHub. A `v*` tag runs `.github/workflows/release.yml`, which publishes the macOS app zip and the Linux tarball with `SHA256SUMS`. Gates are local commands. Do not notarize.
 - `TODO.md` holds open work. Delete a ticket when it is done; git history is the record.
@@ -30,7 +29,7 @@ Player is a local-only media player built on a Rust playback engine, a minimal p
 
 - [docs/install.md](docs/install.md): build, run, release artifacts, and owner checks.
 - [docs/linux.md](docs/linux.md): Linux runtime set, container, headless gates, ALSA, fixtures.
-- [docs/architecture.md](docs/architecture.md): ownership boundaries, playback pipeline, script host, renderer, release closure.
+- [docs/architecture.md](docs/architecture.md): ownership boundaries, playback pipeline, OSC, renderer, release closure.
 - [docs/scope.md](docs/scope.md): input boundary, retained and removed modules, CLI, debt.
 - [docs/ffmpeg.md](docs/ffmpeg.md): FFmpeg pin, allowlist, manifest gate.
 - [docs/metrics.md](docs/metrics.md): measurement history and release budgets.
@@ -40,6 +39,5 @@ Player is a local-only media player built on a Rust playback engine, a minimal p
 - [docs/repo-audit.md](docs/repo-audit.md): dated security, license, and complexity audit.
 - [docs/licenses.md](docs/licenses.md): shipped licenses.
 - [docs/manual-checklist.md](docs/manual-checklist.md): owner-run visual and audio checks.
-- [docs/lua-api.md](docs/lua-api.md): generated Lua API closure.
 - [docs/tui-design.md](docs/tui-design.md): terminal UI layout, art transport, and limits.
 - [TODO.md](TODO.md): open work.

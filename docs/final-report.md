@@ -11,9 +11,9 @@ The mpv-derived C playback engine is gone. Cargo builds the player on both platf
 - **Playback engine:** `player-engine` owns the scheduler, clock, playback state, frame pacing, subtitles, and the session worker.
 - **Media:** `player-media` owns FFmpeg demuxing and video decode; `player-audio` owns Symphonia decode, mixing, resampling, the audio clock, and the CoreAudio and ALSA sinks.
 - **Output:** `player-ass` renders subtitles and the OSD bitmaps; `player-output` renders through libplacebo and Vulkan; `player-display` owns the macOS Cocoa/Metal window and the Linux Wayland window.
-- **Application:** `player-app` owns the executable, CLI, IPC, playlists, chapters, track switching, properties and events, command dispatch, OSC, scripts, GUI and TUI modes, Finder open, drag-and-drop, and screenshots.
-- **Lua:** one mlua 0.12.2 Lua 5.2 host with embedded built-in modules and one interpreter. The sources live in `rust/player-lua/lua/`.
-- **Native:** the Objective-C window bridge, Lua 5.2.4 vendored through `mlua`, and the pinned native dependency closure. There is no mpv playloop, libmpv, or C player process.
+- **Application:** `player-app` owns the executable, CLI, IPC, playlists, chapters, track switching, properties and events, command dispatch, the native OSC, GUI and TUI modes, Finder open, drag-and-drop, and screenshots.
+- **Scripting:** none. The on-screen controller is a typed Rust state machine in `rust/player-app/src/osc.rs` that renders ASS events through libass.
+- **Native:** the Objective-C window bridge and the pinned native dependency closure. There is no mpv playloop, libmpv, or C player process.
 
 ## Verification
 
@@ -37,13 +37,13 @@ The mpv-derived C playback engine is gone. Cargo builds the player on both platf
 | 1080p RSS | 300 MB | 219.78 MB |
 | Seek | 250 ms | 40.45 ms |
 | Network schemes | 0 | 0 |
-| Duplicate Lua interpreters | 0 | 0 |
+| Lua interpreters | 0 | 0 |
 
 The final measurement is the clean tree at `f41bb50`, after the C ABI, probe, and static-archive cleanup: cold 17.94 ms, warm 16.42 ms, idle RSS 14.34 MB, 1080p RSS 219.78 MB, 1080p CPU 2.98 s, 4K CPU 2.99 s, seek 40.45 ms, exit 10.88 ms, no audio underruns. These are headless timings. The 1080p CPU figure is real-time headless playback, not a fixed gate. The host was quiet before and after the run (`perf-gate-ready` exited 0).
 
 ## Build and provenance
 
-- mpv v0.41.0, `41f6a645068483470267271e1d09966ca3b9f413`, remains the behavioral reference for the ported application surface; the bundled Lua client scripts come from it under GPL-2.0-or-later.
+- mpv v0.41.0, `41f6a645068483470267271e1d09966ca3b9f413`, remains the behavioral reference for the ported application surface; the native OSC is ported from mpv-derived Lua scripts and keeps their GPL-2.0-or-later obligation.
 - FFmpeg n9.0.2, `ce8f11b9fac4cd7ccfb41ca7c01bc17f5cda8cc3`, minimal allowlist, `file` protocol only.
 - libass 0.17.5, libplacebo 7.387.0, shaderc 2026.4 with glslang, SPIRV-Tools, and SPIRV-Headers pins, dav1d 1.5.4, FreeType 2.15.0, FriBiDi 1.0.17, HarfBuzz 15.0.0, Vulkan-Headers and Loader 1.4.363.0, MoltenVK 1.4.2 from a checksum-pinned binary, and Symphonia at `b6336209` under MPL-2.0.
 - `scripts/build-deps.sh` pins source URLs and SHA-256 values. Homebrew supplies build tools, not runtime dylibs.
@@ -74,7 +74,7 @@ The development loop is `scripts/build.sh` plus `tests/run.sh suite`. Scratch ar
 
 ### Outcome
 
-The Linux build is a mostly static `x86_64-unknown-linux-musl` executable with the same Rust engine, application layer, and Lua host as macOS: `vo=gpu-next` over Vulkan and Wayland, ALSA audio, and libva for hardware decode support. The release is `dist/player-x86_64-linux-musl.tar.gz` (player and README) with a SHA-256 file. The stripped executable is 24,471,888 B and needs seven shared libraries: musl, `libgcc_s.so.1`, `libvulkan.so.1`, `libwayland-client.so.0`, `libasound.so.2`, `libva.so.2`, and `libva-drm.so.2`. The final container measurement records cold 10.57 ms, warm 8.82 ms, first frame 74.44 ms, 1080p RSS 216.15 MB, seek 35.91 ms, and one `file` protocol.
+The Linux build is a mostly static `x86_64-unknown-linux-musl` executable with the same Rust engine and application layer as macOS: `vo=gpu-next` over Vulkan and Wayland, ALSA audio, and libva for hardware decode support. The release is `dist/player-x86_64-linux-musl.tar.gz` (player and README) with a SHA-256 file. The stripped executable is 24,471,888 B and needs seven shared libraries: musl, `libgcc_s.so.1`, `libvulkan.so.1`, `libwayland-client.so.0`, `libasound.so.2`, `libva.so.2`, and `libva-drm.so.2`. The final container measurement records cold 10.57 ms, warm 8.82 ms, first frame 74.44 ms, 1080p RSS 216.15 MB, seek 35.91 ms, and one `file` protocol.
 
 ### Verification
 
@@ -90,7 +90,7 @@ The Linux build is a mostly static `x86_64-unknown-linux-musl` executable with t
 | Stripped binary | 50,000,000 B | 24,471,888 B |
 | Direct dynamic libraries | 7 | 7 |
 | Network schemes | 0 | 0 |
-| Duplicate Lua interpreters | 0 | 0 |
+| Lua interpreters | 0 | 0 |
 | 1080p RSS | 300 MB | 216.15 MB |
 
 ### Provenance

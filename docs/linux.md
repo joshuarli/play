@@ -1,6 +1,6 @@
 # Linux
 
-Player builds for Linux x86-64 on musl. The playback engine, application layer, and Lua host are the same Rust code as macOS; the platform split is Wayland for the window and input, Vulkan for rendering, and ALSA for audio. The executable is mostly static. It needs a small shared-library set because a fully static binary cannot load a Vulkan ICD, and a `wlshm` fallback was rejected because it has no GPU, HDR, or hardware decode. The build host is the Alpine edge image in `docker/linux/Dockerfile`, pinned by digest. `scripts/linux-container.sh COMMAND...` runs a command in that image as the calling user with the repository mounted at `/work`.
+Player builds for Linux x86-64 on musl. The playback engine and application layer are the same Rust code as macOS; the platform split is Wayland for the window and input, Vulkan for rendering, and ALSA for audio. The executable is mostly static. It needs a small shared-library set because a fully static binary cannot load a Vulkan ICD, and a `wlshm` fallback was rejected because it has no GPU, HDR, or hardware decode. The build host is the Alpine edge image in `docker/linux/Dockerfile`, pinned by digest. `scripts/linux-container.sh COMMAND...` runs a command in that image as the calling user with the repository mounted at `/work`.
 
 ## Build
 

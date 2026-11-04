@@ -19,8 +19,7 @@ The macOS release app is assembled from the pinned sources in `scripts/build-dep
 | FriBiDi | 1.0.17 | LGPL-2.1-or-later |
 | HarfBuzz | 15.0.0 | MIT |
 | MoltenVK (binary) | 1.4.2 | Apache-2.0 |
-| Lua (vendored by mlua) | 5.2.4 | MIT |
-| mpv Lua client scripts (`defaults`, `assdraw`, `options`, `input`, `osc`) | 0.41.0 | GPL-2.0-or-later |
+| Native OSC (`rust/player-app/src/osc.rs`), ported from the mpv-derived Lua `osc` and `assdraw` scripts | 0.41.0 | GPL-2.0-or-later |
 | Symphonia (vendored) | `b6336209` | MPL-2.0 |
 | Rust crates | `Cargo.lock` | MIT/Apache-2.0/MPL-2.0/Zlib/Unicode-3.0 |
 
@@ -34,4 +33,4 @@ The Linux build adds these components, linked statically by `scripts/build-deps-
 
 The musl runtime libraries come from the Alpine image and are not shipped: musl (MIT), libgcc (GPL-3.0-or-later WITH GCC-exception-3.1), vulkan-loader (Apache-2.0), wayland-libs-client (MIT), alsa-lib (LGPL-2.1-or-later), and libva (MIT).
 
-`cargo audit` reports no RustSec vulnerabilities for the locked crates. The release audit checked `cargo metadata` license fields. The set is MIT OR Apache-2.0, MPL-2.0, MIT, Apache-2.0 OR MIT, Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT, Apache-2.0/MIT, Zlib OR Apache-2.0 OR MIT, Unlicense OR MIT, and (MIT OR Apache-2.0) AND Unicode-3.0. Symphonia's MPL-2.0 notice is preserved under `vendor/symphonia`; FFmpeg, libass, and libplacebo notices and source obligations remain with the repository and pinned sources. The bundled Lua scripts retain their mpv provenance and GPL-2.0-or-later headers.
+`cargo audit` reports no RustSec vulnerabilities for the locked crates. The release audit checked `cargo metadata` license fields. The set is MIT OR Apache-2.0, MPL-2.0, MIT, Apache-2.0 OR MIT, Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT, Apache-2.0/MIT, Zlib OR Apache-2.0 OR MIT, Unlicense OR MIT, and (MIT OR Apache-2.0) AND Unicode-3.0. Symphonia's MPL-2.0 notice is preserved under `vendor/symphonia`; FFmpeg, libass, and libplacebo notices and source obligations remain with the repository and pinned sources. No Lua interpreter or Lua script ships. The native OSC keeps the GPL-2.0-or-later obligation of the mpv-derived Lua OSC it was ported from.
