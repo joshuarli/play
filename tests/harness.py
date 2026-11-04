@@ -1954,7 +1954,7 @@ def gate_linux_rust_link(results, args):
             **os.environ,
             "CARGO_TARGET_DIR": str(ROOT / ".work/deps/player-linux/target"),
             # A static-pie test binary with Wayland in NEEDED dies in the
-            # loader before any test runs; the release staticlib is unaffected.
+            # loader before any test runs; the release binary is unaffected.
             "RUSTFLAGS": "-C target-feature=-crt-static",
         },
     )
