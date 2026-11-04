@@ -16,9 +16,15 @@ mod tests {
         selected: usize,
         reads: usize,
         fail_at_read: Option<usize>,
+        keyframe_interval: Option<f64>,
     }
 
     impl FakeDemux {
+        fn with_keyframes(mut self, interval: f64) -> Self {
+            self.keyframe_interval = Some(interval);
+            self
+        }
+
         fn av(duration: f64, fps: f64, audio_every: f64) -> Self {
             FakeDemux::build(duration, fps, audio_every, 1, false, false)
         }
@@ -92,6 +98,7 @@ mod tests {
                 selected: 0,
                 reads: 0,
                 fail_at_read: None,
+                keyframe_interval: None,
             }
         }
     }
@@ -120,6 +127,10 @@ mod tests {
         }
 
         fn seek(&mut self, seconds: f64) {
+            let seconds = match self.keyframe_interval {
+                Some(interval) => (seconds / interval).floor() * interval,
+                None => seconds,
+            };
             self.cursor = self
                 .script
                 .iter()
@@ -489,6 +500,28 @@ mod tests {
         let after_first: Vec<f64> = h.sim.video_output().presented.iter().map(|(pts, _)| *pts).collect();
         assert!(after_first.iter().any(|pts| *pts >= 3.0));
         assert!(after_first.iter().any(|pts| *pts < 1.0 && *pts >= 0.5));
+    }
+
+    #[test]
+    fn seek_between_keyframes_resumes_at_the_target() {
+        let mut h = Harness::new(FakeDemux::av(14.0, 25.0, 0.04).with_keyframes(5.0), false);
+        h.run(25, DT, &[]);
+        let presented_before = h.sim.video_output().presented.len();
+        let pushes_before = h.sim.audio_output().log.len();
+        h.sim.send(Command::Seek(9.0));
+        h.run(50, DT, &[]);
+        let presented: Vec<f64> = h.sim.video_output().presented[presented_before..]
+            .iter()
+            .map(|(pts, _)| *pts)
+            .collect();
+        assert!(!presented.is_empty(), "video resumes after the seek");
+        assert!(presented[0] >= 9.0 - 0.04, "first frame after the seek is at {}", presented[0]);
+        assert!(
+            presented.len() >= 10 && *presented.last().unwrap() >= 9.4,
+            "video keeps playing after the seek: {presented:?}"
+        );
+        let audio: Vec<f64> = h.sim.audio_output().log[pushes_before..].iter().map(|(pts, _)| *pts).collect();
+        assert!(audio.iter().all(|pts| *pts >= 9.0 - 0.04), "audio before the target played: {:?}", &audio[..audio.len().min(5)]);
     }
 
     #[test]

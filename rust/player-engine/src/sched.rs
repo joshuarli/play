@@ -107,7 +107,8 @@ pub struct Stats {
 }
 
 const PUMP_PACKETS_PER_STEP: usize = 8;
-const SEEK_PUMP_LIMIT: usize = 1024;
+const SEEK_PUMP_LIMIT: usize = 16384;
+const SEEK_FRAME_TOLERANCE: f64 = 0.04;
 const SEEK_PREROLL_CHUNKS: u64 = 8;
 const SUBTITLE_PRIME_WINDOW: f64 = 30.0;
 const SUBTITLE_PRIME_PACKETS: usize = 8192;
@@ -544,10 +545,12 @@ where
                 packet.pts = Some(pts);
                 self.audio.send(packet)?;
                 for chunk in self.audio.finish()? {
-                    self.audio_cursor = chunk.pts + chunk_duration(&chunk);
-                    if chunk.pts >= target {
-                        *have_audio = true;
+                    let end = chunk.pts + chunk_duration(&chunk);
+                    self.audio_cursor = end;
+                    if end <= target {
+                        continue;
                     }
+                    *have_audio = true;
                     self.preroll.push_back(chunk);
                 }
             }
@@ -561,9 +564,10 @@ where
                 self.video.send(packet)?;
                 for frame in self.video.drain()? {
                     self.video_cursor = self.video_cursor.max(frame.pts);
-                    if frame.pts >= target {
-                        *have_video = true;
+                    if frame.pts < target - SEEK_FRAME_TOLERANCE {
+                        continue;
                     }
+                    *have_video = true;
                     self.pending_frames.push_back(frame);
                 }
             }
