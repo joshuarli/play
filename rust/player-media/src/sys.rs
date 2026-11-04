@@ -19,6 +19,8 @@ pub const AVMEDIA_TYPE_DATA: c_int = 2;
 pub const AVMEDIA_TYPE_SUBTITLE: c_int = 3;
 pub const AVMEDIA_TYPE_ATTACHMENT: c_int = 4;
 
+pub const AV_DISPOSITION_DEFAULT: c_int = 1 << 0;
+pub const AV_DISPOSITION_FORCED: c_int = 1 << 6;
 pub const AV_DISPOSITION_ATTACHED_PIC: c_int = 1 << 10;
 
 pub const AVFMT_FLAG_CUSTOM_IO: c_int = 0x0080;

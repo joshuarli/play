@@ -33,8 +33,31 @@ fn channels_of(info: &StreamInfo) -> Channels {
     Channels::Discrete(info.channels.max(0) as u16)
 }
 
+pub fn target_layout(info: &StreamInfo) -> Result<Layout, String> {
+    let source_layout = layout_of(&channels_of(info)).ok_or_else(|| {
+        format!(
+            "audio layout of '{}' has no pipeline mapping",
+            info.codec_name
+        )
+    })?;
+    Ok(match source_layout {
+        Layout::Mono => Layout::Mono,
+        Layout::Stereo => Layout::Stereo,
+        Layout::FiveOne => Layout::Stereo,
+    })
+}
+
 impl PacketDecoder {
     pub fn open(stream: &StreamInfo, target_rate: u32) -> Result<Self, String> {
+        let target_layout = target_layout(stream)?;
+        Self::open_with_layout(stream, target_rate, target_layout)
+    }
+
+    pub fn open_with_layout(
+        stream: &StreamInfo,
+        target_rate: u32,
+        target_layout: Layout,
+    ) -> Result<Self, String> {
         if target_rate == 0 {
             return Err("decoder needs a positive output rate".to_string());
         }
@@ -47,11 +70,6 @@ impl PacketDecoder {
                 stream.codec_name
             )
         })?;
-        let target_layout = match source_layout {
-            Layout::Mono => Layout::Mono,
-            Layout::Stereo => Layout::Stereo,
-            Layout::FiveOne => Layout::Stereo,
-        };
         let resampler = Resampler::new(
             stream.sample_rate as u32,
             target_rate,

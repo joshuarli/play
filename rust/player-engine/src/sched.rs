@@ -49,6 +49,9 @@ pub trait Demuxer {
     fn seek(&mut self, seconds: f64);
     fn select_audio(&mut self, stream: usize);
     fn selected_audio(&self) -> usize;
+    fn audio_info(&self, _stream: usize) -> Option<player_media::StreamInfo> {
+        None
+    }
 }
 
 pub trait AudioDecoder {
@@ -56,6 +59,9 @@ pub trait AudioDecoder {
     fn drain(&mut self) -> Result<Vec<AudioChunk>, String>;
     fn finish(&mut self) -> Result<Vec<AudioChunk>, String>;
     fn flush(&mut self);
+    fn reconfigure(&mut self, _info: &player_media::StreamInfo) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 pub trait VideoDecoder {
@@ -180,6 +186,10 @@ where
 
     pub fn stats(&self) -> Stats {
         self.stats
+    }
+
+    pub fn speed(&self) -> f64 {
+        self.clock.speed()
     }
 
     pub fn failure(&self) -> Option<&str> {
@@ -339,9 +349,16 @@ where
                         *self.machine.state(),
                         State::Playing | State::Paused { .. }
                     ) {
-                        self.demux.select_audio(stream);
-                        self.audio.flush();
-                        self.audio_cursor = self.clock.position(now);
+                        let info = self.demux.audio_info(stream);
+                        match info {
+                            Some(info) if self.audio.reconfigure(&info).is_ok() => {
+                                self.demux.select_audio(stream);
+                                self.audio.flush();
+                                self.audio_out.flush();
+                                self.audio_cursor = self.clock.position(now);
+                            }
+                            _ => self.stats.commands_ignored += 1,
+                        }
                     } else {
                         self.stats.commands_ignored += 1;
                     }

@@ -15,6 +15,15 @@ impl Layout {
             Layout::FiveOne => 6,
         }
     }
+
+    pub fn channel_mask(&self) -> u64 {
+        match self {
+            Layout::Mono => Position::FRONT_CENTER.bits(),
+            Layout::Stereo | Layout::FiveOne => {
+                Position::FRONT_LEFT.bits() | Position::FRONT_RIGHT.bits()
+            }
+        }
+    }
 }
 
 const CANONICAL: [Position; 8] = [

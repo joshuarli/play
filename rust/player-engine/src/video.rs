@@ -169,6 +169,7 @@ impl VideoDecoder for EngineVideo {
 pub struct EngineVideoOutput {
     shared: SharedHandle,
     gpu: Option<Gpu>,
+    discard: bool,
     sink: mpsc::SyncSender<PresentedFrame>,
 }
 
@@ -186,6 +187,7 @@ impl EngineVideoOutput {
         Ok(EngineVideoOutput {
             shared,
             gpu: Some(Gpu { renderer, vk }),
+            discard: false,
             sink,
         })
     }
@@ -194,6 +196,16 @@ impl EngineVideoOutput {
         EngineVideoOutput {
             shared,
             gpu: None,
+            discard: false,
+            sink,
+        }
+    }
+
+    pub fn null(shared: SharedHandle, sink: mpsc::SyncSender<PresentedFrame>) -> Self {
+        EngineVideoOutput {
+            shared,
+            gpu: None,
+            discard: true,
             sink,
         }
     }
@@ -262,6 +274,10 @@ impl VideoOutput for EngineVideoOutput {
             Some(frame) => frame,
             None => return Ok(()),
         };
+        if self.discard {
+            drop(frame);
+            return Ok(());
+        }
         let gpu = self
             .gpu
             .as_ref()

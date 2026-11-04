@@ -227,9 +227,12 @@ mod tests {
             sample_rate: 48000,
             channels: 6,
             time_base: (1, 48000),
+            duration_seconds: None,
             extradata: Vec::new(),
             channel_mask: 0,
             attached: false,
+            default: false,
+            forced: false,
             language: None,
             title: None,
         };

@@ -20,7 +20,7 @@ const PRESENTED_CHANNEL_DEPTH: usize = 4;
 pub struct EngineDemux {
     session: MediaSession,
     audio_streams: Vec<usize>,
-    selected: usize,
+    selected: Option<usize>,
     selected_video: Option<usize>,
     sub_streams: Vec<usize>,
     duration: f64,
@@ -52,12 +52,19 @@ impl EngineDemux {
                 _ => {}
             }
         }
-        let selected = *audio
-            .first()
-            .ok_or_else(|| format!("{path} has no audio stream"))?;
-        let info = stream_info(&session, selected).ok_or_else(|| format!("{path} has no usable audio format"))?;
-        if info.sample_rate <= 0 || info.channels <= 0 {
-            return Err(format!("{path} has no usable audio format"));
+        let selected = audio.first().copied();
+        if selected.is_none() && !include_video {
+            return Err(format!("{path} has no audio stream"));
+        }
+        if let Some(selected) = selected {
+            let info = stream_info(&session, selected)
+                .ok_or_else(|| format!("{path} has no usable audio format"))?;
+            if info.sample_rate <= 0 || info.channels <= 0 {
+                return Err(format!("{path} has no usable audio format"));
+            }
+        }
+        if selected.is_none() && selected_video.is_none() {
+            return Err(format!("{path} has no playable streams"));
         }
         let duration = session.duration_seconds().unwrap_or(0.0).max(0.0);
         Ok(EngineDemux {
@@ -72,6 +79,10 @@ impl EngineDemux {
 
     pub fn audio_streams(&self) -> &[usize] {
         &self.audio_streams
+    }
+
+    pub fn selected_audio_stream(&self) -> Option<usize> {
+        self.selected
     }
 
     pub fn sub_streams(&self) -> &[usize] {
@@ -111,7 +122,7 @@ fn stream_info(session: &MediaSession, index: usize) -> Option<StreamInfo> {
 
 impl Demuxer for EngineDemux {
     fn has_audio(&self) -> bool {
-        true
+        self.selected.is_some()
     }
 
     fn has_video(&self) -> bool {
@@ -124,7 +135,7 @@ impl Demuxer for EngineDemux {
                 Err(MediaError::Eof) => return DemuxEvent::Eof,
                 Err(other) => return DemuxEvent::Error(other.to_string()),
                 Ok(packet) => {
-                    let kind = if packet.stream_index == self.selected {
+                    let kind = if Some(packet.stream_index) == self.selected {
                         StreamKind::Audio
                     } else if Some(packet.stream_index) == self.selected_video {
                         StreamKind::Video
@@ -151,21 +162,30 @@ impl Demuxer for EngineDemux {
 
     fn select_audio(&mut self, stream: usize) {
         if self.audio_streams.contains(&stream) {
-            self.selected = stream;
+            self.selected = Some(stream);
         }
     }
 
     fn selected_audio(&self) -> usize {
-        self.selected
+        self.selected.unwrap_or(usize::MAX)
+    }
+
+    fn audio_info(&self, stream: usize) -> Option<StreamInfo> {
+        if self.audio_streams.contains(&stream) {
+            stream_info(&self.session, stream)
+        } else {
+            None
+        }
     }
 }
 
 pub struct EngineAudio {
-    core: PacketDecoder,
+    core: Option<PacketDecoder>,
     outbox: VecDeque<AudioChunk>,
     stream: usize,
     channels: u16,
     rate: u32,
+    layout: player_audio::mix::Layout,
 }
 
 impl EngineAudio {
@@ -173,16 +193,41 @@ impl EngineAudio {
         let core = PacketDecoder::open(info, target_rate)?;
         Ok(EngineAudio {
             channels: core.target_layout().channels() as u16,
+            layout: core.target_layout(),
             rate: core.target_rate(),
-            core,
+            core: Some(core),
             outbox: VecDeque::new(),
             stream: info.index,
         })
+    }
+
+    pub fn silent(rate: u32) -> Self {
+        EngineAudio {
+            core: None,
+            outbox: VecDeque::new(),
+            stream: usize::MAX,
+            channels: 2,
+            rate,
+            layout: player_audio::mix::Layout::Stereo,
+        }
+    }
+
+    pub fn reconfigure(&mut self, info: &StreamInfo) -> Result<(), String> {
+        let core = PacketDecoder::open_with_layout(info, self.rate, self.layout)?;
+        self.channels = core.target_layout().channels() as u16;
+        self.layout = core.target_layout();
+        self.stream = info.index;
+        self.outbox.clear();
+        self.core = Some(core);
+        Ok(())
     }
 }
 
 impl AudioDecoder for EngineAudio {
     fn send(&mut self, packet: Packet) -> Result<(), String> {
+        let Some(core) = self.core.as_mut() else {
+            return Ok(());
+        };
         let media = MediaPacket {
             stream_index: packet.stream,
             pts_seconds: packet.pts,
@@ -192,7 +237,7 @@ impl AudioDecoder for EngineAudio {
             data: packet.payload,
         };
         let pts = packet.pts.unwrap_or(0.0);
-        if let Some(ready) = self.core.feed(&media, pts)? {
+        if let Some(ready) = core.feed(&media, pts)? {
             self.outbox.push_back(AudioChunk {
                 pts: ready.pts,
                 stream: self.stream,
@@ -209,7 +254,9 @@ impl AudioDecoder for EngineAudio {
     }
 
     fn finish(&mut self) -> Result<Vec<AudioChunk>, String> {
-        if let Some(ready) = self.core.finish()? {
+        if let Some(core) = self.core.as_mut()
+            && let Some(ready) = core.finish()?
+        {
             self.outbox.push_back(AudioChunk {
                 pts: ready.pts,
                 stream: self.stream,
@@ -222,8 +269,14 @@ impl AudioDecoder for EngineAudio {
     }
 
     fn flush(&mut self) {
-        self.core.reset();
+        if let Some(core) = self.core.as_mut() {
+            core.reset();
+        }
         self.outbox.clear();
+    }
+
+    fn reconfigure(&mut self, info: &StreamInfo) -> Result<(), String> {
+        EngineAudio::reconfigure(self, info)
     }
 }
 
@@ -297,10 +350,11 @@ impl AudioOutput for EngineOutput {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct EngineStatus {
     pub position: f64,
     pub duration: f64,
+    pub speed: f64,
     pub volume: f32,
     pub muted: bool,
     pub paused: bool,
@@ -313,12 +367,34 @@ pub struct EngineStatus {
     pub tracks: Vec<TrackInfo>,
 }
 
+impl Default for EngineStatus {
+    fn default() -> Self {
+        EngineStatus {
+            position: 0.0,
+            duration: 0.0,
+            speed: 1.0,
+            volume: 1.0,
+            muted: false,
+            paused: false,
+            ended: false,
+            presented: 0,
+            dropped_late: 0,
+            video_width: 0,
+            video_height: 0,
+            error: None,
+            tracks: Vec::new(),
+        }
+    }
+}
+
 #[derive(Debug)]
 enum WorkerCommand {
     SetPaused(bool),
     Seek(f64),
+    SetSpeed(f64),
     SetVolume(f32),
     SetMuted(bool),
+    SelectAudio(usize),
     Stop,
     SelectSub(Option<usize>),
     AddSub(String, mpsc::Sender<Result<(), String>>),
@@ -341,14 +417,23 @@ pub struct SchedulerEngine {
 
 impl SchedulerEngine {
     pub fn load(path: &str, kind: SinkKind) -> Result<Self, String> {
-        Self::start(path, kind, true)
+        Self::start(path, kind, true, true)
+    }
+
+    pub fn load_null_video(path: &str, kind: SinkKind) -> Result<Self, String> {
+        Self::start(path, kind, true, false)
     }
 
     pub fn load_audio_only(path: &str, kind: SinkKind) -> Result<Self, String> {
-        Self::start(path, kind, false)
+        Self::start(path, kind, false, false)
     }
 
-    fn start(path: &str, kind: SinkKind, include_video: bool) -> Result<Self, String> {
+    fn start(
+        path: &str,
+        kind: SinkKind,
+        include_video: bool,
+        render_video: bool,
+    ) -> Result<Self, String> {
         let (command_tx, command_rx) = mpsc::channel::<WorkerCommand>();
         let (ready_tx, ready_rx) = mpsc::channel::<Result<(), String>>();
         // Bounded: present blocks when the consumer falls behind instead of
@@ -367,6 +452,7 @@ impl SchedulerEngine {
                     owned_path,
                     kind,
                     include_video,
+                    render_video,
                     command_rx,
                     worker_state,
                     ready_tx,
@@ -404,6 +490,10 @@ impl SchedulerEngine {
         self.send(WorkerCommand::Seek(seconds.max(0.0)));
     }
 
+    pub fn set_speed(&self, speed: f64) {
+        self.send(WorkerCommand::SetSpeed(speed.max(0.0)));
+    }
+
     pub fn set_volume(&self, volume: f32) {
         self.send(WorkerCommand::SetVolume(volume.clamp(0.0, 2.0)));
     }
@@ -426,6 +516,10 @@ impl SchedulerEngine {
 
     pub fn set_sub_visible(&self, visible: bool) {
         self.send(WorkerCommand::SetSubVisible(visible));
+    }
+
+    pub fn select_audio(&self, stream: usize) {
+        self.send(WorkerCommand::SelectAudio(stream));
     }
 
     pub fn render_subtitles(
@@ -484,6 +578,7 @@ fn run_worker(
     path: String,
     kind: SinkKind,
     include_video: bool,
+    render_video: bool,
     commands: mpsc::Receiver<WorkerCommand>,
     state: Arc<Mutex<EngineStatus>>,
     ready: mpsc::Sender<Result<(), String>>,
@@ -499,23 +594,32 @@ fn run_worker(
         } else {
             EngineDemux::open_audio_only(&path)?
         };
-        let info = demux
-            .stream_info(demux.selected_audio())
-            .ok_or_else(|| format!("{path} has no usable audio format"))?;
-        let sink: Box<dyn AudioSink> = match kind {
-            SinkKind::Null => Box::new(NullSink::new(
-                info.channels.max(1) as usize,
-                info.sample_rate.max(1) as u32,
-            )),
-            SinkKind::Default => open_default_sink(
-                info.channels.max(1) as usize,
-                info.sample_rate.max(1) as u32,
-                info.channel_mask,
-            )?,
-        };
         let duration = demux.duration();
-        let rate = sink.rate();
-        let audio = EngineAudio::open(&info, rate)?;
+        let (sink, audio): (Box<dyn AudioSink>, EngineAudio) =
+            if let Some(selected) = demux.selected_audio_stream() {
+                let info = demux.stream_info(selected).ok_or_else(|| {
+                    format!("{path} has no usable audio format")
+                })?;
+                let layout = player_audio::decode::target_layout(&info)?;
+                let sink: Box<dyn AudioSink> = match kind {
+                    SinkKind::Null => Box::new(NullSink::new(
+                        layout.channels(),
+                        info.sample_rate.max(1) as u32,
+                    )),
+                    SinkKind::Default => open_default_sink(
+                        layout.channels(),
+                        info.sample_rate.max(1) as u32,
+                        layout.channel_mask(),
+                    )?,
+                };
+                let rate = sink.rate();
+                let audio = EngineAudio::open(&info, rate)?;
+                (sink, audio)
+            } else {
+                let sink: Box<dyn AudioSink> = Box::new(NullSink::new(2, 48_000));
+                let rate = sink.rate();
+                (sink, EngineAudio::silent(rate))
+            };
         let output = EngineOutput {
             sink,
             written: 0,
@@ -526,7 +630,11 @@ fn run_worker(
             Some(stream) => {
                 let decoder = EngineVideo::open(demux.session(), stream)?;
                 let shared = decoder.shared();
-                let output = EngineVideoOutput::open(shared, frames_tx)?;
+                let output = if render_video {
+                    EngineVideoOutput::open(shared, frames_tx)?
+                } else {
+                    EngineVideoOutput::null(shared, frames_tx)
+                };
                 (decoder, output)
             }
             None => {
@@ -644,6 +752,7 @@ impl Worker {
         match command {
             WorkerCommand::SetPaused(paused) => self.scheduler.send(Command::Pause(paused)),
             WorkerCommand::Seek(seconds) => self.scheduler.send(Command::Seek(seconds)),
+            WorkerCommand::SetSpeed(speed) => self.scheduler.send(Command::SetSpeed(speed)),
             WorkerCommand::SetVolume(volume) => {
                 self.volume = volume;
                 self.scheduler.audio_output_mut().set_volume(volume);
@@ -652,6 +761,7 @@ impl Worker {
                 self.muted = muted;
                 self.scheduler.audio_output_mut().set_muted(muted);
             }
+            WorkerCommand::SelectAudio(stream) => self.scheduler.send(Command::SwitchAudio(stream)),
             WorkerCommand::Stop => {}
             WorkerCommand::SelectSub(selected) => self.scheduler.select_sub(selected),
             WorkerCommand::AddSub(path, reply) => {
@@ -688,6 +798,7 @@ impl Worker {
         let tracks = track_list(&self.scheduler);
         update(state, |status| {
             status.position = position;
+            status.speed = self.scheduler.speed();
             status.paused = paused;
             status.ended = ended;
             status.error = error;

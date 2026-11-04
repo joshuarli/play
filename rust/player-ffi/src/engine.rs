@@ -19,6 +19,8 @@ pub struct EngineBackend {
     fullscreen: bool,
     display: Option<(u32, u32)>,
     mouse_areas: HashMap<String, (f64, f64, f64, f64)>,
+    mouse_pos: (f64, f64),
+    mouse_seen: bool,
     sub_visible: bool,
     last_log: Option<(String, String)>,
     user_data: HashMap<String, NativeValue>,
@@ -64,6 +66,8 @@ impl EngineBackend {
             fullscreen: false,
             display: None,
             mouse_areas: HashMap::new(),
+            mouse_pos: (0.0, 0.0),
+            mouse_seen: false,
             sub_visible: true,
             last_log: None,
             user_data: HashMap::new(),
@@ -104,6 +108,15 @@ impl EngineBackend {
         self.quit
     }
 
+    pub fn set_sub_visible(&mut self, visible: bool) {
+        self.sub_visible = visible;
+        self.engine.set_sub_visible(visible);
+    }
+
+    pub fn sub_visible(&self) -> bool {
+        self.sub_visible
+    }
+
     pub fn engine_error(&self) -> Option<String> {
         self.engine.snapshot().error
     }
@@ -114,6 +127,18 @@ impl EngineBackend {
 
     pub fn mouse_area(&self, section: &str) -> Option<(f64, f64, f64, f64)> {
         self.mouse_areas.get(section).copied()
+    }
+
+    pub fn set_mouse_pos(&mut self, x: f64, y: f64) {
+        self.mouse_pos = (x, y);
+        self.mouse_seen = true;
+    }
+
+    pub fn sections(&self) -> Vec<(String, String, bool)> {
+        self.sections
+            .iter()
+            .map(|(name, section)| (name.clone(), section.contents.clone(), section.enabled))
+            .collect()
     }
 
     fn output_size(&self, status: &EngineStatus) -> (i64, i64) {
@@ -268,7 +293,7 @@ impl EngineBackend {
         self.osd_error.as_ref()
     }
 
-    pub fn pump(&mut self, sender: &EventSender) -> Result<Posted, HostError> {
+    pub fn pump_frames(&mut self) {
         let mut fresh = self.engine.drain_frames();
         let status = self.engine.snapshot();
         self.composite_frames(&status, &mut fresh);
@@ -276,6 +301,10 @@ impl EngineBackend {
         while self.pending_frames.len() > 8 {
             self.pending_frames.remove(0);
         }
+    }
+
+    pub fn pump(&mut self, sender: &EventSender) -> Result<Posted, HostError> {
+        self.pump_frames();
         let watched: Vec<(u64, String, NativeValue)> = self
             .observed
             .iter()
@@ -306,6 +335,7 @@ impl EngineBackend {
             "pause" => Ok(NativeValue::Bool(status.paused)),
             "time-pos" => Ok(NativeValue::Double(status.position)),
             "duration" => Ok(NativeValue::Double(status.duration)),
+            "speed" => Ok(NativeValue::Double(status.speed)),
             "volume" => Ok(NativeValue::Double(status.volume as f64 * 100.0)),
             "mute" => Ok(NativeValue::Bool(status.muted)),
             "fullscreen" => Ok(NativeValue::Bool(self.fullscreen)),
@@ -320,9 +350,9 @@ impl EngineBackend {
             "sub-visibility" => Ok(NativeValue::Bool(self.sub_visible)),
             "track-list" => Ok(track_list_value(&status)),
             "mouse-pos" => Ok(NativeValue::Map(vec![
-                ("x".to_owned(), NativeValue::Double(0.0)),
-                ("y".to_owned(), NativeValue::Double(0.0)),
-                ("hover".to_owned(), NativeValue::Bool(false)),
+                ("x".to_owned(), NativeValue::Double(self.mouse_pos.0)),
+                ("y".to_owned(), NativeValue::Double(self.mouse_pos.1)),
+                ("hover".to_owned(), NativeValue::Bool(self.mouse_seen)),
             ])),
             "osd-dimensions" => {
                 let (width, height) = self
@@ -501,13 +531,30 @@ impl PlayerBackend for EngineBackend {
                 self.fullscreen = fullscreen;
                 Ok(())
             }
+            ("speed", NativeValue::Double(speed)) => {
+                self.engine.set_speed(speed);
+                Ok(())
+            }
+            ("speed", NativeValue::Int(speed)) => {
+                self.engine.set_speed(speed as f64);
+                Ok(())
+            }
             ("sub-visibility", NativeValue::Bool(visible)) => {
                 self.sub_visible = visible;
                 self.engine.set_sub_visible(visible);
                 Ok(())
             }
             ("sid", NativeValue::Int(id)) => self.select_sub_by_id(id),
+            ("sid", NativeValue::Bool(false)) => {
+                self.engine.select_sub(None);
+                Ok(())
+            }
+            ("sid", NativeValue::Bool(true)) => {
+                self.engine.select_sub(None);
+                Ok(())
+            }
             ("sid", NativeValue::String(name)) => self.select_sub_by_name(&name),
+            ("aid", NativeValue::Int(id)) => self.select_audio_by_id(id),
             (name, value) if name.starts_with("user-data/") => {
                 self.user_data.insert(name.to_owned(), value);
                 Ok(())
@@ -687,6 +734,11 @@ impl EngineBackend {
                         self.engine.set_volume(volume as f32 / 100.0);
                         Ok(NativeValue::None)
                     }
+                    "speed" => {
+                        let speed = self.engine.snapshot().speed + delta;
+                        self.engine.set_speed(speed);
+                        Ok(NativeValue::None)
+                    }
                     _ => Err(format!("cannot add to '{property}'")),
                 }
             }
@@ -851,6 +903,16 @@ impl EngineBackend {
         }
     }
 
+    fn select_audio_by_id(&mut self, id: i64) -> Result<(), String> {
+        let tracks = self.engine.snapshot().tracks;
+        let track = tracks
+            .iter()
+            .find(|track| track.kind == TrackKind::Audio && track.id as i64 == id)
+            .ok_or_else(|| format!("no audio track {id}"))?;
+        self.engine.select_audio(track.src_id.saturating_sub(1));
+        Ok(())
+    }
+
     fn select_sub_by_id(&mut self, id: i64) -> Result<(), String> {
         let tracks = self.engine.snapshot().tracks;
         let track = tracks
@@ -973,6 +1035,13 @@ impl EngineBackend {
                 }
                 Err(_) => Err(format!("'{text}' is not a volume")),
             },
+            "speed" => match text.parse::<f64>() {
+                Ok(speed) => {
+                    self.engine.set_speed(speed);
+                    Ok(())
+                }
+                Err(_) => Err(format!("'{text}' is not a speed")),
+            },
             _ if name.starts_with("user-data/") => {
                 self.user_data
                     .insert(name.to_owned(), NativeValue::String(text.to_owned()));
@@ -1037,6 +1106,12 @@ impl SharedEngine {
     pub fn new(backend: EngineBackend) -> Self {
         SharedEngine {
             shared: Arc::new(Mutex::new(backend)),
+        }
+    }
+
+    pub fn pump_frames(&self) {
+        if let Ok(mut backend) = self.shared.lock() {
+            backend.pump_frames();
         }
     }
 

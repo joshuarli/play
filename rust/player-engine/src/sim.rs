@@ -12,6 +12,7 @@ mod tests {
         cursor: usize,
         has_audio: bool,
         has_video: bool,
+        audio_streams: usize,
         selected: usize,
         reads: usize,
         fail_at_read: Option<usize>,
@@ -87,6 +88,7 @@ mod tests {
                 cursor: 0,
                 has_audio: audio_every > 0.0,
                 has_video: fps > 0.0,
+                audio_streams,
                 selected: 0,
                 reads: 0,
                 fail_at_read: None,
@@ -131,6 +133,27 @@ mod tests {
 
         fn selected_audio(&self) -> usize {
             self.selected
+        }
+
+        fn audio_info(&self, stream: usize) -> Option<player_media::StreamInfo> {
+            (stream < self.audio_streams).then(|| player_media::StreamInfo {
+                index: stream,
+                kind: player_media::StreamKind::Audio,
+                codec_name: "fake".to_owned(),
+                width: 0,
+                height: 0,
+                sample_rate: 48_000,
+                channels: 2,
+                time_base: (1, 48_000),
+                duration_seconds: None,
+                extradata: Vec::new(),
+                channel_mask: 0,
+                attached: false,
+                default: false,
+                forced: false,
+                language: None,
+                title: None,
+            })
         }
     }
 

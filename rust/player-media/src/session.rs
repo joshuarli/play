@@ -81,9 +81,12 @@ pub struct StreamInfo {
     pub sample_rate: i32,
     pub channels: i32,
     pub time_base: (i32, i32),
+    pub duration_seconds: Option<f64>,
     pub extradata: Vec<u8>,
     pub channel_mask: u64,
     pub attached: bool,
+    pub default: bool,
+    pub forced: bool,
     pub language: Option<String>,
     pub title: Option<String>,
 }
@@ -313,6 +316,17 @@ impl MediaSession {
                     }
                 },
                 time_base,
+                // SAFETY: duration is plain data set by the probe.
+                duration_seconds: unsafe {
+                    let duration = (*stream).duration;
+                    if duration < 0 {
+                        None
+                    } else if time_base.1 == 0 {
+                        None
+                    } else {
+                        Some(duration as f64 * time_base.0 as f64 / time_base.1 as f64)
+                    }
+                },
                 // SAFETY: extradata is plain data set by the probe.
                 extradata: unsafe {
                     if (*codecpar).extradata.is_null() || (*codecpar).extradata_size <= 0 {
@@ -327,6 +341,10 @@ impl MediaSession {
                 },
                 // SAFETY: disposition is plain data set by the probe.
                 attached: unsafe { (*stream).disposition } & AV_DISPOSITION_ATTACHED_PIC != 0,
+                // SAFETY: disposition is plain data set by the probe.
+                default: unsafe { (*stream).disposition } & AV_DISPOSITION_DEFAULT != 0,
+                // SAFETY: disposition is plain data set by the probe.
+                forced: unsafe { (*stream).disposition } & AV_DISPOSITION_FORCED != 0,
                 language,
                 title,
             });
@@ -337,6 +355,21 @@ impl MediaSession {
     pub fn metadata(&self) -> Vec<(String, String)> {
         // SAFETY: the format dictionary is valid for the open session.
         unsafe { dict_entries((*self.context).metadata) }
+    }
+
+    pub fn stream_metadata(&self, index: usize) -> Vec<(String, String)> {
+        // SAFETY: streams/nb_streams are valid for the open session.
+        let count = unsafe { (*self.context).nb_streams as usize };
+        if index >= count {
+            return Vec::new();
+        }
+        // SAFETY: index is below nb_streams.
+        let stream = unsafe { *(*self.context).streams.add(index) };
+        if stream.is_null() {
+            return Vec::new();
+        }
+        // SAFETY: the stream dictionary is valid for the open session.
+        unsafe { dict_entries((*stream).metadata) }
     }
 
     pub fn duration_seconds(&self) -> Option<f64> {

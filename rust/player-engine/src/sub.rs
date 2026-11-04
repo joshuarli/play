@@ -159,7 +159,12 @@ impl EngineSub {
             stream: None,
             codec,
             language: None,
-            title: None,
+            title: Some(
+                std::path::Path::new(&path)
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| path.to_owned()),
+            ),
         };
         match codec {
             SubCodec::Ass => {
