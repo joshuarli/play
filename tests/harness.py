@@ -66,7 +66,7 @@ class Mpv:
         if not MPV.exists():
             raise Failure(f"missing player: {MPV}; run scripts/build.sh")
         TMP.mkdir(parents=True, exist_ok=True)
-        self.socket_path = TMP / f"mpv-{os.getpid()}-{uuid.uuid4().hex}.sock"
+        self.socket_path = TMP / f"m{os.getpid()}-{uuid.uuid4().hex[:8]}.sock"
         self.socket_path.unlink(missing_ok=True)
         command = [
             str(MPV), "--no-config", "--idle=yes",
@@ -1399,6 +1399,11 @@ def gate_osd_fidelity(results, args):
     run_osd_fidelity(results)
 
 
+def gate_osc_mpv(results, args):
+    from osc_mpv import run as run_osc_mpv
+    run_osc_mpv(results, args)
+
+
 def gate_gui(results, args):
     from gui import run as run_gui
     run_gui(results)
@@ -2009,6 +2014,7 @@ GATES = {
     "osc": gate_osc,
     "osc-input": gate_osc_input,
     "osd-fidelity": gate_osd_fidelity,
+    "osc-mpv": gate_osc_mpv,
     "gui": gate_gui,
     "input": gate_input,
     "playlist": gate_playlist,
@@ -2025,7 +2031,7 @@ GATES = {
 
 SUITE = [
     "fixtures", "corpus", "audio", "hwdec", "seek", "local-paths",
-    "local-only", "osc", "osc-input", "input", "playlist", "cli", "state", "failures",
+    "local-only", "osc", "osc-input", "osc-mpv", "input", "playlist", "cli", "state", "failures",
     "rust-link", "tui", "release", "traces", "dispatch",
 ]
 
