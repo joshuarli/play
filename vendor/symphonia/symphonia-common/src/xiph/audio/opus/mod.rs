@@ -20,6 +20,12 @@ pub struct OpusHead {
     pub original_sample_rate: u32,
     pub gain: i16,
     pub pre_skip: u16,
+    /// Number of elementary Opus streams in each packet.
+    pub stream_count: u8,
+    /// Number of those streams that carry two coupled channels.
+    pub coupled_count: u8,
+    /// Decoded channel index for each output channel (255 for silence).
+    pub channel_map: Vec<u8>,
 }
 
 impl OpusHead {
@@ -114,12 +120,29 @@ impl OpusHead {
             _ => return unsupported_error("common (opus): unsupported channel mapping family"),
         };
 
+        let (stream_count, coupled_count, channel_map) = if channel_mapping == 0 {
+            (1, channel_count - 1, (0..channel_count).collect())
+        }
+        else {
+            let stream_count = reader.read_byte()?;
+            let coupled_count = reader.read_byte()?;
+            if stream_count == 0 || coupled_count > stream_count {
+                return decode_error("common (opus): invalid stream counts");
+            }
+            let mut channel_map = vec![0; usize::from(channel_count)];
+            reader.read_buf_exact(&mut channel_map)?;
+            (stream_count, coupled_count, channel_map)
+        };
+
         Ok(Self {
             version,
             channels: Channels::Positioned(positions),
             gain,
             original_sample_rate,
             pre_skip,
+            stream_count,
+            coupled_count,
+            channel_map,
         })
     }
 }

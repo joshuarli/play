@@ -144,16 +144,19 @@ fn rejects_unsupported_sample_rate() {
 }
 
 #[test]
-fn rejects_multichannel() {
-    let params =
-        params(Channels::Discrete(3), Some(opus_head(3, 0, 1)));
+fn accepts_surround_with_a_mapping_table() {
+    let mut head = opus_head(3, 0, 1).into_vec();
+    head.extend_from_slice(&[2, 1, 0, 2, 1]);
+    let params = params(Channels::Discrete(3), Some(head.into_boxed_slice()));
 
-    let err = match OpusDecoder::try_new(&params, &AudioDecoderOptions::default()) {
-        Ok(_) => panic!("expected an unsupported channel count error"),
-        Err(err) => err,
-    };
+    assert!(OpusDecoder::try_new(&params, &AudioDecoderOptions::default()).is_ok());
+}
 
-    assert!(matches!(err, Error::Unsupported(_)));
+#[test]
+fn rejects_surround_without_a_mapping_table() {
+    let params = params(Channels::Discrete(3), Some(opus_head(3, 0, 1)));
+
+    assert!(OpusDecoder::try_new(&params, &AudioDecoderOptions::default()).is_err());
 }
 
 #[test]

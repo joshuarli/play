@@ -33,7 +33,7 @@ use symphonia_core::support_audio_codec;
 use symphonia_common::xiph::audio::opus::OpusHead;
 
 use log::debug;
-use ruopus::OpusDecoder as RuOpusDecoder;
+use ruopus::{MultistreamDecoder, OpusDecoder as RuOpusDecoder};
 use ruopus::packet::PacketError;
 
 const OPUS_HEAD_MAX_VERSION: u8 = 0x0f;
@@ -60,12 +60,71 @@ fn parse_opus_head(extra_data: &[u8]) -> Result<OpusHead> {
     OpusHead::read(&mut reader, OPUS_HEAD_MAX_VERSION)
 }
 
+/// The elementary decoder: one stream for mono and stereo, several for surround layouts.
+enum Engine {
+    Single(RuOpusDecoder),
+    Multi(MultistreamDecoder),
+}
+
+/// The stream layout from the OpusHead.
+#[derive(Clone)]
+struct StreamLayout {
+    streams: usize,
+    coupled: usize,
+    channel_map: Vec<u8>,
+}
+
+impl Engine {
+    fn new(sample_rate: u32, channels: usize, layout: &StreamLayout) -> Self {
+        if channels <= 2 {
+            Engine::Single(RuOpusDecoder::with_rate(sample_rate, channels))
+        }
+        else {
+            Engine::Multi(MultistreamDecoder::with_rate(
+                sample_rate,
+                layout.streams,
+                layout.coupled,
+                &layout.channel_map,
+            ))
+        }
+    }
+
+    fn decode(&mut self, data: &[u8]) -> core::result::Result<Vec<f32>, PacketError> {
+        match self {
+            Engine::Single(decoder) => decoder.decode_packet(data),
+            Engine::Multi(decoder) => decoder.decode_packet(data),
+        }
+    }
+}
+
+/// Buffer plane for each channel in Vorbis channel order (RFC 7845 section 5.1.1.2), which is
+/// the output order of mapping family 1.
+fn vorbis_order_planes(channels: usize) -> Option<&'static [usize]> {
+    Some(match channels {
+        1 => &[0],
+        2 => &[0, 1],
+        3 => &[0, 2, 1],
+        4 => &[0, 1, 2, 3],
+        5 => &[0, 2, 1, 3, 4],
+        6 => &[0, 2, 1, 4, 5, 3],
+        7 => &[0, 2, 1, 5, 6, 4, 3],
+        8 => &[0, 2, 1, 6, 7, 4, 5, 3],
+        _ => return None,
+    })
+}
+
 /// Opus decoder.
 pub struct OpusDecoder {
     /// Codec parameters.
     params: AudioCodecParameters,
     /// The underlying Opus decoder.
-    decoder: RuOpusDecoder,
+    decoder: Engine,
+    /// The stream layout, kept to rebuild the decoder on reset.
+    layout: StreamLayout,
+    /// Buffer plane for each decoded channel.
+    planes: &'static [usize],
+    /// Scratch for reordering decoded frames into buffer plane order.
+    reordered: Vec<f32>,
     /// Output buffer.
     buf: AudioBuffer<f32>,
     /// The output sample rate.
@@ -105,8 +164,33 @@ impl OpusDecoder {
 
         let num_channels = channels.count();
 
-        if !(1..=2).contains(&num_channels) {
-            return unsupported_error("opus: unsupported number of channels");
+        let planes = match vorbis_order_planes(num_channels) {
+            Some(planes) => planes,
+            None => return unsupported_error("opus: unsupported number of channels"),
+        };
+
+        let layout = match &head {
+            Some(head) => StreamLayout {
+                streams: usize::from(head.stream_count),
+                coupled: usize::from(head.coupled_count),
+                channel_map: head.channel_map.clone(),
+            },
+            None if num_channels <= 2 => StreamLayout {
+                streams: 1,
+                coupled: num_channels - 1,
+                channel_map: (0..num_channels as u8).collect(),
+            },
+            None => return unsupported_error("opus: surround audio needs an OpusHead"),
+        };
+        if num_channels > 2
+            && (layout.channel_map.len() != num_channels
+                || layout.streams + layout.coupled > 255
+                || layout
+                    .channel_map
+                    .iter()
+                    .any(|&entry| entry != 255 && usize::from(entry) >= layout.streams + layout.coupled))
+        {
+            return decode_error("opus: invalid channel mapping table");
         }
 
         let pre_skip = head
@@ -141,7 +225,10 @@ impl OpusDecoder {
 
         Ok(OpusDecoder {
             params,
-            decoder: RuOpusDecoder::with_rate(sample_rate, num_channels),
+            decoder: Engine::new(sample_rate, num_channels, &layout),
+            layout,
+            planes,
+            reordered: Vec::new(),
             buf,
             sample_rate,
             channels: num_channels,
@@ -151,7 +238,7 @@ impl OpusDecoder {
     }
 
     fn decode_inner(&mut self, packet: &PacketRef<'_>) -> Result<()> {
-        let mut pcm = self.decoder.decode_packet(packet.data).map_err(map_packet_error)?;
+        let mut pcm = self.decoder.decode(packet.data).map_err(map_packet_error)?;
 
         if self.gain != 1.0 {
             for sample in &mut pcm {
@@ -181,7 +268,19 @@ impl OpusDecoder {
 
         self.buf.clear();
         self.buf.render_uninit(Some(frames));
-        self.buf.copy_from_slice_interleaved(&pcm);
+        if self.channels > 2 {
+            self.reordered.clear();
+            self.reordered.resize(pcm.len(), 0.0);
+            for (source, target) in pcm.chunks_exact(self.channels).zip(self.reordered.chunks_exact_mut(self.channels)) {
+                for (channel, &sample) in source.iter().enumerate() {
+                    target[self.planes[channel]] = sample;
+                }
+            }
+            self.buf.copy_from_slice_interleaved(&self.reordered);
+        }
+        else {
+            self.buf.copy_from_slice_interleaved(&pcm);
+        }
         self.buf.trim(trim_start, packet.trim_end.get() as usize);
 
         Ok(())
@@ -190,7 +289,7 @@ impl OpusDecoder {
 
 impl AudioDecoder for OpusDecoder {
     fn reset(&mut self) {
-        self.decoder = RuOpusDecoder::with_rate(self.sample_rate, self.channels);
+        self.decoder = Engine::new(self.sample_rate, self.channels, &self.layout);
         self.buf.clear();
         self.pre_skip = 0;
     }
