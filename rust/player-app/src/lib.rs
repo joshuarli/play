@@ -9,4 +9,4 @@ pub mod properties;
 pub mod value;
 pub mod window;
 
-pub use app::run;
+pub use app::{run, run_program};

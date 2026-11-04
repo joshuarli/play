@@ -31,7 +31,7 @@ fn main() {
             height.unwrap_or_else(|| "720".to_owned())
         ));
     }
-    if let Err(error) = player_app::run(&translated) {
+    if let Err(error) = player_app::run_program(&translated) {
         eprintln!("player-gui: {error}");
         exit(1);
     }

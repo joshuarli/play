@@ -1,5 +1,6 @@
 #import <Cocoa/Cocoa.h>
 #import <QuartzCore/CAMetalLayer.h>
+#include <pthread.h>
 
 // Narrow v1 bridge between Rust player-display and AppKit. The window
 // owns a layer-hosting view whose CAMetalLayer backs the Vulkan
@@ -50,16 +51,26 @@ struct PlayerMacWindow {
     struct PlayerMacInputEvent input[PLAYER_MAC_INPUT_QUEUE];
     int input_head;
     int input_tail;
+    pthread_mutex_t input_lock;
 };
 
 static void player_mac_push_input(struct PlayerMacWindow *win,
                                   struct PlayerMacInputEvent event) {
+    pthread_mutex_lock(&win->input_lock);
     int next = (win->input_head + 1) % PLAYER_MAC_INPUT_QUEUE;
-    if (next == win->input_tail) {
-        return;
+    if (next != win->input_tail) {
+        win->input[win->input_head] = event;
+        win->input_head = next;
     }
-    win->input[win->input_head] = event;
-    win->input_head = next;
+    pthread_mutex_unlock(&win->input_lock);
+}
+
+static void player_mac_on_main(dispatch_block_t block) {
+    if ([NSThread isMainThread]) {
+        block();
+    } else {
+        dispatch_sync(dispatch_get_main_queue(), block);
+    }
 }
 
 static struct PlayerMacWindow *player_mac_main_window;
@@ -108,11 +119,9 @@ static void player_mac_enqueue_files(NSArray<NSURL *> *urls, BOOL append) {
     [sender replyToOpenOrPrint:NSApplicationDelegateReplySuccess];
 }
 
-// AppKit only treats a process as a launched, activatable app after
-// -[NSApplication run] reaches applicationDidFinishLaunching. The player owns
-// its event loop, so it runs AppKit until launch completes and stops there.
-- (void)applicationDidFinishLaunching:(NSNotification *)notification {
-    (void)notification;
+@end
+
+static void player_mac_stop_run_loop(void) {
     [NSApp stop:nil];
     NSEvent *wake = [NSEvent otherEventWithType:NSEventTypeApplicationDefined
                                        location:NSZeroPoint
@@ -125,11 +134,10 @@ static void player_mac_enqueue_files(NSArray<NSURL *> *urls, BOOL append) {
                                           data2:0];
     [NSApp postEvent:wake atStart:YES];
 }
-@end
 
 static PlayerMacAppDelegate *player_mac_delegate;
 
-static void player_mac_finish_launching(void) {
+static void player_mac_prepare_app(void) {
     if (player_mac_delegate) {
         return;
     }
@@ -141,7 +149,37 @@ static void player_mac_finish_launching(void) {
     [app setActivationPolicy:NSApplicationActivationPolicyAccessory];
     player_mac_delegate = [[PlayerMacAppDelegate alloc] init];
     app.delegate = player_mac_delegate;
-    [app run];
+}
+
+struct PlayerMacBody {
+    void (*run)(void *);
+    void *context;
+};
+
+static void *player_mac_body_thread(void *argument) {
+    struct PlayerMacBody *body = (struct PlayerMacBody *)argument;
+    body->run(body->context);
+    dispatch_async(dispatch_get_main_queue(), ^{
+      player_mac_stop_run_loop();
+    });
+    return NULL;
+}
+
+// AppKit keeps the main thread, as in mpv: the run loop owns activation, key
+// focus, and event delivery, and the player runs on its own thread.
+int player_mac_run_main(void (*run)(void *), void *context) {
+    if (![NSThread isMainThread]) {
+        return -1;
+    }
+    player_mac_prepare_app();
+    struct PlayerMacBody body = {.run = run, .context = context};
+    pthread_t thread;
+    if (pthread_create(&thread, NULL, player_mac_body_thread, &body) != 0) {
+        return -1;
+    }
+    [NSApp run];
+    pthread_join(thread, NULL);
+    return 0;
 }
 
 @interface PlayerMacView : NSView
@@ -267,8 +305,11 @@ static void player_mac_finish_launching(void) {
 }
 @end
 
-void *player_mac_window_open(const char *title, int width, int height) {
-    player_mac_finish_launching();
+static void *player_mac_window_open_on_main(const char *title, int width, int height) {
+    player_mac_prepare_app();
+    if (![NSApp isRunning]) {
+        [NSApp finishLaunching];
+    }
 
     NSRect frame = NSMakeRect(0, 0, width > 0 ? width : 320, height > 0 ? height : 240);
     NSWindow *window = [[NSWindow alloc]
@@ -322,6 +363,7 @@ void *player_mac_window_open(const char *title, int width, int height) {
     if (!handle) {
         return NULL;
     }
+    pthread_mutex_init(&handle->input_lock, NULL);
     handle->window = window;
     handle->view = view;
     handle->layer = layer;
@@ -335,6 +377,14 @@ void *player_mac_window_open(const char *title, int width, int height) {
     return handle;
 }
 
+void *player_mac_window_open(const char *title, int width, int height) {
+    __block void *handle = NULL;
+    player_mac_on_main(^{
+      handle = player_mac_window_open_on_main(title, width, height);
+    });
+    return handle;
+}
+
 void *player_mac_window_layer(void *handle) {
     CAMetalLayer *layer = ((struct PlayerMacWindow *)handle)->layer;
     return (__bridge void *)layer;
@@ -342,22 +392,31 @@ void *player_mac_window_layer(void *handle) {
 
 int player_mac_window_poll(void *handle) {
     struct PlayerMacWindow *win = (struct PlayerMacWindow *)handle;
-    NSApplication *app = [NSApplication sharedApplication];
-    NSEvent *event;
-    while ((event = [app nextEventMatchingMask:NSEventMaskAny
-                                     untilDate:[NSDate distantPast]
-                                        inMode:NSDefaultRunLoopMode
-                                       dequeue:YES])) {
-        [app sendEvent:event];
-    }
-    [app updateWindows];
-    return win->watcher.closed ? 1 : 0;
+    __block int closed = 0;
+    player_mac_on_main(^{
+      if (![NSApp isRunning]) {
+          NSEvent *event;
+          while ((event = [NSApp nextEventMatchingMask:NSEventMaskAny
+                                             untilDate:[NSDate distantPast]
+                                                inMode:NSDefaultRunLoopMode
+                                               dequeue:YES])) {
+              [NSApp sendEvent:event];
+          }
+          [NSApp updateWindows];
+      }
+      closed = win->watcher.closed ? 1 : 0;
+    });
+    return closed;
 }
 
 void player_mac_window_size(void *handle, int *width, int *height) {
     struct PlayerMacWindow *win = (struct PlayerMacWindow *)handle;
-    NSSize size = win->view.frame.size;
-    CGFloat scale = win->window.backingScaleFactor;
+    __block NSSize size;
+    __block CGFloat scale;
+    player_mac_on_main(^{
+      size = win->view.frame.size;
+      scale = win->window.backingScaleFactor;
+    });
     if (width) {
         *width = (int)(size.width * scale);
     }
@@ -368,35 +427,46 @@ void player_mac_window_size(void *handle, int *width, int *height) {
 
 void player_mac_window_resize(void *handle, int width, int height) {
     struct PlayerMacWindow *win = (struct PlayerMacWindow *)handle;
-    CGFloat scale = win->window.backingScaleFactor;
-    if (scale <= 0) {
-        scale = 1;
-    }
-    [win->window setContentSize:NSMakeSize(width / scale, height / scale)];
+    player_mac_on_main(^{
+      CGFloat scale = win->window.backingScaleFactor;
+      if (scale <= 0) {
+          scale = 1;
+      }
+      [win->window setContentSize:NSMakeSize(width / scale, height / scale)];
+    });
 }
 
 int player_mac_window_fullscreen(void *handle) {
     struct PlayerMacWindow *win = (struct PlayerMacWindow *)handle;
-    return (win->window.styleMask & NSWindowStyleMaskFullScreen) != 0 ? 1 : 0;
+    __block int fullscreen = 0;
+    player_mac_on_main(^{
+      fullscreen = (win->window.styleMask & NSWindowStyleMaskFullScreen) != 0 ? 1 : 0;
+    });
+    return fullscreen;
 }
 
 void player_mac_window_set_fullscreen(void *handle, int fullscreen) {
     struct PlayerMacWindow *win = (struct PlayerMacWindow *)handle;
-    BOOL is_full = (win->window.styleMask & NSWindowStyleMaskFullScreen) != 0;
-    if ((fullscreen != 0) != is_full) {
-        [win->window toggleFullScreen:nil];
-    }
+    player_mac_on_main(^{
+      BOOL is_full = (win->window.styleMask & NSWindowStyleMaskFullScreen) != 0;
+      if ((fullscreen != 0) != is_full) {
+          [win->window toggleFullScreen:nil];
+      }
+    });
 }
 
 int player_mac_window_next_input(void *handle, int *kind, int *key_code, int *flags,
                                  int *pressed, int *repeat, int *append, double *x, double *y,
                                  char *path, int path_cap) {
     struct PlayerMacWindow *win = (struct PlayerMacWindow *)handle;
+    pthread_mutex_lock(&win->input_lock);
     if (win->input_tail == win->input_head) {
+        pthread_mutex_unlock(&win->input_lock);
         return 0;
     }
     struct PlayerMacInputEvent event = win->input[win->input_tail];
     win->input_tail = (win->input_tail + 1) % PLAYER_MAC_INPUT_QUEUE;
+    pthread_mutex_unlock(&win->input_lock);
     if (kind) {
         *kind = event.kind;
     }
@@ -433,7 +503,14 @@ int player_mac_window_next_input(void *handle, int *kind, int *key_code, int *fl
 
 void player_mac_window_close(void *handle) {
     struct PlayerMacWindow *win = (struct PlayerMacWindow *)handle;
-    win->window.delegate = nil;
-    [win->window close];
+    player_mac_on_main(^{
+      if (player_mac_main_window == win) {
+          player_mac_main_window = NULL;
+      }
+      ((PlayerMacView *)win->view).owner = NULL;
+      win->window.delegate = nil;
+      [win->window close];
+    });
+    pthread_mutex_destroy(&win->input_lock);
     free(win);
 }

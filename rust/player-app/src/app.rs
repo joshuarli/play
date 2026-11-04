@@ -1939,6 +1939,27 @@ fn split_commands(text: &str) -> Result<Vec<String>, String> {
     Ok(commands)
 }
 
+#[cfg(target_os = "macos")]
+pub fn run_program(args: &[String]) -> Result<(), String> {
+    if !may_open_window(args) {
+        return run(args);
+    }
+    let mut result = Ok(());
+    player_display::run_with_app_kit(|| result = run(args))?;
+    result
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn run_program(args: &[String]) -> Result<(), String> {
+    run(args)
+}
+
+fn may_open_window(args: &[String]) -> bool {
+    options::parse(args).is_ok_and(|options| {
+        !options.list_protocols && !options.tui && !options.null_video && !options.no_video
+    })
+}
+
 pub fn run(args: &[String]) -> Result<(), String> {
     let options = match options::parse(args) {
         Ok(options) => options,

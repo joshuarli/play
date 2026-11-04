@@ -30,6 +30,28 @@ unsafe extern "C" {
         path_cap: c_int,
     ) -> c_int;
     fn player_mac_window_close(handle: *mut c_void);
+    fn player_mac_run_main(run: extern "C" fn(*mut c_void), context: *mut c_void) -> c_int;
+}
+
+pub fn run_with_app_kit<F: FnOnce() + Send>(body: F) -> Result<(), String> {
+    extern "C" fn trampoline<F: FnOnce()>(context: *mut c_void) {
+        // SAFETY: context points at the Option<F> owned by run_with_app_kit,
+        // which blocks until this call returns; the body runs exactly once.
+        let slot = unsafe { &mut *context.cast::<Option<F>>() };
+        if let Some(body) = slot.take() {
+            body();
+        }
+    }
+    let mut slot = Some(body);
+    // SAFETY: the bridge calls trampoline once on a new thread and joins it
+    // before returning, so the slot outlives every use of its pointer.
+    let status = unsafe {
+        player_mac_run_main(trampoline::<F>, (&mut slot as *mut Option<F>).cast())
+    };
+    if status != 0 {
+        return Err("AppKit must run on the main thread".to_string());
+    }
+    Ok(())
 }
 
 struct Bridge {
