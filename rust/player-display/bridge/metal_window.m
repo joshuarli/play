@@ -63,9 +63,14 @@ static void player_mac_push_input(struct PlayerMacWindow *win,
 }
 
 static struct PlayerMacWindow *player_mac_main_window;
+static NSMutableArray<NSURL *> *player_mac_early_files;
 
 static void player_mac_enqueue_files(NSArray<NSURL *> *urls, BOOL append) {
     if (!player_mac_main_window) {
+        if (!player_mac_early_files) {
+            player_mac_early_files = [NSMutableArray array];
+        }
+        [player_mac_early_files addObjectsFromArray:urls];
         return;
     }
     for (NSUInteger index = 0; index < urls.count; index++) {
@@ -102,16 +107,38 @@ static void player_mac_enqueue_files(NSArray<NSURL *> *urls, BOOL append) {
     player_mac_enqueue_files(urls, NO);
     [sender replyToOpenOrPrint:NSApplicationDelegateReplySuccess];
 }
+
+// AppKit only treats a process as a launched, activatable app after
+// -[NSApplication run] reaches applicationDidFinishLaunching. The player owns
+// its event loop, so it runs AppKit until launch completes and stops there.
+- (void)applicationDidFinishLaunching:(NSNotification *)notification {
+    (void)notification;
+    [NSApp activateIgnoringOtherApps:YES];
+    [NSApp stop:nil];
+    NSEvent *wake = [NSEvent otherEventWithType:NSEventTypeApplicationDefined
+                                       location:NSZeroPoint
+                                  modifierFlags:0
+                                      timestamp:0
+                                   windowNumber:0
+                                        context:nil
+                                        subtype:0
+                                          data1:0
+                                          data2:0];
+    [NSApp postEvent:wake atStart:YES];
+}
 @end
 
 static PlayerMacAppDelegate *player_mac_delegate;
 
-static void player_mac_install_delegate(void) {
+static void player_mac_finish_launching(void) {
     if (player_mac_delegate) {
         return;
     }
+    NSApplication *app = [NSApplication sharedApplication];
+    [app setActivationPolicy:NSApplicationActivationPolicyRegular];
     player_mac_delegate = [[PlayerMacAppDelegate alloc] init];
-    [NSApplication sharedApplication].delegate = player_mac_delegate;
+    app.delegate = player_mac_delegate;
+    [app run];
 }
 
 @interface PlayerMacView : NSView
@@ -238,9 +265,7 @@ static void player_mac_install_delegate(void) {
 @end
 
 void *player_mac_window_open(const char *title, int width, int height) {
-    NSApplication *app = [NSApplication sharedApplication];
-    [app setActivationPolicy:NSApplicationActivationPolicyRegular];
-    [app activateIgnoringOtherApps:YES];
+    player_mac_finish_launching();
 
     NSRect frame = NSMakeRect(0, 0, width > 0 ? width : 320, height > 0 ? height : 240);
     NSWindow *window = [[NSWindow alloc]
@@ -298,7 +323,10 @@ void *player_mac_window_open(const char *title, int width, int height) {
     handle->watcher = watcher;
     ((PlayerMacView *)view).owner = handle;
     player_mac_main_window = handle;
-    player_mac_install_delegate();
+    if (player_mac_early_files) {
+        player_mac_enqueue_files(player_mac_early_files, NO);
+        player_mac_early_files = nil;
+    }
     return handle;
 }
 
