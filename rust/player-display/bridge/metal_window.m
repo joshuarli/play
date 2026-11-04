@@ -134,6 +134,10 @@ static void player_mac_finish_launching(void) {
     if (player_mac_delegate) {
         return;
     }
+    // -[NSApplication run] turns command-line arguments into open-document
+    // events unless this default is NO; the player already loads its arguments.
+    [[NSUserDefaults standardUserDefaults] setObject:@"NO"
+                                              forKey:@"NSTreatUnknownArgumentsAsOpen"];
     NSApplication *app = [NSApplication sharedApplication];
     [app setActivationPolicy:NSApplicationActivationPolicyRegular];
     player_mac_delegate = [[PlayerMacAppDelegate alloc] init];
