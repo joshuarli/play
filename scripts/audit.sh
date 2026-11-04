@@ -43,7 +43,7 @@ if [ "$interpreters" != "1" ]; then
     exit 1
 fi
 
-release_dylib="$ROOT/.work/deps/player-audio/target/release/libplayer_release.dylib"
+release_dylib="$ROOT/.work/deps/player-audio/target/dist/libplayer_release.dylib"
 if [ -f "$release_dylib" ]; then
     release_interpreters=$(nm "$release_dylib" | rg -c 'luaL_newstate' || true)
     if [ "$release_interpreters" != "1" ]; then

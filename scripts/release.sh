@@ -18,9 +18,9 @@ export LDFLAGS="-L$PREFIX/lib -L$FFMPEG_PREFIX/lib -ldav1d -Wl,-dead_strip -Wl,-
 
 RUST_TARGET="$ROOT/.work/deps/player-audio/target"
 mkdir -p "$RUST_TARGET"
-CARGO_TARGET_DIR="$RUST_TARGET" cargo build --release \
+CARGO_TARGET_DIR="$RUST_TARGET" cargo build --profile dist \
     --manifest-path "$ROOT/rust/Cargo.toml" -p player-release
-PLAYER_RELEASE_LIB="$RUST_TARGET/release/libplayer_release.dylib"
+PLAYER_RELEASE_LIB="$RUST_TARGET/dist/libplayer_release.dylib"
 
 options=(
     -Dcplayer=true -Dlibmpv=false -Dgpl=true

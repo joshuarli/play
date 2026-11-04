@@ -16,9 +16,9 @@ DIST="$ROOT/dist"
 }
 
 mkdir -p "$RUST_TARGET_DIR" "$ROOT/.work/tmp" "$DIST"
-RUSTFLAGS="--remap-path-prefix=$ROOT=." CARGO_TARGET_DIR="$RUST_TARGET_DIR" cargo rustc --release --target "$RUST_TRIPLE" \
+RUSTFLAGS="--remap-path-prefix=$ROOT=." CARGO_TARGET_DIR="$RUST_TARGET_DIR" cargo rustc --profile dist --target "$RUST_TRIPLE" \
     --manifest-path "$ROOT/rust/Cargo.toml" -p player-release --crate-type staticlib
-RUST_LIB_DIR="../.work/deps/player-linux/target/$RUST_TRIPLE/release"
+RUST_LIB_DIR="../.work/deps/player-linux/target/$RUST_TRIPLE/dist"
 
 PKG_CONFIG_STATIC="$ROOT/.work/tmp/pkg-config-static"
 printf '#!/bin/sh\nexec pkg-config --static "$@"\n' >"$PKG_CONFIG_STATIC"

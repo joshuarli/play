@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 IMAGE=player-linux
 
-docker build --platform linux/amd64 -q -t "$IMAGE" -f "$ROOT/docker/linux/Dockerfile" "$ROOT/docker/linux" >/dev/null
+docker build --platform linux/amd64 -q -t "$IMAGE" -f "$ROOT/docker/linux/Dockerfile" "$ROOT" >/dev/null
 
 mkdir -p "$ROOT/.work/home"
 

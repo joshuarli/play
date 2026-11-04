@@ -513,7 +513,7 @@ def hwdec():
 
 
 def lua_interpreters():
-    paths = [MPV, ROOT / ".work/deps/player-audio/target/release/libplayer_release.dylib"]
+    paths = [MPV, ROOT / ".work/deps/player-audio/target/dist/libplayer_release.dylib"]
     count = 0
     for path in paths:
         if not path.exists():

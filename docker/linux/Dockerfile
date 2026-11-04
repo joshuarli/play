@@ -11,9 +11,15 @@ RUN apk add --no-cache \
         ffmpeg rustup gperf ripgrep
 
 ENV RUSTUP_HOME=/opt/rustup CARGO_HOME=/opt/cargo PATH=/opt/cargo/bin:$PATH
-RUN rustup-init -y --profile minimal --default-toolchain none \
- && rustup toolchain install nightly-2026-09-15 --profile minimal \
+RUN rustup-init -y --profile minimal --default-toolchain none
+
+COPY rust-toolchain.toml /tmp/rust-toolchain.toml
+RUN channel="$(sed -n 's/^channel *= *"\(.*\)"/\1/p' /tmp/rust-toolchain.toml)" \
+ && test -n "$channel" \
+ && rustup toolchain install "$channel" --profile minimal \
         -c rust-src -c clippy -t x86_64-unknown-linux-musl \
+ && rustup default "$channel" \
+ && rm /tmp/rust-toolchain.toml \
  && chmod -R a+rX /opt/rustup /opt/cargo
 
 WORKDIR /work

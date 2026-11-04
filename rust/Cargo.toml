@@ -2,5 +2,22 @@
 resolver = "2"
 members = ["player-ass", "player-audio", "player-build", "player-core", "player-display", "player-engine", "player-ffi", "player-gui", "player-lua", "player-media", "player-output", "player-release", "player-swap", "player-tui"]
 
+[profile.dev]
+incremental = false
+debug = "line-tables-only"
+split-debuginfo = "unpacked"
+
+[profile.dev.package."*"]
+opt-level = 2
+
 [profile.release]
+opt-level = 3
+lto = "thin"
+panic = "abort"
+strip = false
+
+[profile.dist]
+inherits = "release"
+lto = "fat"
 codegen-units = 1
+strip = true

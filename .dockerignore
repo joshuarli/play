@@ -1,0 +1,8 @@
+.git
+.work
+target
+rust/target
+build
+build-*
+dist
+vendor
