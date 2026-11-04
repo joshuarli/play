@@ -30,16 +30,16 @@ The mpv-derived C playback engine is gone. Cargo builds the player on both platf
 
 | Budget | Limit | Actual |
 |---|---:|---:|
-| Distributable | 29,542,136 B | 22,744,448 B |
+| Distributable | 29,542,136 B | 22,728,016 B |
 | Executable | 10,000,000 B | 7,600,656 B |
-| First frame | 1 s | 35.11 ms |
-| 1080p CPU | no fixed gate | 2.960 s |
-| 1080p RSS | 300 MB | 219.75 MB |
-| Seek | 250 ms | 42.21 ms |
+| First frame | 1 s | 33.93 ms |
+| 1080p CPU | no fixed gate | 2.970 s |
+| 1080p RSS | 300 MB | 219.62 MB |
+| Seek | 250 ms | 41.08 ms |
 | Network schemes | 0 | 0 |
 | Duplicate Lua interpreters | 0 | 0 |
 
-The final measurement is the S9b working tree on top of `ab74141`: cold 18.20 ms, warm 17.63 ms, idle RSS 14.33 MB, 1080p RSS 219.75 MB, 1080p CPU 2.96 s, 4K CPU 2.98 s, seek 42.21 ms, exit 11.40 ms, no audio underruns. These are headless timings. The 1080p CPU figure is real-time headless playback, not a fixed gate. The host was quiet before and after the run (`perf-gate-ready` exited 0).
+The final measurement is the clean tree at `cdb159a`, after the C ABI and port-scaffolding removal: cold 16.31 ms, warm 14.37 ms, idle RSS 14.39 MB, 1080p RSS 219.62 MB, 1080p CPU 2.97 s, 4K CPU 2.98 s, seek 41.08 ms, exit 9.01 ms, no audio underruns. These are headless timings. The 1080p CPU figure is real-time headless playback, not a fixed gate. The host was quiet before and after the run (`perf-gate-ready` exited 0).
 
 ## Build and provenance
 
@@ -74,7 +74,7 @@ The development loop is `scripts/build.sh` plus `tests/run.sh suite`. Scratch ar
 
 ### Outcome
 
-The Linux build is a mostly static `x86_64-unknown-linux-musl` executable with the same Rust engine, application layer, and Lua host as macOS: `vo=gpu-next` over Vulkan and Wayland, ALSA audio, and libva for hardware decode support. The release is `dist/player-x86_64-linux-musl.tar.gz` (player and README) with a SHA-256 file. The stripped executable is 24,475,984 B and needs seven shared libraries: musl, `libgcc_s.so.1`, `libvulkan.so.1`, `libwayland-client.so.0`, `libasound.so.2`, `libva.so.2`, and `libva-drm.so.2`. The final container measurement records cold 12.14 ms, warm 12.62 ms, first frame 75.34 ms, 1080p RSS 216.09 MB, seek 36.05 ms, and one `file` protocol.
+The Linux build is a mostly static `x86_64-unknown-linux-musl` executable with the same Rust engine, application layer, and Lua host as macOS: `vo=gpu-next` over Vulkan and Wayland, ALSA audio, and libva for hardware decode support. The release is `dist/player-x86_64-linux-musl.tar.gz` (player and README) with a SHA-256 file. The stripped executable is 24,475,984 B and needs seven shared libraries: musl, `libgcc_s.so.1`, `libvulkan.so.1`, `libwayland-client.so.0`, `libasound.so.2`, `libva.so.2`, and `libva-drm.so.2`. The final container measurement records cold 13.73 ms, warm 13.59 ms, first frame 76.3 ms, 1080p RSS 215.99 MB, seek 36.02 ms, and one `file` protocol.
 
 ### Verification
 
@@ -91,7 +91,7 @@ The Linux build is a mostly static `x86_64-unknown-linux-musl` executable with t
 | Direct dynamic libraries | 7 | 7 |
 | Network schemes | 0 | 0 |
 | Duplicate Lua interpreters | 0 | 0 |
-| 1080p RSS | 300 MB | 216.09 MB |
+| 1080p RSS | 300 MB | 215.99 MB |
 
 ### Provenance
 

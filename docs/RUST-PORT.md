@@ -16,7 +16,10 @@ properties and events, OSC dispatch, traces). S8b complete (GUI and
 TUI modes in the Rust `player` binary, Finder open and drag-and-drop,
 PNG screenshots). S9 complete: the mpv-derived C engine and Meson
 player build are deleted, Cargo builds both artifacts, and the full
-macOS and Linux suites, audits, and budgets pass.
+macOS and Linux suites, audits, and budgets pass. A post-S9 cleanup
+removed the retained C ABI, headers, C test harness, and the abandoned
+`player-release` and `player-swap` crates; `player-ffi` became
+`player-backend`.
 
 ## S9 record
 
@@ -650,8 +653,8 @@ Scoped deviations from `campaign-rust.md`:
 None. The playback loop, demux orchestration, audio and video paths, command
 and property implementation, client event delivery, stream and playlist
 machinery, allocators, and platform glue are Rust or pinned native libraries.
-The only in-tree C is the Objective-C window bridge and the vendored Lua
-interpreter.
+The only in-tree C is the Objective-C window bridge; Lua 5.2.4 is vendored
+through `mlua`.
 
 ## S0 baseline (reference: legacy engine at `ee5021c`)
 

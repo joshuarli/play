@@ -4,11 +4,11 @@ Player is a local-only media player. The macOS release artifact is `dist/Player.
 
 ## Current state
 
-- The Rust port is complete through S9. The C playback engine and Meson player build are gone; Cargo builds both artifacts. The Rust engine owns scheduling, demux, decode, audio, video rendering, Lua, subtitles, OSD, OSC composition, GUI, and TUI. The `player-app` binary owns the application layer (CLI, IPC, playlists, chapters, track switching, properties/events, OSC dispatch, native GUI window, TUI, Finder open, drag-and-drop, and PNG screenshots).
+- The Rust port is complete through S9. The C playback engine and Meson player build are gone; Cargo builds both artifacts. A post-S9 cleanup removed the retired C ABI, its headers and C test harness, and the abandoned `player-release` and `player-swap` crates; `player-ffi` became `player-backend`. The Rust engine owns scheduling, demux, decode, audio, video rendering, Lua, subtitles, OSD, OSC composition, GUI, and TUI. The `player-app` binary owns the application layer (CLI, IPC, playlists, chapters, track switching, properties/events, OSC dispatch, native GUI window, TUI, Finder open, drag-and-drop, and PNG screenshots).
 - `tests/run.sh suite` on macOS: 340 passed, 0 failed.
 - `tests/run.sh suite` in the Alpine container: 334 passed, 0 failed.
 - `scripts/audit.sh`: ok. `scripts/audit-linux.sh`: ok.
-- `scripts/measure.sh final`: final: ok. Distributable 22,744,448 B; first frame 35.11 ms; 1080p RSS 219.75 MB; seek 42.21 ms.
+- `scripts/measure.sh final`: final: ok. Distributable 22,728,016 B; first frame 33.93 ms; 1080p RSS 219.62 MB; seek 41.08 ms.
 - App: 24,123,809 B on disk; executable 7,600,656 B; framework closure 15,127,360 B in 12 dylibs; bundled icon 1,387,652 B.
 - One `file` protocol and one Lua interpreter.
 - `--tui` plays in the terminal with centered embedded cover art. Kitty graphics are used on Ghostty, kitty, and WezTerm; other terminals use truecolor half-blocks. The TUI is audio-first and keeps `vo=null`.
@@ -34,7 +34,7 @@ Player is a local-only media player. The macOS release artifact is `dist/Player.
 
 - `scripts/linux-container.sh tests/run.sh suite`: 334 passed, 0 failed.
 - `scripts/audit-linux.sh`: ok. `dist/player` needs seven shared libraries: musl, libgcc, Vulkan loader, Wayland client, ALSA, libva, and libva-drm. The tarball lists six Alpine runtime packages.
-- `scripts/measure-linux.sh final`: stripped 24,475,984 B; 1080p RSS 216.09 MB; first frame 75.34 ms; seek 36.05 ms.
+- `scripts/measure-linux.sh final`: stripped 24,475,984 B; 1080p RSS 215.99 MB; first frame 76.3 ms; seek 36.02 ms.
 - `--hwdec` defaults to the compatibility value `auto` and `hwdec-current` reports `no` while the scheduler decodes in software.
 - `tests/run.sh linux-gpu-next` passes 41/41 on headless Weston with lavapipe, including the OSD pixel diff, subtitles, window scaling, and the GUI gate.
 - `tests/run.sh linux-vaapi` (needs a GPU render node, not part of `suite`) is an owner check.

@@ -4,7 +4,7 @@
 
 Goal: replace the remaining mpv-derived C playback engine with a small Rust-owned engine. No loss of supported local playback. Both release artifacts keep building.
 
-- Last accepted: S9 (the mpv-derived C engine and Meson player build are deleted; Cargo builds both artifacts; both suites, audits, release packaging, and budgets pass). S8b (GUI and TUI modes in the Rust `player` binary), S8a, S7e, and earlier slices landed before it.
+- Last accepted: S9 (the mpv-derived C engine and Meson player build are deleted; Cargo builds both artifacts; both suites, audits, release packaging, and budgets pass). S8b (GUI and TUI modes in the Rust `player` binary), S8a, S7e, and earlier slices landed before it. A post-S9 cleanup removed the retired C ABI, its headers and C test harness, and the abandoned `player-release` and `player-swap` crates; `player-ffi` became `player-backend`.
 - Red: none. `cargo test`, the macOS suite, the Alpine suite, `build`, `rust-link`, `release`, `audit`, `audit-linux`, and `measure.sh final` pass.
 - Next: none. The campaign is complete. Open work is `TODO.md` (`PLAY-20` hardware-decode wiring) and the owner-run checks in `docs/manual-checklist.md`.
 - Open: remote command center and touchbar were already disabled in the C build, so they have no behavior to port. Ordered chapters stay open (no fixture, needs linking design). The Linux binary must be built with `-C target-feature=-crt-static`; a static-pie with Wayland in NEEDED dies in the loader.

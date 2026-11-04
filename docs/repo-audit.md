@@ -1,6 +1,6 @@
 # Repository audit
 
-Recorded 2026-11-03 at S9: the C playback engine is retired and Cargo is the only player build.
+Recorded 2026-11-03 after S9 and the C ABI cleanup: the C playback engine is retired and Cargo is the only player build.
 
 ## Layout
 
@@ -43,7 +43,7 @@ Recorded 2026-11-03 at S9: the C playback engine is retired and Cargo is the onl
 
 - Rust: 26,576 lines in 82 files under `rust/`.
 - C ABI: none. No `extern "C"` export, header, or C test harness remains.
-- In-tree C: the Objective-C window bridge and the vendored Lua interpreter only.
+- In-tree C: only the Objective-C window bridge. Lua 5.2.4 is vendored through `mlua`.
 - Tests: 37 gates in `tests/harness.py`; the suite passes on the recorded host.
 - Distributable: 24.1 MB on disk; the executable is 7,600,656 B, the framework closure is 15,127,360 B in 12 dylibs, and the bundled icon is 1.39 MB.
 - Linux: the stripped musl executable is 24,475,984 B and needs seven shared libraries.
