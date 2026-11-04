@@ -12,8 +12,8 @@ from pathlib import Path
 
 ROOT = Path(sys.argv[1] if len(sys.argv) > 1 else ".").resolve()
 PREFIX = ROOT / ".work/deps/release"
-RUST_TARGET = ROOT / ".work/deps/player-audio/target/dist"
-BINARY = ROOT / "build-release/mpv"
+RUST_TARGET = ROOT / "rust/target/dist"
+BINARY = RUST_TARGET / "player"
 APP = ROOT / "dist/Player.app"
 VERSION = (ROOT / "MPV_VERSION").read_text().strip()
 MACOS = APP / "Contents/MacOS"

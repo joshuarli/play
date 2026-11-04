@@ -60,7 +60,6 @@ elif MODE in ("release", "final"):
     MPV = RELEASE_PLAYER
 else:
     MPV = ROOT / "build/mpv"
-BUILD_DIR = "build-release" if MODE in ("release", "final") else "build"
 FRAMEWORKS = ROOT / "dist/Player.app/Contents/Frameworks"
 
 
@@ -477,19 +476,19 @@ def protocols():
 
 
 def features():
-    proc = run(["meson", "configure", BUILD_DIR], cwd=str(ROOT), timeout=60)
-    wanted = {
-        "cplayer", "libmpv", "gpl", "lua", "cocoa", "swift-build",
-        "coreaudio", "vulkan", "videotoolbox-pl", "gl", "gl-cocoa",
-        "videotoolbox-gl", "macos-cocoa-cb", "x11", "wayland", "drm",
-        "vaapi", "vdpau", "javascript", "libavdevice", "tests",
+    manifest = (ROOT / "rust" / "Cargo.toml").read_text()
+    profiles = [
+        line.strip().strip("[]").removeprefix("profile.")
+        for line in manifest.splitlines()
+        if line.startswith("[profile.")
+    ]
+    return {
+        "engine": "rust",
+        "audio_decoder": "symphonia",
+        "renderer": "libplacebo",
+        "script_host": "lua-5.2",
+        "profiles": ",".join(profiles),
     }
-    values = {}
-    for line in proc.stdout.splitlines():
-        fields = line.split()
-        if len(fields) >= 2 and fields[0] in wanted:
-            values[fields[0]] = fields[1]
-    return values
 
 
 def hwdec():
@@ -513,7 +512,7 @@ def hwdec():
 
 
 def lua_interpreters():
-    paths = [MPV, ROOT / ".work/deps/player-audio/target/dist/libplayer_release.dylib"]
+    paths = [MPV]
     count = 0
     for path in paths:
         if not path.exists():

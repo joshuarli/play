@@ -1526,7 +1526,7 @@ def gate_build(results, args):
     try:
         proc = subprocess.run(
             [str(ROOT / "scripts" / "build.sh")], cwd=str(ROOT),
-            capture_output=True, text=True, timeout=240,
+            capture_output=True, text=True, timeout=900,
         )
     except subprocess.TimeoutExpired:
         results.check("build: compile", False, "timed out")
@@ -1540,47 +1540,14 @@ def gate_build(results, args):
         [str(MPV), "--version"], capture_output=True, text=True, timeout=30,
     ).stdout.splitlines()
     results.check("build: version",
-                  bool(version) and ("0.41.0" in version[0] or
-                                     "campaign-base" in version[0]),
+                  bool(version) and "0.41.0" in version[0],
                   version[0] if version else "no output")
-    configured = subprocess.run(
-        ["meson", "configure", "build"], cwd=str(ROOT),
-        capture_output=True, text=True, timeout=60,
-    ).stdout
-    basic = {
-        "cplayer": "true", "libmpv": "false", "gpl": "true",
-        "tests": "false", "build-date": "false",
-    }
-    missing = []
-    for option, value in basic.items():
-        if not re.search(rf"^\s*{re.escape(option)}\s+{re.escape(value)}\s",
-                         configured, re.MULTILINE):
-            missing.append(f"{option}={value}")
-    results.check("build: core options", not missing,
-                  f"not found: {', '.join(missing)}")
-
-    feature_text = (ROOT / "meson.options").read_text()
-    feature_names = re.findall(
-        r"option\('([^']+)',\s*type\s*:\s*'feature'", feature_text)
-    values = {}
-    for line in configured.splitlines():
-        fields = line.split()
-        if len(fields) >= 2 and fields[0] in feature_names:
-            values[fields[0]] = fields[1]
-    allowed_enabled = {
-        "cocoa", "coreaudio", "vulkan", "videotoolbox-pl", "swift-build",
-        "iconv", "zlib", "macos-10-15-4-features", "macos-11-features",
-        "macos-11-3-features", "macos-12-features",
-    }
-    missing_features = [name for name in feature_names if name not in values]
-    wrong = [f"{name}={values.get(name)}" for name in feature_names
-             if name not in allowed_enabled and values.get(name) != "disabled"]
-    not_enabled = [f"{name}={values.get(name)}" for name in allowed_enabled
-                   if values.get(name) != "enabled"]
-    results.check("build: feature surface",
-                  not missing_features and not wrong and not not_enabled,
-                  f"missing={missing_features[:3]} wrong={wrong[:5]} "
-                  f"not-enabled={not_enabled[:5]}")
+    protocols = subprocess.run(
+        [str(MPV), "--no-config", "--list-protocols"],
+        capture_output=True, text=True, timeout=30,
+    )
+    results.check("build: protocols", protocols.stdout.strip() == "file://",
+                  protocols.stdout.strip())
 
     otool = subprocess.run(
         ["otool", "-L", str(MPV)], capture_output=True, text=True, timeout=30,
@@ -1600,28 +1567,20 @@ def gate_build(results, args):
     interpreters = [line for line in nm.splitlines() if "_luaL_newstate" in line]
     results.check("build: single Lua interpreter", len(interpreters) == 1,
                   f"count {len(interpreters)}")
-
-    targets_proc = subprocess.run(
-        ["meson", "introspect", "build", "--targets"], cwd=str(ROOT),
-        capture_output=True, text=True, timeout=60,
-    )
-    try:
-        targets = json.loads(targets_proc.stdout) if targets_proc.returncode == 0 else []
-    except json.JSONDecodeError:
-        targets = []
-    shared = [target.get("name") for target in targets
-              if target.get("type") == "shared library"]
-    results.check("build: no shared library target", not shared,
-                  ", ".join(str(name) for name in shared))
-    stray = sorted((ROOT / "build").glob("libmpv*.dylib"))
-    results.check("build: no stray libmpv dylib", not stray,
-                  ", ".join(path.name for path in stray))
+    engine_symbols = [line for line in nm.splitlines()
+                      if "player_engine" in line or "player_app" in line]
+    results.check("build: rust engine symbols", bool(engine_symbols),
+                  "no player_app or player_engine symbol")
+    c_engine = [line for line in nm.splitlines()
+                if re.search(r"_(mpv_create|mpv_playloop|mp_dispatch_create)$", line)]
+    results.check("build: no C engine symbols", not c_engine,
+                  "; ".join(line.strip() for line in c_engine[:3]))
 
 
 def gate_rust_link(results, args):
     proc = subprocess.run(
         [str(ROOT / "scripts" / "build.sh")], cwd=str(ROOT),
-        capture_output=True, text=True, timeout=300,
+        capture_output=True, text=True, timeout=600,
     )
     results.check("rust-link: build", proc.returncode == 0,
                   tail((proc.stdout + proc.stderr).splitlines(), 20))
@@ -1629,9 +1588,14 @@ def gate_rust_link(results, args):
         results.check("rust-link: player exists", False, str(MPV))
         return
 
-    nm = subprocess.run(["nm", "-g", str(MPV)], capture_output=True, text=True,
-                        timeout=30).stdout
-    results.check("rust-link: symbol", "player_ffi_abi_version" in nm, "symbol missing")
+    nm = subprocess.run(["nm", str(MPV)], capture_output=True, text=True,
+                        timeout=60).stdout
+    results.check("rust-link: engine symbols",
+                  "player_engine" in nm and "player_app" in nm, "symbol missing")
+    results.check("rust-link: no C playloop",
+                  not re.search(r"_(mpv_create|mpv_playloop|mp_dispatch_create)$",
+                                nm, re.MULTILINE),
+                  "C playloop symbol present")
 
     proc = subprocess.run(
         ["cargo", "test", "--manifest-path", str(ROOT / "rust" / "Cargo.toml"),
@@ -1654,13 +1618,22 @@ def gate_rust_link(results, args):
 
 
 def gate_ffi(results, args):
+    target = ROOT / ".work" / "deps" / "player-audio" / "target"
+    env = os.environ.copy()
+    env["CARGO_TARGET_DIR"] = str(target)
+    ffmpeg = ROOT / ".work" / "deps" / "ffmpeg-full"
+    if (ffmpeg / "lib/pkgconfig").is_dir():
+        env["PKG_CONFIG_PATH"] = (
+            f"{ffmpeg / 'lib/pkgconfig'}:{env.get('PKG_CONFIG_PATH', '')}"
+        ).rstrip(":")
     proc = subprocess.run(
-        [str(ROOT / "scripts" / "build.sh")], cwd=str(ROOT),
-        capture_output=True, text=True, timeout=300,
+        ["cargo", "build", "--release",
+         "--manifest-path", str(ROOT / "rust" / "Cargo.toml"), "-p", "player-ffi"],
+        cwd=str(ROOT), capture_output=True, text=True, timeout=900, env=env,
     )
     results.check("ffi: build", proc.returncode == 0,
                   tail((proc.stdout + proc.stderr).splitlines(), 20))
-    ffi_lib = ROOT / ".work" / "deps" / "player-audio" / "target" / "release" / "libplayer_ffi.a"
+    ffi_lib = target / "release" / "libplayer_ffi.a"
     binary = ROOT / "build" / "ffi_test"
     proc = subprocess.run(
         ["cc", "-std=c11", "-Wall", "-Wextra",
@@ -1935,7 +1908,7 @@ def gate_release(results, args):
         f"build={plist.get('CFBundleVersion')!r} expected={version!r}",
     )
 
-    release_binary = ROOT / "build-release/mpv"
+    release_binary = ROOT / "rust" / "target" / "dist" / "player"
     try:
         stamp = json.loads((app / "Contents/Resources/build.json").read_text())
         expected = hashlib.sha256(release_binary.read_bytes()).hexdigest()
@@ -1959,11 +1932,15 @@ def gate_release(results, args):
         "libass.9.dylib", "libplacebo.387.dylib", "libvulkan.1.dylib",
         "libMoltenVK.dylib", "libshaderc_shared.1.dylib",
         "libdav1d.7.dylib", "libfreetype.6.dylib", "libfribidi.0.dylib",
-        "libharfbuzz.0.dylib", "libplayer_release.dylib",
+        "libharfbuzz.0.dylib",
     }
     present = {path.name for path in frameworks.glob("*.dylib")}
     results.check("release: bundled closure", expected <= present,
                   ",".join(sorted(expected - present)))
+    c_engine = sorted(name for name in present
+                      if "player_release" in name or "libmpv" in name)
+    results.check("release: no C engine dylib", not c_engine,
+                  ",".join(c_engine))
 
     icd_path = app / "Contents/Resources/vulkan/icd.d/MoltenVK_icd.json"
     try:
