@@ -5,8 +5,7 @@ fn main() {
         return;
     }
     println!("cargo:rustc-link-arg=/usr/lib/libasound.so");
-    println!("cargo:rustc-link-arg=/usr/lib/libva.so");
-    println!("cargo:rustc-link-arg=/usr/lib/libva-drm.so");
+    player_build::ffmpeg_sdk::emit_linux_va("player-app");
     let dir = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
     for closure in ["../player-output/linux-link.args"] {
         player_build::emit_linux_closure(

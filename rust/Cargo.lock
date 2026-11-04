@@ -240,6 +240,7 @@ dependencies = [
 name = "player-audio"
 version = "0.1.0"
 dependencies = [
+ "player-build",
  "player-media",
  "symphonia",
 ]

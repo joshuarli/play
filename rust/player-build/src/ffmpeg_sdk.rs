@@ -5,6 +5,18 @@ use std::process::Command;
 pub const PROFILE: &str = "play-sdk";
 pub const PIN_FILE: &str = "ffmpeg-sdk.lock.json";
 const MANIFEST: &str = "share/ffmpeg-build/manifest.json";
+const SDK_FILES: [&str; 8] = [
+    "include/libavformat/avformat.h",
+    "lib/pkgconfig/libavformat.pc",
+    "lib/libavformat.a",
+    "lib/libavcodec.a",
+    "lib/libswscale.a",
+    "lib/libavutil.a",
+    "lib/libdav1d.a",
+    "lib/libz.a",
+];
+const SYSTEM_LIBRARIES: [&str; 6] = ["m", "pthread", "dl", "atomic", "va", "va-drm"];
+pub const LINUX_VA: [(&str, &str); 2] = [("va", "libva"), ("va-drm", "libva-drm")];
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Json {
@@ -289,7 +301,7 @@ pub fn check_prefix(prefix: &Path, pin: &Pin, target: &str) -> Result<(), String
     let manifest = Json::parse(&text).map_err(|error| format!("{}: {error}", manifest_path.display()))?;
     pin.check_manifest(&manifest, target)
         .map_err(|error| format!("{}: {error}", prefix.display()))?;
-    for relative in ["include/libavformat/avformat.h", "lib/libavformat.a", "lib/pkgconfig/libavformat.pc"] {
+    for relative in SDK_FILES {
         if !prefix.join(relative).is_file() {
             return Err(format!("FFmpeg SDK {} lacks {relative}", prefix.display()));
         }
@@ -356,8 +368,10 @@ pub fn plan_links(tokens: &[String], prefix: &Path, system_library: impl Fn(&str
         } else if let Some(name) = token.strip_prefix("-l") {
             if lib.join(format!("lib{name}.a")).is_file() {
                 push(Link::Static(name.to_owned()), &mut links);
-            } else {
+            } else if SYSTEM_LIBRARIES.contains(&name) {
                 push(system_library(name), &mut links);
+            } else {
+                return Err(format!("pkg-config names -l{name}, but the SDK {} has no lib{name}.a", lib.display()));
             }
         } else if token == "-framework" {
             let name = tokens.next().ok_or("-framework without a name")?;
@@ -402,6 +416,20 @@ pub fn pkg_config_static_libs(prefix: &Path, modules: &[&str]) -> Result<Vec<Str
         ));
     }
     Ok(split_pkg_config(&String::from_utf8_lossy(&output.stdout)))
+}
+
+pub fn linux_va_link_args() -> Result<Vec<String>, String> {
+    LINUX_VA
+        .iter()
+        .map(|(library, module)| Ok(system_libdir(module)?.join(format!("lib{library}.so")).display().to_string()))
+        .collect()
+}
+
+pub fn emit_linux_va(owner: &str) {
+    let args = linux_va_link_args().unwrap_or_else(|error| panic!("{owner}: {error}"));
+    for arg in args {
+        println!("cargo:rustc-link-arg={arg}");
+    }
 }
 
 pub fn system_libdir(module: &str) -> Result<PathBuf, String> {
@@ -512,6 +540,8 @@ mod tests {
         );
         let foreign = vec!["-L/opt/homebrew/lib".to_owned()];
         assert!(plan_links(&foreign, &prefix, |name| Link::System(name.to_owned())).is_err());
+        let missing_static = vec!["-ldav1d".to_owned()];
+        assert!(plan_links(&missing_static, &prefix, |name| Link::System(name.to_owned())).is_err());
         std::fs::remove_dir_all(root).unwrap();
     }
 }

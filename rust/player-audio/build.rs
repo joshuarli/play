@@ -10,7 +10,6 @@ fn main() {
         // Build-script link-args do not propagate to dependent crates the
         // way link-lib and link-search do, so the VA-API pair player-media
         // emits for its own targets is repeated here for ours.
-        println!("cargo:rustc-link-arg=/usr/lib/libva.so");
-        println!("cargo:rustc-link-arg=/usr/lib/libva-drm.so");
+        player_build::ffmpeg_sdk::emit_linux_va("player-audio");
     }
 }

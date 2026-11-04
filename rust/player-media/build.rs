@@ -5,7 +5,6 @@ use std::path::PathBuf;
 use player_build::ffmpeg_sdk::{self, Link, Pin};
 
 const MODULES: [&str; 4] = ["libavformat", "libavcodec", "libswscale", "libavutil"];
-const LINUX_SYSTEM_VA: [(&str, &str); 2] = [("va", "libva"), ("va-drm", "libva-drm")];
 
 fn fail(message: String) -> ! {
     panic!("player-media: {message}")
@@ -36,7 +35,7 @@ fn main() {
 
     let tokens = ffmpeg_sdk::pkg_config_static_libs(&prefix, &MODULES).unwrap_or_else(|error| fail(error));
     let links = ffmpeg_sdk::plan_links(&tokens, &prefix, |name| {
-        match LINUX_SYSTEM_VA.iter().find(|(library, _)| *library == name) {
+        match ffmpeg_sdk::LINUX_VA.iter().find(|(library, _)| *library == name) {
             Some((library, module)) if target_os == "linux" => {
                 let libdir = ffmpeg_sdk::system_libdir(module).unwrap_or_else(|error| fail(error));
                 Link::Arg(libdir.join(format!("lib{library}.so")).display().to_string())

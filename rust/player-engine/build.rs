@@ -9,8 +9,7 @@ fn main() {
     // targets. Absolute paths because the musl cross-linker does not search
     // /usr/lib for -l names.
     println!("cargo:rustc-link-arg=/usr/lib/libasound.so");
-    println!("cargo:rustc-link-arg=/usr/lib/libva.so");
-    println!("cargo:rustc-link-arg=/usr/lib/libva-drm.so");
+    player_build::ffmpeg_sdk::emit_linux_va("player-engine");
     // The renderer closure is owned by player-output's linux-link.args;
     // read it there instead of copying it here.
     let dir = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());

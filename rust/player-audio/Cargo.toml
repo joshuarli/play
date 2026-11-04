@@ -18,3 +18,6 @@ symphonia = { path = "../../vendor/symphonia/symphonia", default-features = fals
     "vorbis",
     "opt-simd",
 ] }
+
+[build-dependencies]
+player-build = { path = "../player-build" }
