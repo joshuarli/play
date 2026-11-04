@@ -1888,7 +1888,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
     let options = match options::parse(args) {
         Ok(options) => options,
         Err(message) if message == "__version__" => {
-            println!("player mpv-compatible 0.41.0");
+            println!("player mpv-compatible {}", env!("CARGO_PKG_VERSION"));
             return Ok(());
         }
         Err(message) if message == "__help__" => {

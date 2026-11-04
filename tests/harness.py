@@ -1803,17 +1803,20 @@ def gate_release(results, args):
     results.check(
         "release: bundle identity",
         environment.get("MPVBUNDLE") == "true"
-        and bool(plist.get("CFBundleDocumentTypes"))
-        and bool(plist.get("CFBundleIconFile")),
+        and bool(plist.get("CFBundleDocumentTypes")),
         f"MPVBUNDLE={environment.get('MPVBUNDLE')!r} "
-        f"documentTypes={bool(plist.get('CFBundleDocumentTypes'))} "
-        f"icon={plist.get('CFBundleIconFile')!r}",
+        f"documentTypes={bool(plist.get('CFBundleDocumentTypes'))}",
     )
 
-    version = (ROOT / "MPV_VERSION").read_text().strip()
+    version_output = subprocess.run(
+        [str(binary), "--version"], capture_output=True, text=True, timeout=30,
+    )
+    match = re.search(r"\b\d+\.\d+\.\d+\b", version_output.stdout)
+    version = match.group(0) if match else ""
     results.check(
         "release: bundle version",
-        plist.get("CFBundleShortVersionString") == version
+        bool(version)
+        and plist.get("CFBundleShortVersionString") == version
         and plist.get("CFBundleVersion") == version,
         f"short={plist.get('CFBundleShortVersionString')!r} "
         f"build={plist.get('CFBundleVersion')!r} expected={version!r}",

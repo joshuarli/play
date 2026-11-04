@@ -15,13 +15,20 @@ PREFIX = ROOT / ".work/deps/release"
 RUST_TARGET = ROOT / "rust/target/dist"
 BINARY = RUST_TARGET / "player"
 APP = ROOT / "dist/Player.app"
-VERSION = (ROOT / "MPV_VERSION").read_text().strip()
 MACOS = APP / "Contents/MacOS"
 FRAMEWORKS = APP / "Contents/Frameworks"
 RESOURCES = APP / "Contents/Resources"
 ICD_DIR = RESOURCES / "vulkan/icd.d"
 MOLTENVK_LIB = PREFIX / "lib/libMoltenVK.dylib"
 MOLTENVK_ICD = PREFIX / "share/vulkan/icd.d/MoltenVK_icd.json"
+
+
+def package_version():
+    for line in (ROOT / "rust/player-app/Cargo.toml").read_text().splitlines():
+        key, separator, value = line.partition("=")
+        if separator and key.strip() == "version":
+            return value.strip().strip('"')
+    raise SystemExit("player-app/Cargo.toml has no version")
 
 
 def otool(path, flag):
@@ -73,6 +80,7 @@ def collect(binary):
 def main():
     if not BINARY.exists():
         raise SystemExit(f"missing release binary: {BINARY}")
+    version = package_version()
     for path in (MOLTENVK_LIB, MOLTENVK_ICD):
         if not path.exists():
             raise SystemExit(f"missing dependency {path}")
@@ -106,11 +114,6 @@ def main():
     icd = json.loads(MOLTENVK_ICD.read_text())
     icd["ICD"]["library_path"] = "../../../Frameworks/libMoltenVK.dylib"
     (ICD_DIR / "MoltenVK_icd.json").write_text(json.dumps(icd, indent=4) + "\n")
-
-    shutil.copy2(
-        ROOT / "packaging/icon.icns",
-        RESOURCES / "icon.icns",
-    )
 
     path_map = {}
     for name, source in closure.items():
@@ -171,14 +174,13 @@ def main():
             },
         ],
         "CFBundleExecutable": "player",
-        "CFBundleIconFile": "icon.icns",
         "CFBundleIdentifier": "local.player",
         "CFBundleInfoDictionaryVersion": "6.0",
         "CFBundleName": "Player",
         "CFBundleDisplayName": "Player",
         "CFBundlePackageType": "APPL",
-        "CFBundleShortVersionString": VERSION,
-        "CFBundleVersion": VERSION,
+        "CFBundleShortVersionString": version,
+        "CFBundleVersion": version,
         "LSApplicationCategoryType": "public.app-category.video",
         "LSEnvironment": {"MPVBUNDLE": "true"},
         "LSMinimumSystemVersion": "27.0",
