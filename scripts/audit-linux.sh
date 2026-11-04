@@ -5,7 +5,7 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 PLAYER=${PLAYER:-$ROOT/dist/player}
 UNSTRIPPED=${UNSTRIPPED:-$ROOT/build-linux/mpv}
 ALLOWED_NEEDED=(
-    libvulkan.so.1 libwayland-client.so.0 libgcc_s.so.1
+    libvulkan.so.1 libwayland-client.so.0
     libasound.so.2 libc.musl-x86_64.so.1 libva.so.2 libva-drm.so.2
     libfontconfig.so.1 libharfbuzz.so.0 libfreetype.so.6
 )
@@ -55,6 +55,9 @@ check "ldd resolves every library" "$([ -z "$unresolved" ] && echo 1 || echo 0)"
 
 paths=$(strings -a "$PLAYER" | rg -F -e "$ROOT/" -e "/work/" | head -3 || true)
 check "no build paths" "$([ -z "$paths" ] && echo 1 || echo 0)" "$paths"
+
+gnu_runtime=$(nm -D --undefined-only "$PLAYER" | awk '{print $NF}' | rg '@GCC_|^_Unwind_|^__popcountdi2|^__(de)?register_frame_info' || true)
+check "no GNU runtime imports" "$([ -z "$gnu_runtime" ] && echo 1 || echo 0)" "$(printf '%s' "$gnu_runtime" | tr '\n' ' ')"
 
 imports=$(nm -D --undefined-only "$PLAYER" | awk '{print $NF}' | rg "$FORBIDDEN_IMPORTS" || true)
 check "no network imports" "$([ -z "$imports" ] && echo 1 || echo 0)" "$imports"

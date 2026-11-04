@@ -21,7 +21,6 @@ The executable links only these shared libraries from the Alpine image:
 | Library | Alpine package |
 | --- | --- |
 | musl libc | `musl` |
-| `libgcc_s.so.1` | `libgcc` |
 | `libvulkan.so.1` | `vulkan-loader` |
 | `libwayland-client.so.0` | `wayland-libs-client` |
 | `libasound.so.2` | `alsa-lib` |
@@ -30,7 +29,7 @@ The executable links only these shared libraries from the Alpine image:
 | `libharfbuzz.so.0` | `harfbuzz` |
 | `libfreetype.so.6` | `freetype` |
 
-`scripts/audit-linux.sh` rejects any other `NEEDED` entry, and any libass, FriBiDi, Pango, Cairo, or Pixman in `NEEDED`, in the binary's symbols, or in the dependency prefix. Fontconfig reads `/etc/fonts` at run time, so a system needs a fontconfig configuration and fonts for system-font discovery.
+`scripts/audit-linux.sh` rejects any other `NEEDED` entry and any GNU runtime import (`@GCC_*` versions, `_Unwind_*`, `__popcountdi2`, frame registration). Rust std asks for `libgcc_s` on a dynamic musl target; `docker/linux/musl-cc-wrap.sh` links GCC's static `libgcc_eh.a` in its place, beside the static `libgcc.a` and `libstdc++.a`. The audit also rejects any libass, FriBiDi, Pango, Cairo, or Pixman in `NEEDED`, in the binary's symbols, or in the dependency prefix. Fontconfig reads `/etc/fonts` at run time, so a system needs a fontconfig configuration and fonts for system-font discovery.
 
 ## Hardware decode
 

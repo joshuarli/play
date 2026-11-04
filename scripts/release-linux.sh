@@ -11,10 +11,10 @@ STAGE="$ROOT/.work/tmp/release-linux"
 "$ROOT/scripts/audit-linux.sh"
 
 runtime_packages=$(apk list -I 2>/dev/null |
-    awk '$1 ~ /^(musl|libgcc|vulkan-loader|wayland-libs-client|alsa-lib|libva|fontconfig|harfbuzz|freetype)-[0-9]/ {print "  " $1}' |
+    awk '$1 ~ /^(musl|vulkan-loader|wayland-libs-client|alsa-lib|libva|fontconfig|harfbuzz|freetype)-[0-9]/ {print "  " $1}' |
     sort)
-[ "$(printf '%s\n' "$runtime_packages" | wc -l)" -eq 9 ] || {
-    printf 'error: expected nine runtime packages, found:\n%s\n' "$runtime_packages" >&2
+[ "$(printf '%s\n' "$runtime_packages" | wc -l)" -eq 8 ] || {
+    printf 'error: expected eight runtime packages, found:\n%s\n' "$runtime_packages" >&2
     exit 1
 }
 

@@ -14,7 +14,7 @@ Player.app/Contents/MacOS/player FILE
 
 The bundle carries its own dylibs, Vulkan loader, and MoltenVK. It does not use Homebrew at runtime. It is ad-hoc signed and not notarized; macOS may require the Finder context-menu Open on first launch, or clearing the quarantine attribute.
 
-On Linux, unpack the tarball and run `./player FILE`. The executable is mostly static and needs only musl, libgcc, the Vulkan loader, Wayland client, ALSA, and libva at run time; the bundled README lists the runtime packages. See [Linux](docs/linux.md).
+On Linux, unpack the tarball and run `./player FILE`. The executable is mostly static and needs only musl, the Vulkan loader, Wayland client, ALSA, and libva at run time; the bundled README lists the runtime packages. See [Linux](docs/linux.md).
 
 To build either artifact from source, see [Install and run](docs/install.md).
 
