@@ -20,7 +20,6 @@ pub struct Options {
     pub playlists: Vec<String>,
     pub items: Vec<Item>,
     pub ipc: Option<PathBuf>,
-    pub input_conf: Option<PathBuf>,
     pub idle: bool,
     pub pause: bool,
     pub start: Start,
@@ -56,7 +55,6 @@ impl Default for Options {
             playlists: Vec::new(),
             items: Vec::new(),
             ipc: None,
-            input_conf: None,
             idle: false,
             pause: false,
             start: Start::Unset,
@@ -101,7 +99,22 @@ const SCRIPTING: &[&str] = &[
     "script-opts-add",
 ];
 
+pub const ENVIRONMENT: &str = "PLAYER_OPTIONS";
+
+pub fn with_environment(environment: Option<&str>, args: &[String]) -> Result<Vec<String>, String> {
+    let mut combined = Vec::new();
+    for token in environment.unwrap_or("").split_whitespace() {
+        if !token.starts_with("--") {
+            return Err(format!("{ENVIRONMENT} holds options only, not '{token}'"));
+        }
+        combined.push(token.to_owned());
+    }
+    combined.extend(args.iter().cloned());
+    Ok(combined)
+}
+
 const REMOVED: &[&str] = &[
+    "input-conf",
     "http-header-fields",
     "ytdl",
     "lavfi-complex",
@@ -207,7 +220,6 @@ pub fn parse(args: &[String]) -> Result<Options, String> {
             "input-ipc-server" | "input-ipc-server-raw" => {
                 options.ipc = Some(PathBuf::from(value(&name)?));
             }
-            "input-conf" => options.input_conf = Some(PathBuf::from(value(&name)?)),
             "start" => options.start = parse_start(&value(&name)?)?,
             "volume" => {
                 options.volume = value(&name)?
@@ -322,4 +334,31 @@ pub fn help() -> &'static str {
      --playlist=<file>     load a playlist\n\
      --tui                 play in the terminal\n\
      --input-ipc-server=<path>  listen for IPC commands\n"
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| (*value).to_owned()).collect()
+    }
+
+    #[test]
+    fn environment_options_apply_before_the_command_line() {
+        let combined = with_environment(Some("--volume=40  --fs=no"), &args(&["--volume=70", "a.mkv"]))
+            .expect("options combine");
+        let options = parse(&combined).expect("combined options parse");
+        assert_eq!(options.volume, 70.0);
+        assert_eq!(options.fullscreen, Some(false));
+        assert_eq!(options.files, vec!["a.mkv".to_owned()]);
+        assert_eq!(with_environment(None, &args(&["b.mp4"])).unwrap(), args(&["b.mp4"]));
+    }
+
+    #[test]
+    fn environment_rejects_files_and_removed_options_fail() {
+        assert!(with_environment(Some("--mute movie.mkv"), &[]).is_err());
+        assert!(parse(&args(&["--input-conf=keys.conf"])).is_err());
+        assert!(parse(&args(&["--script=x.lua"])).is_err());
+    }
 }

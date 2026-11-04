@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use player_audio::sink::SinkKind;
 use player_core::command::{
-    parse_string, Adjust, Command as CoreCommand, OscVisibility, OscVisibilityChange, Toggle,
+    Adjust, Command as CoreCommand, OscVisibility, OscVisibilityChange, Toggle,
     TrackKind as CoreTrackKind,
 };
 use player_core::input::{classify_input, InputPath};
@@ -67,7 +67,6 @@ pub struct App {
     presented_size: (i32, i32),
     gate_ready_at: Option<Instant>,
     last_gate_report: Instant,
-    bindings: HashMap<String, String>,
     screenshot_index: u32,
     observers: HashMap<u64, Observer>,
     end_sent: bool,
@@ -121,7 +120,6 @@ impl App {
             presented_size: (0, 0),
             gate_ready_at: None,
             last_gate_report: Instant::now(),
-            bindings: HashMap::new(),
             screenshot_index: 0,
             observers: HashMap::new(),
             end_sent: false,
@@ -586,9 +584,6 @@ impl App {
     pub fn run(&mut self) -> Result<(), String> {
         self.options.sub_files = local_inputs(std::mem::take(&mut self.options.sub_files));
         self.options.audio_files = local_inputs(std::mem::take(&mut self.options.audio_files));
-        if let Some(path) = &self.options.input_conf {
-            self.bindings = read_bindings(path)?;
-        }
         if let Some(path) = &self.options.log_file {
             std::fs::File::create(path)
                 .map_err(|error| format!("cannot create {}: {error}", path.display()))?;
@@ -1436,9 +1431,6 @@ impl App {
         if key.eq_ignore_ascii_case("WHEEL_DOWN") {
             return self.wheel(false);
         }
-        if self.run_bound_key(key) {
-            return Ok(());
-        }
         match key {
             "SPACE" => self.set_paused(!self.paused)?,
             "f" => self.fullscreen = !self.fullscreen,
@@ -1466,16 +1458,6 @@ impl App {
         Ok(())
     }
 
-    fn run_bound_key(&mut self, key: &str) -> bool {
-        let Some(text) = self.bindings.get(key).cloned() else {
-            return false;
-        };
-        if let Err(message) = self.run_binding(&text) {
-            eprintln!("player: {message}");
-        }
-        true
-    }
-
     fn pointer_button(&mut self, pressed: bool) -> Result<(), String> {
         let response = self
             .osc
@@ -1483,10 +1465,6 @@ impl App {
             .map_or(Response::Pass, |osc| osc.button(pressed));
         match response {
             Response::Command(command) => self.execute_core(command),
-            Response::Pass if pressed => {
-                self.run_bound_key("MBTN_LEFT");
-                Ok(())
-            }
             Response::Pass | Response::Consumed => Ok(()),
         }
     }
@@ -1495,11 +1473,7 @@ impl App {
         let response = self.osc.as_mut().map_or(Response::Pass, |osc| osc.wheel(up));
         match response {
             Response::Command(command) => self.execute_core(command),
-            Response::Pass => {
-                self.run_bound_key(if up { "WHEEL_UP" } else { "WHEEL_DOWN" });
-                Ok(())
-            }
-            Response::Consumed => Ok(()),
+            Response::Pass | Response::Consumed => Ok(()),
         }
     }
 
@@ -1512,20 +1486,6 @@ impl App {
             Response::Command(command) => self.execute_core(command),
             Response::Pass | Response::Consumed => Ok(()),
         }
-    }
-
-    fn run_binding(&mut self, text: &str) -> Result<(), String> {
-        let mut commands = Vec::new();
-        for part in split_commands(text)? {
-            let command = parse_string(&part)
-                .map_err(|error| error.to_string())?
-                .ok_or_else(|| format!("unknown command '{part}'"))?;
-            commands.push(command);
-        }
-        for command in commands {
-            self.execute_core(command)?;
-        }
-        Ok(())
     }
 
     fn execute_core(&mut self, command: CoreCommand) -> Result<(), String> {
@@ -1887,71 +1847,25 @@ fn toggle_value(toggle: Toggle, current: bool) -> bool {
     }
 }
 
-fn read_bindings(path: &Path) -> Result<HashMap<String, String>, String> {
-    let text = std::fs::read_to_string(path)
-        .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
-    let mut bindings = HashMap::new();
-    for line in text.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        if let Some((key, command)) = line.split_once(char::is_whitespace) {
-            let command = command.trim();
-            if !command.is_empty() {
-                bindings.insert(key.to_owned(), command.to_owned());
-            }
-        }
-    }
-    Ok(bindings)
-}
-
-fn split_commands(text: &str) -> Result<Vec<String>, String> {
-    let mut commands = Vec::new();
-    let mut start = 0;
-    let mut quoted = false;
-    let mut escaped = false;
-    for (index, character) in text.char_indices() {
-        if escaped {
-            escaped = false;
-            continue;
-        }
-        match character {
-            '\\' if quoted => escaped = true,
-            '"' => quoted = !quoted,
-            ';' if !quoted => {
-                let command = text[start..index].trim();
-                if !command.is_empty() {
-                    commands.push(command.to_owned());
-                }
-                start = index + 1;
-            }
-            _ => {}
-        }
-    }
-    if quoted {
-        return Err("unterminated quote".to_owned());
-    }
-    let command = text[start..].trim();
-    if !command.is_empty() {
-        commands.push(command.to_owned());
-    }
-    Ok(commands)
-}
-
 #[cfg(target_os = "macos")]
 pub fn run_program(args: &[String]) -> Result<(), String> {
-    if !may_open_window(args) {
-        return run(args);
+    let args = environment_args(args)?;
+    if !may_open_window(&args) {
+        return run(&args);
     }
     let mut result = Ok(());
-    player_display::run_with_app_kit(|| result = run(args))?;
+    player_display::run_with_app_kit(|| result = run(&args))?;
     result
 }
 
 #[cfg(not(target_os = "macos"))]
 pub fn run_program(args: &[String]) -> Result<(), String> {
-    run(args)
+    run(&environment_args(args)?)
+}
+
+fn environment_args(args: &[String]) -> Result<Vec<String>, String> {
+    let environment = std::env::var(options::ENVIRONMENT).ok();
+    options::with_environment(environment.as_deref(), args)
 }
 
 fn may_open_window(args: &[String]) -> bool {

@@ -75,6 +75,7 @@ class Mpv:
             *[str(arg) for arg in args],
         ]
         process_env = os.environ.copy()
+        process_env.pop("PLAYER_OPTIONS", None)
         if env:
             process_env.update(env)
         self.proc = subprocess.Popen(
@@ -737,11 +738,23 @@ def gate_play(results, args):
 
 
 def gate_cli(results, args):
-    def run(argv, timeout=20):
+    def run(argv, timeout=20, options=None):
+        env = {key: value for key, value in os.environ.items() if key != "PLAYER_OPTIONS"}
+        if options is not None:
+            env["PLAYER_OPTIONS"] = options
         return subprocess.run(
             [str(MPV), "--no-config", *argv], cwd=str(ROOT),
-            capture_output=True, text=True, timeout=timeout,
+            capture_output=True, text=True, timeout=timeout, env=env,
         )
+
+    proc = run(["--version"], options="--fs=no movie.mkv")
+    output = proc.stdout + proc.stderr
+    results.check("cli: PLAYER_OPTIONS rejects non-options",
+                  proc.returncode != 0 and "PLAYER_OPTIONS holds options only" in output,
+                  f"exit {proc.returncode}: {output.strip()}")
+    proc = run(["--input-conf=keys.conf"])
+    results.check("cli: --input-conf removed", proc.returncode != 0,
+                  f"exit {proc.returncode}")
 
     proc = run(["--version"])
     version_text = proc.stdout + proc.stderr
@@ -1921,66 +1934,37 @@ def gate_linux_osc(results, args):
 
 
 def gate_dispatch(results, args):
-    bindings = ROOT / "tests" / "input.conf"
-    extra = (
-        "\nF7 cycle pause; set volume nope\n"
-        "F8 cycle pause; cycle mute\n"
-    )
-    conf = TMP / f"dispatch-input-{os.getpid()}.conf"
-    conf.write_text(bindings.read_text() + extra)
-    try:
-        with Mpv(["--vo=null", "--ao=null",
-                  f"--input-conf={conf}"]) as mpv:
-            mpv.load(fixture_path(fixture_entry("multiaudio")))
-            mpv.wait_event("file-loaded", timeout=15)
-            paused = mpv.get_property("pause")
-            muted = mpv.get_property("mute")
-            mpv.command("keypress", "F7")
-            same_pause = mpv.wait_property(
-                "pause", lambda value: value is paused, timeout=5)
-            results.check("dispatch: invalid multi rejected atomically",
-                          same_pause is paused
-                          and mpv.get_property("mute") is muted)
-            mpv.command("keypress", "F8")
-            mpv.wait_property("pause", lambda value: value is not paused,
-                              timeout=5)
-            mpv.wait_property("mute", lambda value: value is not muted,
-                              timeout=5)
-            results.check("dispatch: valid multi executes", True)
-            mpv.command("cycle", "pause")
-            mpv.command("cycle", "mute")
-            mpv.wait_property("pause", lambda value: value is paused,
-                              timeout=5)
-            check_no_errors(results, "dispatch", mpv)
-            for name, command in (
-                ("seek-nope", ["seek", "nope"]),
-                ("set-volume-missing", ["set", "volume"]),
-                ("loadfile-missing", ["loadfile"]),
-                ("cycle-missing", ["cycle"]),
-                ("bogus-command", ["bogus-command-xyz"]),
-            ):
-                try:
-                    mpv.command(*command)
-                except Failure:
-                    results.check(f"dispatch: node {name} errors", True)
-                else:
-                    results.check(f"dispatch: node {name} errors",
-                                  False, "expected an error")
-            mpv.command("show-text", "a;b")
-            results.check("dispatch: quoted semicolon passes", True)
-            aid = mpv.get_property("aid")
-            results.check("dispatch: aid reads through Rust store",
-                          isinstance(aid, int), f"got {aid!r}")
-            # Deselected tracks read back as boolean false: the node format
-            # maps the "no" choice alternative that way, same as the C engine.
-            mpv.command("set", "aid", "no")
-            mpv.wait_property("aid", lambda value: value is False, timeout=10)
-            results.check("dispatch: aid no round-trips", True)
-            mpv.command("set", "aid", "1")
-            mpv.wait_property("aid", lambda value: value == 1, timeout=10)
-            results.check("dispatch: aid set round-trips", True)
-    finally:
-        conf.unlink(missing_ok=True)
+    with Mpv(["--vo=null", "--ao=null"]) as mpv:
+        mpv.load(fixture_path(fixture_entry("multiaudio")))
+        mpv.wait_event("file-loaded", timeout=15)
+        check_no_errors(results, "dispatch", mpv)
+        for name, command in (
+            ("seek-nope", ["seek", "nope"]),
+            ("set-volume-missing", ["set", "volume"]),
+            ("loadfile-missing", ["loadfile"]),
+            ("cycle-missing", ["cycle"]),
+            ("bogus-command", ["bogus-command-xyz"]),
+        ):
+            try:
+                mpv.command(*command)
+            except Failure:
+                results.check(f"dispatch: node {name} errors", True)
+            else:
+                results.check(f"dispatch: node {name} errors",
+                              False, "expected an error")
+        mpv.command("show-text", "a;b")
+        results.check("dispatch: quoted semicolon passes", True)
+        aid = mpv.get_property("aid")
+        results.check("dispatch: aid reads through Rust store",
+                      isinstance(aid, int), f"got {aid!r}")
+        # Deselected tracks read back as boolean false: the node format
+        # maps the "no" choice alternative that way, same as the C engine.
+        mpv.command("set", "aid", "no")
+        mpv.wait_property("aid", lambda value: value is False, timeout=10)
+        results.check("dispatch: aid no round-trips", True)
+        mpv.command("set", "aid", "1")
+        mpv.wait_property("aid", lambda value: value == 1, timeout=10)
+        results.check("dispatch: aid set round-trips", True)
     results.check("dispatch: exit", mpv.returncode == 0,
                   f"exit {mpv.returncode}")
 

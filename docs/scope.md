@@ -47,13 +47,13 @@ There is no C playback loop or Meson player build.
 
 ## CLI
 
-Supported: `player FILE...`, `--tui`, `--gui`, `--gate` (GUI gate), `--fullscreen` and `--fs` (a window opens fullscreen unless `--fs=no` or `--geometry` is given), `--start`, `--playlist`, `--audio-file` and `--audio-files`, `--sub-file` and `--sub-files`, `--osc` and `--no-osc`, `--input-conf`, `--input-ipc-server`, `--audio-device` (Linux ALSA), `--geometry`, `--frames`, `--term-playing-msg`, `--list-protocols`, `--version`, `--help`, and the playback, track, and OSD controls used by the OSC and local playback. `--tui` is audio-first and keeps `vo=null`; it is not a terminal video output.
+Supported: `player FILE...`, `--tui`, `--gui`, `--gate` (GUI gate), `--fullscreen` and `--fs` (a window opens fullscreen unless `--fs=no` or `--geometry` is given), `--start`, `--playlist`, `--audio-file` and `--audio-files`, `--sub-file` and `--sub-files`, `--osc` and `--no-osc`, `--input-ipc-server`, `--audio-device` (Linux ALSA), `--geometry`, `--frames`, `--term-playing-msg`, `--list-protocols`, `--version`, `--help`, and the playback, track, and OSD controls used by the OSC and local playback. `--tui` is audio-first and keeps `vo=null`; it is not a terminal video output.
 
 Removed: `--ytdl*`, `--hls-bitrate`, `--lavfi-complex`, `--stream-dump`, `--stretch-dvd-subs`, the encoding group (`--o`, `--of`, `--ovc`, `--oac`, their option tables, `--orawts`, and metadata flags), the Windows window and capture group, the scripting options (`--script`, `--scripts`, `--script-opts`, and `--load-scripts=yes` fail with an unsupported-option error), `--audio-spdif`, and `--ad-lavc-*`. `--http-header-fields` and the other network groups were removed with the network modules.
 
 ## Configuration
 
-The player has no scripting. It does not read `mpv.conf`, `input.conf`, or scripts from user directories; `--input-conf=FILE` loads key bindings explicitly.
+The player has no scripting and no key-binding files. It does not read `mpv.conf`, `input.conf`, or scripts from user directories. Defaults and bindings are compiled in. `PLAYER_OPTIONS` holds options, whitespace-separated, that apply before the command line, so command-line options win; anything that is not an `--option` is an error. `--input-conf` fails as removed.
 
 ## Remaining debt
 

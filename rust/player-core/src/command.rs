@@ -114,11 +114,6 @@ impl fmt::Display for CommandError {
 
 impl std::error::Error for CommandError {}
 
-pub fn parse_string(input: &str) -> Result<Option<Command>, CommandError> {
-    let args = tokenize(input)?;
-    parse_args(&args)
-}
-
 pub fn parse_args(args: &[String]) -> Result<Option<Command>, CommandError> {
     let mut index = 0;
     while index < args.len() && is_flag(&args[index]) {
@@ -347,40 +342,6 @@ fn is_flag(value: &str) -> bool {
     )
 }
 
-fn tokenize(input: &str) -> Result<Vec<String>, CommandError> {
-    let mut tokens = Vec::new();
-    let mut current = String::new();
-    let mut quoted = false;
-    let mut escaped = false;
-    for character in input.chars() {
-        if escaped {
-            current.push(character);
-            escaped = false;
-            continue;
-        }
-        match character {
-            '\\' if quoted => escaped = true,
-            '"' => quoted = !quoted,
-            character if character.is_whitespace() && !quoted => {
-                if !current.is_empty() {
-                    tokens.push(std::mem::take(&mut current));
-                }
-            }
-            character => current.push(character),
-        }
-    }
-    if quoted {
-        return Err(CommandError::new("unterminated quote"));
-    }
-    if escaped {
-        return Err(CommandError::new("trailing escape"));
-    }
-    if !current.is_empty() {
-        tokens.push(current);
-    }
-    Ok(tokens)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -514,25 +475,24 @@ mod tests {
     }
 
     #[test]
-    fn command_parses_strings_and_flags() {
+    fn command_parses_prefix_flags_and_rejects_bad_arguments() {
+        let parse = |values: &[&str]| {
+            parse_args(&values.iter().map(|value| (*value).to_owned()).collect::<Vec<_>>())
+        };
+        assert_eq!(command(&["no-osd", "cycle", "pause"]), Some(Command::Pause(Toggle::Toggle)));
         assert_eq!(
-            parse_string("no-osd cycle pause").unwrap(),
-            Some(Command::Pause(Toggle::Toggle))
-        );
-        assert_eq!(
-            parse_string(r#"loadfile "/tmp/a b.mkv" append"#).unwrap(),
+            command(&["loadfile", "/tmp/a b.mkv", "append"]),
             Some(Command::LoadFile {
                 path: "/tmp/a b.mkv".to_owned(),
                 mode: LoadMode::Append
             })
         );
-        assert_eq!(parse_string("unknown-command").unwrap(), None);
-        assert!(parse_string("seek nope").is_err());
-        assert_eq!(parse_string("seek 5 weird-mode").unwrap(), None);
-        assert_eq!(parse_string("loadfile /tmp/a.mkv append-play").unwrap(), None);
-        assert!(parse_string("set pause maybe").is_err());
-        assert!(parse_string("loadfile").is_err());
-        assert!(parse_string("\"unterminated").is_err());
+        assert_eq!(command(&["unknown-command"]), None);
+        assert!(parse(&["seek", "nope"]).is_err());
+        assert_eq!(command(&["seek", "5", "weird-mode"]), None);
+        assert_eq!(command(&["loadfile", "/tmp/a.mkv", "append-play"]), None);
+        assert!(parse(&["set", "pause", "maybe"]).is_err());
+        assert!(parse(&["loadfile"]).is_err());
     }
 
     #[test]
@@ -557,7 +517,7 @@ mod tests {
             Some(Command::CycleTrack(TrackKind::Video))
         );
         assert_eq!(
-            parse_string("cycle audio").unwrap(),
+            command(&["cycle", "audio"]),
             Some(Command::CycleTrack(TrackKind::Audio))
         );
     }
@@ -604,6 +564,6 @@ mod tests {
             command(&["set", "sid", "auto"]),
             Some(Command::SelectTrackAuto(TrackKind::Subtitle))
         );
-        assert!(parse_string("seek 1:2:3:4").is_err());
+        assert!(parse_args(&["seek".to_owned(), "1:2:3:4".to_owned()]).is_err());
     }
 }
