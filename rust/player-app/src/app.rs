@@ -62,6 +62,7 @@ pub struct App {
     last_gate_report: Instant,
     last_gate_visibility: Instant,
     bindings: HashMap<String, String>,
+    screenshot_index: u32,
     observers: HashMap<u64, Observer>,
     end_sent: bool,
     quit: bool,
@@ -111,6 +112,7 @@ impl App {
                 .checked_sub(Duration::from_secs(1))
                 .unwrap_or_else(Instant::now),
             bindings: HashMap::new(),
+            screenshot_index: 0,
             observers: HashMap::new(),
             end_sent: false,
             quit: false,
@@ -1354,9 +1356,51 @@ impl App {
                 }
                 Ok(NativeValue::None)
             }
-            "screenshot" | "screenshot-raw" => Ok(NativeValue::None),
+            "screenshot" => self.write_screenshot(None),
+            "screenshot-to-file" => {
+                let path = rest
+                    .first()
+                    .ok_or_else(|| "screenshot-to-file needs a path".to_owned())?;
+                self.write_screenshot(Some(path))
+            }
+            "screenshot-raw" => self.screenshot_raw(),
             _ => Err(format!("unknown command '{name}'")),
         }
+    }
+
+    fn write_screenshot(&mut self, path: Option<&str>) -> Result<NativeValue, String> {
+        let frame = self
+            .last_frame
+            .as_ref()
+            .ok_or_else(|| "no video frame is available for a screenshot".to_owned())?;
+        let png = crate::png::encode_png(&frame.rgba, frame.width, frame.height)?;
+        let target = match path {
+            Some(path) => Path::new(path).to_path_buf(),
+            None => {
+                self.screenshot_index += 1;
+                Path::new(&format!("shot{:04}.png", self.screenshot_index)).to_path_buf()
+            }
+        };
+        std::fs::write(&target, png)
+            .map_err(|error| format!("cannot write {}: {error}", target.display()))?;
+        Ok(NativeValue::None)
+    }
+
+    fn screenshot_raw(&self) -> Result<NativeValue, String> {
+        let frame = self
+            .last_frame
+            .as_ref()
+            .ok_or_else(|| "no video frame is available for a screenshot".to_owned())?;
+        Ok(NativeValue::Map(vec![
+            ("w".to_owned(), NativeValue::Int(frame.width as i64)),
+            ("h".to_owned(), NativeValue::Int(frame.height as i64)),
+            (
+                "stride".to_owned(),
+                NativeValue::Int(frame.width as i64 * 4),
+            ),
+            ("format".to_owned(), NativeValue::String("rgba".to_owned())),
+            ("data".to_owned(), NativeValue::Bytes(frame.rgba.clone())),
+        ]))
     }
 
     fn keypress(&mut self, key: &str) -> Result<(), String> {
@@ -1500,7 +1544,9 @@ impl App {
                     self.load_current()?;
                 }
             }
-            CoreCommand::Screenshot => {}
+            CoreCommand::Screenshot => {
+                self.write_screenshot(None)?;
+            }
             CoreCommand::SubtitleAdd(path) => {
                 if let Some(shared) = &self.shared {
                     shared

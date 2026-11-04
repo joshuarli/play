@@ -1,4 +1,5 @@
 fn main() {
+    println!("cargo:rustc-link-lib=z");
     let target = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     if target != "linux" {
         return;
