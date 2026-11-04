@@ -88,7 +88,7 @@ fn main() -> Result<(), String> {
         .map_err(|error| format!("cannot open {}: {error}", options.fixture))?;
     let mut backend = EngineBackend::open(engine);
     backend.set_paused(true);
-    backend.seek_to(options.position);
+    backend.seek_to(options.position, player_engine::SeekPrecision::Exact);
     let deadline = Instant::now() + Duration::from_secs(20);
     let status = loop {
         backend.latest_frame();

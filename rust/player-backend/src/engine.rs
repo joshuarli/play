@@ -1,6 +1,6 @@
 use crate::osd::{composite, composite_straight, AssOverlay, OsdState};
 use player_ass::RenderedImage;
-use player_engine::{video::PresentedFrame, EngineStatus, SchedulerEngine, TrackKind};
+use player_engine::{video::PresentedFrame, EngineStatus, SchedulerEngine, SeekPrecision, TrackKind};
 use std::time::{Duration, Instant};
 
 pub const DEFAULT_OSD_DURATION: Duration = Duration::from_millis(1000);
@@ -44,8 +44,8 @@ impl EngineBackend {
         self.engine.set_paused(paused);
     }
 
-    pub fn seek_to(&self, seconds: f64) {
-        self.engine.seek(seconds);
+    pub fn seek_to(&self, seconds: f64, precision: SeekPrecision) {
+        self.engine.seek(seconds, precision);
     }
 
     pub fn set_speed(&self, speed: f64) {
@@ -296,7 +296,7 @@ mod tests {
         let mut backend = backend();
         backend.set_paused(true);
         poll_while(&mut backend, |status| status.paused);
-        backend.seek_to(1.0);
+        backend.seek_to(1.0, SeekPrecision::Exact);
         poll_while(&mut backend, |status| (status.position - 1.0).abs() < 0.05);
         backend.set_paused(false);
         poll_while(&mut backend, |status| !status.paused);
@@ -401,7 +401,7 @@ mod tests {
                 .any(|track| track.kind == TrackKind::Subtitle && track.selected)
         });
         backend.set_paused(true);
-        backend.seek_to(0.6);
+        backend.seek_to(0.6, SeekPrecision::Exact);
         poll_while(&mut backend, |status| (status.position - 0.6).abs() < 0.05);
         let mut frame = black_frame();
         backend

@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::sched::{
+    use crate::sched::{SeekPrecision, 
         AudioChunk, AudioDecoder, AudioOutput, Command, DecodedFrame, DemuxEvent, Demuxer, Packet,
         Scheduler, Stats, StreamKind, VideoDecoder, VideoOutput,
     };
@@ -493,7 +493,7 @@ mod tests {
         h.run(
             900,
             DT,
-            &[(30, Command::Seek(3.0)), (120, Command::Seek(0.5))],
+            &[(30, Command::Seek(3.0, SeekPrecision::Exact)), (120, Command::Seek(0.5, SeekPrecision::Exact))],
         );
         assert_eq!(h.sim.state(), State::Ended);
         assert_eq!(h.stats().seeks_completed, 2);
@@ -508,7 +508,7 @@ mod tests {
         h.run(25, DT, &[]);
         let presented_before = h.sim.video_output().presented.len();
         let pushes_before = h.sim.audio_output().log.len();
-        h.sim.send(Command::Seek(9.0));
+        h.sim.send(Command::Seek(9.0, SeekPrecision::Exact));
         h.run(50, DT, &[]);
         let presented: Vec<f64> = h.sim.video_output().presented[presented_before..]
             .iter()
@@ -525,14 +525,31 @@ mod tests {
     }
 
     #[test]
+    fn keyframe_seek_resumes_at_the_keyframe_without_decoding_through() {
+        let mut h = Harness::new(FakeDemux::av(14.0, 25.0, 0.04).with_keyframes(5.0), false);
+        h.run(25, DT, &[]);
+        let presented_before = h.sim.video_output().presented.len();
+        h.sim.send(Command::Seek(9.0, SeekPrecision::Keyframe));
+        h.run(30, DT, &[]);
+        let presented: Vec<f64> = h.sim.video_output().presented[presented_before..]
+            .iter()
+            .map(|(pts, _)| *pts)
+            .collect();
+        assert!((presented[0] - 5.0).abs() < 1e-9, "keyframe seek resumes at 5.0: {presented:?}");
+        assert_eq!(h.sim.stats().dropped_late, 0);
+        let position = h.sim.clock_position(h.now);
+        assert!((5.0..6.0).contains(&position), "clock follows the keyframe: {position}");
+    }
+
+    #[test]
     fn repeated_rapid_seeks_land_on_last_target() {
         let mut h = Harness::new(FakeDemux::av(4.0, 25.0, 0.04), false);
-        h.run(60, DT, &[(10, Command::Seek(3.5))]);
-        h.sim.send(Command::Seek(0.2));
-        h.sim.send(Command::Seek(2.8));
-        h.sim.send(Command::Seek(1.1));
-        h.sim.send(Command::Seek(3.9));
-        h.sim.send(Command::Seek(0.7));
+        h.run(60, DT, &[(10, Command::Seek(3.5, SeekPrecision::Exact))]);
+        h.sim.send(Command::Seek(0.2, SeekPrecision::Exact));
+        h.sim.send(Command::Seek(2.8, SeekPrecision::Exact));
+        h.sim.send(Command::Seek(1.1, SeekPrecision::Exact));
+        h.sim.send(Command::Seek(3.9, SeekPrecision::Exact));
+        h.sim.send(Command::Seek(0.7, SeekPrecision::Exact));
         h.sim.step(h.now);
         h.now += DT;
         assert_eq!(h.sim.stats().seeks_completed, 2, "queued seeks collapse to the last target");
@@ -556,7 +573,7 @@ mod tests {
         h.run(
             400,
             DT,
-            &[(10, Command::Pause(true)), (20, Command::Seek(1.0))],
+            &[(10, Command::Pause(true)), (20, Command::Seek(1.0, SeekPrecision::Exact))],
         );
         assert!(matches!(h.sim.state(), State::Paused { .. }));
         assert_eq!(h.stats().seeks_completed, 1);

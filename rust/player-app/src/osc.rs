@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use player_backend::osd::escape_ass;
 use player_backend::AssOverlay;
 use player_core::command::{
-    Adjust, Command, OscVisibility, SeekMode, Toggle, TrackKind,
+    Adjust, Command, OscVisibility, SeekMode, SeekPrecision, Toggle, TrackKind,
 };
 
 const HIDE_TIMEOUT: Duration = Duration::from_millis(500);
@@ -662,7 +662,7 @@ impl Osc {
             Some(Control::Seek) => Response::Command(Command::Seek {
                 amount: sign * WHEEL_SEEK_SECONDS,
                 mode: SeekMode::Relative,
-                exact: false,
+                precision: SeekPrecision::Default,
             }),
             _ => Response::Pass,
         }
@@ -736,7 +736,7 @@ impl Osc {
                     Some(amount) => Command::Seek {
                         amount,
                         mode: SeekMode::Absolute,
-                        exact: true,
+                        precision: SeekPrecision::Exact,
                     },
                     None => return Response::Consumed,
                 }
@@ -767,7 +767,7 @@ impl Osc {
         Response::Command(Command::Seek {
             amount: self.layout.seek_percent(virtual_x) / 100.0 * duration,
             mode: SeekMode::Absolute,
-            exact: true,
+            precision: SeekPrecision::Keyframes,
         })
     }
 
@@ -1310,11 +1310,11 @@ mod tests {
         let (_, y) = center(seek);
         let span = (seek.x + 2.0, seek.w - 4.0);
         osc.pointer_move(span.0 + span.1 * 0.25, y, now);
-        let Response::Command(Command::Seek { amount, mode, exact }) = osc.button(true) else {
+        let Response::Command(Command::Seek { amount, mode, precision }) = osc.button(true) else {
             panic!("pressing the seek bar seeks");
         };
         assert!((amount - 30.0).abs() < 1e-9);
-        assert_eq!((mode, exact), (SeekMode::Absolute, true));
+        assert_eq!((mode, precision), (SeekMode::Absolute, SeekPrecision::Keyframes));
         let Response::Command(Command::Seek { amount, .. }) =
             osc.pointer_move(span.0 + span.1 * 0.75, 100.0, now)
         else {

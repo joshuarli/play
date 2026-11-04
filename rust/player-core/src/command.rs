@@ -5,7 +5,7 @@ pub enum Command {
     Pause(Toggle),
     Fullscreen(Toggle),
     Mute(Toggle),
-    Seek { amount: f64, mode: SeekMode, exact: bool },
+    Seek { amount: f64, mode: SeekMode, precision: SeekPrecision },
     FrameStep(i32),
     Volume(Adjust),
     Speed(Adjust),
@@ -80,6 +80,13 @@ pub enum SeekMode {
     Absolute,
     AbsolutePercent,
     RelativePercent,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SeekPrecision {
+    Default,
+    Exact,
+    Keyframes,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -201,7 +208,7 @@ fn parse_seek(args: &[String]) -> Result<Option<Command>, CommandError> {
     let amount = parse_time(amount)
         .ok_or_else(|| CommandError::new("invalid parameter"))?;
     let mut mode = SeekMode::Relative;
-    let mut exact = false;
+    let mut precision = SeekPrecision::Default;
     if let Some(value) = args.get(1) {
         for part in value.split('+') {
             match part {
@@ -209,8 +216,8 @@ fn parse_seek(args: &[String]) -> Result<Option<Command>, CommandError> {
                 "absolute" => mode = SeekMode::Absolute,
                 "absolute-percent" => mode = SeekMode::AbsolutePercent,
                 "relative-percent" => mode = SeekMode::RelativePercent,
-                "exact" => exact = true,
-                "keyframes" => exact = false,
+                "exact" => precision = SeekPrecision::Exact,
+                "keyframes" => precision = SeekPrecision::Keyframes,
                 "default" | "" => {}
                 _ => return Ok(None),
             }
@@ -219,7 +226,7 @@ fn parse_seek(args: &[String]) -> Result<Option<Command>, CommandError> {
     Ok(Some(Command::Seek {
         amount,
         mode,
-        exact,
+        precision,
     }))
 }
 
@@ -383,7 +390,7 @@ mod tests {
             Some(Command::Seek {
                 amount: 5.0,
                 mode: SeekMode::Relative,
-                exact: false
+                precision: SeekPrecision::Default
             })
         );
         assert_eq!(
@@ -391,7 +398,7 @@ mod tests {
             Some(Command::Seek {
                 amount: 12.5,
                 mode: SeekMode::Absolute,
-                exact: true
+                precision: SeekPrecision::Exact
             })
         );
         assert_eq!(
@@ -399,7 +406,7 @@ mod tests {
             Some(Command::Seek {
                 amount: 50.0,
                 mode: SeekMode::AbsolutePercent,
-                exact: false
+                precision: SeekPrecision::Default
             })
         );
     }
@@ -529,7 +536,7 @@ mod tests {
             Some(Command::Seek {
                 amount: 90.0,
                 mode: SeekMode::Relative,
-                exact: false
+                precision: SeekPrecision::Default
             })
         );
         assert_eq!(
@@ -537,7 +544,7 @@ mod tests {
             Some(Command::Seek {
                 amount: 10.0,
                 mode: SeekMode::Relative,
-                exact: false
+                precision: SeekPrecision::Default
             })
         );
         assert_eq!(
@@ -545,7 +552,7 @@ mod tests {
             Some(Command::Seek {
                 amount: 3723.5,
                 mode: SeekMode::Relative,
-                exact: false
+                precision: SeekPrecision::Default
             })
         );
         assert_eq!(
@@ -553,7 +560,7 @@ mod tests {
             Some(Command::Seek {
                 amount: -5.0,
                 mode: SeekMode::Absolute,
-                exact: false
+                precision: SeekPrecision::Default
             })
         );
         assert_eq!(

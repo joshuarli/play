@@ -1,4 +1,4 @@
-use crate::sched::{
+use crate::sched::{SeekPrecision, 
     AudioChunk, AudioDecoder, AudioOutput, Command, DemuxEvent, Demuxer, Packet, Scheduler,
     StreamKind,
 };
@@ -395,7 +395,7 @@ impl Default for EngineStatus {
 #[derive(Debug)]
 enum WorkerCommand {
     SetPaused(bool),
-    Seek(f64),
+    Seek(f64, SeekPrecision),
     SetSpeed(f64),
     SetVolume(f32),
     SetMuted(bool),
@@ -516,8 +516,8 @@ impl SchedulerEngine {
         self.send(WorkerCommand::SetPaused(paused));
     }
 
-    pub fn seek(&self, seconds: f64) {
-        self.send(WorkerCommand::Seek(seconds.max(0.0)));
+    pub fn seek(&self, seconds: f64, precision: SeekPrecision) {
+        self.send(WorkerCommand::Seek(seconds.max(0.0), precision));
     }
 
     pub fn set_speed(&self, speed: f64) {
@@ -712,7 +712,7 @@ fn run_worker(
         scheduler.open();
         if start.paused {
             scheduler.send(Command::Pause(true));
-            scheduler.send(Command::Seek(0.0));
+            scheduler.send(Command::Seek(0.0, SeekPrecision::Exact));
         }
         Ok((scheduler, duration, video_width, video_height, library, playres))
     };
@@ -791,7 +791,9 @@ impl Worker {
     fn apply(&mut self, state: &Arc<Mutex<EngineStatus>>, now: f64, command: WorkerCommand) {
         match command {
             WorkerCommand::SetPaused(paused) => self.scheduler.send(Command::Pause(paused)),
-            WorkerCommand::Seek(seconds) => self.scheduler.send(Command::Seek(seconds)),
+            WorkerCommand::Seek(seconds, precision) => {
+                self.scheduler.send(Command::Seek(seconds, precision))
+            }
             WorkerCommand::SetSpeed(speed) => self.scheduler.send(Command::SetSpeed(speed)),
             WorkerCommand::SetVolume(volume) => {
                 self.volume = volume;
@@ -1064,7 +1066,7 @@ mod tests {
     fn seek_moves_position() {
         let engine = SchedulerEngine::load(&fixture("audio-mp3.mp3"), SinkKind::Null, StartState::default()).expect("engine loads");
         engine.set_paused(true);
-        engine.seek(2.0);
+        engine.seek(2.0, SeekPrecision::Exact);
         let status = poll_until(&engine, StdDuration::from_secs(10), |status| {
             (status.position - 2.0).abs() < 0.05
         });
@@ -1082,7 +1084,7 @@ mod tests {
         engine.set_paused(true);
         let paused = poll_until(&engine, StdDuration::from_secs(10), |status| status.paused);
         assert!(paused.paused);
-        engine.seek(1.0);
+        engine.seek(1.0, SeekPrecision::Exact);
         let deadline = Instant::now() + StdDuration::from_secs(10);
         let mut frames = Vec::new();
         let status = loop {
@@ -1108,7 +1110,7 @@ mod tests {
     fn pause_and_seek(engine: &SchedulerEngine, seconds: f64) {
         engine.set_paused(true);
         poll_until(engine, StdDuration::from_secs(10), |status| status.paused);
-        engine.seek(seconds);
+        engine.seek(seconds, SeekPrecision::Exact);
         poll_until(engine, StdDuration::from_secs(10), |status| {
             (status.position - seconds).abs() < 0.05
         });
@@ -1175,7 +1177,7 @@ mod tests {
             .expect("subs render");
         assert!(hidden.is_empty(), "bitmaps while hidden");
         engine.set_sub_visible(true);
-        engine.seek(0.6);
+        engine.seek(0.6, SeekPrecision::Exact);
         let status = poll_until(&engine, StdDuration::from_secs(10), |status| {
             (status.position - 0.6).abs() < 0.05
         });
@@ -1243,7 +1245,7 @@ mod tests {
                 .iter()
                 .any(|track| track.kind == TrackKind::Subtitle && track.selected)
         });
-        engine.seek(1.0);
+        engine.seek(1.0, SeekPrecision::Exact);
         let status = poll_until(&engine, StdDuration::from_secs(10), |status| {
             (status.position - 1.0).abs() < 0.05
         });
@@ -1265,7 +1267,7 @@ mod tests {
             .expect("engine loads video with subs");
         engine.select_sub(Some(0));
         poll_until(&engine, StdDuration::from_secs(30), |status| status.ended);
-        engine.seek(0.5);
+        engine.seek(0.5, SeekPrecision::Exact);
         engine.set_paused(true);
         poll_until(&engine, StdDuration::from_secs(10), |status| status.paused);
         let status = engine.snapshot();
@@ -1285,7 +1287,7 @@ mod tests {
             .render_subtitles(320, 240, 1.0, 2900)
             .expect("subs render");
         assert!(outside.is_empty(), "bitmaps outside the cues");
-        engine.seek(1.5);
+        engine.seek(1.5, SeekPrecision::Exact);
         engine.set_paused(true);
         poll_until(&engine, StdDuration::from_secs(10), |status| status.paused);
         let second = engine
@@ -1332,7 +1334,7 @@ mod tests {
     fn seek_after_end_restarts() {
         let engine = SchedulerEngine::load(&fixture("audio-mono.wav"), SinkKind::Null, StartState::default()).expect("engine loads");
         poll_until(&engine, StdDuration::from_secs(10), |status| status.ended);
-        engine.seek(0.0);
+        engine.seek(0.0, SeekPrecision::Exact);
         let status = poll_until(&engine, StdDuration::from_secs(10), |status| {
             !status.ended && status.position > 0.5
         });

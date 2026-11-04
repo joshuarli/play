@@ -4,12 +4,15 @@ use std::time::{Duration, Instant};
 
 use player_audio::sink::SinkKind;
 use player_core::command::{
-    Adjust, Command as CoreCommand, OscVisibility, OscVisibilityChange, Toggle,
+    Adjust, Command as CoreCommand, OscVisibility, OscVisibilityChange, SeekMode, SeekPrecision,
+    Toggle,
     TrackKind as CoreTrackKind,
 };
 use player_core::input::{classify_input, InputPath};
 use player_engine::video::PresentedFrame;
-use player_engine::{EngineStatus, SchedulerEngine, StartState, TrackKind};
+use player_engine::{
+    EngineStatus, SchedulerEngine, SeekPrecision as EngineSeek, StartState, TrackKind,
+};
 use player_backend::engine::{EngineBackend, OverlayImage, DEFAULT_OSD_DURATION};
 use player_output::{Overlay, OverlayRect};
 use player_tui::{Control, Cover, Player as TuiPlayer, Snapshot, Track};
@@ -490,17 +493,17 @@ impl App {
     }
 
     pub fn seek_absolute(&mut self, seconds: f64) {
-        if let Some(backend) = &self.backend {
-            backend.seek_to(seconds.max(0.0));
-        }
-        self.send_event(ipc::event("seek", Vec::new()));
-        self.send_event(ipc::event("playback-restart", Vec::new()));
-        self.send_event(ipc::event("playback-restart", Vec::new()));
+        self.seek_to(seconds, EngineSeek::Exact);
     }
 
     pub fn seek_relative(&mut self, seconds: f64) {
+        let position = self.status().position;
+        self.seek_to(position + seconds, EngineSeek::Exact);
+    }
+
+    fn seek_to(&mut self, seconds: f64, precision: EngineSeek) {
         if let Some(backend) = &self.backend {
-            backend.seek_to(backend.status().position + seconds);
+            backend.seek_to(seconds.max(0.0), precision);
         }
         self.send_event(ipc::event("seek", Vec::new()));
         self.send_event(ipc::event("playback-restart", Vec::new()));
@@ -1499,18 +1502,25 @@ impl App {
             CoreCommand::Mute(toggle) => {
                 self.set_muted(toggle_value(toggle, self.muted));
             }
-            CoreCommand::Seek { amount, mode, .. } => match mode {
-                player_core::command::SeekMode::Absolute => self.seek_absolute(amount),
-                player_core::command::SeekMode::AbsolutePercent => {
-                    let duration = self.probe.as_ref().map_or(0.0, |probe| probe.duration);
-                    self.seek_absolute(duration * amount / 100.0);
-                }
-                player_core::command::SeekMode::RelativePercent => {
-                    let duration = self.probe.as_ref().map_or(0.0, |probe| probe.duration);
-                    self.seek_relative(duration * amount / 100.0);
-                }
-                player_core::command::SeekMode::Relative => self.seek_relative(amount),
-            },
+            CoreCommand::Seek {
+                amount,
+                mode,
+                precision,
+            } => {
+                let duration = self.probe.as_ref().map_or(0.0, |probe| probe.duration);
+                let position = self.status().position;
+                let target = match mode {
+                    SeekMode::Absolute => amount,
+                    SeekMode::AbsolutePercent => duration * amount / 100.0,
+                    SeekMode::RelativePercent => position + duration * amount / 100.0,
+                    SeekMode::Relative => position + amount,
+                };
+                let precision = match precision {
+                    SeekPrecision::Keyframes => EngineSeek::Keyframe,
+                    SeekPrecision::Default | SeekPrecision::Exact => EngineSeek::Exact,
+                };
+                self.seek_to(target, precision);
+            }
             CoreCommand::FrameStep(direction) => {
                 self.set_paused(true)?;
                 self.seek_relative(direction as f64 / 24.0);

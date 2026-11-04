@@ -90,10 +90,16 @@ pub trait VideoOutput {
 #[derive(Clone, Debug)]
 pub enum Command {
     Pause(bool),
-    Seek(f64),
+    Seek(f64, SeekPrecision),
     SetSpeed(f64),
     SwitchAudio(usize),
     Close,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SeekPrecision {
+    Exact,
+    Keyframe,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -109,6 +115,7 @@ pub struct Stats {
 const PUMP_PACKETS_PER_STEP: usize = 8;
 const SEEK_PUMP_LIMIT: usize = 16384;
 const SEEK_FRAME_TOLERANCE: f64 = 0.04;
+const SEEK_AUDIO_PRIMING: f64 = 0.2;
 const SEEK_PREROLL_CHUNKS: u64 = 8;
 const SUBTITLE_PRIME_WINDOW: f64 = 30.0;
 const SUBTITLE_PRIME_PACKETS: usize = 8192;
@@ -177,7 +184,7 @@ where
     }
 
     pub fn send(&mut self, command: Command) {
-        if let (Command::Seek(_), Some(pending @ Command::Seek(_))) = (&command, self.commands.last_mut()) {
+        if let (Command::Seek(..), Some(pending @ Command::Seek(..))) = (&command, self.commands.last_mut()) {
             *pending = command;
             return;
         }
@@ -349,7 +356,7 @@ where
                         self.stats.commands_ignored += 1;
                     }
                 }
-                Command::Seek(target) => self.command_seek(target, now),
+                Command::Seek(target, precision) => self.command_seek(target, precision, now),
                 Command::SetSpeed(speed) => {
                     if matches!(
                         *self.machine.state(),
@@ -387,7 +394,7 @@ where
         }
     }
 
-    fn command_seek(&mut self, target: f64, now: f64) {
+    fn command_seek(&mut self, target: f64, precision: SeekPrecision, now: f64) {
         if self.machine.apply(Event::Seek).is_err() {
             self.stats.commands_ignored += 1;
             return;
@@ -423,6 +430,8 @@ where
         self.eof_seen = false;
         self.clock.seek_rebase(target, now);
 
+        let mut target = target;
+        let mut keyframe_pending = precision == SeekPrecision::Keyframe && self.demux.has_video();
         let mut have_audio = !self.demux.has_audio();
         let mut have_video = !self.demux.has_video();
         let preroll_start = Instant::now();
@@ -430,11 +439,19 @@ where
             if have_audio && have_video {
                 break;
             }
-            if self.preroll.len() >= SEEK_PREROLL_CHUNKS as usize {
+            if have_video && self.preroll.len() >= SEEK_PREROLL_CHUNKS as usize {
                 break;
             }
             match self.demux.read() {
                 DemuxEvent::Packet(packet) => {
+                    if keyframe_pending && packet.kind == StreamKind::Video {
+                        keyframe_pending = false;
+                        if let Some(pts) = packet.pts {
+                            target = pts.max(0.0);
+                            self.audio_cursor = target;
+                            self.video_cursor = target;
+                        }
+                    }
                     if let Err(message) =
                         self.route(packet, target, &mut have_audio, &mut have_video)
                     {
@@ -541,6 +558,9 @@ where
         match packet.kind {
             StreamKind::Audio if packet.stream == self.demux.selected_audio() => {
                 let pts = stamp(packet.pts, &mut self.audio_cursor);
+                if pts + packet.duration.unwrap_or(0.0) < target - SEEK_AUDIO_PRIMING {
+                    return Ok(());
+                }
                 let mut packet = packet;
                 packet.pts = Some(pts);
                 self.audio.send(packet)?;

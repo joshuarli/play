@@ -1,6 +1,9 @@
 import time
 
 
+NEAREST_KEYFRAME = 0.55
+
+
 def _check(results, name, action):
     try:
         action()
@@ -93,24 +96,24 @@ def playback_controls(results, mpv_class, fixture_entry, fixture_path):
             mpv.command("keypress", "MBTN_LEFT"),
             mpv.wait_property(
                 "time-pos", lambda value: _number(value)
-                and abs(value - duration * 0.75) < 0.3, timeout=5),
+                and abs(value - duration * 0.75) <= NEAREST_KEYFRAME, timeout=5),
         ))
         _check(results, "osc-input: seek drag", lambda: (
             mpv.command("mouse", _seek_x(seek, 0.1), seek_y),
             mpv.command("keydown", "MBTN_LEFT"),
             mpv.wait_property(
                 "time-pos", lambda value: _number(value)
-                and abs(value - duration * 0.1) < 0.3, timeout=5),
+                and abs(value - duration * 0.1) <= NEAREST_KEYFRAME, timeout=5),
             mpv.command("mouse", _seek_x(seek, 0.5), seek_y - 200),
             mpv.wait_property(
                 "time-pos", lambda value: _number(value)
-                and abs(value - duration * 0.5) < 0.3, timeout=5),
+                and abs(value - duration * 0.5) <= NEAREST_KEYFRAME, timeout=5),
             mpv.command("keyup", "MBTN_LEFT"),
-            mpv.command("mouse", _seek_x(seek, 0.9), seek_y - 200),
+            mpv.command("mouse", _seek_x(seek, 0.05), seek_y - 200),
             time.sleep(0.3),
             mpv.wait_property(
                 "time-pos", lambda value: _number(value)
-                and abs(value - duration * 0.5) < 0.3, timeout=5),
+                and abs(value - duration * 0.5) <= NEAREST_KEYFRAME, timeout=5),
         ))
 
         _check(results, "osc-input: mute button", lambda: (

@@ -12,7 +12,7 @@ pub use sub::{TrackInfo, TrackKind};
 
 pub use clock::{judge_frame, rescale_to_seconds, ClockMode, FrameVerdict, MasterClock, NOPTS};
 pub use sched::{
-    AudioChunk, AudioDecoder, AudioOutput, Command, DecodedFrame, DemuxEvent, Demuxer, Packet,
+    AudioChunk, AudioDecoder, AudioOutput, Command, DecodedFrame, SeekPrecision, DemuxEvent, Demuxer, Packet,
     Scheduler, Stats, StreamKind, VideoDecoder, VideoOutput,
 };
 pub use state::{Event, Machine, PlayResume, Rejected, SeekResume, State};
