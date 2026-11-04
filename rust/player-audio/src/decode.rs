@@ -103,7 +103,7 @@ impl PacketDecoder {
     pub fn feed(&mut self, packet: &MediaPacket, packet_pts: f64) -> Result<Option<ReadyChunk>, String> {
         let decoded = self.decoder.decode(packet)?;
         let layout = layout_of(&decoded.channels)
-            .ok_or_else(|| "decoded audio layout has no pipeline mapping".to_string())?;
+            .ok_or_else(|| format!("decoded audio layout {:?} has no pipeline mapping", decoded.channels))?;
         if layout != self.source_layout {
             return Err("audio layout changed mid-stream".to_string());
         }

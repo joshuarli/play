@@ -41,7 +41,7 @@ pub fn layout_of(channels: &Channels) -> Option<Layout> {
     match channels {
         Channels::Positioned(positions) => {
             let bits = positions.bits();
-            if bits == Position::FRONT_CENTER.bits() {
+            if bits.count_ones() == 1 {
                 Some(Layout::Mono)
             } else if bits
                 == (Position::FRONT_LEFT.bits() | Position::FRONT_RIGHT.bits())
@@ -173,6 +173,13 @@ pub fn mix_into(input: &[f32], from: &Channels, to: Layout, output: &mut Vec<f32
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn any_single_positioned_channel_is_mono() {
+        assert_eq!(layout_of(&Channels::Positioned(Position::FRONT_LEFT)), Some(Layout::Mono));
+        assert_eq!(layout_of(&Channels::Positioned(Position::FRONT_CENTER)), Some(Layout::Mono));
+    }
+
     use super::*;
 
     fn positioned(bits: u64) -> Channels {
