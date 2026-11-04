@@ -337,8 +337,6 @@ def component_for(path):
         return "FFmpeg"
     if "libplacebo" in lowered:
         return "libplacebo"
-    if "libass" in lowered:
-        return "libass"
     if "moltenvk" in lowered:
         return "MoltenVK"
     if "vulkan" in lowered:
@@ -347,8 +345,6 @@ def component_for(path):
         return "shaderc"
     if "dav1d" in lowered:
         return "dav1d"
-    if name.startswith(("libfreetype", "libfribidi", "libharfbuzz")):
-        return "fonts/shaping"
     return "remaining external"
 
 

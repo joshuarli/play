@@ -83,24 +83,19 @@ run_log() {
 
 VULKAN_VERSION=1.4.363.0
 DAV1D_VERSION=1.5.4
-FREETYPE_VERSION=2.15.0
-FRIBIDI_VERSION=1.0.17
-HARFBUZZ_VERSION=15.0.0
 SHADERC_VERSION=2026.4
 GLSLANG_REV=e1b562a8bed273a02f30b59b66a5d499793cede5
 SPIRV_HEADERS_REV=04fd3caa1e8267e4d95c806cad901181728e1006
 SPIRV_TOOLS_REV=ef96ed763b43b59b33b31b362f09a02b729fa1c9
 LIBPLACEBO_VERSION=7.387.0
-LIBASS_VERSION=0.17.5
 GLAD_VERSION=2.0.8
 JINJA_VERSION=3.1.6
 MARKUPSAFE_VERSION=3.0.4
 FAST_FLOAT_VERSION=8.3.2
 MOLTENVK_VERSION=1.4.2
 
-export VULKAN_VERSION DAV1D_VERSION FREETYPE_VERSION FRIBIDI_VERSION
-export HARFBUZZ_VERSION SHADERC_VERSION GLSLANG_REV SPIRV_HEADERS_REV
-export SPIRV_TOOLS_REV LIBPLACEBO_VERSION LIBASS_VERSION GLAD_VERSION
+export VULKAN_VERSION DAV1D_VERSION SHADERC_VERSION GLSLANG_REV
+export SPIRV_HEADERS_REV SPIRV_TOOLS_REV LIBPLACEBO_VERSION GLAD_VERSION
 export JINJA_VERSION MARKUPSAFE_VERSION FAST_FLOAT_VERSION MOLTENVK_VERSION
 
 if ! have vulkan-headers; then
@@ -160,46 +155,6 @@ Version: $SDK_ZLIB_VERSION
 Libs: -lz
 Cflags:
 EOF
-
-if ! have freetype; then
-    FT="freetype-$FREETYPE_VERSION.tar.xz"
-    fetch "https://downloads.sourceforge.net/project/freetype/freetype2/$FREETYPE_VERSION/freetype-$FREETYPE_VERSION.tar.xz" \
-        93cd47eb719c325107f2d3cf087d06299e944c3b48a40b55537302304dea1dd5 "$SRC/$FT"
-    extract "$SRC/$FT" "$SRC/freetype-$FREETYPE_VERSION"
-    run_log freetype meson setup "$SRC/freetype-$FREETYPE_VERSION/build" \
-        "$SRC/freetype-$FREETYPE_VERSION" --prefix="$PREFIX" --buildtype=release \
-        --default-library=shared -Dzlib=system -Dpng=disabled -Dbrotli=disabled \
-        -Dharfbuzz=disabled -Dbzip2=disabled -Dtests=disabled
-    run_log freetype-build ninja -C "$SRC/freetype-$FREETYPE_VERSION/build" install
-    stamp freetype
-fi
-
-if ! have fribidi; then
-    FB="fribidi-$FRIBIDI_VERSION.tar.xz"
-    fetch "https://github.com/fribidi/fribidi/releases/download/v$FRIBIDI_VERSION/fribidi-$FRIBIDI_VERSION.tar.xz" \
-        6949dcde27d41cebad1fd741fcafc36d55a1020d2d872d4a6eb3914caabbada2 "$SRC/$FB"
-    extract "$SRC/$FB" "$SRC/fribidi-$FRIBIDI_VERSION"
-    run_log fribidi-configure bash -c "cd '$SRC/fribidi-$FRIBIDI_VERSION' && ./configure --prefix='$PREFIX' --disable-static --enable-shared --disable-docs"
-    run_log fribidi-build make -C "$SRC/fribidi-$FRIBIDI_VERSION/lib" -j"$JOBS"
-    run_log fribidi-install make -C "$SRC/fribidi-$FRIBIDI_VERSION/lib" install
-    install -d "$PREFIX/lib/pkgconfig"
-    install -m 644 "$SRC/fribidi-$FRIBIDI_VERSION/fribidi.pc" "$PREFIX/lib/pkgconfig/"
-    stamp fribidi
-fi
-
-if ! have harfbuzz; then
-    HB="harfbuzz-$HARFBUZZ_VERSION.tar.xz"
-    fetch "https://github.com/harfbuzz/harfbuzz/releases/download/$HARFBUZZ_VERSION/harfbuzz-$HARFBUZZ_VERSION.tar.xz" \
-        968536e9abd782f07f7954044c0c4020199fcdd39b41d221ec42d2a3be4a44df "$SRC/$HB"
-    extract "$SRC/$HB" "$SRC/harfbuzz-$HARFBUZZ_VERSION"
-    run_log harfbuzz meson setup "$SRC/harfbuzz-$HARFBUZZ_VERSION/build" \
-        "$SRC/harfbuzz-$HARFBUZZ_VERSION" --prefix="$PREFIX" --buildtype=release \
-        --default-library=shared -Dglib=disabled -Dgobject=disabled -Dcairo=disabled \
-        -Dfreetype=disabled -Dicu=disabled -Dgraphite2=disabled -Dtests=disabled \
-        -Ddocs=disabled -Dutilities=disabled
-    run_log harfbuzz-build ninja -C "$SRC/harfbuzz-$HARFBUZZ_VERSION/build" install
-    stamp harfbuzz
-fi
 
 if ! have shaderc; then
     SH="shaderc-$SHADERC_VERSION.tar.gz"
@@ -265,20 +220,6 @@ if ! have libplacebo; then
         -Dd3d11=disabled -Dlibdovi=disabled -Ddemos=false -Dtests=false -Dbench=false
     run_log libplacebo-build ninja -C "$SRC/libplacebo-v$LIBPLACEBO_VERSION/build" install
     stamp libplacebo
-fi
-
-if ! have libass; then
-    ASS="libass-$LIBASS_VERSION.tar.xz"
-    fetch "https://github.com/libass/libass/releases/download/$LIBASS_VERSION/libass-$LIBASS_VERSION.tar.xz" \
-        2dca25c0e0c837ddf00b52011b3f82cac1e4ddd3ad018227806b0c2288864acc "$SRC/$ASS"
-    extract "$SRC/$ASS" "$SRC/libass-$LIBASS_VERSION"
-    run_log libass meson setup "$SRC/libass-$LIBASS_VERSION/build" \
-        "$SRC/libass-$LIBASS_VERSION" --prefix="$PREFIX" --buildtype=release \
-        --default-library=shared -Dfontconfig=disabled -Dcoretext=enabled \
-        -Dlibunibreak=disabled -Dtest=disabled -Dcompare=disabled \
-        -Dprofile=disabled -Dfuzz=disabled -Dcheckasm=disabled
-    run_log libass-build ninja -C "$SRC/libass-$LIBASS_VERSION/build" install
-    stamp libass
 fi
 
 if ! have moltenvk; then

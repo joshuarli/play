@@ -1840,14 +1840,15 @@ def gate_release(results, args):
     results.check("release: no Homebrew or build paths", not bad, ", ".join(bad))
 
     expected = {
-        "libass.9.dylib", "libplacebo.387.dylib", "libvulkan.1.dylib",
-        "libMoltenVK.dylib", "libshaderc_shared.1.dylib",
-        "libdav1d.7.dylib", "libfreetype.6.dylib", "libfribidi.0.dylib",
-        "libharfbuzz.0.dylib",
+        "libplacebo.387.dylib", "libvulkan.1.dylib",
+        "libMoltenVK.dylib", "libshaderc_shared.1.dylib", "libdav1d.7.dylib",
     }
     present = {path.name for path in frameworks.glob("*.dylib")}
     results.check("release: bundled closure", expected <= present,
                   ",".join(sorted(expected - present)))
+    text_stack = sorted(name for name in present
+                        if re.match(r"lib(ass|fribidi|harfbuzz|freetype|fontconfig)\b", name))
+    results.check("release: no bundled text stack", not text_stack, ",".join(text_stack))
     c_engine = sorted(name for name in present
                       if "player_release" in name or "libmpv" in name)
     results.check("release: no C engine dylib", not c_engine,

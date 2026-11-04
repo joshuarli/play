@@ -31,7 +31,6 @@ command -v brew >/dev/null || {
 
 pin ffmpeg 9.0.2_1
 pin libplacebo 7.387.0
-pin libass 0.17.5_1
 pin molten-vk 1.4.2
 pin vulkan-loader 1.4.363.0
 pin vulkan-headers 1.4.363.0
