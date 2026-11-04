@@ -12,6 +12,10 @@ export CFLAGS="-O2 -fPIC -ffile-prefix-map=$ROOT=."
 export CXXFLAGS="-O2 -fPIC -ffile-prefix-map=$ROOT=."
 
 mkdir -p "$PREFIX" "$SRC" "$LOGS"
+# Release tarballs carry no .git, so a build-time `git describe` (meson's
+# vcs_tag in libplacebo) would describe this checkout instead and stamp
+# Player's own version into the dependency. Stop git's search at $SRC.
+export GIT_CEILING_DIRECTORIES="$SRC"
 
 INPUT_HASH=$(sha256sum "$ROOT/scripts/build-deps-linux.sh" | awk '{print $1}')
 
