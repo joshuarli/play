@@ -468,8 +468,6 @@ impl Window {
         layout: PixelLayout,
         color: ColorSpec,
         planes: &[Plane<'_>],
-        width: i32,
-        height: i32,
         overlay: Option<&Overlay>,
     ) -> Result<(), String> {
         let frame = self.swapchain.start_frame()?;
@@ -480,8 +478,8 @@ impl Window {
             color,
             planes,
             frame.fbo,
-            width,
-            height,
+            self.width,
+            self.height,
             frame.flipped,
             overlay,
         ) {

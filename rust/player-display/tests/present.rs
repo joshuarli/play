@@ -109,8 +109,6 @@ fn wayland_window_presents_frames() {
                 PixelLayout::Rgba8,
                 ColorSpec::bt709_full(),
                 &planes,
-                320,
-                240,
                 None,
             )
             .expect("frame presents");
@@ -149,8 +147,6 @@ fn present_gray(window: &mut Window, width: i32, height: i32) {
             PixelLayout::Rgba8,
             ColorSpec::bt709_full(),
             &planes,
-            width,
-            height,
             None,
         )
         .expect("frame presents");

@@ -149,8 +149,6 @@ impl HostWindow {
             PixelLayout::Rgba8,
             ColorSpec::bt709_full(),
             &planes,
-            width,
-            height,
             overlay,
         )?;
         self.presented += 1;

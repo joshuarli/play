@@ -94,9 +94,9 @@ pub fn render_frame(
         layout,
         color,
         &texs,
+        (width, height),
         target,
-        width,
-        height,
+        (width, height),
         false,
         overlay,
     );
@@ -116,8 +116,8 @@ pub fn render_to_target(
     color: ColorSpec,
     planes: &[Plane<'_>],
     target: sys::PlTex,
-    width: c_int,
-    height: c_int,
+    target_width: c_int,
+    target_height: c_int,
     flipped: bool,
     overlay: Option<&Overlay>,
 ) -> Result<(), String> {
@@ -147,15 +147,19 @@ pub fn render_to_target(
         }
         texs.push(tex);
     }
+    let source = planes
+        .first()
+        .map(|plane| (plane.width, plane.height))
+        .ok_or_else(|| "no planes to render".to_string())?;
     let result = render_planes(
         vk,
         renderer,
         layout,
         color,
         &texs,
+        source,
         target,
-        width,
-        height,
+        (target_width, target_height),
         flipped,
         overlay,
     );
@@ -211,9 +215,9 @@ fn render_planes(
     layout: PixelLayout,
     color: ColorSpec,
     texs: &[sys::PlTex],
+    (width, height): (c_int, c_int),
     target: sys::PlTex,
-    width: c_int,
-    height: c_int,
+    (target_width, target_height): (c_int, c_int),
     flipped: bool,
     overlay: Option<&Overlay>,
 ) -> Result<sys::PlTex, String> {
@@ -334,7 +338,8 @@ fn render_planes(
             shift_y: 0.0,
         };
     }
-    let mut target_frame = crate::render::target_frame(target, width, height, flipped);
+    let mut target_frame = crate::render::target_frame(target, target_width, target_height, flipped);
+    target_frame.crop = fit_crop((width, height), (target_width, target_height), flipped);
     // SAFETY: the renderer is live; infer fills defaulted metadata.
     unsafe { sys::pl_frames_infer(renderer.as_raw(), &mut frame, &mut target_frame) };
     // SAFETY: the library defaults are valid for any render.
@@ -350,6 +355,25 @@ fn render_planes(
             vk.destroy_tex(overlay_tex);
         }
         Err("pl_render_image failed".to_string())
+    }
+}
+
+fn fit_crop(
+    (width, height): (c_int, c_int),
+    (target_width, target_height): (c_int, c_int),
+    flipped: bool,
+) -> sys::PlRect2df {
+    let scale = (target_width as f32 / width.max(1) as f32)
+        .min(target_height as f32 / height.max(1) as f32);
+    let fitted_width = width as f32 * scale;
+    let fitted_height = height as f32 * scale;
+    let x0 = ((target_width as f32 - fitted_width) / 2.0).round();
+    let y0 = ((target_height as f32 - fitted_height) / 2.0).round();
+    let (x1, y1) = (x0 + fitted_width.round(), y0 + fitted_height.round());
+    if flipped {
+        sys::PlRect2df { x0, y0: y1, x1, y1: y0 }
+    } else {
+        sys::PlRect2df { x0, y0, x1, y1 }
     }
 }
 
@@ -475,6 +499,44 @@ mod tests {
                 .max()
                 .unwrap_or(0);
             assert!(worst <= 6, "solid yuv({y},{u},{v}): worst channel delta {worst}");
+        }
+    }
+
+    #[test]
+    #[cfg_attr(target_os = "linux", ignore = "static-pie test binaries cannot call the container Vulkan loader; run with RUSTFLAGS=\"-C target-feature=-crt-static\"")]
+    fn presented_frame_fits_the_target_with_letterbox_bars() {
+        let (vk, renderer) = setup();
+        let rgba = [255u8; 32 * 16 * 4];
+        let planes = [Plane {
+            data: &rgba,
+            stride: 32 * 4,
+            width: 32,
+            height: 16,
+        }];
+        let format = vk.find_rgba8(sys::PL_FMT_CAP_RENDERABLE).expect("renderable format");
+        let target = vk.create_render_target(64, 64, format).expect("target allocates");
+        render_to_target(
+            &vk,
+            &renderer,
+            PixelLayout::Rgba8,
+            ColorSpec::bt709_full(),
+            &planes,
+            target,
+            64,
+            64,
+            false,
+            None,
+        )
+        .expect("frame renders");
+        let pixels = vk.download(target, 64, 64).expect("target downloads");
+        vk.destroy_tex(target);
+        let luma = |x: usize, y: usize| pixels[(y * 64 + x) * 4];
+        for x in [0, 31, 63] {
+            assert!(luma(x, 4) < 16, "top bar at x={x} is {}", luma(x, 4));
+            assert!(luma(x, 59) < 16, "bottom bar at x={x} is {}", luma(x, 59));
+            for y in [17, 32, 46] {
+                assert!(luma(x, y) > 240, "picture at ({x},{y}) is {}", luma(x, y));
+            }
         }
     }
 

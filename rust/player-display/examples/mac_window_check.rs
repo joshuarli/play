@@ -22,8 +22,6 @@ fn gray(window: &mut MacWindow, width: i32, height: i32) {
             PixelLayout::Rgba8,
             ColorSpec::bt709_full(),
             &planes,
-            width,
-            height,
             None,
         )
         .expect("frame presents");
