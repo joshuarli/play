@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""Oracle behavioral traces for the Rust port (campaign S0).
+"""Golden behavioral traces.
 
-Drives the reference player over the fixture corpus through the JSON IPC
-and records normalized behavior: duration, tracks, chapters, metadata keys,
+Drives the player over the fixture corpus through the JSON IPC and
+records normalized behavior: duration, tracks, chapters, metadata keys,
 default properties, command results and errors, event order, seek completion,
 EOF, playlist transitions, and malformed-input handling.
 
 Goldens live in tests/traces/ and are committed. Regenerate with
-`python3 tests/trace.py --regen` using the reference binary, then commit the
-result. Compare with `python3 tests/trace.py --check` (used by the `traces`
-harness gate). Floats are rounded; event payloads are dropped except for the
-fields the comparator names. Seek completion is a range check, not an exact
-value, because decode position after a seek is timing dependent.
+`python3 tests/trace.py --regen`, then commit the result. Compare with
+`python3 tests/trace.py --check` (used by the `traces` gate). Floats are
+rounded; event payloads are dropped except for the fields the comparator
+names. Seek completion is a range check, not an exact value, because
+decode position after a seek is timing dependent.
 """
 
 import json
