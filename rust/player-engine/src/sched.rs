@@ -1,7 +1,6 @@
 use crate::clock::{judge_frame, ClockMode, FrameVerdict, MasterClock};
 use crate::state::{Event, Machine, SeekResume, State};
 use crate::sub::EngineSub;
-use player_ass::RenderedImage;
 use std::time::Instant;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -233,11 +232,6 @@ where
     pub fn select_sub(&mut self, selected: Option<usize>) {
         if selected != self.selected_sub {
             self.selected_sub = selected.filter(|index| *index < self.subs.len());
-            if let Some(index) = self.selected_sub {
-                if let Some(sub) = self.subs.get_mut(index) {
-                    let _ = sub.reseed();
-                }
-            }
             self.sub_cursor = 0.0;
         }
     }
@@ -255,37 +249,17 @@ where
         }
     }
 
-    pub fn render_subtitles(
-        &mut self,
-        width: i32,
-        height: i32,
-        par: f64,
-        now_ms: i64,
-    ) -> Result<Vec<RenderedImage>, String> {
-        match self.selected_sub {
-            Some(index) => match self.subs.get_mut(index) {
-                Some(sub) => sub.render(width, height, par, now_ms),
-                None => Ok(Vec::new()),
-            },
-            None => Ok(Vec::new()),
-        }
-    }
-
     fn selected_sub_stream(&self) -> Option<usize> {
         self.selected_sub
             .and_then(|index| self.subs.get(index))
             .and_then(|sub| sub.source().stream)
     }
 
-    fn feed_sub(&mut self, packet: Packet) -> Result<(), String> {
+    fn feed_sub(&mut self, packet: Packet) {
         let pts = stamp(packet.pts, &mut self.sub_cursor);
         let duration = packet.duration.unwrap_or(0.0).max(0.0);
-        match self.selected_sub {
-            Some(index) => match self.subs.get_mut(index) {
-                Some(sub) => sub.feed(packet.stream, &packet.payload, pts, duration),
-                None => Ok(()),
-            },
-            None => Ok(()),
+        if let Some(sub) = self.selected_sub.and_then(|index| self.subs.get_mut(index)) {
+            sub.feed(&packet.payload, pts, duration);
         }
     }
 
@@ -407,14 +381,6 @@ where
         };
         self.audio.flush();
         self.video.flush();
-        if let Some(index) = self.selected_sub {
-            if let Some(sub) = self.subs.get_mut(index) {
-                if let Err(message) = sub.flush((target * 1000.0).round() as i64) {
-                    self.fail(message);
-                    return;
-                }
-            }
-        }
         if let Some(stream) = self.selected_sub_stream() {
             if let Err(message) = self.prime_subtitles(stream, target) {
                 self.fail(message);
@@ -542,7 +508,7 @@ where
                         if pts > target {
                             break;
                         }
-                        self.feed_sub(packet)?;
+                        self.feed_sub(packet);
                     }
                 }
                 DemuxEvent::Eof | DemuxEvent::Error(_) => break,
@@ -578,7 +544,7 @@ where
                 }
             }
             StreamKind::Subtitle if self.selected_sub_stream() == Some(packet.stream) => {
-                self.feed_sub(packet)?;
+                self.feed_sub(packet);
             }
             StreamKind::Video => {
                 let pts = stamp(packet.pts, &mut self.video_cursor);
@@ -754,10 +720,7 @@ where
                 }
             }
             StreamKind::Subtitle if self.selected_sub_stream() == Some(packet.stream) => {
-                if let Err(message) = self.feed_sub(packet) {
-                    self.fail(message);
-                    return true;
-                }
+                self.feed_sub(packet);
             }
             _ => {}
         }

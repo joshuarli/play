@@ -1,7 +1,0 @@
-[package]
-name = "player-ass"
-version = "0.1.0"
-edition = "2024"
-
-[build-dependencies]
-player-build = { path = "../player-build" }

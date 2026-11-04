@@ -12,9 +12,4 @@ fn main() {
         &dir.join("../player-output/linux-link.args"),
         &dir.join("../../.work/deps/linux/lib"),
     );
-    player_build::emit_linux_closure(
-        "player-backend",
-        &dir.join("../player-ass/ass-link.args"),
-        &dir.join("../../.work/deps/linux/lib"),
-    );
 }

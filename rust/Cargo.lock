@@ -232,14 +232,8 @@ dependencies = [
  "player-engine",
  "player-media",
  "player-output",
+ "player-overlay",
  "player-tui",
-]
-
-[[package]]
-name = "player-ass"
-version = "0.1.0"
-dependencies = [
- "player-build",
 ]
 
 [[package]]
@@ -254,10 +248,10 @@ dependencies = [
 name = "player-backend"
 version = "0.1.0"
 dependencies = [
- "player-ass",
  "player-audio",
  "player-build",
  "player-engine",
+ "player-overlay",
 ]
 
 [[package]]
@@ -283,7 +277,6 @@ dependencies = [
 name = "player-engine"
 version = "0.1.0"
 dependencies = [
- "player-ass",
  "player-audio",
  "player-build",
  "player-media",

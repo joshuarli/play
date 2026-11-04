@@ -7,7 +7,7 @@ fn main() {
     println!("cargo:rustc-link-arg=/usr/lib/libva.so");
     println!("cargo:rustc-link-arg=/usr/lib/libva-drm.so");
     let dir = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
-    for closure in ["../player-output/linux-link.args", "../player-ass/ass-link.args"] {
+    for closure in ["../player-output/linux-link.args"] {
         player_build::emit_linux_closure(
             "player-gui",
             &dir.join(closure),

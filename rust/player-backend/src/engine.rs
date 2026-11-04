@@ -1,24 +1,15 @@
-use crate::osd::{composite, composite_straight, AssOverlay, OsdState};
-use player_ass::RenderedImage;
+use crate::overlay::{OverlayRenderer, Scene};
 use player_engine::{video::PresentedFrame, EngineStatus, SchedulerEngine, SeekPrecision, TrackKind};
+pub use player_overlay::{DisplayList, OverlayImage};
 use std::time::{Duration, Instant};
 
 pub const DEFAULT_OSD_DURATION: Duration = Duration::from_millis(1000);
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OverlayImage {
-    pub rgba: Vec<u8>,
-    pub x: u32,
-    pub y: u32,
-    pub width: u32,
-    pub height: u32,
-}
 
 pub struct EngineBackend {
     engine: SchedulerEngine,
     sub_visible: bool,
     message: Option<OsdMessage>,
-    osd: Option<OsdState>,
+    overlay: Option<OverlayRenderer>,
 }
 
 struct OsdMessage {
@@ -32,7 +23,7 @@ impl EngineBackend {
             engine,
             sub_visible: true,
             message: None,
-            osd: None,
+            overlay: None,
         }
     }
 
@@ -137,92 +128,42 @@ impl EngineBackend {
         subtitles_selected(&self.engine.snapshot())
     }
 
-    fn render_images(
-        &mut self,
-        width: u32,
-        height: u32,
-        osc: Option<&AssOverlay>,
-    ) -> Result<Vec<RenderedImage>, String> {
-        let status = self.engine.snapshot();
-        let mut images = Vec::new();
-        if subtitles_selected(&status) {
-            let now_ms = (status.position * 1000.0).round() as i64;
-            images.extend(self.engine.render_subtitles(
-                width as i32,
-                height as i32,
-                1.0,
-                now_ms,
-            )?);
-        }
-        let message = self.visible_message(Instant::now()).map(str::to_owned);
-        if osc.is_none() && message.is_none() {
-            return Ok(images);
-        }
-        if self.osd.is_none() {
-            self.osd = Some(OsdState::new()?);
-        }
-        let osd = self.osd.as_mut().expect("overlay renderer starts");
-        images.extend(osd.render(osc, message.as_deref(), width as i64, height as i64)?);
-        Ok(images)
-    }
-
     pub fn compose(
         &mut self,
         frame: &mut [u8],
         width: u32,
         height: u32,
-        osc: Option<&AssOverlay>,
+        osc: Option<&DisplayList>,
     ) -> Result<(), String> {
-        let images = self.render_images(width, height, osc)?;
-        composite(frame, width, height, &images)
+        match self.render_overlay(width, height, osc)? {
+            Some(image) => image.blend_onto(frame, width, height),
+            None => Ok(()),
+        }
     }
 
     pub fn render_overlay(
         &mut self,
         width: u32,
         height: u32,
-        osc: Option<&AssOverlay>,
+        osc: Option<&DisplayList>,
     ) -> Result<Option<OverlayImage>, String> {
-        let mut images = self.render_images(width, height, osc)?;
-        let Some((x, y, crop_width, crop_height)) = inked_bounds(&images, width, height) else {
+        let status = self.engine.snapshot();
+        let subtitle = subtitles_selected(&status).then_some(status.subtitle_text);
+        let message = self.visible_message(Instant::now()).map(str::to_owned);
+        let scene = Scene { subtitle: subtitle.as_deref(), message: message.as_deref(), osc };
+        if scene.subtitle.is_none_or(|text| text.trim().is_empty()) && scene.message.is_none() && scene.osc.is_none() {
             return Ok(None);
-        };
-        for image in &mut images {
-            image.dst_x -= x as i32;
-            image.dst_y -= y as i32;
         }
-        let mut rgba = vec![0u8; crop_width as usize * crop_height as usize * 4];
-        composite_straight(&mut rgba, crop_width, crop_height, &images)?;
-        Ok(Some(OverlayImage {
-            rgba,
-            x,
-            y,
-            width: crop_width,
-            height: crop_height,
-        }))
+        if self.overlay.is_none() {
+            self.overlay = Some(OverlayRenderer::new()?);
+        }
+        let renderer = self.overlay.as_mut().expect("overlay renderer starts");
+        renderer.render(&scene, width, height)
     }
 
     pub fn latest_frame(&self) -> Option<PresentedFrame> {
         self.engine.drain_frames().pop()
     }
-}
-
-fn inked_bounds(images: &[RenderedImage], width: u32, height: u32) -> Option<(u32, u32, u32, u32)> {
-    let mut bounds: Option<(i32, i32, i32, i32)> = None;
-    for image in images.iter().filter(|image| image.width > 0 && image.height > 0) {
-        let x0 = image.dst_x.max(0);
-        let y0 = image.dst_y.max(0);
-        let x1 = (image.dst_x + image.width as i32).min(width as i32);
-        let y1 = (image.dst_y + image.height as i32).min(height as i32);
-        if x0 >= x1 || y0 >= y1 {
-            continue;
-        }
-        bounds = Some(match bounds {
-            None => (x0, y0, x1, y1),
-            Some((a, b, c, d)) => (a.min(x0), b.min(y0), c.max(x1), d.max(y1)),
-        });
-    }
-    bounds.map(|(x0, y0, x1, y1)| (x0 as u32, y0 as u32, (x1 - x0) as u32, (y1 - y0) as u32))
 }
 
 fn subtitles_selected(status: &EngineStatus) -> bool {
@@ -349,11 +290,11 @@ mod tests {
     #[test]
     fn osc_overlay_composites_into_a_frame() {
         let mut backend = video_backend();
-        let osc = AssOverlay {
-            events: "{\\an7\\pos(40,30)\\fs40\\bord0\\shad0}Hi".to_owned(),
-            res_x: 320,
-            res_y: 240,
-        };
+        let mut osc = DisplayList::new(320, 240, 1.0);
+        osc.fill(
+            player_overlay::Shape::Rect(player_overlay::Rect::new(40.0, 30.0, 50.0, 30.0)),
+            player_overlay::Color::WHITE,
+        );
         let mut frame = black_frame();
         backend
             .compose(&mut frame, 320, 240, Some(&osc))
@@ -365,8 +306,7 @@ mod tests {
             .render_overlay(320, 240, Some(&osc))
             .expect("overlay renders")
             .expect("overlay has ink");
-        assert!(cropped.x >= 40 && cropped.y >= 30, "crop starts at the text: {cropped:?}");
-        assert!(cropped.width < 120 && cropped.height < 80, "crop hugs the text");
+        assert_eq!((cropped.x, cropped.y, cropped.width, cropped.height), (40, 30, 50, 30));
         assert_eq!(cropped.rgba.len(), cropped.width as usize * cropped.height as usize * 4);
         assert!(cropped.rgba.chunks_exact(4).any(|pixel| pixel[3] > 0));
     }

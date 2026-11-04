@@ -1,5 +1,6 @@
 pub mod app;
 pub mod art;
+pub mod icon;
 pub mod ipc;
 pub mod options;
 pub mod osc;

@@ -1,11 +1,11 @@
-use std::fmt::Write as _;
 use std::time::{Duration, Instant};
 
-use player_backend::osd::escape_ass;
-use player_backend::AssOverlay;
 use player_core::command::{
     Adjust, Command, OscVisibility, SeekMode, SeekPrecision, Toggle, TrackKind,
 };
+use player_overlay::{self as overlay, Align, Anchor, Color, DisplayList, Outline, Point, Shape, TextBlock, TextStyle, Weight};
+
+use crate::icon::{self, Icon, VolumeLevel};
 
 const HIDE_TIMEOUT: Duration = Duration::from_millis(500);
 const FADE_DURATION: Duration = Duration::from_millis(200);
@@ -22,35 +22,17 @@ const BAR_OVERSCAN: f64 = 2.0;
 const TOP_BUTTON_WIDTH: f64 = 18.0;
 const CACHE_WIDTH: f64 = 150.0;
 const SEEK_GAP: f64 = 2.0;
-const BOX_ALPHA: f64 = 80.0;
-const DISABLED_ALPHA: f64 = 136.0;
-const TOOLTIP_ALPHA: [f64; 4] = [0.0, 255.0, 88.0, 255.0];
-const OPAQUE: [f64; 4] = [0.0, 255.0, 255.0, 255.0];
-const BOX_STYLE: &str = "{\\rDefault\\blur0\\bord1\\1c&H000000\\3c&HFFFFFF}";
-const TOP_BUTTON_STYLE: &str =
-    "{\\blur0\\bord0\\1c&HFFFFFF\\3c&HFFFFFF\\fs18\\fnmpv-osd-symbols}";
-const BUTTON_STYLE: &str =
-    "{\\blur0\\bord0\\1c&HFFFFFF\\3c&HFFFFFF\\fs28\\fnmpv-osd-symbols}";
-const TIMECODE_STYLE: &str = "{\\blur0\\bord0\\1c&HFFFFFF\\3c&HFFFFFF\\fs27}";
-const TOOLTIP_STYLE: &str = "{\\blur0\\bord1\\1c&HFFFFFF\\3c&H000000\\fs30}";
-const TITLE_STYLE: &str = "{\\blur0\\bord0\\1c&HFFFFFF\\3c&HFFFFFF\\fs18\\q2}";
-const LABEL_STYLE: &str = "{\\fscx105\\fscy105\\fnsans-serif}";
-
-mod icon {
-    pub const MENU: &str = "\u{e102}";
-    pub const PLAYLIST_PREV: &str = "\u{e110}";
-    pub const PLAYLIST_NEXT: &str = "\u{e101}";
-    pub const PLAY: &str = "\u{e101}";
-    pub const PAUSE: &str = "\u{e002}";
-    pub const CHAPTER_PREV: &str = "\u{e104}";
-    pub const CHAPTER_NEXT: &str = "\u{e105}";
-    pub const VOLUME: [&str; 4] = ["\u{e10b}", "\u{e10c}", "\u{e10d}", "\u{e10e}"];
-    pub const MUTE: &str = "\u{e10a}";
-    pub const AUDIO: &str = "\u{e106}";
-    pub const SUBTITLE: &str = "\u{e107}";
-    pub const FULLSCREEN: &str = "\u{e108}";
-    pub const EXIT_FULLSCREEN: &str = "\u{e109}";
-}
+const BAR_OPACITY: f64 = 175.0 / 255.0;
+const TRACK_OPACITY: f64 = 35.0 / 255.0;
+const DISABLED_OPACITY: f64 = 119.0 / 255.0;
+const TOOLTIP_OUTLINE_OPACITY: f64 = 167.0 / 255.0;
+const ICON_SIZE: f64 = 26.0;
+const TOP_ICON_SIZE: f64 = 16.0;
+const TITLE_SIZE: f64 = 15.0;
+const TIMECODE_SIZE: f64 = 22.0;
+const TOOLTIP_SIZE: f64 = 25.0;
+const LABEL_SIZE: f64 = 22.0;
+const LABEL_GAP: f64 = 4.0;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Rect {
@@ -244,6 +226,29 @@ struct Geometry {
 }
 
 impl Geometry {
+    fn anchor(&self) -> Anchor {
+        let along = |index: u8| match index {
+            0 => Align::Start,
+            1 => Align::Center,
+            _ => Align::End,
+        };
+        let vertical = match (self.an - 1) / 3 {
+            0 => Align::End,
+            1 => Align::Center,
+            _ => Align::Start,
+        };
+        Anchor { x: along((self.an - 1) % 3), y: vertical }
+    }
+
+    fn origin(&self) -> Point {
+        Point { x: self.x, y: self.y }
+    }
+
+    fn center(&self) -> Point {
+        let hitbox = self.hitbox();
+        Point { x: hitbox.x + hitbox.w / 2.0, y: hitbox.y + hitbox.h / 2.0 }
+    }
+
     fn hitbox(&self) -> Rect {
         let left = match (self.an - 1) % 3 {
             0 => self.x,
@@ -471,9 +476,9 @@ struct Tooltip {
 struct View {
     layout: LayoutKey,
     title: String,
-    play_icon: &'static str,
-    volume_icon: &'static str,
-    fullscreen_icon: &'static str,
+    play_icon: Icon,
+    volume_icon: Icon,
+    fullscreen_icon: Icon,
     elapsed: String,
     remaining: Option<String>,
     progress: Option<f64>,
@@ -502,7 +507,7 @@ pub struct Osc {
     size: (u32, u32),
     layout: Layout,
     now: Instant,
-    rendered: Option<(View, AssOverlay)>,
+    rendered: Option<(View, DisplayList)>,
     revision: u64,
 }
 
@@ -668,7 +673,7 @@ impl Osc {
         }
     }
 
-    pub fn overlay(&mut self) -> Option<&AssOverlay> {
+    pub fn overlay(&mut self) -> Option<&DisplayList> {
         let Some(view) = self.view() else {
             if self.rendered.take().is_some() {
                 self.revision += 1;
@@ -676,12 +681,8 @@ impl Osc {
             return None;
         };
         if self.rendered.as_ref().is_none_or(|(rendered, _)| *rendered != view) {
-            let overlay = AssOverlay {
-                events: self.events(&view),
-                res_x: self.layout.res_x as u32,
-                res_y: self.layout.res_y as u32,
-            };
-            self.rendered = Some((view, overlay));
+            let list = self.display(&view);
+            self.rendered = Some((view, list));
             self.revision += 1;
         }
         self.rendered.as_ref().map(|(_, overlay)| overlay)
@@ -842,13 +843,9 @@ impl Osc {
         Some(View {
             layout: layout.key,
             title,
-            play_icon: if playback.paused { icon::PLAY } else { icon::PAUSE },
+            play_icon: if playback.paused { Icon::Play } else { Icon::Pause },
             volume_icon: volume_icon(playback),
-            fullscreen_icon: if playback.fullscreen {
-                icon::EXIT_FULLSCREEN
-            } else {
-                icon::FULLSCREEN
-            },
+            fullscreen_icon: if playback.fullscreen { Icon::ExitFullscreen } else { Icon::Fullscreen },
             elapsed: format_time(playback.position, self.milliseconds),
             remaining,
             progress: playback
@@ -876,129 +873,130 @@ impl Osc {
         title.replace('\n', " ")
     }
 
-    fn events(&self, view: &View) -> String {
+    fn display(&self, view: &View) -> DisplayList {
         let layout = &self.layout;
-        let mut ass = Ass::new(view.animation);
-        let bar = layout.bar;
-        ass.element(bar, BOX_STYLE, [BOX_ALPHA, 255.0, 255.0, 255.0]);
-        ass.draw_start();
-        ass.round_rect_cw(0.0, 0.0, bar.w, bar.h);
-        ass.draw_stop();
+        let fade = view.animation.map_or(1.0, |animation| 1.0 - animation as f64 / 255.0);
+        let white = |opacity: f64| Color::WHITE.with_opacity(opacity * fade);
+        let enabled = |control: Control| if view.enabled(control) { white(1.0) } else { white(DISABLED_OPACITY) };
+        let scale = self.size.1 as f64 / layout.res_y;
+        let mut list = DisplayList::new(self.size.0, self.size.1, scale);
 
-        let track_alpha = (255.0_f64).min(BOX_ALPHA + (255.0 - BOX_ALPHA) * 0.8);
-        let seek = layout.seek;
-        ass.element(seek, TIMECODE_STYLE, [track_alpha, 255.0, 255.0, 255.0]);
-        ass.draw_start();
-        ass.round_rect_cw(0.0, 0.0, seek.w, seek.h);
-        ass.draw_stop();
+        list.fill(Shape::Rect(overlay_rect(layout.bar.hitbox())), Color::BLACK.with_opacity(BAR_OPACITY * fade));
+        let seek = layout.seek.hitbox();
+        list.fill(Shape::Rect(overlay_rect(seek)), white(TRACK_OPACITY));
 
-        ass.button(layout.menu, TOP_BUTTON_STYLE, view.enabled(Control::Menu), icon::MENU);
-        ass.button(
-            layout.playlist_prev,
-            TOP_BUTTON_STYLE,
-            view.enabled(Control::PlaylistPrev),
-            icon::PLAYLIST_PREV,
+        icon::draw(&mut list, Icon::Menu, layout.menu.center(), TOP_ICON_SIZE, enabled(Control::Menu));
+        icon::draw(
+            &mut list,
+            Icon::PlaylistPrev,
+            layout.playlist_prev.center(),
+            TOP_ICON_SIZE,
+            enabled(Control::PlaylistPrev),
         );
-        ass.button(
-            layout.playlist_next,
-            TOP_BUTTON_STYLE,
-            view.enabled(Control::PlaylistNext),
-            icon::PLAYLIST_NEXT,
+        icon::draw(
+            &mut list,
+            Icon::PlaylistNext,
+            layout.playlist_next.center(),
+            TOP_ICON_SIZE,
+            enabled(Control::PlaylistNext),
         );
         let title = layout.title;
-        let title_style = format!(
-            "{TITLE_STYLE}{{\\clip({:.6},{:.6},{:.6},{:.6})}}",
-            title.x,
-            title.y - title.h,
-            title.w,
-            title.y + title.h
-        );
-        let title_text = if view.title.is_empty() {
-            "mpv".to_owned()
-        } else {
-            escape_ass(&view.title)
-        };
-        ass.button(title, &title_style, true, &title_text);
+        let title_text = if view.title.is_empty() { "mpv".to_owned() } else { view.title.clone() };
+        list.push(overlay::Item::Text {
+            origin: title.origin(),
+            anchor: title.anchor(),
+            block: text(title_text, TITLE_SIZE, white(1.0), None),
+            clip: Some(overlay_rect(title.hitbox())),
+        });
 
-        ass.button(layout.play, BUTTON_STYLE, true, view.play_icon);
-        ass.button(
-            layout.chapter_prev,
-            BUTTON_STYLE,
-            view.enabled(Control::ChapterPrev),
-            icon::CHAPTER_PREV,
-        );
-        ass.button(
-            layout.chapter_next,
-            BUTTON_STYLE,
-            view.enabled(Control::ChapterNext),
-            icon::CHAPTER_NEXT,
-        );
-        ass.button(layout.time_elapsed, TIMECODE_STYLE, true, &view.elapsed);
-        ass.button(layout.fullscreen, BUTTON_STYLE, true, view.fullscreen_icon);
-        ass.button(layout.volume, BUTTON_STYLE, true, view.volume_icon);
-        ass.button(
-            layout.sub,
-            BUTTON_STYLE,
-            view.enabled(Control::Sub),
-            &format!("{}{LABEL_STYLE} {}", icon::SUBTITLE, view.sub_label),
-        );
-        ass.button(
-            layout.audio,
-            BUTTON_STYLE,
-            view.enabled(Control::Audio),
-            &format!("{}{LABEL_STYLE} {}", icon::AUDIO, view.audio_label),
-        );
+        icon::draw(&mut list, view.play_icon, layout.play.center(), ICON_SIZE, white(1.0));
+        icon::draw(&mut list, Icon::ChapterPrev, layout.chapter_prev.center(), ICON_SIZE, enabled(Control::ChapterPrev));
+        icon::draw(&mut list, Icon::ChapterNext, layout.chapter_next.center(), ICON_SIZE, enabled(Control::ChapterNext));
+        let elapsed = layout.time_elapsed;
+        list.text(elapsed.origin(), elapsed.anchor(), text(view.elapsed.clone(), TIMECODE_SIZE, white(1.0), None));
+        icon::draw(&mut list, view.fullscreen_icon, layout.fullscreen.center(), ICON_SIZE, white(1.0));
+        icon::draw(&mut list, view.volume_icon, layout.volume.center(), ICON_SIZE, white(1.0));
+        for (control, track_icon, label) in [
+            (Control::Sub, Icon::Subtitle, &view.sub_label),
+            (Control::Audio, Icon::Audio, &view.audio_label),
+        ] {
+            let geometry = layout.geometry(control);
+            let color = enabled(control);
+            let hitbox = geometry.hitbox();
+            let icon_center = Point { x: hitbox.x + ICON_SIZE / 2.0, y: geometry.center().y };
+            icon::draw(&mut list, track_icon, icon_center, ICON_SIZE, color);
+            list.text(
+                Point { x: hitbox.x + ICON_SIZE + LABEL_GAP, y: geometry.center().y },
+                Anchor { x: Align::Start, y: Align::Center },
+                text(label.clone(), LABEL_SIZE, color, None),
+            );
+        }
         if let Some(remaining) = &view.remaining {
-            ass.button(layout.time_remaining, TIMECODE_STYLE, true, remaining);
+            let geometry = layout.time_remaining;
+            list.text(geometry.origin(), geometry.anchor(), text(remaining.clone(), TIMECODE_SIZE, white(1.0), None));
         }
 
-        let seek_alpha = if view.enabled(Control::Seek) {
-            OPAQUE
-        } else {
-            [DISABLED_ALPHA, 255.0, 255.0, 255.0]
-        };
-        ass.element(seek, TIMECODE_STYLE, seek_alpha);
-        ass.draw_start();
-        ass.round_rect_cw(0.0, 0.0, seek.w, seek.h);
-        ass.rect_ccw(0.0, 0.0, seek.w, seek.h);
+        let seek_color = enabled(Control::Seek);
         for percent in &view.chapter_marks {
-            let offset = layout.seek_offset(*percent);
+            let offset = seek.x + layout.seek_offset(*percent);
             let half = SEEK_GAP / 0.5 / 2.0;
-            ass.move_to(offset - half, 0.0);
-            ass.line_to(offset + half, 0.0);
-            ass.line_to(offset, SEEK_GAP);
-            ass.move_to(offset - half, seek.h);
-            ass.line_to(offset, seek.h - SEEK_GAP);
-            ass.line_to(offset + half, seek.h);
+            let (top, bottom) = (seek.y, seek.y + seek.h);
+            list.fill(
+                Shape::Path(overlay::Path::polygon(&[(offset - half, top), (offset + half, top), (offset, top + SEEK_GAP)])),
+                seek_color,
+            );
+            list.fill(
+                Shape::Path(overlay::Path::polygon(&[
+                    (offset - half, bottom),
+                    (offset, bottom - SEEK_GAP),
+                    (offset + half, bottom),
+                ])),
+                seek_color,
+            );
         }
         if let Some(progress) = view.progress {
-            ass.rect_cw(SEEK_GAP, SEEK_GAP, progress, seek.h - SEEK_GAP);
-        }
-        ass.draw_stop();
-        if let Some(tooltip) = &view.tooltip {
-            ass.element(
-                Geometry {
-                    x: tooltip.x,
-                    y: tooltip.y,
-                    an: tooltip.an,
-                    w: 0.0,
-                    h: 0.0,
-                },
-                TOOLTIP_STYLE,
-                TOOLTIP_ALPHA,
+            list.fill(
+                Shape::Rect(overlay::Rect::new(
+                    seek.x + SEEK_GAP,
+                    seek.y + SEEK_GAP,
+                    (progress - SEEK_GAP).max(0.0),
+                    seek.h - 2.0 * SEEK_GAP,
+                )),
+                seek_color,
             );
-            ass.text.push_str(&tooltip.text);
         }
-        ass.text
+        if let Some(tooltip) = &view.tooltip {
+            let anchor = Geometry { x: tooltip.x, y: tooltip.y, an: tooltip.an, w: 0.0, h: 0.0 }.anchor();
+            let outline = Outline { width: 1.0, color: Color::BLACK.with_opacity(TOOLTIP_OUTLINE_OPACITY * fade) };
+            list.text(
+                Point { x: tooltip.x, y: tooltip.y },
+                anchor,
+                text(tooltip.text.clone(), TOOLTIP_SIZE, white(1.0), Some(outline)),
+            );
+        }
+        list
     }
 }
 
-fn volume_icon(playback: &Playback) -> &'static str {
+fn overlay_rect(rect: Rect) -> overlay::Rect {
+    overlay::Rect::new(rect.x, rect.y, rect.w, rect.h)
+}
+
+fn text(content: String, size: f64, color: Color, outline: Option<Outline>) -> TextBlock {
+    TextBlock {
+        text: content,
+        style: TextStyle { size, weight: Weight::Regular, color, outline },
+        max_width: None,
+        align: Align::Start,
+    }
+}
+
+fn volume_icon(playback: &Playback) -> Icon {
     if playback.volume == 0.0 || playback.muted {
-        return icon::MUTE;
+        return Icon::Mute;
     }
     let level = (playback.volume / (100.0 / 3.0)).ceil().clamp(1.0, 4.0) as usize;
-    icon::VOLUME[level - 1]
+    Icon::Volume([VolumeLevel::Low, VolumeLevel::Medium, VolumeLevel::High, VolumeLevel::Boosted][level - 1])
 }
 
 fn track_label(id: Option<i64>, count: usize) -> String {
@@ -1020,100 +1018,6 @@ pub fn format_time(seconds: f64, milliseconds: bool) -> String {
         format!("{sign}{hours:02}:{minutes:02}:{secs:02}.{millis:03}")
     } else {
         format!("{sign}{hours:02}:{minutes:02}:{secs:02}")
-    }
-}
-
-fn mult_alpha(a: f64, b: f64) -> f64 {
-    255.0 - ((1.0 - a / 255.0) * (1.0 - b / 255.0)) * 255.0
-}
-
-struct Ass {
-    text: String,
-    animation: Option<u8>,
-}
-
-impl Ass {
-    fn new(animation: Option<u8>) -> Self {
-        Ass {
-            text: String::new(),
-            animation,
-        }
-    }
-
-    fn alpha(&self, base: f64) -> u32 {
-        let mut value = mult_alpha(base, 0.0);
-        if let Some(animation) = self.animation {
-            value = mult_alpha(value, animation as f64);
-        }
-        value as u32
-    }
-
-    fn element(&mut self, geometry: Geometry, style: &str, alpha: [f64; 4]) {
-        if !self.text.is_empty() {
-            self.text.push('\n');
-        }
-        let alpha = alpha.map(|value| self.alpha(value));
-        let _ = write!(
-            self.text,
-            "{{\\pos({:.6},{:.6})}}{{\\an{}}}{style}{{\\1a&H{:X}&\\2a&H{:X}&\\3a&H{:X}&\\4a&H{:X}&}}",
-            geometry.x, geometry.y, geometry.an, alpha[0], alpha[1], alpha[2], alpha[3]
-        );
-    }
-
-    fn button(&mut self, geometry: Geometry, style: &str, enabled: bool, content: &str) {
-        let alpha = if enabled {
-            OPAQUE
-        } else {
-            [DISABLED_ALPHA, 255.0, 255.0, 255.0]
-        };
-        self.element(geometry, style, alpha);
-        self.text.push_str(content);
-    }
-
-    fn draw_start(&mut self) {
-        self.text.push_str("{\\p4}");
-    }
-
-    fn draw_stop(&mut self) {
-        self.text.push_str("{\\p0}");
-    }
-
-    fn coord(&mut self, x: f64, y: f64) {
-        let _ = write!(
-            self.text,
-            " {} {}",
-            (x * 8.0).ceil() as i64,
-            (y * 8.0).ceil() as i64
-        );
-    }
-
-    fn move_to(&mut self, x: f64, y: f64) {
-        self.text.push_str(" m");
-        self.coord(x, y);
-    }
-
-    fn line_to(&mut self, x: f64, y: f64) {
-        self.text.push_str(" l");
-        self.coord(x, y);
-    }
-
-    fn rect_cw(&mut self, x0: f64, y0: f64, x1: f64, y1: f64) {
-        self.move_to(x0, y0);
-        self.line_to(x1, y0);
-        self.line_to(x1, y1);
-        self.line_to(x0, y1);
-    }
-
-    fn rect_ccw(&mut self, x0: f64, y0: f64, x1: f64, y1: f64) {
-        self.move_to(x0, y0);
-        self.line_to(x0, y1);
-        self.line_to(x1, y1);
-        self.line_to(x1, y0);
-    }
-
-    fn round_rect_cw(&mut self, x0: f64, y0: f64, x1: f64, y1: f64) {
-        self.rect_cw(x0, y0, x1, y1);
-        self.line_to(x0, y0);
     }
 }
 
@@ -1157,6 +1061,26 @@ mod tests {
         match osc.button(false) {
             Response::Command(command) => Some(command),
             Response::Pass | Response::Consumed => None,
+        }
+    }
+
+    fn texts(list: &DisplayList) -> String {
+        list.items
+            .iter()
+            .filter_map(|item| match item {
+                overlay::Item::Text { block, .. } => Some(block.text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn tooltip(list: &DisplayList) -> (Point, Anchor, String) {
+        match list.items.last() {
+            Some(overlay::Item::Text { origin, anchor, block, .. }) if block.style.outline.is_some() => {
+                (*origin, *anchor, block.text.clone())
+            }
+            other => panic!("the tooltip draws last: {other:?}"),
         }
     }
 
@@ -1356,18 +1280,18 @@ mod tests {
         let now = Instant::now();
         let mut osc = osc_at(now);
         osc.set_visibility(OscVisibility::Always, now);
-        let events = osc.overlay().expect("visible osc draws").events.clone();
+        let events = texts(osc.overlay().expect("visible osc draws"));
         assert!(events.contains("00:00:30") && events.contains("-00:01:30"), "{events}");
         let seek_before = area(&osc, "seek");
 
         assert_eq!(click(&mut osc, "time_elapsed", now), None);
         osc.update(playback(), 1280, 720, now);
-        let events = osc.overlay().expect("visible osc draws").events.clone();
+        let events = texts(osc.overlay().expect("visible osc draws"));
         assert!(events.contains("00:00:30.000") && events.contains("-00:01:30.000"), "{events}");
         assert!(area(&osc, "seek").w < seek_before.w);
 
         assert_eq!(click(&mut osc, "time_remaining", now), None);
-        let events = osc.overlay().expect("visible osc draws").events.clone();
+        let events = texts(osc.overlay().expect("visible osc draws"));
         assert!(events.contains("00:02:00.000") && !events.contains("-00:01:30"), "{events}");
     }
 
@@ -1381,8 +1305,13 @@ mod tests {
         assert!(osc.visible(), "fading still draws");
         let faded = start + HIDE_TIMEOUT + FADE_DURATION / 2;
         osc.update(playback(), 1280, 720, faded);
-        let events = osc.overlay().expect("fading draws").events.clone();
-        assert!(events.contains("\\1a&H80&") || events.contains("\\1a&H7F&"), "{events}");
+        let events = texts(osc.overlay().expect("fading draws"));
+        let bar_alpha = match &osc.overlay().expect("fading draws").items[0] {
+            overlay::Item::Fill { color, .. } => color.a,
+            other => panic!("the bar comes first: {other:?}"),
+        };
+        assert!((86..=89).contains(&bar_alpha), "half-faded bar alpha {bar_alpha}");
+        assert!(!events.is_empty());
         osc.update(playback(), 1280, 720, faded + FADE_DURATION);
         assert!(!osc.visible());
         assert!(osc.overlay().is_none());
@@ -1437,20 +1366,22 @@ mod tests {
         let now = Instant::now();
         let mut osc = osc_at(now);
         osc.set_visibility(OscVisibility::Always, now);
-        let first = osc.overlay().expect("visible osc draws").events.clone();
+        let first = texts(osc.overlay().expect("visible osc draws"));
         let revision = osc.revision();
         osc.update(Playback { position: 29.9999, ..playback() }, 1280, 720, now);
         osc.overlay();
         assert_eq!(osc.revision(), revision, "a sub-pixel change keeps the overlay");
         osc.update(Playback { position: 31.0, ..playback() }, 1280, 720, now);
-        let second = osc.overlay().expect("visible osc draws").events.clone();
+        let second = texts(osc.overlay().expect("visible osc draws"));
         assert_ne!(osc.revision(), revision);
         assert!(first.contains("00:00:30") && second.contains("00:00:31"));
         assert!(second.contains("-00:01:29"));
-        assert!(second.contains(icon::PAUSE) && second.contains(icon::VOLUME[2]));
+        let view = osc.view().expect("visible osc has a view");
+        assert_eq!((view.play_icon, view.volume_icon), (Icon::Pause, Icon::Volume(VolumeLevel::High)));
         osc.update(Playback { paused: true, muted: true, ..playback() }, 1280, 720, now);
-        let paused = osc.overlay().expect("visible osc draws").events.clone();
-        assert!(paused.contains(icon::PLAY) && paused.contains(icon::MUTE));
+        osc.overlay().expect("visible osc draws");
+        let view = osc.view().expect("visible osc has a view");
+        assert_eq!((view.play_icon, view.volume_icon), (Icon::Play, Icon::Mute));
     }
 
     #[test]
@@ -1472,15 +1403,15 @@ mod tests {
             720,
             now,
         );
-        let events = osc.overlay().expect("visible osc draws").events.clone();
+        let events = texts(osc.overlay().expect("visible osc draws"));
         assert!(events.contains("[2/3] Title"), "{events}");
         let seek = area(&osc, "seek");
         osc.pointer_move(seek.x + seek.w * 0.9, seek.y + 5.0, now);
-        let events = osc.overlay().expect("visible osc draws").events.clone();
-        assert!(events.contains("Chapter: Two \\{x}"), "{events}");
+        let events = texts(osc.overlay().expect("visible osc draws"));
+        assert!(events.contains("Chapter: Two {x}"), "{events}");
         osc.update(Playback { title: String::new(), ..playback() }, 1280, 720, now);
         osc.pointer_move(640.0, 400.0, now);
-        assert!(osc.overlay().expect("visible osc draws").events.contains("mpv"));
+        assert!(texts(osc.overlay().expect("visible osc draws")).contains("mpv"));
     }
 
     #[test]
@@ -1489,13 +1420,15 @@ mod tests {
         let mut osc = osc_at(now);
         let seek = area(&osc, "seek");
         osc.pointer_move(seek.x + seek.w * 0.25, seek.y + 1.0, now);
-        let events = osc.overlay().expect("visible osc draws").events.clone();
-        let x = seek.x + seek.w * 0.25 + 10.0;
-        assert!(events.contains(&format!("{{\\pos({x:.6},705.000000)}}{{\\an4}}")), "{events}");
-        assert!(events.contains("00:00:30"), "{events}");
+        let (origin, anchor, text) = tooltip(osc.overlay().expect("visible osc draws"));
+        assert_eq!(text, "00:00:29");
+        assert!((origin.x - (seek.x + seek.w * 0.25 + 10.0)).abs() < 1e-9 && origin.y == 705.0, "{origin:?}");
+        assert_eq!(anchor, Anchor { x: Align::Start, y: Align::Center });
         osc.pointer_move(seek.x + seek.w * 0.75, seek.y + 1.0, now);
-        let events = osc.overlay().expect("visible osc draws").events.clone();
-        assert!(events.contains("{\\an6}") && events.contains("00:01:30"), "{events}");
+        let (origin, anchor, text) = tooltip(osc.overlay().expect("visible osc draws"));
+        assert_eq!(text, "00:01:30");
+        assert!((origin.x - (seek.x + seek.w * 0.75 - 5.0)).abs() < 1e-9, "{origin:?}");
+        assert_eq!(anchor, Anchor { x: Align::End, y: Align::Center });
     }
 
     #[test]
@@ -1511,11 +1444,11 @@ mod tests {
     #[test]
     fn volume_icon_follows_the_reference_thresholds() {
         let at = |volume: f64, muted: bool| volume_icon(&Playback { volume, muted, ..playback() });
-        assert_eq!(at(0.0, false), icon::MUTE);
-        assert_eq!(at(80.0, true), icon::MUTE);
-        assert_eq!(at(10.0, false), icon::VOLUME[0]);
-        assert_eq!(at(40.0, false), icon::VOLUME[1]);
-        assert_eq!(at(100.0, false), icon::VOLUME[2]);
-        assert_eq!(at(130.0, false), icon::VOLUME[3]);
+        assert_eq!(at(0.0, false), Icon::Mute);
+        assert_eq!(at(80.0, true), Icon::Mute);
+        assert_eq!(at(10.0, false), Icon::Volume(VolumeLevel::Low));
+        assert_eq!(at(40.0, false), Icon::Volume(VolumeLevel::Medium));
+        assert_eq!(at(100.0, false), Icon::Volume(VolumeLevel::High));
+        assert_eq!(at(130.0, false), Icon::Volume(VolumeLevel::Boosted));
     }
 }

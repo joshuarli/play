@@ -1,48 +1,15 @@
-use player_ass::{Library, RenderedImage, Renderer, Track};
+use std::collections::HashSet;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SubCodec {
-    Ass,
-    SubRip,
-    MovText,
-    WebVtt,
+/// FFmpeg's names for SubRip, the only subtitle format the player reads.
+pub fn is_subrip(codec_name: &str) -> bool {
+    matches!(codec_name, "subrip" | "srt")
 }
 
-impl SubCodec {
-    pub fn for_name(name: &str) -> Option<SubCodec> {
-        match name {
-            "ass" | "ssa" => Some(SubCodec::Ass),
-            "subrip" | "srt" | "text" => Some(SubCodec::SubRip),
-            "mov_text" => Some(SubCodec::MovText),
-            "webvtt" | "web_vtt" | "vtt" => Some(SubCodec::WebVtt),
-            _ => None,
-        }
-    }
-
-    pub fn for_extension(path: &str) -> Option<SubCodec> {
-        let extension = path.rsplit('.').next().unwrap_or("").to_lowercase();
-        match extension.as_str() {
-            "ass" | "ssa" => Some(SubCodec::Ass),
-            "srt" => Some(SubCodec::SubRip),
-            "vtt" => Some(SubCodec::WebVtt),
-            _ => None,
-        }
-    }
-
-    pub fn name(self) -> &'static str {
-        match self {
-            SubCodec::Ass => "ass",
-            SubCodec::SubRip => "subrip",
-            SubCodec::MovText => "mov_text",
-            SubCodec::WebVtt => "webvtt",
-        }
-    }
-}
+pub const SUBRIP_CODEC: &str = "subrip";
 
 #[derive(Debug, Clone)]
 pub struct SubTrack {
     pub stream: Option<usize>,
-    pub codec: SubCodec,
     pub language: Option<String>,
     pub title: Option<String>,
 }
@@ -69,6 +36,8 @@ pub struct TrackInfo {
     pub title: Option<String>,
     pub selected: bool,
     pub external: bool,
+    /// Position in the scheduler's subtitle list; `None` for subtitle
+    /// streams in a format the player does not read.
     pub sub_index: Option<usize>,
 }
 
@@ -82,115 +51,55 @@ impl TrackKind {
     }
 }
 
-struct Retained {
-    start_ms: i64,
-    end_ms: i64,
-    payload: Vec<u8>,
-    text: String,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Cue {
+    pub start_ms: i64,
+    pub end_ms: i64,
+    pub text: String,
 }
 
-#[derive(Clone)]
-enum ExternalSource {
-    Ass(String),
-    Cues(Vec<(i64, i64, String)>),
-}
-
+/// One subtitle track's cues: parsed up front for an external file, or
+/// collected from demuxed packets for an embedded stream.
 pub struct EngineSub {
-    renderer: Renderer,
-    track: Track,
     source: SubTrack,
-    external: Option<ExternalSource>,
-    retained: Vec<Retained>,
-    fed: std::collections::HashSet<(usize, i64)>,
+    cues: Vec<Cue>,
+    fed: HashSet<i64>,
     visible: bool,
 }
 
 impl EngineSub {
-    fn open(library: &Library, source: SubTrack, header: &str) -> Result<Self, String> {
-        let renderer = Renderer::new(library)?;
-        let mut track = Track::new(library)?;
-        track.process_data(header)?;
+    pub fn open_embedded(info: &player_media::StreamInfo) -> Result<Self, String> {
+        if !is_subrip(&info.codec_name) {
+            return Err(format!("unsupported subtitle codec '{}'; only SubRip is supported", info.codec_name));
+        }
         Ok(EngineSub {
-            renderer,
-            track,
-            source,
-            external: None,
-            retained: Vec::new(),
-            fed: std::collections::HashSet::new(),
+            source: SubTrack { stream: Some(info.index), language: info.language.clone(), title: info.title.clone() },
+            cues: Vec::new(),
+            fed: HashSet::new(),
             visible: true,
         })
     }
 
-    pub fn open_embedded(
-        library: &Library,
-        info: &player_media::StreamInfo,
-        playres: (i32, i32),
-    ) -> Result<Self, String> {
-        let codec = SubCodec::for_name(&info.codec_name)
-            .ok_or_else(|| format!("unsupported subtitle codec '{}'", info.codec_name))?;
-        let source = SubTrack {
-            stream: Some(info.index),
-            codec,
-            language: info.language.clone(),
-            title: info.title.clone(),
-        };
-        let extradata = &info.extradata;
-        match codec {
-            SubCodec::Ass => {
-                let mut sub = Self::open(library, source, &ass_header(playres))?;
-                let header = String::from_utf8_lossy(extradata);
-                sub.track.process_data(&header)?;
-                Ok(sub)
-            }
-            SubCodec::SubRip | SubCodec::MovText | SubCodec::WebVtt => {
-                Self::open(library, source, &text_header(playres))
-            }
+    pub fn open_external(path: &str) -> Result<Self, String> {
+        let extension = std::path::Path::new(path)
+            .extension()
+            .map(|extension| extension.to_string_lossy().to_lowercase());
+        if extension.as_deref() != Some("srt") {
+            return Err(format!("unsupported subtitle file '{path}'; only SubRip (.srt) is supported"));
         }
-    }
-
-    pub fn open_external(
-        library: &Library,
-        path: &str,
-        playres: (i32, i32),
-    ) -> Result<Self, String> {
-        let codec = SubCodec::for_extension(path)
-            .ok_or_else(|| format!("unsupported subtitle file '{path}'"))?;
-        let content = std::fs::read(path)
-            .map_err(|error| format!("cannot read subtitle file '{path}': {error}"))?;
-        let text = String::from_utf8(content)
-            .map_err(|_| format!("subtitle file '{path}' is not UTF-8"))?;
-        let source = SubTrack {
-            stream: None,
-            codec,
-            language: None,
-            title: Some(
-                std::path::Path::new(&path)
-                    .file_name()
-                    .map(|name| name.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| path.to_owned()),
-            ),
-        };
-        match codec {
-            SubCodec::Ass => {
-                let mut sub = Self::open(library, source, &ass_header(playres))?;
-                sub.track.process_data(&text)?;
-                sub.external = Some(ExternalSource::Ass(text));
-                Ok(sub)
-            }
-            SubCodec::SubRip | SubCodec::MovText | SubCodec::WebVtt => {
-                let mut sub = Self::open(library, source, &text_header(playres))?;
-                let cues = parse_cues(&text, codec)?;
-                for (start, end, event) in &cues {
-                    let dialogue =
-                        dialogue_event(event, ms_to_seconds(*start), ms_to_seconds(*end));
-                    sub.track
-                        .process_data(&dialogue)
-                        .map_err(|error| format!("subtitle cue rejected: {error}"))?;
-                }
-                sub.external = Some(ExternalSource::Cues(cues));
-                Ok(sub)
-            }
-        }
+        let content = std::fs::read(path).map_err(|error| format!("cannot read subtitle file '{path}': {error}"))?;
+        let text = String::from_utf8(content).map_err(|_| format!("subtitle file '{path}' is not UTF-8"))?;
+        let cues = parse_srt(&text).map_err(|error| format!("subtitle file '{path}': {error}"))?;
+        let title = std::path::Path::new(path)
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.to_owned());
+        Ok(EngineSub {
+            source: SubTrack { stream: None, language: None, title: Some(title) },
+            cues,
+            fed: HashSet::new(),
+            visible: true,
+        })
     }
 
     pub fn source(&self) -> &SubTrack {
@@ -201,392 +110,206 @@ impl EngineSub {
         self.visible = visible;
     }
 
-    pub fn feed(
-        &mut self,
-        stream: usize,
-        payload: &[u8],
-        start: f64,
-        duration: f64,
-    ) -> Result<(), String> {
+    /// Adds an embedded packet's cue once; demuxing the same span again
+    /// after a seek re-delivers packets that are already known.
+    pub fn feed(&mut self, payload: &[u8], start: f64, duration: f64) {
         let start_ms = (start * 1000.0).round() as i64;
         let duration_ms = (duration * 1000.0).round().max(0.0) as i64;
-        if !self.fed.insert((stream, start_ms)) {
-            return Ok(());
+        if !self.fed.insert(start_ms) {
+            return;
         }
-        match self.source.codec {
-            SubCodec::Ass => {
-                self.track.process_chunk(payload, start_ms, duration_ms);
-                let text = String::from_utf8_lossy(payload).into_owned();
-                self.retained.push(Retained {
-                    start_ms,
-                    end_ms: start_ms + duration_ms,
-                    payload: payload.to_vec(),
-                    text: ass_event_text(&text),
-                });
-                Ok(())
-            }
-            SubCodec::SubRip | SubCodec::MovText | SubCodec::WebVtt => {
-                let payload = match self.source.codec {
-                    SubCodec::MovText => mov_text_body(payload),
-                    _ => payload,
-                };
-                let text = String::from_utf8_lossy(payload);
-                let event = dialogue_event(&text, start, start + duration);
-                self.track
-                    .process_data(&event)
-                    .map_err(|error| format!("subtitle cue rejected: {error}"))?;
-                self.retained.push(Retained {
-                    start_ms,
-                    end_ms: start_ms + duration_ms,
-                    payload: event.into_bytes(),
-                    text: text.trim().to_owned(),
-                });
-                Ok(())
-            }
+        let text = markup_free(&String::from_utf8_lossy(payload));
+        if text.trim().is_empty() {
+            return;
         }
+        let at = self.cues.partition_point(|cue| cue.start_ms <= start_ms);
+        self.cues.insert(at, Cue { start_ms, end_ms: start_ms + duration_ms, text });
     }
 
-    pub fn flush(&mut self, target_ms: i64) -> Result<(), String> {
-        self.track.flush_events();
-        self.retained.retain(|event| event.end_ms > target_ms);
-        let replay: Vec<(Vec<u8>, i64, i64)> = self
-            .retained
-            .iter()
-            .map(|event| {
-                (
-                    event.payload.clone(),
-                    event.start_ms,
-                    event.end_ms - event.start_ms,
-                )
-            })
-            .collect();
-        for (payload, start, duration) in &replay {
-            self.replay(payload, *start, *duration)?;
-        }
-        self.refeed_external(Some(target_ms))
-    }
-
-    pub fn reseed(&mut self) -> Result<(), String> {
-        self.retained.clear();
-        self.fed.clear();
-        self.track.flush_events();
-        self.refeed_external(None)
-    }
-
-    fn refeed_external(&mut self, target_ms: Option<i64>) -> Result<(), String> {
-        let show_all = target_ms.is_none();
-        match self.external.clone() {
-            Some(ExternalSource::Ass(text)) => {
-                self.track.process_data(&text)?;
-            }
-            Some(ExternalSource::Cues(cues)) => {
-                for (start, end, text) in &cues {
-                    if show_all || target_ms.is_some_and(|target| *end > target) {
-                        let dialogue =
-                            dialogue_event(text, ms_to_seconds(*start), ms_to_seconds(*end));
-                        self.track
-                            .process_data(&dialogue)
-                            .map_err(|error| format!("subtitle cue rejected: {error}"))?;
-                    }
-                }
-            }
-            None => {}
-        }
-        Ok(())
-    }
-
-    fn replay(&mut self, payload: &[u8], start_ms: i64, duration_ms: i64) -> Result<(), String> {
-        match self.source.codec {
-            SubCodec::Ass => {
-                self.track.process_chunk(payload, start_ms, duration_ms);
-                Ok(())
-            }
-            _ => self
-                .track
-                .process_data(std::str::from_utf8(payload).map_err(|_| {
-                    "retained subtitle cue is not UTF-8".to_owned()
-                })?)
-                .map_err(|error| format!("subtitle cue rejected: {error}")),
-        }
-    }
-
+    /// Every cue showing at `position_ms`, in start order, one per line.
     pub fn text_at(&self, position_ms: i64) -> String {
         if !self.visible {
             return String::new();
         }
-        match &self.external {
-            Some(ExternalSource::Ass(text)) => ass_text_at(text, position_ms),
-            Some(ExternalSource::Cues(cues)) => cues
-                .iter()
-                .filter(|(start, end, _)| *start <= position_ms && position_ms < *end)
-                .map(|(_, _, text)| text.trim())
-                .filter(|text| !text.is_empty())
-                .collect::<Vec<_>>()
-                .join("\n"),
-            None => self
-                .retained
-                .iter()
-                .filter(|event| event.start_ms <= position_ms && position_ms < event.end_ms)
-                .map(|event| event.text.trim())
-                .filter(|text| !text.is_empty())
-                .collect::<Vec<_>>()
-                .join("\n"),
-        }
-    }
-
-    pub fn render(
-        &mut self,
-        width: i32,
-        height: i32,
-        par: f64,
-        now_ms: i64,
-    ) -> Result<Vec<RenderedImage>, String> {
-        if !self.visible {
-            return Ok(Vec::new());
-        }
-        self.renderer.render(
-            &self.track,
-            width,
-            height,
-            Some((width, height)),
-            par,
-            now_ms,
-        )
+        let shown = self.cues.partition_point(|cue| cue.start_ms <= position_ms);
+        self.cues[..shown]
+            .iter()
+            .filter(|cue| position_ms < cue.end_ms)
+            .map(|cue| cue.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 }
 
-fn mov_text_body(payload: &[u8]) -> &[u8] {
-    if payload.len() < 2 {
-        return payload;
-    }
-    let length = u16::from_be_bytes([payload[0], payload[1]]) as usize;
-    payload
-        .get(2..2 + length)
-        .unwrap_or(&payload[2..])
-}
-
-fn strip_ass_tags(text: &str) -> String {
-    let mut out = String::new();
-    let mut depth = 0;
-    for character in text.chars() {
-        match character {
-            '{' => depth += 1,
-            '}' if depth > 0 => depth -= 1,
-            _ if depth == 0 => out.push(character),
-            _ => {}
-        }
-    }
-    out.replace("\\N", "\n").replace("\\n", "\n")
-}
-
-fn ass_event_text(payload: &str) -> String {
-    let line = payload
-        .lines()
-        .find(|line| line.trim_start().starts_with("Dialogue:"))
-        .unwrap_or(payload);
-    let text = line.splitn(10, ',').nth(9).unwrap_or("");
-    strip_ass_tags(text)
-}
-
-fn ass_text_at(content: &str, position_ms: i64) -> String {
-    let mut visible = Vec::new();
-    for line in content.lines() {
-        let Some(rest) = line.trim_start().strip_prefix("Dialogue:") else {
-            continue;
-        };
-        let fields: Vec<&str> = rest.splitn(10, ',').collect();
-        if fields.len() < 10 {
-            continue;
-        }
-        let start = parse_timestamp(fields[1]).map(|value| (value * 1000.0) as i64);
-        let end = parse_timestamp(fields[2]).map(|value| (value * 1000.0) as i64);
-        if let (Some(start), Some(end)) = (start, end)
-            && start <= position_ms
-            && position_ms < end
-        {
-            let text = strip_ass_tags(fields[9]);
-            if !text.trim().is_empty() {
-                visible.push(text);
-            }
-        }
-    }
-    visible.join("\n")
-}
-
-fn ass_header(playres: (i32, i32)) -> String {
-    format!(
-        "[Script Info]\nScriptType: v4.00+\nPlayResX: {}\nPlayResY: {}\nScaledBorderAndShadow: yes\n",
-        playres.0, playres.1
-    )
-}
-
-fn text_header(playres: (i32, i32)) -> String {
-    format!(
-        "{}\n[V4+ Styles]\n\
-        Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n\
-        Style: Default,Arial,48,&H00FFFFFF,&H000019FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2,2,2,10,10,10,1\n\
-        \n\
-        [Events]\n\
-        Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n",
-        ass_header(playres)
-    )
-}
-
-fn ass_time(seconds: f64) -> String {
-    let clamped = seconds.max(0.0);
-    let whole = clamped.trunc() as u64;
-    let centis = ((clamped - whole as f64) * 100.0).round() as u64;
-    format!(
-        "{}:{:02}:{:02}.{:02}",
-        whole / 3600,
-        (whole / 60) % 60,
-        whole % 60,
-        centis.min(99)
-    )
-}
-
-fn ms_to_seconds(ms: i64) -> f64 {
-    ms as f64 / 1000.0
-}
-
-fn dialogue_event(text: &str, start: f64, end: f64) -> String {
-    let clean = text.replace('\n', "\\N").replace('\r', "");
-    format!(
-        "Dialogue: 0,{},{},Default,,0,0,0,,{}\n",
-        ass_time(start),
-        ass_time(end),
-        clean
-    )
-}
-
-fn parse_timestamp(text: &str) -> Option<f64> {
-    let normalized = text.trim().replace(',', ".");
-    let mut parts = normalized.split(':');
-    let (hours, minutes, seconds) = match (parts.next(), parts.next(), parts.next(), parts.next())
-    {
-        (Some(h), Some(m), Some(s), None) => {
-            (h.parse::<f64>().ok()?, m.parse::<f64>().ok()?, s.parse::<f64>().ok()?)
-        }
-        (Some(m), Some(s), None, _) => (0.0, m.parse::<f64>().ok()?, s.parse::<f64>().ok()?),
-        _ => return None,
-    };
-    if !(0.0..60.0).contains(&minutes) || !(0.0..60.0).contains(&seconds) || hours < 0.0 {
+fn parse_timestamp(text: &str) -> Option<i64> {
+    let text = text.trim();
+    let (clock, millis) = text.split_once([',', '.'])?;
+    let mut parts = clock.split(':');
+    let (hours, minutes, seconds) = (parts.next()?, parts.next()?, parts.next()?);
+    if parts.next().is_some() || millis.is_empty() || millis.len() > 3 {
         return None;
     }
-    Some(hours * 3600.0 + minutes * 60.0 + seconds)
+    let number = |part: &str| -> Option<i64> {
+        (!part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit())).then(|| part.parse().ok()).flatten()
+    };
+    let (hours, minutes, seconds) = (number(hours)?, number(minutes)?, number(seconds)?);
+    let millis = number(millis)? * 10i64.pow(3 - millis.len() as u32);
+    if minutes >= 60 || seconds >= 60 {
+        return None;
+    }
+    Some(((hours * 60 + minutes) * 60 + seconds) * 1000 + millis)
 }
 
-fn parse_cues(content: &str, codec: SubCodec) -> Result<Vec<(i64, i64, String)>, String> {
+fn parse_timing(line: &str) -> Option<(i64, i64)> {
+    let (start, rest) = line.split_once("-->")?;
+    let end = rest.split_whitespace().next()?;
+    Some((parse_timestamp(start)?, parse_timestamp(end)?))
+}
+
+/// Parses a SubRip file into cues sorted by start time. Cue numbers are
+/// optional, text runs to the next blank line, and cues with no text or an
+/// end before their start are skipped.
+pub fn parse_srt(content: &str) -> Result<Vec<Cue>, String> {
+    let content = content.strip_prefix('\u{feff}').unwrap_or(content);
+    let normalized = content.replace("\r\n", "\n").replace('\r', "\n");
     let mut cues = Vec::new();
-    let mut blocks = content.replace("\r\n", "\n").replace('\r', "\n");
-    if codec == SubCodec::WebVtt {
-        if let Some(stripped) = blocks.strip_prefix("WEBVTT") {
-            blocks = stripped.to_string();
-        }
-    }
-    for block in blocks.split("\n\n") {
-        let mut lines = block.lines().filter(|line| !line.trim().is_empty());
-        let Some(first) = lines.next() else { continue };
-        if first.trim_start().starts_with("NOTE") {
-            continue;
-        }
-        let (timing, text) = if first.contains("-->") {
-            (first, lines.collect::<Vec<_>>().join("\n"))
-        } else if let Some(second) = lines.next() {
-            if !second.contains("-->") {
-                continue;
+    let mut lines = normalized.lines().peekable();
+    while let Some(line) = lines.next() {
+        let timing = match parse_timing(line) {
+            Some(timing) => timing,
+            None => match lines.peek().and_then(|next| parse_timing(next)) {
+                Some(timing) if line.trim().bytes().all(|byte| byte.is_ascii_digit()) => {
+                    lines.next();
+                    timing
+                }
+                _ => continue,
+            },
+        };
+        let mut body = Vec::new();
+        while let Some(next) = lines.peek() {
+            if next.trim().is_empty() {
+                break;
             }
-            (second, lines.collect::<Vec<_>>().join("\n"))
-        } else {
-            continue;
-        };
-        let mut arrow = timing.split("-->");
-        let (Some(start), Some(end)) = (arrow.next(), arrow.next()) else {
-            continue;
-        };
-        let (Some(start), Some(end)) = (
-            parse_timestamp(start.split_whitespace().next().unwrap_or("")),
-            parse_timestamp(end.split_whitespace().next().unwrap_or("")),
-        ) else {
-            continue;
-        };
-        if end <= start || text.trim().is_empty() {
-            continue;
+            body.push(lines.next().expect("peeked line"));
         }
-        cues.push((
-            (start * 1000.0).round() as i64,
-            (end * 1000.0).round() as i64,
-            text,
-        ));
+        let (start_ms, end_ms) = timing;
+        let text = markup_free(&body.join("\n"));
+        if end_ms > start_ms && !text.trim().is_empty() {
+            cues.push(Cue { start_ms, end_ms, text });
+        }
     }
     if cues.is_empty() {
-        return Err("no subtitle cues found".to_owned());
+        return Err("no SubRip cues found".to_owned());
     }
+    cues.sort_by_key(|cue| cue.start_ms);
     Ok(cues)
+}
+
+/// Removes SubRip's HTML-style formatting tags (`<i>`, `<b>`, `<u>`,
+/// `<font …>`, and their closers) and ASS-style `{\…}` override blocks,
+/// which the renderer does not style, keeping all other text.
+pub fn markup_free(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(index) = rest.find(['<', '{']) {
+        out.push_str(&rest[..index]);
+        let tail = &rest[index..];
+        let close = if tail.starts_with('<') { '>' } else { '}' };
+        let end = tail.find(close);
+        let tag = end.map(|end| &tail[1..end]);
+        let is_markup = match (close, tag) {
+            ('>', Some(tag)) => {
+                let name = tag.trim_start_matches('/').split([' ', '\t']).next().unwrap_or("").to_ascii_lowercase();
+                matches!(name.as_str(), "i" | "b" | "u" | "s" | "font")
+            }
+            ('}', Some(tag)) => tag.starts_with('\\'),
+            _ => false,
+        };
+        if is_markup {
+            rest = &tail[end.expect("markup has a closer") + 1..];
+        } else {
+            out.push_str(&tail[..1]);
+            rest = &tail[1..];
+        }
+    }
+    out.push_str(rest);
+    out.lines().map(str::trim_end).collect::<Vec<_>>().join("\n").trim_matches('\n').to_owned()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{ass_time, dialogue_event, mov_text_body, parse_cues, parse_timestamp, SubCodec};
+    use super::*;
 
-    const SRT: &str = "1\n00:00:00,200 --> 00:00:01,500\nHello from SubRip.\n\n2\n00:00:01,600 --> 00:00:02,800\nSecond cue.\n";
-
-    const VTT: &str = "WEBVTT\n\n00:00:00.200 --> 00:00:01.500\nHello from WebVTT.\n\nNOTE a comment\n\n00:00:01.600 --> 00:00:02.800 align:start\nSecond cue.\n";
-
-    #[test]
-    fn timestamps_parse_both_separators() {
-        assert_eq!(parse_timestamp("00:00:01,500"), Some(1.5));
-        assert_eq!(parse_timestamp("00:00:01.500"), Some(1.5));
-        assert_eq!(parse_timestamp("01:02.500"), Some(62.5));
-        assert_eq!(parse_timestamp("nope"), None);
-        assert_eq!(parse_timestamp("00:99:01.500"), None);
+    fn cue(start_ms: i64, end_ms: i64, text: &str) -> Cue {
+        Cue { start_ms, end_ms, text: text.to_owned() }
     }
 
     #[test]
-    fn ass_time_formats_centiseconds() {
-        assert_eq!(ass_time(1.5), "0:00:01.50");
-        assert_eq!(ass_time(62.25), "0:01:02.25");
-        assert_eq!(ass_time(-1.0), "0:00:00.00");
-    }
-
-    #[test]
-    fn srt_converts_to_dialogues() {
-        let cues = parse_cues(SRT, SubCodec::SubRip).expect("srt parses");
-        assert_eq!(cues.len(), 2);
-        let event = dialogue_event(&cues[0].2, 0.2, 1.5);
+    fn parses_numbered_multiline_cues() {
+        let srt = "1\n00:00:00,200 --> 00:00:01,500\nHello from SubRip.\nSecond line\n\n2\n00:00:01,600 --> 00:00:02,800\nSecond cue.\n";
         assert_eq!(
-            event,
-            "Dialogue: 0,0:00:00.20,0:00:01.50,Default,,0,0,0,,Hello from SubRip.\n"
+            parse_srt(srt).unwrap(),
+            vec![cue(200, 1500, "Hello from SubRip.\nSecond line"), cue(1600, 2800, "Second cue.")]
         );
     }
 
     #[test]
-    fn vtt_converts_ignoring_header_and_settings() {
-        let cues = parse_cues(VTT, SubCodec::WebVtt).expect("vtt parses");
-        assert_eq!(cues.len(), 2);
-        assert_eq!(cues[0], (200, 1500, "Hello from WebVTT.".to_owned()));
-        assert_eq!(cues[1].2, "Second cue.");
+    fn tolerates_bom_crlf_missing_numbers_dots_and_coordinates() {
+        let srt = "\u{feff}00:00:01.5 --> 00:00:02,000 X1:10 X2:20 Y1:0 Y2:5\r\nNo number\r\n\r\n\r\n7\r\n100:00:00,000 --> 100:00:01,000\r\nLong film\r\n";
+        assert_eq!(parse_srt(srt).unwrap(), vec![cue(1500, 2000, "No number"), cue(360_000_000, 360_001_000, "Long film")]);
     }
 
     #[test]
-    fn mov_text_has_its_own_codec_and_bitmap_codecs_stay_unsupported() {
-        assert_eq!(SubCodec::for_name("mov_text"), Some(SubCodec::MovText));
-        assert_eq!(SubCodec::for_name("text"), Some(SubCodec::SubRip));
-        assert_eq!(SubCodec::for_name("hdmv_pgs_subtitle"), None);
-        assert_eq!(SubCodec::for_name("dvd_subtitle"), None);
+    fn keeps_international_text_and_strips_formatting() {
+        let srt = "1\n00:00:01,000 --> 00:00:02,000\n<i>مرحبا</i> <font color=\"#ff0000\">שלום</font>\n{\\an8}नमस्ते 你好 <3 {not a tag}\n";
+        assert_eq!(parse_srt(srt).unwrap()[0].text, "مرحبا שלום\nनमस्ते 你好 <3 {not a tag}");
     }
 
     #[test]
-    fn mov_text_strips_the_length_prefix() {
-        let payload = [0, 16, b'H', b'e', b'l', b'l', b'o', b',', b' ', b'w', b'o', b'r', b'l', b'd', b'!', b'\n'];
-        assert_eq!(mov_text_body(&payload), b"Hello, world!\n");
-        assert_eq!(mov_text_body(&[0]), &[0]);
-        assert_eq!(mov_text_body(&[0xFF, 4, b'a']), b"a");
+    fn skips_broken_cues_and_rejects_files_without_any() {
+        let srt = "1\n00:00:05,000 --> 00:00:04,000\nBackwards\n\n2\n00:00:06,000 --> 00:00:07,000\n\n3\n00:0x:08,000 --> 00:00:09,000\nBad time\n\n4\n00:00:10,000 --> 00:00:11,000\nGood\n";
+        assert_eq!(parse_srt(srt).unwrap(), vec![cue(10_000, 11_000, "Good")]);
+        assert!(parse_srt("nothing here\n").is_err());
+        assert!(parse_srt("").is_err());
     }
 
     #[test]
-    fn garbage_has_no_cues() {
-        assert!(parse_cues("nothing here\n", SubCodec::SubRip).is_err());
-        assert!(parse_cues("1\nno arrow here\ntext\n", SubCodec::SubRip).is_err());
+    fn timestamps_need_three_fields_and_valid_ranges() {
+        assert_eq!(parse_timestamp("00:00:01,500"), Some(1500));
+        assert_eq!(parse_timestamp("01:02:03.04"), Some(3_723_040));
+        assert_eq!(parse_timestamp("01:02,500"), None);
+        assert_eq!(parse_timestamp("00:60:00,000"), None);
+        assert_eq!(parse_timestamp("00:00:01"), None);
+    }
+
+    fn embedded() -> EngineSub {
+        EngineSub {
+            source: SubTrack { stream: Some(2), language: None, title: None },
+            cues: Vec::new(),
+            fed: HashSet::new(),
+            visible: true,
+        }
+    }
+
+    #[test]
+    fn overlapping_cues_show_together_in_start_order() {
+        let mut sub = embedded();
+        sub.feed(b"second", 1.0, 2.0);
+        sub.feed(b"first", 0.5, 1.0);
+        assert_eq!(sub.text_at(400), "");
+        assert_eq!(sub.text_at(700), "first");
+        assert_eq!(sub.text_at(1200), "first\nsecond");
+        assert_eq!(sub.text_at(1500), "second");
+        assert_eq!(sub.text_at(3000), "");
+    }
+
+    #[test]
+    fn refed_packets_are_ignored_and_hidden_tracks_show_nothing() {
+        let mut sub = embedded();
+        sub.feed(b"<b>once</b>", 1.0, 1.0);
+        sub.feed(b"<b>once</b>", 1.0, 1.0);
+        assert_eq!(sub.text_at(1500), "once");
+        sub.set_visible(false);
+        assert_eq!(sub.text_at(1500), "");
     }
 }

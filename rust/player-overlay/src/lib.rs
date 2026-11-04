@@ -4,5 +4,5 @@ pub mod raster;
 pub mod text;
 
 pub use compose::{render, Canvas, OverlayImage};
-pub use display::{Align, Color, DisplayList, Item, Path, PathCommand, Point, Rect, Shape};
+pub use display::{Align, Anchor, Color, DisplayList, Item, Path, PathCommand, Point, Rect, Shape};
 pub use text::{GlyphRun, Line, Outline, TextBlock, TextEngine, TextLayout, TextStyle, Weight};

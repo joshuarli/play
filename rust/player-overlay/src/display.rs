@@ -183,6 +183,20 @@ impl Shape {
     }
 }
 
+/// Which point of a text box sits at its origin: `x` picks left, centre,
+/// or right, and `y` top, middle, or bottom of the line boxes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Anchor {
+    pub x: Align,
+    pub y: Align,
+}
+
+impl Anchor {
+    pub const TOP_LEFT: Anchor = Anchor { x: Align::Start, y: Align::Start };
+    pub const CENTER: Anchor = Anchor { x: Align::Center, y: Align::Center };
+    pub const BOTTOM_CENTER: Anchor = Anchor { x: Align::Center, y: Align::End };
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Item {
     Fill {
@@ -194,6 +208,13 @@ pub enum Item {
         shape: Shape,
         width: f64,
         color: Color,
+        clip: Option<Rect>,
+    },
+    /// Text whose size, outline, and wrap width are in logical units.
+    Text {
+        origin: Point,
+        anchor: Anchor,
+        block: crate::text::TextBlock,
         clip: Option<Rect>,
     },
     Image {
@@ -225,6 +246,10 @@ impl DisplayList {
 
     pub fn stroke(&mut self, shape: Shape, width: f64, color: Color) {
         self.items.push(Item::Stroke { shape, width, color, clip: None });
+    }
+
+    pub fn text(&mut self, origin: Point, anchor: Anchor, block: crate::text::TextBlock) {
+        self.items.push(Item::Text { origin, anchor, block, clip: None });
     }
 
     pub fn push(&mut self, item: Item) {

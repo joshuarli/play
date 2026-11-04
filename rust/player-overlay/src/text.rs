@@ -42,6 +42,19 @@ pub struct TextBlock {
     pub align: Align,
 }
 
+impl TextBlock {
+    /// The block with sizes, outline, and wrap width multiplied by `scale`.
+    pub fn scaled(&self, scale: f64) -> TextBlock {
+        let mut block = self.clone();
+        block.style.size *= scale;
+        if let Some(outline) = &mut block.style.outline {
+            outline.width *= scale;
+        }
+        block.max_width = block.max_width.map(|width| width * scale);
+        block
+    }
+}
+
 /// One shaped run in visual order: a single font and direction.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GlyphRun {

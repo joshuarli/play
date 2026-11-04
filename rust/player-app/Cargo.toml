@@ -18,6 +18,7 @@ player-core = { path = "../player-core" }
 player-display = { path = "../player-display" }
 player-engine = { path = "../player-engine" }
 player-backend = { path = "../player-backend" }
+player-overlay = { path = "../player-overlay" }
 player-media = { path = "../player-media" }
 player-output = { path = "../player-output" }
 player-tui = { path = "../player-tui" }

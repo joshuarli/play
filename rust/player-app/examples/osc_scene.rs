@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use player_app::osc::{Chapter, Osc, Playback};
-use player_backend::osd::{composite, OsdState};
+use player_backend::overlay::{OverlayRenderer, Scene};
 use player_core::command::OscVisibility;
 
 struct Options {
@@ -12,7 +12,6 @@ struct Options {
     height: u32,
     playback: Playback,
     pointer: Option<(f64, f64)>,
-    events: Option<PathBuf>,
     clicks: Vec<(f64, f64)>,
 }
 
@@ -27,7 +26,6 @@ fn parse_args() -> Result<Options, String> {
         ..Playback::default()
     };
     let mut pointer = None;
-    let mut events = None;
     let mut clicks = Vec::new();
     let mut args = std::env::args().skip(1);
     while let Some(argument) = args.next() {
@@ -49,7 +47,6 @@ fn parse_args() -> Result<Options, String> {
         let number = |name: &str| value.parse::<f64>().map_err(|_| format!("bad {name} '{value}'"));
         match argument.as_str() {
             "--base" => base = Some(PathBuf::from(&value)),
-            "--events" => events = Some(PathBuf::from(&value)),
             "--output" => output = Some(PathBuf::from(&value)),
             "--width" => width = number("width")? as u32,
             "--height" => height = number("height")? as u32,
@@ -101,7 +98,6 @@ fn parse_args() -> Result<Options, String> {
         height,
         playback,
         pointer,
-        events,
         clicks,
     })
 }
@@ -130,18 +126,10 @@ fn main() -> Result<(), String> {
     if let Some((x, y)) = options.pointer {
         osc.pointer_move(x, y, now);
     }
-    let overlay = osc.overlay();
-    if let (Some(path), Some(overlay)) = (&options.events, overlay) {
-        std::fs::write(path, &overlay.events).map_err(|error| error.to_string())?;
+    let scene = Scene { subtitle: None, message: None, osc: osc.overlay() };
+    if let Some(image) = OverlayRenderer::new()?.render(&scene, options.width, options.height)? {
+        image.blend_onto(&mut frame, options.width, options.height)?;
     }
-    let mut osd = OsdState::new()?;
-    let images = osd.render(overlay, None, options.width as i64, options.height as i64)?;
-    if std::env::var_os("OSC_SCENE_IMAGES").is_some() {
-        for image in &images {
-            eprintln!("{:08x} {}x{} at {},{}", image.color, image.width, image.height, image.dst_x, image.dst_y);
-        }
-    }
-    composite(&mut frame, options.width, options.height, &images)?;
     std::fs::write(&options.output, &frame)
         .map_err(|error| format!("cannot write {}: {error}", options.output.display()))
 }

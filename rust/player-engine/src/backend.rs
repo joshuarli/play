@@ -5,7 +5,6 @@ use crate::sched::{SeekPrecision,
 use crate::state::State;
 use crate::sub::{EngineSub, TrackInfo, TrackKind};
 use crate::video::{EngineVideo, EngineVideoOutput, PresentedFrame};
-use player_ass::{Library, RenderedImage};
 use player_audio::decode::PacketDecoder;
 use player_audio::sink::{AudioSink, NullSink, SinkKind};
 use player_media::{MediaError, MediaSession, Packet as MediaPacket, StreamInfo, StreamKind as MediaKind};
@@ -405,13 +404,6 @@ enum WorkerCommand {
     SelectSub(Option<usize>),
     AddSub(String, mpsc::Sender<Result<(), String>>),
     SetSubVisible(bool),
-    RenderSubs {
-        width: i32,
-        height: i32,
-        par: f64,
-        now_ms: i64,
-        reply: mpsc::Sender<Result<Vec<RenderedImage>, String>>,
-    },
 }
 
 pub struct SchedulerEngine {
@@ -557,26 +549,6 @@ impl SchedulerEngine {
         self.send(WorkerCommand::SelectAudio(stream));
     }
 
-    pub fn render_subtitles(
-        &self,
-        width: i32,
-        height: i32,
-        par: f64,
-        now_ms: i64,
-    ) -> Result<Vec<RenderedImage>, String> {
-        let (reply_tx, reply_rx) = mpsc::channel();
-        self.send(WorkerCommand::RenderSubs {
-            width,
-            height,
-            par,
-            now_ms,
-            reply: reply_tx,
-        });
-        reply_rx
-            .recv_timeout(Duration::from_secs(30))
-            .map_err(|_| "subtitle render timed out".to_owned())?
-    }
-
     pub fn snapshot(&self) -> EngineStatus {
         self.state
             .lock()
@@ -624,7 +596,7 @@ fn run_worker(
         state: state.clone(),
         clean: false,
     };
-    let build = || -> Result<(EngineScheduler, f64, u32, u32, Library, (i32, i32)), String> {
+    let build = || -> Result<(EngineScheduler, f64, u32, u32), String> {
         let demux = if include_video {
             EngineDemux::open(&path)?
         } else {
@@ -693,18 +665,12 @@ fn run_worker(
             .unwrap_or((0, 0));
         let mut scheduler = EngineScheduler::new(demux, audio, video, output, video_out);
         scheduler.enable_video_preroll();
-        let library = Library::new()?;
-        let playres = if video_width > 0 && video_height > 0 {
-            (video_width as i32, video_height as i32)
-        } else {
-            (640, 480)
-        };
         let mut subs = Vec::new();
         for stream in scheduler.demux().sub_streams().to_vec() {
             let Some(info) = scheduler.demux().sub_info(stream) else {
                 continue;
             };
-            let Ok(sub) = EngineSub::open_embedded(&library, &info, playres) else {
+            let Ok(sub) = EngineSub::open_embedded(&info) else {
                 continue;
             };
             subs.push(sub);
@@ -715,16 +681,14 @@ fn run_worker(
             scheduler.send(Command::Pause(true));
             scheduler.send(Command::Seek(0.0, SeekPrecision::Exact));
         }
-        Ok((scheduler, duration, video_width, video_height, library, playres))
+        Ok((scheduler, duration, video_width, video_height))
     };
     let (mut worker, duration, video_width, video_height) = match build() {
-        Ok((scheduler, duration, video_width, video_height, library, playres)) => (
+        Ok((scheduler, duration, video_width, video_height)) => (
             Worker {
                 scheduler,
                 volume: start.volume,
                 muted: start.muted,
-                library,
-                playres,
             },
             duration,
             video_width,
@@ -784,8 +748,6 @@ struct Worker {
     scheduler: EngineScheduler,
     volume: f32,
     muted: bool,
-    library: Library,
-    playres: (i32, i32),
 }
 
 impl Worker {
@@ -808,7 +770,7 @@ impl Worker {
             WorkerCommand::Stop => {}
             WorkerCommand::SelectSub(selected) => self.scheduler.select_sub(selected),
             WorkerCommand::AddSub(path, reply) => {
-                let result = EngineSub::open_external(&self.library, &path, self.playres)
+                let result = EngineSub::open_external(&path)
                     .map(|sub| {
                         self.scheduler.add_sub(sub);
                     });
@@ -816,18 +778,6 @@ impl Worker {
                 let _ = reply.send(result);
             }
             WorkerCommand::SetSubVisible(visible) => self.scheduler.set_sub_visible(visible),
-            WorkerCommand::RenderSubs {
-                width,
-                height,
-                par,
-                now_ms,
-                reply,
-            } => {
-                let result = self
-                    .scheduler
-                    .render_subtitles(width, height, par, now_ms);
-                let _ = reply.send(result);
-            }
         }
     }
 
@@ -932,7 +882,7 @@ fn track_list(scheduler: &EngineScheduler) -> Vec<TrackInfo> {
             id: sub_id,
             kind: TrackKind::Subtitle,
             src_id: external_base + external_order,
-            codec: sub.source().codec.name().to_owned(),
+            codec: crate::sub::SUBRIP_CODEC.to_owned(),
             language: sub.source().language.clone(),
             title: sub.source().title.clone(),
             selected: scheduler.selected_sub() == Some(offset),
@@ -1173,26 +1123,23 @@ mod tests {
         });
     }
 
-    fn inked(images: &[player_ass::RenderedImage]) -> usize {
-        images
-            .iter()
-            .map(|image| image.bitmap.iter().filter(|pixel| **pixel > 0).count())
-            .sum()
+    fn subtitle_at(engine: &SchedulerEngine, seconds: f64) -> String {
+        pause_and_seek(engine, seconds);
+        engine.snapshot().subtitle_text
+    }
+
+    fn wait_for_subtitle(engine: &SchedulerEngine, expected: &str) {
+        poll_until(engine, StdDuration::from_secs(10), |status| status.subtitle_text == expected);
     }
 
     #[test]
-    fn external_subs_render_on_audio_only() {
+    fn external_srt_cues_follow_selection_visibility_and_seeks() {
         let engine =
             SchedulerEngine::load(&fixture("audio-wav.wav"), SinkKind::Null, StartState::default()).expect("engine loads");
         pause_and_seek(&engine, 0.0);
-        engine
-            .add_sub(&fixture("external.srt"))
-            .expect("srt loads");
+        engine.add_sub(&fixture("external.srt")).expect("srt loads");
         let status = poll_until(&engine, StdDuration::from_secs(5), |status| {
-            status
-                .tracks
-                .iter()
-                .any(|track| track.kind == TrackKind::Subtitle)
+            status.tracks.iter().any(|track| track.kind == TrackKind::Subtitle)
         });
         let sub = status
             .tracks
@@ -1202,87 +1149,29 @@ mod tests {
         assert_eq!(sub.codec, "subrip");
         assert!(sub.selected, "added subs auto-select");
         assert_eq!(sub.sub_index, Some(0));
-        let during = engine
-            .render_subtitles(640, 480, 1.0, 600)
-            .expect("subs render");
-        assert!(!during.is_empty(), "no bitmaps during the cue");
-        assert!(inked(&during) > 50, "no ink during the cue");
-        let outside = engine
-            .render_subtitles(640, 480, 1.0, 2900)
-            .expect("subs render");
-        assert!(outside.is_empty(), "bitmaps outside the cues");
+        assert_eq!(subtitle_at(&engine, 0.6), "Hello from SubRip.");
+        assert_eq!(subtitle_at(&engine, 2.9), "");
+        assert_eq!(subtitle_at(&engine, 1.7), "Second cue.");
         engine.select_sub(None);
-        let deadline = Instant::now() + StdDuration::from_secs(10);
-        loop {
-            let images = engine
-                .render_subtitles(640, 480, 1.0, 600)
-                .expect("subs render");
-            if images.is_empty() {
-                break;
-            }
-            assert!(Instant::now() < deadline, "deselect never applied");
-            thread::sleep(StdDuration::from_millis(5));
-        }
+        wait_for_subtitle(&engine, "");
         engine.select_sub(Some(0));
-        let reselected = engine
-            .render_subtitles(640, 480, 1.0, 600)
-            .expect("subs render");
-        assert!(!reselected.is_empty(), "no bitmaps after reselect");
+        wait_for_subtitle(&engine, "Second cue.");
         engine.set_sub_visible(false);
-        let hidden = engine
-            .render_subtitles(640, 480, 1.0, 600)
-            .expect("subs render");
-        assert!(hidden.is_empty(), "bitmaps while hidden");
+        wait_for_subtitle(&engine, "");
         engine.set_sub_visible(true);
-        engine.seek(0.6, SeekPrecision::Exact);
-        let status = poll_until(&engine, StdDuration::from_secs(10), |status| {
-            (status.position - 0.6).abs() < 0.05
-        });
-        assert!(!status.ended, "ended after reseek: {status:?}");
-        let reseeked = engine
-            .render_subtitles(640, 480, 1.0, 700)
-            .expect("subs render");
-        assert!(!reseeked.is_empty(), "no bitmaps after seek");
-        assert!(engine.add_sub(&fixture("audio-wav.wav")).is_err());
+        assert_eq!(subtitle_at(&engine, 0.6), "Hello from SubRip.");
+        assert!(!engine.snapshot().ended);
     }
 
     #[test]
-    fn external_ass_switches_tracks() {
+    fn subtitle_files_other_than_srt_are_rejected() {
         let engine =
             SchedulerEngine::load(&fixture("audio-wav.wav"), SinkKind::Null, StartState::default()).expect("engine loads");
-        pause_and_seek(&engine, 0.0);
-        engine
-            .add_sub(&fixture("external.srt"))
-            .expect("srt loads");
-        engine
-            .add_sub(&fixture("external.ass"))
-            .expect("ass loads");
-        let status = poll_until(&engine, StdDuration::from_secs(5), |status| {
-            status
-                .tracks
-                .iter()
-                .any(|track| track.kind == TrackKind::Subtitle && track.codec == "ass" && track.selected)
-        });
-        let selected: Vec<usize> = status
-            .tracks
-            .iter()
-            .filter(|track| track.kind == TrackKind::Subtitle && track.selected)
-            .map(|track| track.id)
-            .collect();
-        assert_eq!(selected.len(), 1, "one sub selected: {selected:?}");
-        let ass = status
-            .tracks
-            .iter()
-            .find(|track| track.kind == TrackKind::Subtitle && track.codec == "ass")
-            .expect("ass listed");
-        assert!(ass.selected, "added ass auto-selects");
-        engine.select_sub(ass.sub_index);
-        let _ = engine.snapshot();
-        engine.select_sub(Some(0));
-        let srt_cue = engine
-            .render_subtitles(640, 480, 1.0, 1700)
-            .expect("subs render");
-        assert!(!srt_cue.is_empty(), "no bitmaps for the srt cue");
+        for file in ["external.ass", "external.vtt", "audio-wav.wav"] {
+            let error = engine.add_sub(&fixture(file)).expect_err(file);
+            assert!(error.contains("only SubRip"), "{file}: {error}");
+        }
+        assert!(engine.snapshot().tracks.iter().all(|track| track.kind != TrackKind::Subtitle));
     }
 
     #[test]
@@ -1297,21 +1186,11 @@ mod tests {
         poll_until(&engine, StdDuration::from_secs(10), |status| status.paused);
         engine.select_sub(Some(0));
         poll_until(&engine, StdDuration::from_secs(10), |status| {
-            status
-                .tracks
-                .iter()
-                .any(|track| track.kind == TrackKind::Subtitle && track.selected)
+            status.tracks.iter().any(|track| track.kind == TrackKind::Subtitle && track.selected)
         });
-        engine.seek(1.0, SeekPrecision::Exact);
-        let status = poll_until(&engine, StdDuration::from_secs(10), |status| {
-            (status.position - 1.0).abs() < 0.05
-        });
-        assert!(status.error.is_none(), "unexpected error: {:?}", status.error);
-        let images = engine
-            .render_subtitles(320, 240, 1.0, 1000)
-            .expect("subs render");
-        assert!(!images.is_empty(), "no bitmaps after a paused seek");
-        assert!(inked(&images) > 50, "no ink after a paused seek");
+        let text = subtitle_at(&engine, 1.0);
+        assert!(engine.snapshot().error.is_none());
+        assert!(!text.is_empty(), "no cue after a paused seek");
     }
 
     #[test]
@@ -1319,14 +1198,11 @@ mod tests {
         target_os = "linux",
         ignore = "static-pie test binaries cannot call the container Vulkan loader; run with RUSTFLAGS=\"-C target-feature=-crt-static\""
     )]
-    fn embedded_subs_render_at_cue_time() {
+    fn embedded_subs_show_at_cue_time() {
         let engine = SchedulerEngine::load(&fixture("h264-embedded-srt.mkv"), SinkKind::Null, StartState::default())
             .expect("engine loads video with subs");
         engine.select_sub(Some(0));
         poll_until(&engine, StdDuration::from_secs(30), |status| status.ended);
-        engine.seek(0.5, SeekPrecision::Exact);
-        engine.set_paused(true);
-        poll_until(&engine, StdDuration::from_secs(10), |status| status.paused);
         let status = engine.snapshot();
         let sub = status
             .tracks
@@ -1335,37 +1211,19 @@ mod tests {
             .expect("embedded sub listed");
         assert_eq!(sub.codec, "subrip");
         assert!(sub.selected, "embedded subs auto-select");
-        let during = engine
-            .render_subtitles(320, 240, 1.0, 600)
-            .expect("subs render");
-        assert!(!during.is_empty(), "no bitmaps during the cue");
-        assert!(inked(&during) > 50, "no ink during the cue");
-        let outside = engine
-            .render_subtitles(320, 240, 1.0, 2900)
-            .expect("subs render");
-        assert!(outside.is_empty(), "bitmaps outside the cues");
-        engine.seek(1.5, SeekPrecision::Exact);
-        engine.set_paused(true);
-        poll_until(&engine, StdDuration::from_secs(10), |status| status.paused);
-        let second = engine
-            .render_subtitles(320, 240, 1.0, 1800)
-            .expect("subs render");
-        assert!(!second.is_empty(), "no bitmaps for the second cue");
+        let first = subtitle_at(&engine, 0.6);
+        assert!(!first.is_empty(), "no cue at 0.6s");
+        assert_eq!(subtitle_at(&engine, 2.9), "");
+        let second = subtitle_at(&engine, 1.8);
+        assert!(!second.is_empty() && second != first, "second cue {second:?} after {first:?}");
     }
 
     #[test]
-    #[cfg_attr(
-        target_os = "linux",
-        ignore = "static-pie test binaries cannot call the container Vulkan loader; run with RUSTFLAGS=\"-C target-feature=-crt-static\""
-    )]
-    fn mov_text_subs_select_and_render() {
+    fn embedded_subtitles_in_other_formats_are_listed_but_not_selectable() {
         let engine = SchedulerEngine::load(&fixture("h264-movtext.mp4"), SinkKind::Null, StartState::default())
             .expect("engine loads video with movtext");
         let status = poll_until(&engine, StdDuration::from_secs(10), |status| {
-            status
-                .tracks
-                .iter()
-                .any(|track| track.kind == TrackKind::Subtitle)
+            status.tracks.iter().any(|track| track.kind == TrackKind::Subtitle)
         });
         let sub = status
             .tracks
@@ -1373,18 +1231,8 @@ mod tests {
             .find(|track| track.kind == TrackKind::Subtitle)
             .expect("movtext listed");
         assert_eq!(sub.codec, "mov_text");
-        let sub_index = sub.sub_index.expect("movtext has a decoder");
-        engine.select_sub(Some(sub_index));
-        pause_and_seek(&engine, 1.0);
-        let during = engine
-            .render_subtitles(640, 480, 1.0, 1000)
-            .expect("subs render");
-        assert!(!during.is_empty(), "no bitmaps during the movtext cue");
-        assert!(inked(&during) > 50, "no ink during the movtext cue");
-        let outside = engine
-            .render_subtitles(640, 480, 1.0, 2900)
-            .expect("subs render");
-        assert!(outside.is_empty(), "bitmaps outside the movtext cue");
+        assert_eq!(sub.sub_index, None);
+        assert!(!sub.selected);
     }
 
     #[test]
