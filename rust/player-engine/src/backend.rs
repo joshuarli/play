@@ -341,6 +341,7 @@ impl AudioOutput for EngineOutput {
     }
 
     fn flush(&mut self) {
+        self.written = self.written.saturating_sub(self.sink.queued_frames());
         let _ = self.sink.flush();
     }
 
@@ -969,6 +970,62 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
     use std::time::Duration as StdDuration;
+
+    struct QueueSink {
+        queued: u64,
+    }
+
+    impl AudioSink for QueueSink {
+        fn write(&mut self, frames: &[f32]) -> Result<(), String> {
+            self.queued += (frames.len() / 2) as u64;
+            Ok(())
+        }
+        fn channels(&self) -> usize {
+            2
+        }
+        fn rate(&self) -> u32 {
+            48_000
+        }
+        fn queued_frames(&self) -> u64 {
+            self.queued
+        }
+        fn pause(&mut self) -> Result<(), String> {
+            Ok(())
+        }
+        fn resume(&mut self) -> Result<(), String> {
+            Ok(())
+        }
+        fn flush(&mut self) -> Result<(), String> {
+            self.queued = 0;
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn flushing_queued_audio_keeps_the_device_position() {
+        let mut output = EngineOutput {
+            sink: Box::new(QueueSink { queued: 0 }),
+            written: 0,
+            volume: 1.0,
+            muted: false,
+        };
+        output
+            .push(AudioChunk {
+                pts: 0.0,
+                stream: 0,
+                channels: 2,
+                rate: 48_000,
+                samples: vec![0.0; 24_000 * 2],
+            })
+            .expect("chunk queues");
+        assert!(output.device_position().abs() < 1e-9);
+        AudioOutput::flush(&mut output);
+        assert!(
+            output.device_position().abs() < 1e-9,
+            "flushing unplayed audio moved the device clock to {}",
+            output.device_position()
+        );
+    }
 
     fn fixtures() -> PathBuf {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
