@@ -12,9 +12,41 @@ subtitle pipeline, OSD composition, pixel-diff gate). S7d complete
 (TUI on the Rust engine). S7e complete (Rust GUI host, OSC overlay,
 paused-seek subtitle priming). S8a complete (Rust `player`
 application core: CLI, IPC, playlists, chapters, track switching,
-properties and events, OSC dispatch, traces). Next: S8b (GUI and
-TUI modes in the Rust `player` binary, native integration), then S9
-(legacy removal, Cargo-authoritative release).
+properties and events, OSC dispatch, traces). S8b complete (GUI and
+TUI modes in the Rust `player` binary, Finder open and drag-and-drop,
+PNG screenshots). Next: S9 (legacy removal, Cargo-authoritative
+release).
+
+## S8b record
+
+The Rust `player` now owns both presentation modes. `--gui` or any
+windowed playback opens a native `player-display` window, presents
+engine frames and a separate OSD overlay at the window pixel size,
+feeds key and pointer events through the same command dispatcher, and
+tracks native fullscreen. `--tui` drives `player-tui` from the app:
+the engine runs audio-only, the status/metadata come from the same
+probe and scheduler, and embedded PNG/JPEG cover art decodes through
+`player-media` and libswscale into a 64x64 thumbnail. `player-gui` is
+now a thin launcher over `player-app`, so the GUI gate exercises the
+integrated binary.
+
+- Native integration: the macOS bridge queues Finder open events and
+  file drops from the content view. The app replaces the playlist on
+  the first open and appends later files, matching the C host. With
+  `MPVBUNDLE=true` and no arguments the app opens an idle window and
+  waits for an open event instead of printing help.
+- Screenshots: `screenshot` and `screenshot-to-file` encode the last
+  presented RGBA frame as PNG through zlib; `screenshot-raw` returns
+  the same pixels as a native map over IPC.
+- Verification (macOS): `tui` 18, `gui` 3, plus the S8a named gates
+  (`cli` 23, `input` 9, `playlist` 6, `state` 13, `play` 8, `seek` 5,
+  `corpus` 109, `osc` 7, `osc-input` 9, `dispatch` 13, `failures` 8,
+  `traces` 2) all green; `cargo test` green. In the Alpine container
+  the same `tui`, `gui`, `traces`, and `corpus` gates pass against the
+  Rust binary.
+- Linux note: a development binary that links Wayland must be built
+  with `-C target-feature=-crt-static`; the default static-pie dies in
+  the musl loader before `main`.
 
 ## S8a record
 
@@ -561,11 +593,12 @@ Scoped deviations from `campaign-rust.md`:
   `rust/player-engine/src/sub.rs` (embedded and external cues), and the
   `player-ffi` OSD composer plus Lua overlay adapter.
 - Script host: `rust/player-lua` (mlua, Lua 5.2, vendored).
-- Terminal UI: `rust/player-tui` (renderer) with `player-ffi` routing
-  audio-only files to the Rust engine and video to the C engine.
-- GUI host: `rust/player-gui` on `player-display`, `player-engine`,
-  `player-ffi`, `player-lua`, and `player-output`; native window and
-  input, OSC overlay presentation, macOS menu close.
+- Terminal UI: `rust/player-tui` (renderer); `player-app` drives it on
+  the Rust engine for every file and decodes embedded cover art.
+- Application and GUI host: `rust/player-app` on `player-display`,
+  `player-engine`, `player-ffi`, `player-lua`, and `player-output`;
+  native window and input, OSC overlay presentation, Finder open,
+  drag-and-drop, and PNG screenshots.
 
 ## Remaining mpv C dependencies
 
@@ -614,9 +647,10 @@ Fixture corpus: reproducible from `tests/fixtures/gen.sh` plus
   hardware paths, audible output, HDR/color, manual-checklist owner runs:
   all on the Needs environment list, none blocking.
 - Non-UTF-8 path arguments rejected before the classifier (open, unchanged).
-- The S7e GUI host opens one file; Finder open, drag-and-drop, playlist
-  replacement, remote command center, and touchbar stay for S8 artifact
-  integration.
+- The S7e GUI host opened one file; S8b adds Finder open, drag-and-drop,
+  playlist replacement, and screenshots. Remote command center and
+  touchbar were already disabled in the C build and have no behavior to
+  port.
 - Clipboard removal landed in S7a.
 
 ## perf-gate-ready

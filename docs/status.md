@@ -4,7 +4,7 @@ Player is a local-only media player. The macOS release artifact is `dist/Player.
 
 ## Current state
 
-- The Rust port is at S8a: the engine owns scheduling, demux, decode, audio, video rendering, Lua, subtitles, OSD, OSC composition, the TUI (including video files' audio), and the standalone Rust GUI host. A new `player-app` binary owns the application layer (CLI, IPC, playlists, chapters, track switching, properties/events, OSC dispatch) and passes the S8 named gates through `PLAYER_BIN`. S8b (GUI/TUI modes in the Rust binary) and S9 (legacy removal, Cargo-authoritative release) remain.
+- The Rust port is at S8b: the engine owns scheduling, demux, decode, audio, video rendering, Lua, subtitles, OSD, OSC composition, and both presentation modes. The `player-app` binary owns the application layer (CLI, IPC, playlists, chapters, track switching, properties/events, OSC dispatch, native GUI window, TUI, Finder open, drag-and-drop, and PNG screenshots) and passes the S8 named gates through `PLAYER_BIN`, including `tui` and `gui`. S9 (legacy removal, Cargo-authoritative release) remains.
 - `osd-fidelity` passes 10/10 on macOS and in the Linux container; `gui` passes 3/3 on both; `linux-gpu-next` passes 41/41 including the OSD pixel diff and the GUI gate.
 - The app was rebuilt at `96331a9` and fully re-verified on the macOS host after the terminal UI work.
 - `tests/run.sh suite`: 341 passed, 0 failed. The run includes the release gate and the GUI gate.

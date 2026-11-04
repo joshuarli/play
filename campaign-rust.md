@@ -4,10 +4,10 @@
 
 Goal: replace the remaining mpv-derived C playback engine with a small Rust-owned engine. No loss of supported local playback. Both release artifacts keep building.
 
-- Last accepted: S8a (Rust `player` application core: CLI, IPC, playlists, chapters, track switching, properties/events, OSC dispatch, traces; named gates green on macOS and in the Alpine container). S7e (Rust GUI host; `gui` 3/3, `linux-gpu-next` 41/41) and earlier slices landed before it.
-- Red: none. Workspace green on macOS and in the Linux container; `cli`, `input`, `playlist`, `state`, `play`, `seek`, `corpus`, `osc`, `osc-input`, `traces`, `dispatch`, `failures`, `lua-host`, `osc`, `tui`, `osd-fidelity`, `ffi`, and `gui` green.
-- Next: S8b (wire GUI and TUI modes into the Rust `player` binary and restore native open/drag/screenshot behavior), then S9 (retire the legacy engine and make Cargo authoritative). The C engine stays the development reference and release until the Rust binary passes the suite.
-- Open: the standalone `player-gui` host still opens one file; the Rust `player` binary has no TUI/GUI mode yet. Finder open, drag-and-drop, playlist replacement, remote command center, and touchbar stay for S8b. The release app is 32,079,071 B while both engines are linked, 2.54 MB over the 29,542,136 B budget; S9 removes the C engine. Ordered chapters stay open (no fixture, needs linking design).
+- Last accepted: S8b (GUI and TUI modes in the Rust `player` binary; Finder open, drag-and-drop, playlist replacement, and PNG screenshots). S8a (Rust application core), S7e (GUI host; `gui` 3/3, `linux-gpu-next` 41/41), and earlier slices landed before it.
+- Red: none. Workspace green on macOS and in the Alpine container; `cli`, `input`, `playlist`, `state`, `play`, `seek`, `corpus`, `osc`, `osc-input`, `traces`, `dispatch`, `failures`, `lua-host`, `tui` (18), `gui` (3), `osd-fidelity`, `ffi`, and `rust-link` green.
+- Next: S9 (retire the legacy engine and make Cargo authoritative). The C engine stays the development reference and release until the Rust binary passes the suite.
+- Open: remote command center and touchbar were already disabled in the C build, so they have no behavior to port. Ordered chapters stay open (no fixture, needs linking design). The release app is 32,079,071 B while both engines are linked, 2.54 MB over the 29,542,136 B budget; S9 removes the C engine. The Alpine development binary must be built with `-C target-feature=-crt-static`; a static-pie with Wayland in NEEDED dies in the loader.
 - Resume: read this doc and `docs/RUST-PORT.md`, then run the next open slice. If the tree moved, adapt. Never overwrite newer work.
 
 ## Charter
