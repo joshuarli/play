@@ -1,68 +1,68 @@
 # FFmpeg
 
+Player links a prebuilt static FFmpeg SDK from `laputa-systems/ffmpeg-build`. Player does not build FFmpeg. The producer repository owns the sources, the component profile, the configure flags, and the full audit; Player pins one release and checks the shipped manifest against its own playback contract.
+
 ## Pin
 
-FFmpeg **n9.0.2**, commit `ce8f11b9fac4cd7ccfb41ca7c01bc17f5cda8cc3`.
+`ffmpeg-sdk.lock.json` names the producer release:
 
-`scripts/build-ffmpeg.sh` downloads the GitHub tag archive:
-
-```text
-https://github.com/FFmpeg/FFmpeg/archive/refs/tags/n9.0.2.tar.gz
-SHA-256 6e374ed621e48faa40639307dff48ba6fe574a509977956d2cce9669b7cc27e9
+```json
+{
+  "contract": 1,
+  "repository": "laputa-systems/ffmpeg-build",
+  "release": "<YYYYMMDD or YYYYMMDD-rN>",
+  "profile": "play-sdk",
+  "ffmpeg": "9.0.2",
+  "targets": {
+    "aarch64-apple-darwin": {"asset": "ffmpeg-9.0.2+<release>-aarch64-apple-darwin-play-sdk.tar.gz", "sha256": "..."},
+    "x86_64-unknown-linux-musl": {"asset": "ffmpeg-9.0.2+<release>-x86_64-unknown-linux-musl-play-sdk.tar.gz", "sha256": "..."}
+  }
+}
 ```
 
-The extracted tree is `FFmpeg-n9.0.2/`. The script writes a `VERSION` file containing `9.0.2` before configuring; without it, `ffbuild/version.sh` walks up to the enclosing mpv repository and records mpv's `git describe` in `ffversion.h`.
+The two targets are Player's two platforms. The SDK is FFmpeg n9.0.2, dav1d 1.5.4, and zlib 1.3.2, built by the producer from SHA-256-pinned sources.
 
-## Build
-
-`scripts/ffmpeg-components.txt` is the single allowlist. `scripts/build-ffmpeg.sh` maps each entry to `--enable-demuxer`, `--enable-decoder`, `--enable-parser`, `--enable-bsf`, `--enable-filter`, `--enable-hwaccel`, or `--enable-protocol`, then configures:
+## Fetch
 
 ```sh
-./configure \
-  --disable-shared --enable-static \
-  --disable-programs --disable-doc \
-  --disable-network --disable-avdevice --disable-autodetect \
-  --disable-everything \
-  --enable-libdav1d \
-  --enable-zlib \
-  --enable-videotoolbox \
-  ...allowlist enables...
+scripts/fetch-ffmpeg-sdk.sh aarch64-apple-darwin
+scripts/linux-container.sh scripts/fetch-ffmpeg-sdk.sh x86_64-unknown-linux-musl
 ```
 
-`--disable-autodetect` leaves dav1d 1.5.4 plus the system VideoToolbox, CoreFoundation, CoreMedia, CoreVideo, and CoreServices frameworks. `TMPDIR` points at `.work/tmp`. No `ffmpeg` or `ffprobe` program is installed. `scripts/build.sh` prepends the development FFmpeg pkg-config path; `scripts/release.sh` links the release prefix.
+The script downloads the pinned asset into `.work/tmp/ffmpeg-sdk` and verifies its SHA-256 before extracting. The archive must contain exactly one directory named after the asset. Its `share/ffmpeg-build/manifest.json` must agree with the pin on profile, target, FFmpeg version, release tag, and asset name. Only then does the script move it to `.work/deps/ffmpeg-sdk/<target>`. A prefix whose manifest already matches the pin is reused. `scripts/build.sh`, `scripts/release.sh`, and `scripts/build-linux.sh` call the script, so a normal build fetches on first use.
 
-A line prefixed `macos/` or `linux/` applies to that platform only. macOS carries the VideoToolbox hwaccels. Linux carries the `h264_vaapi`, `hevc_vaapi`, `vp9_vaapi`, and `av1_vaapi` hwaccels and the native `av1` decoder they attach to (software AV1 still uses `libdav1d`), drops `--enable-videotoolbox`, and adds `--enable-pic --arch=x86_64 --enable-vaapi`. Platform lines add to the common categories. `scripts/build-deps-linux.sh` puts the Linux build at `.work/deps/linux/ffmpeg`, and the manifest gate reads that tree on Linux.
+## Link
 
-No subtitle decoder or subtitle demuxer is built: the player reads SubRip itself, and embedded `subrip` packets come from the container demuxers.
+`rust/player-media/build.rs` uses the shared checks in `rust/player-build/src/ffmpeg_sdk.rs`:
 
-Add a component only after a named fixture fails without it; remove components in groups while the corpus stays green. Do not start from a guessed allowlist, and do not respond to a failure by enabling everything.
+- The prefix is `FFMPEG_PREFIX` if set, otherwise `.work/deps/ffmpeg-sdk/$TARGET`. There is no fallback to a system, Homebrew, or older local prefix.
+- The prefix must pass the same manifest check as the fetch script. A missing prefix, a `tools` archive, a different release, or a Homebrew prefix fails the build with a message that names the fetch command.
+- Link flags come from `pkg-config --static --libs libavformat libavcodec libswscale libavutil` with `PKG_CONFIG_LIBDIR` set to the SDK only. The tokenizer honors pkg-config's backslash-escaped spaces. A `-L` outside the SDK is an error, and every `-l` that names an SDK archive links statically. That covers the FFmpeg libraries, `libdav1d.a`, and `libz.a`.
+- macOS adds the VideoToolbox, CoreFoundation, CoreMedia, CoreVideo, and CoreServices frameworks from the `.pc` files. On Linux, `-lva` and `-lva-drm` resolve through the system `libva` pkg-config libdir and are passed by absolute name, because the musl cross-linker does not search that directory for `-l`.
+- The build reruns when the pin, `FFMPEG_PREFIX`, or the SDK's manifest, `include/`, or `lib/` changes.
 
-The terminal UI adds the `png` and `mjpeg` picture decoders for embedded album art. The `audio-cover` and `audio-cover-jpeg` fixtures fail without them. FFmpeg is also configured with `--enable-zlib` because its PNG decoder needs it; zlib was already part of the player's dependency set, so the release closure gains no new runtime library.
-
-The release build puts FFmpeg at `.work/deps/release/ffmpeg`; a standalone `scripts/build-ffmpeg.sh` defaults to `.work/deps/ffmpeg-full`. The manifest gate reads the release tree when it exists and falls back to the development tree. `scripts/build-deps.sh` stamps every component with a hash of the build script, the FFmpeg build script, and the allowlist; a changed input rebuilds the closure. Old `ok` stamps are invalid and cause one full rebuild.
-
-## Verification
-
-- `config_components.h` enables no AAC, MP3, FLAC, ALAC, Opus, Vorbis, or PCM FFmpeg audio decoder.
-- `tests/run.sh corpus`: 104 passed, 0 failed.
-- `tests/run.sh audio`: 15 passed, 0 failed.
-- `tests/run.sh hwdec`: 8 passed, 0 failed.
-- `tests/run.sh seek`: 5 passed, 0 failed.
-- `build/mpv --version` reports `FFmpeg version: 9.0.2`.
-- `build/mpv --list-protocols` reports one protocol, `file`.
-- `otool -L build/mpv` contains no `libav*`, curl, or SSL library.
-- Direct non-system libraries are dav1d, libplacebo, and the Vulkan loader.
-
-The configure auto-selects `h263` (pulled in by the MPEG-4 path) and `vp9_superframe_split` (pulled in by `vp9_superframe`). The manifest records both under `auto_selected`; they are not in the requested allowlist.
+dav1d and zlib are inside the SDK as static archives. The macOS bundle no longer carries `libdav1d.7.dylib`, and Player no longer writes an SDK-zlib `zlib.pc` or builds its own zlib.
 
 ## Manifest gate
 
-`scripts/ffmpeg-manifest.sh --generate` writes a manifest from the build tree (`config_components.h` and `config.mak`) to `.work/deps/ffmpeg-manifest.json`. The file is generated, not tracked.
+`tests/run.sh ffmpeg-audit` (`scripts/ffmpeg-manifest.sh --check [manifest.json]`) reads the shipped manifest, by default from `.work/deps/ffmpeg-sdk/<target>`. It checks Player's playback contract, not the full producer allowlist:
 
-`tests/run.sh ffmpeg-audit` regenerates the manifest in memory and checks the allowlist. It fails on any encoder, muxer, device, network protocol, decoder outside the video allowlist, or external library outside `dav1d`.
+- the profile is `play-sdk`, the target is the Rust target, FFmpeg is the pinned 9.0.2, and the release tag matches the pin;
+- no encoders, muxers, or devices; `file` is the only protocol, no network scheme from `scripts/network-schemes.txt` is enabled, and `--disable-network` is configured;
+- no FFmpeg audio decoders, because Symphonia owns audio;
+- the required playback demuxers (`mov`, `matroska`, `avi`, `mp3`, `flac`, `wav`, `ogg`) and decoders (`h264`, `hevc`, `libdav1d`, `vp9`, `mpeg4`, `png`, `mjpeg`) are present. macOS also needs the VideoToolbox hwaccels. Linux needs the native `av1` decoder and the VA-API hwaccels;
+- `dav1d` is the only external library, and `dav1d` and `zlib` are the only bundled dependencies.
 
-Current result: 19 passed, 0 failed. The allowlist now includes the two picture decoders; the manifest records them. A temporary manifest with `http` added to the protocols fails two cases (`protocols allowed`, `no network protocols`) and exits nonzero; the temporary file is removed after the check.
+The producer's `build.py audit` validates the complete resolved configuration against the profile in `ffmpeg-build`. Player does not duplicate that allowlist.
 
-## Release state
+## Update
 
-Both release artifacts bundle the minimal FFmpeg 9.0.2 built from the pinned allowlist. `--list-protocols` reports only `file`; no encoder, muxer, device, network protocol, or external library beyond dav1d is enabled. The macOS app links the pinned closure, not Homebrew; sizes are in `docs/metrics.md`.
+Move to a new producer release only after it is published with its `SHA256SUMS`:
+
+1. Set `release` and each target's `asset` and `sha256` in `ffmpeg-sdk.lock.json` from the release's `SHA256SUMS`.
+2. Run `scripts/fetch-ffmpeg-sdk.sh aarch64-apple-darwin`, `tests/run.sh ffmpeg-audit`, `scripts/audit.sh`, and `tests/run.sh suite`, and run the Linux half in the container.
+3. Publish a Player patch release.
+
+## Fixtures
+
+`tests/fixtures/gen.sh` needs a full host FFmpeg 9.0.2: Homebrew `ffmpeg` on macOS (`scripts/dev-deps.sh` pins it), and the Alpine `ffmpeg` package in `docker/linux/Dockerfile`. That FFmpeg is a test-only dependency; the shipped SDK does not provide it, and the app never runs it.

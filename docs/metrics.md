@@ -28,9 +28,12 @@ Automated playback is headless (`--vo=null --ao=null`), so GUI and renderer beha
 | 2026-11-03 | f41bb506e60d | final | 7600640 | 7600640 | 15127360 | 12 | 17.94 | 16.42 | 36.43 | 14.34 | 219.78 | 2.98 | 2.99 | 40.45 | 10.88 | 1 | headless, 3 s clips |
 | 2026-11-03 | c12a3c3df488 | final | 7074160 | 7074160 | 15127360 | 12 | 17.56 | 15.9 | 34.65 | 14.25 | 218.22 | 2.96 | 2.97 | 44.45 | 10.41 | 1 | headless, 3 s clips |
 | 2026-11-04 | da0c70dbde2b | final | 7107568 | 7107568 | 12606880 | 8 | 17.22 | 16.36 | 38.47 | 14.05 | 262.41 | 2.51 | 2.78 | 11.7 | 12.11 | 1 | headless, 3 s clips |
+| 2026-11-04 | 3c2f7e61356d | final | 7881984 | 7881984 | 11796736 | 7 | 15.77 | 14.2 | 34.18 | 14.0 | 262.08 | 3.24 | 3.54 | 12.44 | 11.07 | 1 | headless, 3 s clips |
 <!-- measure:end -->
 
 The `baseline` row is the original C player. The distributable budget is half of its unique closure, 29,542,136 B.
+
+The `3c2f7e61356d` row is the first build on the `ffmpeg-build` `play-sdk` release `20261104`; its working tree differed from that commit only in docs. Against `da0c70dbde2b` the executable grows by 774,416 B because dav1d and zlib are now linked statically from the SDK, and the closure shrinks by 810,144 B and one file because `libdav1d.7.dylib` is no longer bundled. The distributable is 19,678,720 B, well within 29,542,136 B. The closure is MoltenVK, the Vulkan loader, libplacebo, and the four shaderc/glslang/SPIRV-Tools dylibs; the only protocol is `file`. Timings were taken on a busy host and are not a gate.
 
 ## Budgets
 

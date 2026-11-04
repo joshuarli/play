@@ -14,7 +14,7 @@ The build sets `-C target-feature=-crt-static`. A static-pie executable with Way
 
 ## Dependencies
 
-`scripts/build-deps-linux.sh` builds these as static libraries from pinned, checksum-verified sources into `.work/deps/linux`: Vulkan-Headers 1.4.363.0, zlib 1.3.2, dav1d 1.5.4, shaderc 2026.4 (with glslang `e1b562a8`, SPIRV-Tools `ef96ed76`, SPIRV-Headers `04fd3caa`), and libplacebo 7.387.0. The prefix holds no shared library; text shaping uses the system Fontconfig, HarfBuzz, and FreeType, which `rust/player-overlay/build.rs` links through pkg-config.
+`scripts/build-deps-linux.sh` builds these as static libraries from pinned, checksum-verified sources into `.work/deps/linux`: Vulkan-Headers 1.4.363.0, shaderc 2026.4 (with glslang `e1b562a8`, SPIRV-Tools `ef96ed76`, SPIRV-Headers `04fd3caa`), and libplacebo 7.387.0. The static FFmpeg SDK (FFmpeg 9.0.2 with dav1d and zlib) comes from `scripts/fetch-ffmpeg-sdk.sh x86_64-unknown-linux-musl` into `.work/deps/ffmpeg-sdk/x86_64-unknown-linux-musl`; see `docs/ffmpeg.md`. Neither prefix holds a shared library; text shaping uses the system Fontconfig, HarfBuzz, and FreeType, which `rust/player-overlay/build.rs` links through pkg-config.
 
 The executable links only these shared libraries from the Alpine image:
 

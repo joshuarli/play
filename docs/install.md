@@ -33,6 +33,8 @@ scripts/build-deps.sh
 scripts/release.sh
 ```
 
+`scripts/release.sh` also downloads and verifies the static FFmpeg SDK pinned in `ffmpeg-sdk.lock.json` (see [FFmpeg](ffmpeg.md)); building it needs network access to GitHub releases once.
+
 `make install` builds the same app and copies it to `~/Applications/Player.app`.
 Pass another location with `PREFIX`, such as `make install PREFIX=/Applications`,
 or stage a package root with `DESTDIR`. `make uninstall` removes that copy.
@@ -51,7 +53,7 @@ dist/Player.app/Contents/MacOS/player --tui FILE
 
 Kitty-capable terminals show the embedded cover at full resolution; others use truecolor half-blocks. See [Terminal UI](tui-design.md).
 
-The bundle carries its own pinned dylibs, Vulkan loader, and MoltenVK. It does not use Homebrew at runtime. It is ad-hoc signed and not notarized. Do not distribute the build without a signing identity. It declares `MPVBUNDLE` and the supported document types in `Info.plist`.
+The bundle carries its own pinned dylibs, Vulkan loader, and MoltenVK; FFmpeg, dav1d, and zlib are linked statically into the executable. It does not use Homebrew, a global FFmpeg, or `usr` at runtime. It is ad-hoc signed and not notarized. Do not distribute the build without a signing identity. It declares `MPVBUNDLE` and the supported document types in `Info.plist`.
 
 ## Local-only contract
 

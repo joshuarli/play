@@ -13,7 +13,7 @@ version=$("$FFMPEG" -version | sed -n 1p)
 case "$version" in
     "ffmpeg version 9.0.2"*) ;;
     *)
-        printf 'error: ffmpeg 9.0.2 is required, found: %s\n' "$version" >&2
+        printf 'error: fixtures need a full host ffmpeg 9.0.2 (test-only; the FFmpeg SDK has no programs), found: %s\n' "$version" >&2
         exit 1
         ;;
 esac

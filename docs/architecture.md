@@ -6,9 +6,9 @@ Player is one Rust process with pinned native multimedia libraries and a small n
 
 - **Rust playback engine:** `player-engine` owns the scheduler, clock, playback state, frame pacing, and session worker. `player-media` owns FFmpeg demuxing and video decode. `player-audio` owns Symphonia audio decode, the channel mixer, resampling, the clock, and the CoreAudio and ALSA sinks. `player-overlay` owns the overlay display list, its rasterizer, and native text shaping. `player-output` owns the libplacebo/Vulkan renderer. `player-display` owns the native window, input, and presentation surface: a Cocoa/Metal bridge on macOS and Wayland on Linux.
 - **Rust application:** `player-app` owns argument parsing, IPC, playlists, chapters, track switching, the property/event surface, command dispatch, the on-screen controller (OSC), GUI and TUI modes, Finder open, drag-and-drop, and screenshots. `player-gui` is a thin compatibility launcher.
-- **Native code:** the Objective-C window bridge under `rust/player-display/bridge/`, the pinned FFmpeg/libplacebo/Vulkan/MoltenVK/shaderc/dav1d/zlib closure, the system text stack (Core Text on macOS; Fontconfig, HarfBuzz, and FreeType on Linux), and the platform frameworks. There is no mpv playback loop, libmpv, or C player process.
+- **Native code:** the Objective-C window bridge under `rust/player-display/bridge/`, the pinned static FFmpeg SDK (FFmpeg, dav1d, zlib) from `laputa-systems/ffmpeg-build`, the pinned libplacebo/Vulkan/MoltenVK/shaderc closure, the system text stack (Core Text on macOS; Fontconfig, HarfBuzz, and FreeType on Linux), and the platform frameworks. There is no mpv playback loop, libmpv, or C player process.
 
-The release is one Rust executable. On macOS it links the pinned multimedia dylibs, which are copied into `Player.app/Contents/Frameworks`. On Linux it is an x86-64 musl executable that links the pinned static prefix and a small set of system libraries.
+The release is one Rust executable. It links the FFmpeg SDK statically. On macOS it links the pinned libplacebo, Vulkan, MoltenVK, and shaderc dylibs, which are copied into `Player.app/Contents/Frameworks`. On Linux it is an x86-64 musl executable that links the pinned static prefix and a small set of system libraries.
 
 ## Input boundary
 
@@ -40,7 +40,7 @@ Overlays are drawn by `player-overlay`. A `DisplayList` holds fills, strokes, im
 
 ## Release and dependencies
 
-`scripts/build-deps.sh` builds Vulkan-Headers and Loader, dav1d, shaderc, libplacebo, and FFmpeg from pinned sources, and fetches the checksum-pinned MoltenVK binary. `scripts/release.sh` builds `player-app` with the `dist` Cargo profile and calls `scripts/bundle.py` to copy the non-system closure into `Player.app/Contents/Frameworks`, rewrite install names to `@rpath`, add the executable rpath, bundle MoltenVK and its ICD manifest, write `Info.plist`, write a build stamp with the revision and release binary hash, and ad-hoc sign the app.
+`scripts/build-deps.sh` builds Vulkan-Headers and Loader, shaderc, and libplacebo from pinned sources, and fetches the checksum-pinned MoltenVK binary. `scripts/fetch-ffmpeg-sdk.sh` fetches the FFmpeg SDK pinned in `ffmpeg-sdk.lock.json` and verifies it (see `docs/ffmpeg.md`). `scripts/release.sh` builds `player-app` with the `dist` Cargo profile and calls `scripts/bundle.py` to copy the non-system closure into `Player.app/Contents/Frameworks`, rewrite install names to `@rpath`, add the executable rpath, bundle MoltenVK and its ICD manifest, write `Info.plist`, write a build stamp with the revision and release binary hash, and ad-hoc sign the app.
 
 The bundler sets `MPVBUNDLE=true` in `Info.plist`; the app uses that value to stay idle with a window when launched without a file, so a Finder open event can play. It also declares the movie, audio, and playlist types.
 
