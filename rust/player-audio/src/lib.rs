@@ -8,7 +8,6 @@ pub mod clock;
 pub mod decode;
 pub mod mix;
 pub mod pipeline;
-pub mod probe;
 pub mod resample;
 pub mod session;
 pub mod sink;
