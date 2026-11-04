@@ -64,6 +64,11 @@ run_log() {
     fi
 }
 
+if [ "$(cat "$PREFIX/.stamp-input" 2>/dev/null)" != "$INPUT_HASH" ]; then
+    find "$PREFIX" -mindepth 1 -maxdepth 1 ! -name ffmpeg -exec rm -rf {} +
+    printf '%s\n' "$INPUT_HASH" >"$PREFIX/.stamp-input"
+fi
+
 meson_static() {
     local name=$1 dir=$2
     shift 2
