@@ -8,7 +8,10 @@ RUN apk add --no-cache \
         vulkan-loader-dev vulkan-headers \
         mesa-vulkan-swrast weston weston-backend-headless weston-clients weston-shell-desktop font-dejavu fontconfig \
         libva-dev libdrm-dev mesa-va-gallium libva-utils \
-        ffmpeg rustup gperf ripgrep
+        ffmpeg rustup gperf ripgrep \
+        fontconfig-dev harfbuzz-dev freetype-dev \
+        font-noto font-noto-arabic font-noto-hebrew font-noto-devanagari font-noto-thai \
+        font-noto-cjk font-noto-emoji
 
 ENV RUSTUP_HOME=/opt/rustup CARGO_HOME=/opt/cargo PATH=/opt/cargo/bin:$PATH
 RUN rustup-init -y --profile minimal --default-toolchain none

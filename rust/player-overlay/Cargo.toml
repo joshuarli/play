@@ -6,3 +6,7 @@ description = "Typed overlay display list, shape rasterizer, and native text for
 
 [lib]
 crate-type = ["rlib"]
+
+[target.'cfg(target_os = "linux")'.dependencies]
+unicode-bidi = "0.3.18"
+unicode-linebreak = "0.1.5"
