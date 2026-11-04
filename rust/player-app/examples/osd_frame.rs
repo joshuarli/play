@@ -109,16 +109,18 @@ fn main() -> Result<(), String> {
         let count = |kind: TrackKind| status.tracks.iter().filter(|track| track.kind == kind).count();
         let audio_tracks = count(TrackKind::Audio);
         let playback = Playback {
+            title: std::path::Path::new(&options.fixture)
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default(),
             paused: true,
-            fullscreen: false,
-            muted: false,
             volume: 100.0,
             position: status.position,
             duration,
             audio_tracks,
             sub_tracks: count(TrackKind::Subtitle),
             aid: (audio_tracks > 0).then_some(1),
-            sid: None,
+            ..Playback::default()
         };
         let (width, height) = options.window;
         osc.update(playback, width, height, Instant::now());

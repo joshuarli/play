@@ -15,6 +15,7 @@ Owner-run checks before a release and after a platform change. Automated gates a
 | Audio | No clicks, dropouts, or persistent underruns | not run |
 | Interaction | OSC reveal, auto-hide (also in fullscreen), click and drag seek, volume, fullscreen, track selector with a real mouse | not run |
 | Interaction | OSC hit areas line up with the drawn controls on Retina 2x; scroll wheel over volume and seek | not run |
+| Appearance | OSC next to mpv v0.41.0 on a real display at 1x and Retina 2x: bar alpha, icons, fonts, seek bar, fade, and the presented overlay blend (the `osc-mpv` gate checks the composited render, not the on-screen GPU blend) | not run |
 | Interaction | Keyboard bindings match the shipped help | not run |
 | Interaction | Drag-and-drop and external subtitle loading | not run |
 | Interaction | Clean quit and repeated open/close | not run |

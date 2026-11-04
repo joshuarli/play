@@ -258,8 +258,7 @@ pub fn get(app: &App, name: &str) -> Result<NativeValue, String> {
         "osc-visible" => Ok(NativeValue::Bool(osc(app)?.visible())),
         "osc-areas" => Ok(NativeValue::Map(
             osc(app)?
-                .layout()
-                .controls()
+                .areas()
                 .into_iter()
                 .map(|(name, rect)| (name.to_owned(), rect_value(rect)))
                 .collect(),

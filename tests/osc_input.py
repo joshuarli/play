@@ -58,11 +58,13 @@ def playback_controls(results, mpv_class, fixture_entry, fixture_path):
         areas = mpv.get_property("osc-areas")
         results.check("osc-input: hit areas",
                       isinstance(areas, dict)
-                      and set(areas) == {"play", "seek", "volume", "fullscreen"},
+                      and set(areas) == {"play", "seek", "volume", "fullscreen", "audio",
+                                         "time_elapsed", "time_remaining"},
                       str(areas))
         results.check("osc-input: 720p geometry",
-                      areas.get("play") == {"x": 12, "y": 660, "w": 40, "h": 40}
-                      and areas["fullscreen"]["x"] + areas["fullscreen"]["w"] == 1268,
+                      areas.get("play") == {"x": 7, "y": 690, "w": 27, "h": 30}
+                      and areas["fullscreen"]["x"] + areas["fullscreen"]["w"] == 1273
+                      and areas["seek"] == {"x": 234, "y": 690, "w": 640, "h": 30},
                       str(areas))
         boxes = [areas[name] for name in ("play", "seek", "volume", "fullscreen")]
         results.check("osc-input: controls do not overlap",
@@ -139,8 +141,8 @@ def playback_controls(results, mpv_class, fixture_entry, fixture_path):
 
         mpv.command("set", "window-scale", "2")
         resized = mpv.wait_property(
-            "osc-areas", lambda value: value.get("play", {}).get("w") == 40
-            and value["play"]["y"] == 480 - 64 - 8 + 12, timeout=5)
+            "osc-areas", lambda value: abs(value.get("play", {}).get("w", 0) - 18) < 0.01
+            and abs(value["play"]["y"] - 460) < 0.01, timeout=5)
         dims = mpv.get_property("osd-dimensions")
         results.check("osc-input: layout follows the window size",
                       dims.get("w") == 640 and dims.get("h") == 480
@@ -213,6 +215,9 @@ def pointer_visibility(results, mpv_class, fixture_entry, fixture_path):
         mpv.wait_property("osc-visible", lambda value: value is False, timeout=5)
 
         mpv.command("mouse", 640, 100)
+        results.check("osc-input: motion above the dead zone does not show",
+                      mpv.get_property("osc-visible") is False, "shown by distant motion")
+        mpv.command("mouse", 640, 400)
         shown = time.monotonic()
         results.check("osc-input: pointer motion shows",
                       mpv.get_property("osc-visible") is True, "still hidden")
@@ -235,7 +240,7 @@ def pointer_visibility(results, mpv_class, fixture_entry, fixture_path):
         results.check("osc-input: always stays shown",
                       mpv.get_property("osc-visible") is True, "always hid")
         mpv.command("set", "osc-visibility", "never")
-        mpv.command("mouse", 640, 100)
+        mpv.command("mouse", 640, 400)
         results.check("osc-input: never stays hidden",
                       mpv.get_property("osc-visible") is False, "never showed")
     results.check("osc-input: pointer exit", mpv.returncode == 0, f"exit {mpv.returncode}")

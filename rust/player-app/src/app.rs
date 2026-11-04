@@ -16,7 +16,7 @@ use player_tui::{Control, Cover, Player as TuiPlayer, Snapshot, Track};
 
 use crate::ipc::{self, IpcServer};
 use crate::options::{self, Options, Start};
-use crate::osc::{Osc, Playback, Response};
+use crate::osc::{Chapter, Osc, Playback, Response};
 use crate::playlist::{self, Entry, Playlist};
 use crate::properties::{self, Probe};
 use crate::value::NativeValue;
@@ -999,17 +999,38 @@ impl App {
     }
 
     fn update_osc(&mut self, status: &EngineStatus) {
+        if self.osc.is_none() {
+            return;
+        }
+        let title = match properties::get(self, "media-title") {
+            Ok(NativeValue::String(title)) => title,
+            _ => String::new(),
+        };
         let Some(osc) = self.osc.as_mut() else {
             return;
         };
         let count = |kind: TrackKind| status.tracks.iter().filter(|track| track.kind == kind).count();
         let playback = Playback {
+            title,
             paused: self.paused,
             fullscreen: self.fullscreen,
             muted: self.muted,
             volume: self.volume,
+            speed: self.speed,
             position: status.position,
             duration: self.probe.as_ref().map_or(status.duration, |probe| probe.duration),
+            playlist_position: self.playlist.current().map_or(1, |index| index + 1),
+            playlist_count: self.playlist.count(),
+            chapters: self.probe.as_ref().map_or_else(Vec::new, |probe| {
+                probe
+                    .chapters
+                    .iter()
+                    .map(|chapter| Chapter {
+                        time: chapter.start_seconds,
+                        title: chapter.title.clone().unwrap_or_default(),
+                    })
+                    .collect()
+            }),
             audio_tracks: count(TrackKind::Audio),
             sub_tracks: count(TrackKind::Subtitle),
             aid: if self.aid_disabled { None } else { self.aid },
