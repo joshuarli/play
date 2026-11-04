@@ -132,7 +132,7 @@ mod tests {
 
     #[test]
     fn null_sink_accounts_frames_and_level() {
-        let mut sink = NullSink::new(2, 48000);
+        let mut sink = NullSink::new(2, 1);
         sink.write(&[0.5, -0.5, 0.0, 0.0]).unwrap();
         assert_eq!(sink.frames_written(), 2);
         assert_eq!(sink.peak(), 0.5);
