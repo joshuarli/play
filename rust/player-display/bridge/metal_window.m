@@ -113,7 +113,6 @@ static void player_mac_enqueue_files(NSArray<NSURL *> *urls, BOOL append) {
 // its event loop, so it runs AppKit until launch completes and stops there.
 - (void)applicationDidFinishLaunching:(NSNotification *)notification {
     (void)notification;
-    [NSApp activateIgnoringOtherApps:YES];
     [NSApp stop:nil];
     NSEvent *wake = [NSEvent otherEventWithType:NSEventTypeApplicationDefined
                                        location:NSZeroPoint
@@ -139,7 +138,7 @@ static void player_mac_finish_launching(void) {
     [[NSUserDefaults standardUserDefaults] setObject:@"NO"
                                               forKey:@"NSTreatUnknownArgumentsAsOpen"];
     NSApplication *app = [NSApplication sharedApplication];
-    [app setActivationPolicy:NSApplicationActivationPolicyRegular];
+    [app setActivationPolicy:NSApplicationActivationPolicyAccessory];
     player_mac_delegate = [[PlayerMacAppDelegate alloc] init];
     app.delegate = player_mac_delegate;
     [app run];
@@ -303,8 +302,10 @@ void *player_mac_window_open(const char *title, int width, int height) {
     window.delegate = watcher;
 
     [window setAcceptsMouseMovedEvents:YES];
+    [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
     [window makeKeyAndOrderFront:nil];
     [window makeFirstResponder:view];
+    [NSApp activateIgnoringOtherApps:YES];
 
     NSMenu *menuBar = [[NSMenu alloc] init];
     NSMenuItem *appMenuItem = [[NSMenuItem alloc] init];
