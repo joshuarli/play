@@ -30,10 +30,10 @@ with these packages, built against these versions:
 
 $runtime_packages
 
-It also needs a Vulkan driver for your GPU (for example mesa-vulkan-layers
-and mesa-vulkan-intel, mesa-vulkan-ati, or mesa-vulkan-swrast), a Wayland
-compositor, and a fontconfig configuration with a font such as font-dejavu for subtitles
-and the on-screen controller.
+It also needs a Vulkan driver for your GPU (for example mesa-vulkan-intel,
+mesa-vulkan-ati, or mesa-vulkan-swrast), a Wayland compositor, and a
+fontconfig configuration with a font such as font-dejavu for subtitles and
+the on-screen controller.
 The scheduler decodes video in software. --hwdec is accepted for compatibility
 and hwdec-current reports no. VA-API decode paths are compiled in but are not
 wired into the scheduler yet.
