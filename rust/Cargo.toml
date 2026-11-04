@@ -3,6 +3,7 @@ resolver = "2"
 members = ["player-app", "player-ass", "player-audio", "player-build", "player-core", "player-display", "player-engine", "player-backend", "player-gui", "player-media", "player-output", "player-tui"]
 
 [profile.dev]
+opt-level = 2
 incremental = false
 debug = "line-tables-only"
 split-debuginfo = "unpacked"
