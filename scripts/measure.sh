@@ -273,7 +273,7 @@ def exit_latency():
 def audio_underruns():
     lines = []
     with Mpv(["--ao=coreaudio", "--vo=null", "--no-video", "--volume=0"]) as player:
-        player.load(ROOT / ".work" / "fixtures" / "audio-wav.wav")
+        player.load(ROOT / ".work" / "fixtures" / "audio-mp3.mp3")
         player.wait_event("file-loaded", timeout=10)
         player.wait_eof(timeout=20)
         lines = player.lines

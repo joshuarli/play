@@ -111,7 +111,7 @@ const SEEK_PUMP_LIMIT: usize = 1024;
 const SEEK_PREROLL_CHUNKS: u64 = 8;
 const SUBTITLE_PRIME_WINDOW: f64 = 30.0;
 const SUBTITLE_PRIME_PACKETS: usize = 8192;
-const AUDIO_HIGH_WATER: f64 = 0.05;
+const AUDIO_HIGH_WATER: f64 = 0.12;
 const PREROLL_AUDIO_LIMIT: f64 = 3.0;
 
 pub struct Scheduler<D, A, V, AO, VO> {

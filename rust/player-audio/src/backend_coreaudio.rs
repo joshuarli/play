@@ -15,8 +15,8 @@ const FLAG_FLOAT_PACKED: u32 = 0x1 | 0x8;
 const LAYOUT_USE_BITMAP: u32 = 0x10000;
 const PROPERTY_CHANNEL_LAYOUT: AudioQueuePropertyID = u32::from_be_bytes(*b"aqcl");
 
-const BUFFER_COUNT: usize = 3;
-const FRAMES_PER_BUFFER: usize = 2048;
+const BUFFER_COUNT: usize = 10;
+const FRAMES_PER_BUFFER: usize = 1024;
 
 #[repr(C)]
 struct AudioStreamBasicDescription {
@@ -89,6 +89,8 @@ unsafe extern "C" {
 struct QueueState {
     free: Vec<AudioQueueBufferRef>,
     in_flight: usize,
+    streaming: bool,
+    underruns: u64,
 }
 
 struct Shared {
@@ -105,6 +107,9 @@ unsafe extern "C" fn buffer_done(user: *mut c_void, _queue: AudioQueueRef, buffe
         .lock()
         .unwrap_or_else(|poison| poison.into_inner());
     state.in_flight = state.in_flight.saturating_sub(1);
+    if state.in_flight == 0 && state.streaming {
+        state.underruns += 1;
+    }
     state.free.push(buffer);
     shared.ready.notify_one();
 }
@@ -143,6 +148,8 @@ impl CoreAudioSink {
             state: Mutex::new(QueueState {
                 free: Vec::with_capacity(BUFFER_COUNT),
                 in_flight: 0,
+                streaming: false,
+                underruns: 0,
             }),
             ready: Condvar::new(),
         });
@@ -260,6 +267,7 @@ impl CoreAudioSink {
                 .lock()
                 .unwrap_or_else(|poison| poison.into_inner());
             state.in_flight += 1;
+            state.streaming = true;
         }
         self.current = ptr::null_mut();
         self.staged_frames = 0;
@@ -272,6 +280,14 @@ impl CoreAudioSink {
             self.started = true;
         }
         Ok(())
+    }
+
+    fn stop_streaming(&self) {
+        self.shared
+            .state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .streaming = false;
     }
 
     fn status(status: OSStatus, what: &str) -> Result<(), String> {
@@ -345,6 +361,7 @@ impl AudioSink for CoreAudioSink {
     }
 
     fn flush(&mut self) -> Result<(), String> {
+        self.stop_streaming();
         // SAFETY: the queue is live; the worker thread never runs callbacks,
         // so immediate stop returns every buffer before this returns.
         Self::status(unsafe { AudioQueueStop(self.queue, 1) }, "AudioQueueStop")?;
@@ -355,15 +372,27 @@ impl AudioSink for CoreAudioSink {
     }
 
     fn finish(&mut self) -> Result<(), String> {
-        self.enqueue_current()
+        self.enqueue_current()?;
+        self.stop_streaming();
+        Ok(())
     }
 }
 
 impl Drop for CoreAudioSink {
     fn drop(&mut self) {
+        self.stop_streaming();
         // SAFETY: the queue is live until dispose returns; no callback can
         // fire afterwards, so the shared state dies safely with the sink.
         unsafe { AudioQueueDispose(self.queue, 1) };
+        let underruns = self
+            .shared
+            .state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .underruns;
+        if underruns > 0 {
+            eprintln!("[ao/coreaudio] {underruns} underruns: the output queue ran dry");
+        }
     }
 }
 
