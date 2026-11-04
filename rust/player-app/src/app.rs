@@ -81,7 +81,7 @@ pub struct App {
 
 impl App {
     pub fn new(options: Options) -> Self {
-        let fullscreen = options.fullscreen;
+        let fullscreen = options.fullscreen.unwrap_or(false);
         let osc = (options.osc && !options.tui)
             .then(|| Osc::new(OscVisibility::Auto, Instant::now()));
         App {
@@ -89,7 +89,7 @@ impl App {
             speed: 1.0,
             volume: options.volume,
             muted: options.muted,
-            fullscreen: options.fullscreen,
+            fullscreen,
             aid: None,
             aid_disabled: false,
             options,
@@ -706,8 +706,14 @@ impl App {
             .and_then(|name| name.to_str())
             .unwrap_or("player");
         let mut window = HostWindow::open(title, width.max(64), height.max(64))?;
-        if self.options.fullscreen {
+        let fullscreen = self
+            .options
+            .fullscreen
+            .unwrap_or(self.options.geometry.is_none());
+        if fullscreen {
             window.set_fullscreen(true);
+            self.fullscreen = true;
+            self.applied_fullscreen = true;
         }
         self.display = Some((window.width().max(1) as u32, window.height().max(1) as u32));
         self.window = Some(window);

@@ -13,7 +13,7 @@ from harness import (Failure, Mpv, Results, ROOT, TMP, fixture_entry,  # noqa: E
 
 ICD_DIR = Path("/usr/share/vulkan/icd.d")
 GPU_ARGS = ["--vo=gpu-next", "--gpu-context=waylandvk", "--gpu-sw=yes", "--ao=null",
-            "--hwdec=no", "--vulkan-swap-mode=mailbox", "--keep-open=yes", "--msg-level=all=info,vo=v"]
+            "--hwdec=no", "--vulkan-swap-mode=mailbox", "--keep-open=yes", "--fs=no", "--msg-level=all=info,vo=v"]
 
 
 class Compositor:

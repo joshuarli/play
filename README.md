@@ -28,7 +28,7 @@ The player does not read `mpv.conf`, `input.conf`, or scripts from user director
 
 ## Controls
 
-The on-screen controls provide play and pause, seek, volume and mute, fullscreen, and track selection. Open a file from the command line, Finder, or drag-and-drop; screenshots are available over IPC.
+The window opens fullscreen; pass `--fs=no` or `--geometry=WxH` for a window. The on-screen controls provide play and pause, seek, volume and mute, fullscreen, and track selection. Open a file from the command line, Finder, or drag-and-drop; screenshots are available over IPC.
 
 ## Terminal UI
 
