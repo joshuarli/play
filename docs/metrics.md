@@ -48,6 +48,28 @@ Removing Lua took the executable from 7,600,640 B to 7,074,160 B; headless timin
 | Pointer moving over the seek bar | 28.3% | 10.2% |
 | Playing, OSC hidden | 14.2% | 13.8% |
 
+## Interactive benchmarks
+
+`scripts/bench.py MODE` measures what a user feels in the GUI player, against Homebrew mpv where it can. Fixtures are generated into `.work/fixtures/bench`: `h264-gop10.mp4` (1080p24 x264, 250-frame GOP, AAC) and `vp9-opus.webm` (1080p VP9 realtime, 150-frame GOP, Opus). Every mode checks `perf-gate-ready` before and `perf-gate-ready -1` after, writes `.work/tmp/bench-MODE.json`, and exits 75 with `perf gate deferred: host busy` when either check fails.
+
+- `seek`: random absolute seeks at least 13 s from the current position; latency runs from the command to the first `time-pos` advance past the target. Medians of 15 per fixture and precision (`exact`, `keyframes`); mpv runs exact only.
+- `audio-cpu`: CPU percent over 10 s of `--no-video --ao=null` playback.
+- `frames`: fullscreen playback with the OSC hidden then shown: dropped frames, CPU, and RSS.
+- `gui-cpu --baseline OLD_PLAYER`: interleaved candidate and baseline runs of four scenarios (paused with the OSC hidden or shown, the pointer sweeping the seek bar at 60 Hz, playing with the OSC hidden), medians of `--runs`.
+
+Results from 2026-11-03 on the native-OSC build. The host was not quiet for every run, so treat them as indicative:
+
+| Metric | Player | mpv |
+|---|---:|---:|
+| Exact seek to playing, h264 | 159 ms | 107 ms |
+| Exact seek to playing, VP9 | 137 ms | 107 ms |
+| Keyframe seek to playing (OSC bar) | 115-118 ms | not measured |
+| Audio-only CPU | 0.5-0.7% | 1.0-1.1% |
+| Fullscreen, OSC hidden | 0 drops, 16-20% CPU, 263-287 MB | |
+| Fullscreen, OSC shown | 0-1 drops, 29-33% CPU, 414-437 MB | |
+
+The libass-to-native overlay change (`gui-cpu`, five interleaved runs against `d0e94ad`) measured: paused 0.4-1.0% against 0.4-1.0%, playing 20.2% against 19.2% (h264) and 24.4% against 25.8% (VP9), and seek-bar hover 14.3% against 9.0% (h264) but 12.0% against 11.6% (VP9). The host went busy before the closing check, so the run does not count as a gate; the h264 hover gap is open as PLAY-29.
+
 ## Linux
 
 Medians of 7 runs with the spread (max − min). `scripts/measure-linux.sh`; cold starts follow `sync` because the page cache is not dropped without root.

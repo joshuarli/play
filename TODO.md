@@ -1,5 +1,5 @@
 Prefix: PLAY
-Next: 29
+Next: 30
 
 # Backlog
 
@@ -16,5 +16,6 @@ Next: 29
 - PLAY-26: SubRip `<i>`, `<b>`, `<u>`, and `<font color>` are stripped, not styled. `player-overlay::TextBlock` carries one style; styled spans need per-run attributes in both text backends (Core Text attributed ranges; HarfBuzz runs per span on Linux).
 - PLAY-27: A right-to-left paragraph with `Align::Start` starts at the left edge. Subtitles centre, so only OSD messages and the OSC title see it; base direction should pick the start edge.
 - PLAY-28: Line height is the tallest font's ascent plus descent across every fallback font on the block, on both platforms, so one CJK or Thai character spreads all lines apart; on Linux Noto Sans CJK makes it visibly wider than macOS. Line spacing should come from the primary font, with tall glyphs kept inside the inset.
+- PLAY-29: Re-measure `scripts/bench.py gui-cpu --baseline` (libass build `d0e94ad`) on a quiet host. A loaded run showed seek-bar hover at 14.3% CPU against 9.0% on h264 but parity on VP9. If it holds, the likely cost is re-rasterizing the whole bar and recompositing the union in floats each time the tooltip moves; cache the static layer and repaint only the tooltip and progress.
 
 ## P4
