@@ -5,19 +5,17 @@ set -euo pipefail
 # from this prefix; Homebrew is used for build tools, never for linked dylibs.
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 PREFIX="$ROOT/.work/deps/release"
-FFMPEG_PREFIX="$PREFIX/ffmpeg"
 SRC="$ROOT/.work/tmp/release"
 LOGS="$SRC/logs"
 JOBS=${JOBS:-$(sysctl -n hw.ncpu)}
 export TMPDIR="$ROOT/.work/tmp"
 export MACOSX_DEPLOYMENT_TARGET=${MACOSX_DEPLOYMENT_TARGET:-27.0}
-export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig:$PREFIX/ffmpeg/lib/pkgconfig"
+export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig"
 export PKG_CONFIG_LIBDIR="$PKG_CONFIG_PATH"
 
 mkdir -p "$PREFIX" "$SRC" "$LOGS"
 
-INPUT_HASH=$(cat "$ROOT/scripts/build-deps.sh" "$ROOT/scripts/build-ffmpeg.sh" \
-    "$ROOT/scripts/ffmpeg-components.txt" | shasum -a 256 | awk '{print $1}')
+INPUT_HASH=$(shasum -a 256 "$ROOT/scripts/build-deps.sh" | awk '{print $1}')
 
 for tool in curl tar shasum xcrun; do
     command -v "$tool" >/dev/null || {
@@ -82,7 +80,6 @@ run_log() {
 }
 
 VULKAN_VERSION=1.4.363.0
-DAV1D_VERSION=1.5.4
 SHADERC_VERSION=2026.4
 GLSLANG_REV=e1b562a8bed273a02f30b59b66a5d499793cede5
 SPIRV_HEADERS_REV=04fd3caa1e8267e4d95c806cad901181728e1006
@@ -94,7 +91,7 @@ MARKUPSAFE_VERSION=3.0.4
 FAST_FLOAT_VERSION=8.3.2
 MOLTENVK_VERSION=1.4.2
 
-export VULKAN_VERSION DAV1D_VERSION SHADERC_VERSION GLSLANG_REV
+export VULKAN_VERSION SHADERC_VERSION GLSLANG_REV
 export SPIRV_HEADERS_REV SPIRV_TOOLS_REV LIBPLACEBO_VERSION GLAD_VERSION
 export JINJA_VERSION MARKUPSAFE_VERSION FAST_FLOAT_VERSION MOLTENVK_VERSION
 
@@ -123,38 +120,6 @@ if ! have vulkan-loader; then
     run_log vulkan-loader-install cmake --install "$SRC/build-vulkan-loader"
     stamp vulkan-loader
 fi
-
-if ! have dav1d; then
-    DAV1D="dav1d-$DAV1D_VERSION.tar.bz2"
-    fetch "https://code.videolan.org/videolan/dav1d/-/archive/$DAV1D_VERSION/dav1d-$DAV1D_VERSION.tar.bz2" \
-        2abfb0c89212e6e4733a54e0ae509ec00a5b845a6360946f918806e14aedb011 "$SRC/$DAV1D"
-    extract "$SRC/$DAV1D" "$SRC/dav1d-$DAV1D_VERSION"
-    run_log dav1d meson setup "$SRC/dav1d-$DAV1D_VERSION/build" "$SRC/dav1d-$DAV1D_VERSION" \
-        --prefix="$PREFIX" --buildtype=release --default-library=shared \
-        -Denable_tools=false -Denable_tests=false
-    run_log dav1d-build ninja -C "$SRC/dav1d-$DAV1D_VERSION/build" install
-    stamp dav1d
-fi
-
-SDK_ZLIB_VERSION=$(rg -o 'define ZLIB_VERSION "[0-9.]+"' "$(xcrun --show-sdk-path)/usr/include/zlib.h" |
-    rg -o '[0-9]+(\.[0-9]+)+')
-[ -n "$SDK_ZLIB_VERSION" ] || {
-    printf 'error: cannot read ZLIB_VERSION from the SDK zlib.h\n' >&2
-    exit 1
-}
-mkdir -p "$PREFIX/lib/pkgconfig"
-cat >"$PREFIX/lib/pkgconfig/zlib.pc" <<EOF
-prefix=/usr
-exec_prefix=\${prefix}
-libdir=/usr/lib
-includedir=\${prefix}/include
-
-Name: zlib
-Description: macOS SDK zlib
-Version: $SDK_ZLIB_VERSION
-Libs: -lz
-Cflags:
-EOF
 
 if ! have shaderc; then
     SH="shaderc-$SHADERC_VERSION.tar.gz"
@@ -233,15 +198,6 @@ if ! have moltenvk; then
     cp "$SRC/MoltenVK/MoltenVK/dynamic/dylib/macOS/MoltenVK_icd.json" \
         "$PREFIX/share/vulkan/icd.d/"
     stamp moltenvk
-fi
-
-if ! have ffmpeg; then
-    PREFIX="$FFMPEG_PREFIX" DAV1D_PREFIX="$PREFIX" \
-        "$ROOT/scripts/build-ffmpeg.sh" >"$LOGS/ffmpeg.log" 2>&1 || {
-        tail -60 "$LOGS/ffmpeg.log" >&2
-        exit 1
-    }
-    stamp ffmpeg
 fi
 
 printf 'release dependencies ready in %s\n' "$PREFIX"

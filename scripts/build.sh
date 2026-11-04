@@ -4,9 +4,10 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT"
 
-if [ -d "$ROOT/.work/deps/ffmpeg-full/lib/pkgconfig" ]; then
-    export PKG_CONFIG_PATH="$ROOT/.work/deps/ffmpeg-full/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
-fi
+case "$(uname -s)" in
+    Darwin) "$ROOT/scripts/fetch-ffmpeg-sdk.sh" aarch64-apple-darwin ;;
+    Linux) "$ROOT/scripts/fetch-ffmpeg-sdk.sh" x86_64-unknown-linux-musl ;;
+esac
 
 if [ "$(uname -s)" = "Linux" ]; then
     # A development binary that links Wayland must use the dynamic musl

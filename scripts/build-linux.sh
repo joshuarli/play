@@ -15,9 +15,11 @@ DIST="$ROOT/dist"
     exit 1
 }
 
+"$ROOT/scripts/fetch-ffmpeg-sdk.sh" "$RUST_TRIPLE"
+
 mkdir -p "$RUST_TARGET_DIR" "$ROOT/.work/tmp" "$BUILD_DIR" "$DIST"
 export CARGO_TARGET_DIR="$RUST_TARGET_DIR"
-export PKG_CONFIG_PATH="$DEPS/lib/pkgconfig:$DEPS/ffmpeg/lib/pkgconfig"
+export PKG_CONFIG_PATH="$DEPS/lib/pkgconfig"
 # The Wayland-linked binary must use the dynamic musl loader. A static-pie
 # with Wayland in NEEDED dies in the loader before main.
 export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$ROOT=. -C target-feature=-crt-static -C link-arg=-static-libgcc"

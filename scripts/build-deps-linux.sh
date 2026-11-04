@@ -65,7 +65,7 @@ run_log() {
 }
 
 if [ "$(cat "$PREFIX/.stamp-input" 2>/dev/null)" != "$INPUT_HASH" ]; then
-    find "$PREFIX" -mindepth 1 -maxdepth 1 ! -name ffmpeg -exec rm -rf {} +
+    find "$PREFIX" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
     printf '%s\n' "$INPUT_HASH" >"$PREFIX/.stamp-input"
 fi
 
@@ -78,8 +78,6 @@ meson_static() {
 }
 
 VULKAN_VERSION=1.4.363.0
-ZLIB_VERSION=1.3.2
-DAV1D_VERSION=1.5.4
 SHADERC_VERSION=2026.4
 GLSLANG_REV=e1b562a8bed273a02f30b59b66a5d499793cede5
 SPIRV_HEADERS_REV=04fd3caa1e8267e4d95c806cad901181728e1006
@@ -100,25 +98,6 @@ if ! have vulkan-headers; then
         -DCMAKE_BUILD_TYPE=Release
     run_log vulkan-headers-install cmake --build "$SRC/build-vulkan-headers" --target install
     stamp vulkan-headers
-fi
-
-if ! have zlib; then
-    Z="zlib-$ZLIB_VERSION.tar.xz"
-    fetch "https://github.com/madler/zlib/releases/download/v$ZLIB_VERSION/$Z" \
-        d7a0654783a4da529d1bb793b7ad9c3318020af77667bcae35f95d0e42a792f3 "$SRC/$Z"
-    extract "$SRC/$Z" "$SRC/zlib-$ZLIB_VERSION"
-    run_log zlib-configure bash -c "cd '$SRC/zlib-$ZLIB_VERSION' && ./configure --prefix='$PREFIX' --static"
-    run_log zlib-build make -C "$SRC/zlib-$ZLIB_VERSION" -j"$JOBS" install
-    stamp zlib
-fi
-
-if ! have dav1d; then
-    DAV1D="dav1d-$DAV1D_VERSION.tar.bz2"
-    fetch "https://code.videolan.org/videolan/dav1d/-/archive/$DAV1D_VERSION/dav1d-$DAV1D_VERSION.tar.bz2" \
-        2abfb0c89212e6e4733a54e0ae509ec00a5b845a6360946f918806e14aedb011 "$SRC/$DAV1D"
-    extract "$SRC/$DAV1D" "$SRC/dav1d-$DAV1D_VERSION"
-    meson_static dav1d "$SRC/dav1d-$DAV1D_VERSION" -Denable_tools=false -Denable_tests=false
-    stamp dav1d
 fi
 
 if ! have shaderc; then
@@ -187,12 +166,6 @@ if ! have libplacebo; then
         -Dd3d11=disabled -Dlibdovi=disabled -Ddemos=false -Dtests=false -Dbench=false
     stamp libplacebo
 fi
-
-PREFIX="$PREFIX/ffmpeg" DAV1D_PREFIX="$PREFIX" "$ROOT/scripts/build-ffmpeg.sh" \
-    >"$LOGS/ffmpeg.log" 2>&1 || {
-    tail -60 "$LOGS/ffmpeg.log" >&2
-    exit 1
-}
 
 sed -i 's/^Libs: .*/& -l:libstdc++.a/' "$PREFIX/lib/pkgconfig/shaderc_combined.pc"
 

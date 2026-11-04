@@ -1690,8 +1690,8 @@ def gate_meta(results, args):
         "docs/metrics.md", "docs/manual-checklist.md",
         "docs/ffmpeg.md", "docs/architecture.md", "docs/scope.md",
         "scripts/build.sh", "scripts/dev-deps.sh",
-        "scripts/build-ffmpeg.sh", "scripts/measure.sh",
-        "scripts/ffmpeg-components.txt", "scripts/ffmpeg-manifest.sh",
+        "ffmpeg-sdk.lock.json", "scripts/fetch-ffmpeg-sdk.sh", "scripts/measure.sh",
+        "scripts/ffmpeg-manifest.sh",
         "scripts/audit.sh",
         "scripts/manual-checklist.sh", "tests/run.sh", "tests/harness.py",
         "tests/fixtures/gen.sh", "tests/fixtures/manifest.json",
@@ -1741,7 +1741,7 @@ def gate_meta(results, args):
                   f"found: {', '.join(bad_temp)}")
 
     executable = [name for name in ("scripts/build.sh", "scripts/dev-deps.sh",
-                                    "scripts/build-ffmpeg.sh", "scripts/measure.sh",
+                                    "scripts/fetch-ffmpeg-sdk.sh", "scripts/measure.sh",
                                     "scripts/ffmpeg-manifest.sh",
                                     "scripts/manual-checklist.sh",
                                     "tests/run.sh", "tests/fixtures/gen.sh")
@@ -1844,11 +1844,13 @@ def gate_release(results, args):
 
     expected = {
         "libplacebo.387.dylib", "libvulkan.1.dylib",
-        "libMoltenVK.dylib", "libshaderc_shared.1.dylib", "libdav1d.7.dylib",
+        "libMoltenVK.dylib", "libshaderc_shared.1.dylib",
     }
     present = {path.name for path in frameworks.glob("*.dylib")}
     results.check("release: bundled closure", expected <= present,
                   ",".join(sorted(expected - present)))
+    shared_sdk = sorted(name for name in present if re.match(r"lib(dav1d|z|av|sw)", name))
+    results.check("release: FFmpeg SDK linked statically", not shared_sdk, ",".join(shared_sdk))
     text_stack = sorted(name for name in present
                         if re.match(r"lib(ass|fribidi|harfbuzz|freetype|fontconfig)\b", name))
     results.check("release: no bundled text stack", not text_stack, ",".join(text_stack))

@@ -1,3 +1,5 @@
+pub mod ffmpeg_sdk;
+
 use std::path::Path;
 
 pub fn emit_linux_closure(owner: &str, args_file: &Path, prefix: &Path) {

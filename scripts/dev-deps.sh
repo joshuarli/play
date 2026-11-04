@@ -35,7 +35,6 @@ pin molten-vk 1.4.2
 pin vulkan-loader 1.4.363.0
 pin vulkan-headers 1.4.363.0
 pin shaderc 2026.4
-pin dav1d 1.5.4
 pin meson 1.12.1
 pin ninja 1.13.2
 pin pkgconf 3.0.10

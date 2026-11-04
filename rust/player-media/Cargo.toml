@@ -10,3 +10,4 @@ crate-type = ["rlib"]
 player-core = { path = "../player-core" }
 
 [build-dependencies]
+player-build = { path = "../player-build" }

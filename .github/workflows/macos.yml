@@ -52,8 +52,9 @@ jobs:
         with:
           path: |
             .work/deps/release
+            .work/deps/ffmpeg-sdk
             rust/target
-          key: player-macos-deps-${{ github.workspace }}-${{ hashFiles('scripts/build-deps.sh', 'scripts/build-ffmpeg.sh', 'scripts/ffmpeg-components.txt', 'rust/Cargo.lock', 'rust-toolchain.toml') }}
+          key: player-macos-deps-${{ github.workspace }}-${{ hashFiles('scripts/build-deps.sh', 'ffmpeg-sdk.lock.json', 'scripts/fetch-ffmpeg-sdk.sh', 'rust/Cargo.lock', 'rust-toolchain.toml') }}
           restore-keys: |
             player-macos-deps-${{ github.workspace }}-
 
