@@ -14,7 +14,7 @@ The build sets `-C target-feature=-crt-static`. A static-pie executable with Way
 
 ## Dependencies
 
-`scripts/build-deps-linux.sh` builds these as static libraries from pinned, checksum-verified sources into `.work/deps/linux`: Vulkan-Headers 1.4.363.0, zlib 1.3.2, expat 2.9.0, dav1d 1.5.4, FreeType 2.15.0, FriBiDi 1.0.17, HarfBuzz 15.0.0, fontconfig 2.18.1, shaderc 2026.4 (with glslang `e1b562a8`, SPIRV-Tools `ef96ed76`, SPIRV-Headers `04fd3caa`), libplacebo 7.387.0, and libass 0.17.5. The prefix holds no shared library.
+`scripts/build-deps-linux.sh` builds these as static libraries from pinned, checksum-verified sources into `.work/deps/linux`: Vulkan-Headers 1.4.363.0, zlib 1.3.2, dav1d 1.5.4, shaderc 2026.4 (with glslang `e1b562a8`, SPIRV-Tools `ef96ed76`, SPIRV-Headers `04fd3caa`), and libplacebo 7.387.0. The prefix holds no shared library; text shaping uses the system Fontconfig, HarfBuzz, and FreeType, which `rust/player-overlay/build.rs` links through pkg-config.
 
 The executable links only these shared libraries from the Alpine image:
 
@@ -26,8 +26,11 @@ The executable links only these shared libraries from the Alpine image:
 | `libwayland-client.so.0` | `wayland-libs-client` |
 | `libasound.so.2` | `alsa-lib` |
 | `libva.so.2`, `libva-drm.so.2` | `libva` |
+| `libfontconfig.so.1` | `fontconfig` |
+| `libharfbuzz.so.0` | `harfbuzz` |
+| `libfreetype.so.6` | `freetype` |
 
-`scripts/audit-linux.sh` rejects any other `NEEDED` entry. Fontconfig reads `/etc/fonts` at run time, so a system needs a fontconfig configuration and fonts for system-font discovery.
+`scripts/audit-linux.sh` rejects any other `NEEDED` entry, and any libass, FriBiDi, Pango, Cairo, or Pixman in `NEEDED`, in the binary's symbols, or in the dependency prefix. Fontconfig reads `/etc/fonts` at run time, so a system needs a fontconfig configuration and fonts for system-font discovery.
 
 ## Hardware decode
 

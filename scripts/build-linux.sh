@@ -10,7 +10,7 @@ DIST="$ROOT/dist"
 
 "$ROOT/scripts/linux-check.sh"
 
-[ -f "$DEPS/.stamp-libass" ] || {
+[ -f "$DEPS/.stamp-libplacebo" ] || {
     printf 'error: missing dependency prefix; run scripts/build-deps-linux.sh\n' >&2
     exit 1
 }

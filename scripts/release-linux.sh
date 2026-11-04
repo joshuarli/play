@@ -11,10 +11,10 @@ STAGE="$ROOT/.work/tmp/release-linux"
 "$ROOT/scripts/audit-linux.sh"
 
 runtime_packages=$(apk list -I 2>/dev/null |
-    awk '$1 ~ /^(musl|libgcc|vulkan-loader|wayland-libs-client|alsa-lib|libva)-[0-9]/ {print "  " $1}' |
+    awk '$1 ~ /^(musl|libgcc|vulkan-loader|wayland-libs-client|alsa-lib|libva|fontconfig|harfbuzz|freetype)-[0-9]/ {print "  " $1}' |
     sort)
-[ "$(printf '%s\n' "$runtime_packages" | wc -l)" -eq 6 ] || {
-    printf 'error: expected six runtime packages, found:\n%s\n' "$runtime_packages" >&2
+[ "$(printf '%s\n' "$runtime_packages" | wc -l)" -eq 9 ] || {
+    printf 'error: expected nine runtime packages, found:\n%s\n' "$runtime_packages" >&2
     exit 1
 }
 
@@ -32,7 +32,8 @@ $runtime_packages
 
 It also needs a Vulkan driver for your GPU (for example mesa-vulkan-layers
 and mesa-vulkan-intel, mesa-vulkan-ati, or mesa-vulkan-swrast), a Wayland
-compositor, and fontconfig with a font such as font-dejavu for subtitles.
+compositor, and a fontconfig configuration with a font such as font-dejavu for subtitles
+and the on-screen controller.
 The scheduler decodes video in software. --hwdec is accepted for compatibility
 and hwdec-current reports no. VA-API decode paths are compiled in but are not
 wired into the scheduler yet.

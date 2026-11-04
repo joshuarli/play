@@ -23,7 +23,7 @@ case "$(uname -sm)/$(ldd --version 2>&1)" in
         ;;
 esac
 
-for tool in curl tar sha256sum cmake meson ninja pkg-config python3 gperf make; do
+for tool in curl tar sha256sum cmake meson ninja pkg-config python3 make; do
     command -v "$tool" >/dev/null || {
         printf 'error: %s is required (development tool)\n' "$tool" >&2
         exit 1
@@ -74,18 +74,12 @@ meson_static() {
 
 VULKAN_VERSION=1.4.363.0
 ZLIB_VERSION=1.3.2
-EXPAT_VERSION=2.9.0
 DAV1D_VERSION=1.5.4
-FREETYPE_VERSION=2.15.0
-FRIBIDI_VERSION=1.0.17
-HARFBUZZ_VERSION=15.0.0
-FONTCONFIG_VERSION=2.18.1
 SHADERC_VERSION=2026.4
 GLSLANG_REV=e1b562a8bed273a02f30b59b66a5d499793cede5
 SPIRV_HEADERS_REV=04fd3caa1e8267e4d95c806cad901181728e1006
 SPIRV_TOOLS_REV=ef96ed763b43b59b33b31b362f09a02b729fa1c9
 LIBPLACEBO_VERSION=7.387.0
-LIBASS_VERSION=0.17.5
 GLAD_VERSION=2.0.8
 JINJA_VERSION=3.1.6
 MARKUPSAFE_VERSION=3.0.4
@@ -113,20 +107,6 @@ if ! have zlib; then
     stamp zlib
 fi
 
-if ! have expat; then
-    E="expat-$EXPAT_VERSION.tar.xz"
-    fetch "https://github.com/libexpat/libexpat/releases/download/R_${EXPAT_VERSION//./_}/$E" \
-        1e6371862cc31999b368c3b89b49994f0677e1bab5f1b2b85ae3741f5d803051 "$SRC/$E"
-    extract "$SRC/$E" "$SRC/expat-$EXPAT_VERSION"
-    run_log expat cmake -S "$SRC/expat-$EXPAT_VERSION" -B "$SRC/build-expat" \
-        -DCMAKE_INSTALL_PREFIX="$PREFIX" -DCMAKE_INSTALL_LIBDIR=lib \
-        -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DEXPAT_BUILD_TOOLS=OFF \
-        -DEXPAT_BUILD_EXAMPLES=OFF -DEXPAT_BUILD_TESTS=OFF -DEXPAT_BUILD_DOCS=OFF \
-        -DCMAKE_POSITION_INDEPENDENT_CODE=ON
-    run_log expat-build cmake --build "$SRC/build-expat" --target install -j"$JOBS"
-    stamp expat
-fi
-
 if ! have dav1d; then
     DAV1D="dav1d-$DAV1D_VERSION.tar.bz2"
     fetch "https://code.videolan.org/videolan/dav1d/-/archive/$DAV1D_VERSION/dav1d-$DAV1D_VERSION.tar.bz2" \
@@ -134,55 +114,6 @@ if ! have dav1d; then
     extract "$SRC/$DAV1D" "$SRC/dav1d-$DAV1D_VERSION"
     meson_static dav1d "$SRC/dav1d-$DAV1D_VERSION" -Denable_tools=false -Denable_tests=false
     stamp dav1d
-fi
-
-if ! have freetype; then
-    FT="freetype-$FREETYPE_VERSION.tar.xz"
-    fetch "https://downloads.sourceforge.net/project/freetype/freetype2/$FREETYPE_VERSION/freetype-$FREETYPE_VERSION.tar.xz" \
-        93cd47eb719c325107f2d3cf087d06299e944c3b48a40b55537302304dea1dd5 "$SRC/$FT"
-    extract "$SRC/$FT" "$SRC/freetype-$FREETYPE_VERSION"
-    meson_static freetype "$SRC/freetype-$FREETYPE_VERSION" -Dzlib=system -Dpng=disabled \
-        -Dbrotli=disabled -Dharfbuzz=disabled -Dbzip2=disabled -Dtests=disabled
-    stamp freetype
-fi
-
-if ! have fribidi; then
-    FB="fribidi-$FRIBIDI_VERSION.tar.xz"
-    fetch "https://github.com/fribidi/fribidi/releases/download/v$FRIBIDI_VERSION/fribidi-$FRIBIDI_VERSION.tar.xz" \
-        6949dcde27d41cebad1fd741fcafc36d55a1020d2d872d4a6eb3914caabbada2 "$SRC/$FB"
-    extract "$SRC/$FB" "$SRC/fribidi-$FRIBIDI_VERSION"
-    meson_static fribidi "$SRC/fribidi-$FRIBIDI_VERSION" -Ddocs=false -Dbin=false -Dtests=false
-    stamp fribidi
-fi
-
-if ! have harfbuzz; then
-    HB="harfbuzz-$HARFBUZZ_VERSION.tar.xz"
-    fetch "https://github.com/harfbuzz/harfbuzz/releases/download/$HARFBUZZ_VERSION/harfbuzz-$HARFBUZZ_VERSION.tar.xz" \
-        968536e9abd782f07f7954044c0c4020199fcdd39b41d221ec42d2a3be4a44df "$SRC/$HB"
-    extract "$SRC/$HB" "$SRC/harfbuzz-$HARFBUZZ_VERSION"
-    meson_static harfbuzz "$SRC/harfbuzz-$HARFBUZZ_VERSION" -Dglib=disabled -Dgobject=disabled \
-        -Dcairo=disabled -Dfreetype=disabled -Dicu=disabled -Dgraphite2=disabled \
-        -Dtests=disabled -Ddocs=disabled -Dutilities=disabled
-    stamp harfbuzz
-fi
-
-if ! have fontconfig; then
-    FC="fontconfig-$FONTCONFIG_VERSION.tar.xz"
-    fetch "https://gitlab.freedesktop.org/api/v4/projects/890/packages/generic/fontconfig/$FONTCONFIG_VERSION/$FC" \
-        2300f3dbfa7253b3a44f4feecdbc8dfa45dde5dc2cfb71fceaf31f394cb41031 "$SRC/$FC"
-    extract "$SRC/$FC" "$SRC/fontconfig-$FONTCONFIG_VERSION"
-    fc="$SRC/fontconfig-$FONTCONFIG_VERSION"
-    run_log fontconfig meson setup "$fc/build" "$fc" --prefix="$PREFIX" --libdir=lib \
-        --buildtype=release --default-library=static -Dtests=disabled -Dtools=disabled \
-        -Dnls=disabled -Ddoc=disabled -Dcache-build=disabled -Dxml-backend=expat \
-        -Dsysconfdir=/etc -Dlocalstatedir=/var \
-        -Dtemplate-dir=/usr/share/fontconfig/conf.avail
-    run_log fontconfig-build ninja -C "$fc/build"
-    rm -rf "$SRC/fontconfig-dest"
-    run_log fontconfig-install env DESTDIR="$SRC/fontconfig-dest" meson install -C "$fc/build" --no-rebuild
-    cp -R "$SRC/fontconfig-dest$PREFIX/lib/." "$PREFIX/lib/"
-    cp -R "$SRC/fontconfig-dest$PREFIX/include/." "$PREFIX/include/"
-    stamp fontconfig
 fi
 
 if ! have shaderc; then
@@ -250,17 +181,6 @@ if ! have libplacebo; then
         -Dshaderc=enabled -Dglslang=disabled -Dlcms=disabled -Dopengl=disabled \
         -Dd3d11=disabled -Dlibdovi=disabled -Ddemos=false -Dtests=false -Dbench=false
     stamp libplacebo
-fi
-
-if ! have libass; then
-    ASS="libass-$LIBASS_VERSION.tar.xz"
-    fetch "https://github.com/libass/libass/releases/download/$LIBASS_VERSION/libass-$LIBASS_VERSION.tar.xz" \
-        2dca25c0e0c837ddf00b52011b3f82cac1e4ddd3ad018227806b0c2288864acc "$SRC/$ASS"
-    extract "$SRC/$ASS" "$SRC/libass-$LIBASS_VERSION"
-    meson_static libass "$SRC/libass-$LIBASS_VERSION" -Dfontconfig=enabled -Dcoretext=disabled \
-        -Dlibunibreak=disabled -Dtest=disabled -Dcompare=disabled -Dprofile=disabled \
-        -Dfuzz=disabled -Dcheckasm=disabled
-    stamp libass
 fi
 
 PREFIX="$PREFIX/ffmpeg" DAV1D_PREFIX="$PREFIX" "$ROOT/scripts/build-ffmpeg.sh" \

@@ -7,7 +7,10 @@ UNSTRIPPED=${UNSTRIPPED:-$ROOT/build-linux/mpv}
 ALLOWED_NEEDED=(
     libvulkan.so.1 libwayland-client.so.0 libgcc_s.so.1
     libasound.so.2 libc.musl-x86_64.so.1 libva.so.2 libva-drm.so.2
+    libfontconfig.so.1 libharfbuzz.so.0 libfreetype.so.6
 )
+RETIRED_TEXT_STACK='libass|fribidi|pango|cairo|pixman'
+RETIRED_TEXT_SYMBOLS='^(ass|fribidi|pango|cairo|pixman)_'
 FORBIDDEN_IMPORTS='^(getaddrinfo|freeaddrinfo|getnameinfo|gethostbyname2?|gethostbyaddr|SSL_.*|TLS_.*|curl_.*)$'
 
 failed=0
@@ -40,6 +43,9 @@ for lib in "${needed[@]}"; do
     [ "$found" = 1 ] || extra+=("$lib")
 done
 check "NEEDED inside the allowed set" "$([ ${#extra[@]} -eq 0 ] && echo 1 || echo 0)" "${extra[*]:-}"
+
+retired=$(printf '%s\n' "${needed[@]}" | rg -i "$RETIRED_TEXT_STACK" || true)
+check "no retired text stack in NEEDED" "$([ -z "$retired" ] && echo 1 || echo 0)" "$retired"
 
 rpath=$(readelf -dW "$PLAYER" | rg 'RPATH|RUNPATH' || true)
 check "no RPATH or RUNPATH" "$([ -z "$rpath" ] && echo 1 || echo 0)" "$rpath"
@@ -93,6 +99,13 @@ if [ -f "$UNSTRIPPED" ]; then
 else
     check "no Lua interpreter" 0 "missing $UNSTRIPPED"
 fi
+
+if [ -f "$UNSTRIPPED" ]; then
+    linked=$(nm "$UNSTRIPPED" 2>/dev/null | awk '{print $NF}' | rg "$RETIRED_TEXT_SYMBOLS" | head -3 || true)
+    check "no retired text stack linked statically" "$([ -z "$linked" ] && echo 1 || echo 0)" "$linked"
+fi
+archives=$(printf '%s\n' "$ROOT"/.work/deps/linux/lib/*.a | rg -i "/lib($RETIRED_TEXT_STACK)[^/]*\.a$" || true)
+check "no retired text stack archives in the prefix" "$([ -z "$archives" ] && echo 1 || echo 0)" "$archives"
 
 if [ "$failed" -ne 0 ]; then
     printf 'audit-linux: %d failed\n' "$failed"
