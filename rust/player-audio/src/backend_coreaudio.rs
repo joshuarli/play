@@ -87,6 +87,7 @@ unsafe extern "C" {
 }
 
 struct QueueState {
+    buffers: Vec<AudioQueueBufferRef>,
     free: Vec<AudioQueueBufferRef>,
     in_flight: usize,
     streaming: bool,
@@ -106,6 +107,9 @@ unsafe extern "C" fn buffer_done(user: *mut c_void, _queue: AudioQueueRef, buffe
         .state
         .lock()
         .unwrap_or_else(|poison| poison.into_inner());
+    if state.free.contains(&buffer) {
+        return;
+    }
     state.in_flight = state.in_flight.saturating_sub(1);
     if state.in_flight == 0 && state.streaming {
         state.underruns += 1;
@@ -146,6 +150,7 @@ impl CoreAudioSink {
         };
         let mut shared = Box::new(Shared {
             state: Mutex::new(QueueState {
+                buffers: Vec::with_capacity(BUFFER_COUNT),
                 free: Vec::with_capacity(BUFFER_COUNT),
                 in_flight: 0,
                 streaming: false,
@@ -214,12 +219,13 @@ impl CoreAudioSink {
                 assert!((*buffer).capacity >= buffer_bytes);
                 assert!(!(*buffer).data.is_null());
             }
-            sink.shared
+            let mut state = sink
+                .shared
                 .state
                 .lock()
-                .unwrap_or_else(|poison| poison.into_inner())
-                .free
-                .push(buffer);
+                .unwrap_or_else(|poison| poison.into_inner());
+            state.buffers.push(buffer);
+            state.free.push(buffer);
         }
         sink.refill()?;
         Ok(sink)
@@ -362,9 +368,18 @@ impl AudioSink for CoreAudioSink {
 
     fn flush(&mut self) -> Result<(), String> {
         self.stop_streaming();
-        // SAFETY: the queue is live; the worker thread never runs callbacks,
-        // so immediate stop returns every buffer before this returns.
+        // SAFETY: the queue is live; an immediate stop discards every
+        // enqueued buffer, and it does not report each one to the callback.
         Self::status(unsafe { AudioQueueStop(self.queue, 1) }, "AudioQueueStop")?;
+        {
+            let mut state = self
+                .shared
+                .state
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            state.free = state.buffers.clone();
+            state.in_flight = 0;
+        }
         self.staged_frames = 0;
         self.current = ptr::null_mut();
         self.started = false;
@@ -405,6 +420,20 @@ mod tests {
         assert_eq!(std::mem::size_of::<AudioQueueBuffer>(), 56);
         assert_eq!(std::mem::size_of::<AudioStreamBasicDescription>(), 40);
         assert_eq!(std::mem::size_of::<AudioChannelLayoutHeader>(), 12);
+    }
+
+    #[test]
+    #[ignore = "needs a macOS audio device; run explicitly for the manual checklist"]
+    fn repeated_flushes_keep_every_buffer() {
+        let mut sink = CoreAudioSink::open(2, 48000, 0x3).expect("default output opens");
+        let silence = vec![0.0f32; 1500 * 2];
+        for _ in 0..50 {
+            sink.write(&silence).expect("write does not starve after flushes");
+            sink.flush().expect("flush works");
+        }
+        let state = sink.shared.state.lock().unwrap();
+        assert_eq!(state.free.len() + usize::from(!sink.current.is_null()), BUFFER_COUNT);
+        assert_eq!(state.in_flight, 0);
     }
 
     #[test]
