@@ -121,6 +121,7 @@ const SUBTITLE_PRIME_WINDOW: f64 = 30.0;
 const SUBTITLE_PRIME_PACKETS: usize = 8192;
 const AUDIO_HIGH_WATER: f64 = 0.12;
 const PREROLL_AUDIO_LIMIT: f64 = 3.0;
+const AUDIO_BACKLOG_LIMIT: f64 = 1.0;
 
 pub struct Scheduler<D, A, V, AO, VO> {
     machine: Machine,
@@ -132,7 +133,7 @@ pub struct Scheduler<D, A, V, AO, VO> {
     video_out: VO,
     commands: Vec<Command>,
     pending_frames: std::collections::VecDeque<DecodedFrame>,
-    preroll: std::collections::VecDeque<AudioChunk>,
+    audio_backlog: std::collections::VecDeque<AudioChunk>,
     startup_audio: std::collections::VecDeque<AudioChunk>,
     prerolling_video: bool,
     audio_cursor: f64,
@@ -169,7 +170,7 @@ where
             video_out,
             commands: Vec::new(),
             pending_frames: std::collections::VecDeque::new(),
-            preroll: std::collections::VecDeque::new(),
+            audio_backlog: std::collections::VecDeque::new(),
             startup_audio: std::collections::VecDeque::new(),
             prerolling_video: false,
             audio_cursor: 0.0,
@@ -378,6 +379,7 @@ where
                                 self.demux.select_audio(stream);
                                 self.audio.flush();
                                 self.audio_out.flush();
+                                self.audio_backlog.clear();
                                 self.audio_cursor = self.clock.position(now);
                             }
                             _ => self.stats.commands_ignored += 1,
@@ -422,7 +424,7 @@ where
         self.demux.seek(target);
         self.audio_out.flush();
         self.pending_frames.clear();
-        self.preroll.clear();
+        self.audio_backlog.clear();
         self.startup_audio.clear();
         self.prerolling_video = false;
         self.audio_cursor = target;
@@ -439,7 +441,7 @@ where
             if have_audio && have_video {
                 break;
             }
-            if have_video && self.preroll.len() >= SEEK_PREROLL_CHUNKS as usize {
+            if have_video && self.audio_backlog.len() >= SEEK_PREROLL_CHUNKS as usize {
                 break;
             }
             match self.demux.read() {
@@ -514,8 +516,9 @@ where
 
     fn begin_playback(&mut self, now: f64) -> Result<(), String> {
         self.prerolling_video = false;
-        for chunk in std::mem::take(&mut self.startup_audio) {
-            self.audio_out.push(chunk)?;
+        self.audio_backlog.extend(std::mem::take(&mut self.startup_audio));
+        if self.feed_output() {
+            return Ok(());
         }
         if let Some(frame) = self.pending_frames.pop_front() {
             self.video_out.present(frame.pts, frame.id)?;
@@ -571,7 +574,7 @@ where
                         continue;
                     }
                     *have_audio = true;
-                    self.preroll.push_back(chunk);
+                    self.audio_backlog.push_back(chunk);
                 }
             }
             StreamKind::Subtitle if self.selected_sub_stream() == Some(packet.stream) => {
@@ -596,22 +599,39 @@ where
         Ok(())
     }
 
-    fn drain_preroll(&mut self) -> bool {
-        while let Some(chunk) = self.preroll.pop_front() {
+    fn feed_output(&mut self) -> bool {
+        while self.audio_out.queued_seconds() < AUDIO_HIGH_WATER {
+            let Some(chunk) = self.audio_backlog.pop_front() else {
+                break;
+            };
             if let Err(message) = self.audio_out.push(chunk) {
                 self.fail(message);
                 return true;
             }
-            self.stats.audio_chunks += 1;
         }
         false
     }
 
+    fn backlog_seconds(&self) -> f64 {
+        self.audio_backlog.iter().map(chunk_duration).sum()
+    }
+
+    fn video_wanted(&self, now: f64) -> bool {
+        if !self.demux.has_video() {
+            return false;
+        }
+        let position = self.clock.position(now);
+        !self.pending_frames.iter().any(|frame| frame.pts > position)
+    }
+
     fn pump_playing(&mut self, now: f64) {
-        if self.drain_preroll() {
+        if self.feed_output() {
             return;
         }
-        if !self.prerolling_video && self.audio_out.queued_seconds() >= AUDIO_HIGH_WATER {
+        let audio_wanted =
+            self.audio_backlog.is_empty() && self.audio_out.queued_seconds() < AUDIO_HIGH_WATER;
+        let backlog_full = self.backlog_seconds() >= AUDIO_BACKLOG_LIMIT;
+        if !self.prerolling_video && (backlog_full || !(audio_wanted || self.video_wanted(now))) {
             self.present_due(now);
             self.observe(now);
             return;
@@ -630,10 +650,7 @@ where
                     match self.audio.finish() {
                         Ok(chunks) => {
                             for chunk in chunks {
-                                if let Err(message) = self.audio_out.push(chunk) {
-                                    self.fail(message);
-                                    return;
-                                }
+                                self.audio_backlog.push_back(chunk);
                                 self.stats.audio_chunks += 1;
                             }
                         }
@@ -668,6 +685,9 @@ where
                 break;
             }
         }
+        if self.feed_output() {
+            return;
+        }
         if self.prerolling_video {
             if !self.pending_frames.is_empty()
                 || self.startup_audio_seconds() >= PREROLL_AUDIO_LIMIT
@@ -700,9 +720,8 @@ where
                             self.audio_cursor = chunk.pts + chunk_duration(&chunk);
                             if self.prerolling_video {
                                 self.startup_audio.push_back(chunk);
-                            } else if let Err(message) = self.audio_out.push(chunk) {
-                                self.fail(message);
-                                return true;
+                            } else {
+                                self.audio_backlog.push_back(chunk);
                             }
                             self.stats.audio_chunks += 1;
                         }
@@ -767,20 +786,10 @@ where
     }
 
     fn pump_draining(&mut self, now: f64) {
-        if let Err(message) = self.audio_out.finish() {
-            self.fail(message);
-            return;
-        }
-        if self.drain_preroll() {
-            return;
-        }
         match self.audio.drain() {
             Ok(chunks) => {
                 for chunk in chunks {
-                    if let Err(message) = self.audio_out.push(chunk) {
-                        self.fail(message);
-                        return;
-                    }
+                    self.audio_backlog.push_back(chunk);
                     self.stats.audio_chunks += 1;
                 }
             }
@@ -800,15 +809,22 @@ where
                 return;
             }
         }
-        if self.clock.is_audio_driven()
-            && self.audio_out.drained()
-            && !self.pending_frames.is_empty()
+        if self.feed_output() {
+            return;
+        }
+        if self.audio_backlog.is_empty()
+            && let Err(message) = self.audio_out.finish()
         {
+            self.fail(message);
+            return;
+        }
+        let audio_drained = self.audio_backlog.is_empty() && self.audio_out.drained();
+        if self.clock.is_audio_driven() && audio_drained && !self.pending_frames.is_empty() {
             self.clock.use_system_time(now);
         }
         self.present_due(now);
         self.observe(now);
-        if self.pending_frames.is_empty() && self.audio_out.drained() {
+        if self.pending_frames.is_empty() && audio_drained {
             let _ = self.machine.apply(Event::Drained);
         }
     }

@@ -224,6 +224,7 @@ mod tests {
         max_seen: f64,
         sends: usize,
         fail_at_send: Option<usize>,
+        delay: usize,
     }
 
     const REORDER_WINDOW: f64 = 0.1;
@@ -237,12 +238,14 @@ mod tests {
                 max_seen: f64::NEG_INFINITY,
                 sends: 0,
                 fail_at_send: None,
+                delay: 0,
             }
         }
 
         fn release_ready(&mut self) -> Vec<DecodedFrame> {
             if !self.reorder {
-                return self.buffer.drain(..).collect();
+                let ready = self.buffer.len().saturating_sub(self.delay);
+                return self.buffer.drain(..ready).collect();
             }
             self.buffer.sort_by(|a, b| a.pts.total_cmp(&b.pts));
             let split = self
@@ -393,6 +396,19 @@ mod tests {
             Harness { sim, now: 0.0 }
         }
 
+        fn with_video_delay(demux: FakeDemux, delay: usize) -> Self {
+            let mut video = FakeVideoDecoder::new(false);
+            video.delay = delay;
+            let sim = Sim::new(
+                demux,
+                FakeAudioDecoder::new(0.04),
+                video,
+                FakeAudioOutput::new(),
+                FakeVideoOutput::new(),
+            );
+            Harness { sim, now: 0.0 }
+        }
+
         fn run(&mut self, steps: usize, dt: f64, at: &[(usize, Command)]) {
             self.sim.open();
             for step in 0..steps {
@@ -522,6 +538,16 @@ mod tests {
         );
         let audio: Vec<f64> = h.sim.audio_output().log[pushes_before..].iter().map(|(pts, _)| *pts).collect();
         assert!(audio.iter().all(|pts| *pts >= 9.0 - 0.04), "audio before the target played: {:?}", &audio[..audio.len().min(5)]);
+    }
+
+    #[test]
+    fn decoder_delay_longer_than_the_audio_lead_still_presents_on_time() {
+        let mut h = Harness::with_video_delay(FakeDemux::av(4.0, 25.0, 0.04), 10);
+        h.run(600, DT, &[]);
+        let stats = h.sim.stats();
+        assert_eq!(h.sim.state(), State::Ended);
+        assert!(stats.dropped_late <= 2, "late frames with a delayed decoder: {stats:?}");
+        assert!(stats.presented >= 95, "presented {}", stats.presented);
     }
 
     #[test]
