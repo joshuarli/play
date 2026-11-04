@@ -4,13 +4,13 @@ Player is a local-only media player. The macOS release artifact is `dist/Player.
 
 ## Current state
 
-- The Rust port is complete through S9. The C playback engine and Meson player build are gone; Cargo builds both artifacts. A post-S9 cleanup removed the retired C ABI, its headers and C test harness, and the abandoned `player-release` and `player-swap` crates; `player-ffi` became `player-backend`. The Rust engine owns scheduling, demux, decode, audio, video rendering, Lua, subtitles, OSD, OSC composition, GUI, and TUI. The `player-app` binary owns the application layer (CLI, IPC, playlists, chapters, track switching, properties/events, OSC dispatch, native GUI window, TUI, Finder open, drag-and-drop, and PNG screenshots).
-- `tests/run.sh suite` on macOS: 340 passed, 0 failed.
-- `tests/run.sh suite` in the Alpine container: 334 passed, 0 failed.
+- The Rust port is complete through S9. The C playback engine and Meson player build are gone; Cargo builds both artifacts. A post-S9 cleanup removed the retired C ABI, its headers and C test harness, and the abandoned `player-release` and `player-swap` crates; `player-ffi` became `player-backend`. The Rust engine owns scheduling, demux, decode, audio, video rendering, subtitles, OSD, OSC composition, GUI, and TUI. Scripting is removed; the OSC is native Rust in `player-app::osc`. The `player-app` binary owns the application layer (CLI, IPC, playlists, chapters, track switching, properties/events, OSC dispatch, native GUI window, TUI, Finder open, drag-and-drop, and PNG screenshots).
+- `tests/run.sh suite` on macOS: 367 passed, 0 failed. `tests/run.sh osd-fidelity` and `gui` also pass on macOS.
+- `tests/run.sh suite` in the Alpine container: 361 passed, 0 failed.
 - `scripts/audit.sh`: ok. `scripts/audit-linux.sh`: ok.
-- `scripts/measure.sh final`: final: ok. Distributable 22,728,000 B; first frame 36.43 ms; 1080p RSS 219.78 MB; seek 40.45 ms.
-- App: 24,123,793 B on disk; executable 7,600,640 B; framework closure 15,127,360 B in 12 dylibs; bundled icon 1,387,652 B.
-- One `file` protocol and one Lua interpreter.
+- `scripts/measure.sh final`: final: ok. Distributable 22,201,520 B; first frame 34.65 ms; 1080p RSS 218.22 MB; seek 44.45 ms.
+- App: 23,597,313 B on disk; executable 7,074,160 B; framework closure 15,127,360 B in 12 dylibs; bundled icon 1,387,652 B.
+- One `file` protocol and no Lua interpreter.
 - `--tui` plays in the terminal with centered embedded cover art. Kitty graphics are used on Ghostty, kitty, and WezTerm; other terminals use truecolor half-blocks. The TUI is audio-first and keeps `vo=null`.
 
 ## Releases
@@ -25,16 +25,15 @@ Player is a local-only media player. The macOS release artifact is `dist/Player.
 - The scheduler requests software video decode. `player-media` carries VideoToolbox and VA-API paths and tests; wiring the scheduler and reporting `hwdec-current` is `PLAY-20`.
 - GUI, HDR and 10-bit color, subtitle shaping, Retina scaling, audio audibility, hardware decode, real mouse and drag, and signing or notarization are owner-run. See `docs/manual-checklist.md`.
 - Clipboard support is removed. Encoding, recording, and the lavfi filter graph are deleted.
-- The `subprocess` command and the `.run` script backend are reachable from explicit scripts and IPC. No built-in module uses them.
 - The terminal UI has no sixel output and does not load external cover files; it renders the embedded picture only. Quit, Ctrl-C, and SIGTERM/SIGHUP restore the terminal.
 - The UTF-8-only path API remains.
 - Linux: glibc is explicitly out of scope. aarch64, X11, and a real-GPU, zero-copy VA-API, real-compositor, and real-ALSA check are outside the automated gates. The headless gate uses lavapipe with `--gpu-sw` and `mailbox` swap because headless Weston never releases FIFO buffers.
 
 ## Linux
 
-- `scripts/linux-container.sh tests/run.sh suite`: 334 passed, 0 failed.
+- `scripts/linux-container.sh tests/run.sh suite`: 361 passed, 0 failed.
 - `scripts/audit-linux.sh`: ok. `dist/player` needs seven shared libraries: musl, libgcc, Vulkan loader, Wayland client, ALSA, libva, and libva-drm. The tarball lists six Alpine runtime packages.
-- `scripts/measure-linux.sh final`: stripped 24,471,888 B; 1080p RSS 216.15 MB; first frame 74.44 ms; seek 35.91 ms.
+- `scripts/measure-linux.sh final`: stripped 23,820,624 B; 1080p RSS 214.11 MB; first frame 63.32 ms; seek 36.63 ms.
 - `--hwdec` defaults to the compatibility value `auto` and `hwdec-current` reports `no` while the scheduler decodes in software.
 - `tests/run.sh linux-gpu-next` passes 41/41 on headless Weston with lavapipe, including the OSD pixel diff, subtitles, window scaling, and the GUI gate.
 - `tests/run.sh linux-vaapi` (needs a GPU render node, not part of `suite`) is an owner check.

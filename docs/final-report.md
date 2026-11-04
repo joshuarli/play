@@ -2,7 +2,7 @@
 
 ## Outcome
 
-This fork is a local-only media player built on a Rust playback engine, a minimal FFmpeg n9.0.2, libplacebo, and the mpv-compatible application surface ported in this repository. The release artifact is `dist/Player.app`: a self-contained app with a 7,600,640 B executable, a 15,127,360 B framework closure in 12 dylibs, a bundled icon, an arm64-thinned MoltenVK, and no Homebrew runtime dependency. The app is 24,123,793 B on disk.
+This fork is a local-only media player built on a Rust playback engine, a minimal FFmpeg n9.0.2, libplacebo, and the mpv-compatible application surface ported in this repository. The release artifact is `dist/Player.app`: a self-contained app with a 7,074,160 B executable, a 15,127,360 B framework closure in 12 dylibs, a bundled icon, an arm64-thinned MoltenVK, and no Homebrew runtime dependency. The app is 23,597,313 B on disk.
 
 The mpv-derived C playback engine is gone. Cargo builds the player on both platforms.
 
@@ -20,8 +20,8 @@ The mpv-derived C playback engine is gone. Cargo builds the player on both platf
 | Command | Result |
 |---|---|
 | `cargo test --manifest-path rust/Cargo.toml` | pass |
-| macOS `tests/run.sh suite` | 340 passed, 0 failed |
-| Linux `tests/run.sh suite` | 334 passed, 0 failed |
+| macOS `tests/run.sh suite` | 367 passed, 0 failed |
+| Linux `tests/run.sh suite` | 361 passed, 0 failed |
 | `scripts/audit.sh` | ok |
 | `scripts/audit-linux.sh` | ok |
 | `scripts/release.sh` | `dist/Player.app` built |
@@ -30,16 +30,16 @@ The mpv-derived C playback engine is gone. Cargo builds the player on both platf
 
 | Budget | Limit | Actual |
 |---|---:|---:|
-| Distributable | 29,542,136 B | 22,728,000 B |
-| Executable | 10,000,000 B | 7,600,640 B |
-| First frame | 1 s | 36.43 ms |
-| 1080p CPU | no fixed gate | 2.980 s |
-| 1080p RSS | 300 MB | 219.78 MB |
-| Seek | 250 ms | 40.45 ms |
+| Distributable | 29,542,136 B | 22,201,520 B |
+| Executable | 10,000,000 B | 7,074,160 B |
+| First frame | 1 s | 34.65 ms |
+| 1080p CPU | no fixed gate | 2.960 s |
+| 1080p RSS | 300 MB | 218.22 MB |
+| Seek | 250 ms | 44.45 ms |
 | Network schemes | 0 | 0 |
 | Lua interpreters | 0 | 0 |
 
-The final measurement is the clean tree at `f41bb50`, after the C ABI, probe, and static-archive cleanup: cold 17.94 ms, warm 16.42 ms, idle RSS 14.34 MB, 1080p RSS 219.78 MB, 1080p CPU 2.98 s, 4K CPU 2.99 s, seek 40.45 ms, exit 10.88 ms, no audio underruns. These are headless timings. The 1080p CPU figure is real-time headless playback, not a fixed gate. The host was quiet before and after the run (`perf-gate-ready` exited 0).
+The final measurement is the clean tree at `6eb7184`, after scripting was removed: cold 17.56 ms, warm 15.90 ms, idle RSS 14.25 MB, 1080p RSS 218.22 MB, 1080p CPU 2.96 s, seek 44.45 ms, exit 10.41 ms, no audio underruns. These are headless timings and match the Lua build within noise. Interleaved against the previous release, headless 1080p CPU was 2.97 s against 2.98 s. In the GUI at 2560x1440 backing pixels, paused with the OSC shown, median CPU fell from 27.2% to 0.8%; hovering the seek bar fell from 28.3% to 10.2%; playing 1080p with the OSC hidden went from 14.2% to 13.8%; RSS was about 7 MB lower paused and 26 MB lower playing. `perf-gate-ready` exited 0 before and after each run.
 
 ## Build and provenance
 
@@ -74,24 +74,24 @@ The development loop is `scripts/build.sh` plus `tests/run.sh suite`. Scratch ar
 
 ### Outcome
 
-The Linux build is a mostly static `x86_64-unknown-linux-musl` executable with the same Rust engine and application layer as macOS: `vo=gpu-next` over Vulkan and Wayland, ALSA audio, and libva for hardware decode support. The release is `dist/player-x86_64-linux-musl.tar.gz` (player and README) with a SHA-256 file. The stripped executable is 24,471,888 B and needs seven shared libraries: musl, `libgcc_s.so.1`, `libvulkan.so.1`, `libwayland-client.so.0`, `libasound.so.2`, `libva.so.2`, and `libva-drm.so.2`. The final container measurement records cold 10.57 ms, warm 8.82 ms, first frame 74.44 ms, 1080p RSS 216.15 MB, seek 35.91 ms, and one `file` protocol.
+The Linux build is a mostly static `x86_64-unknown-linux-musl` executable with the same Rust engine and application layer as macOS: `vo=gpu-next` over Vulkan and Wayland, ALSA audio, and libva for hardware decode support. The release is `dist/player-x86_64-linux-musl.tar.gz` (player and README) with a SHA-256 file. The stripped executable is 23,820,624 B and needs seven shared libraries: musl, `libgcc_s.so.1`, `libvulkan.so.1`, `libwayland-client.so.0`, `libasound.so.2`, `libva.so.2`, and `libva-drm.so.2`. The final container measurement records cold 13.56 ms, warm 9.03 ms, first frame 63.32 ms, 1080p RSS 214.11 MB, seek 36.63 ms, and one `file` protocol.
 
 ### Verification
 
 | Command | Result |
 |---|---|
-| `scripts/linux-container.sh tests/run.sh suite` | 334 passed, 0 failed |
+| `scripts/linux-container.sh tests/run.sh suite` | 361 passed, 0 failed |
 | `scripts/linux-container.sh scripts/audit-linux.sh` | ok |
 | `cargo test --target x86_64-unknown-linux-musl` | pass |
 | `make linux` | tarball built |
 
 | Budget | Limit | Actual |
 |---|---:|---:|
-| Stripped binary | 50,000,000 B | 24,471,888 B |
+| Stripped binary | 50,000,000 B | 23,820,624 B |
 | Direct dynamic libraries | 7 | 7 |
 | Network schemes | 0 | 0 |
 | Lua interpreters | 0 | 0 |
-| 1080p RSS | 300 MB | 216.15 MB |
+| 1080p RSS | 300 MB | 214.11 MB |
 
 ### Provenance
 
