@@ -1,4 +1,4 @@
-use crate::mix::{layout_of, mix_into, Layout};
+use crate::mix::{mix_into, Layout};
 use crate::resample::Resampler;
 use crate::session::DecoderSession;
 use player_media::{Packet as MediaPacket, StreamInfo};
@@ -13,7 +13,7 @@ pub struct ReadyChunk {
 
 pub struct PacketDecoder {
     decoder: DecoderSession,
-    source_layout: Layout,
+    source_channels: Channels,
     target_layout: Layout,
     resampler: Resampler,
     target_rate: u32,
@@ -34,17 +34,11 @@ fn channels_of(info: &StreamInfo) -> Channels {
 }
 
 pub fn target_layout(info: &StreamInfo) -> Result<Layout, String> {
-    let source_layout = layout_of(&channels_of(info)).ok_or_else(|| {
-        format!(
-            "audio layout of '{}' has no pipeline mapping",
-            info.codec_name
-        )
-    })?;
-    Ok(match source_layout {
-        Layout::Mono => Layout::Mono,
-        Layout::Stereo => Layout::Stereo,
-        Layout::FiveOne => Layout::Stereo,
-    })
+    match channels_of(info).count() {
+        0 => Err(format!("audio stream '{}' has no channels", info.codec_name)),
+        1 => Ok(Layout::Mono),
+        _ => Ok(Layout::Stereo),
+    }
 }
 
 impl PacketDecoder {
@@ -64,12 +58,10 @@ impl PacketDecoder {
         if stream.sample_rate <= 0 {
             return Err("audio stream has no sample rate".to_string());
         }
-        let source_layout = layout_of(&channels_of(stream)).ok_or_else(|| {
-            format!(
-                "audio layout of '{}' has no pipeline mapping",
-                stream.codec_name
-            )
-        })?;
+        let source_channels = channels_of(stream);
+        if source_channels.count() == 0 {
+            return Err(format!("audio stream '{}' has no channels", stream.codec_name));
+        }
         let resampler = Resampler::new(
             stream.sample_rate as u32,
             target_rate,
@@ -78,7 +70,7 @@ impl PacketDecoder {
         let decoder = DecoderSession::open(stream)?;
         Ok(PacketDecoder {
             decoder,
-            source_layout,
+            source_channels,
             target_layout,
             resampler,
             target_rate,
@@ -88,8 +80,8 @@ impl PacketDecoder {
         })
     }
 
-    pub fn source_layout(&self) -> Layout {
-        self.source_layout
+    pub fn source_channels(&self) -> usize {
+        self.source_channels.count()
     }
 
     pub fn target_layout(&self) -> Layout {
@@ -102,10 +94,11 @@ impl PacketDecoder {
 
     pub fn feed(&mut self, packet: &MediaPacket, packet_pts: f64) -> Result<Option<ReadyChunk>, String> {
         let decoded = self.decoder.decode(packet)?;
-        let layout = layout_of(&decoded.channels)
-            .ok_or_else(|| format!("decoded audio layout {:?} has no pipeline mapping", decoded.channels))?;
-        if layout != self.source_layout {
-            return Err("audio layout changed mid-stream".to_string());
+        if decoded.channels.count() != self.source_channels.count() {
+            return Err(format!(
+                "audio layout changed mid-stream from {:?} to {:?}",
+                self.source_channels, decoded.channels
+            ));
         }
         if decoded.sample_rate != self.resampler.in_rate() {
             self.resampler = Resampler::new(

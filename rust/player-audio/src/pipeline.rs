@@ -26,8 +26,8 @@ impl Pipeline {
         })
     }
 
-    pub fn source_layout(&self) -> Layout {
-        self.core.source_layout()
+    pub fn source_channels(&self) -> usize {
+        self.core.source_channels()
     }
 
     pub fn target_layout(&self) -> Layout {
@@ -139,18 +139,18 @@ mod tests {
     #[test]
     fn drain_matches_fixture_duration() {
         let cases = [
-            ("audio-alac.m4a", Layout::Stereo, Layout::Stereo),
-            ("audio-flac.flac", Layout::Stereo, Layout::Stereo),
-            ("audio-mp3.mp3", Layout::Stereo, Layout::Stereo),
-            ("audio-ogg.ogg", Layout::Stereo, Layout::Stereo),
-            ("audio-wav.wav", Layout::Stereo, Layout::Stereo),
-            ("audio-mono.wav", Layout::Mono, Layout::Mono),
-            ("surround51.wav", Layout::FiveOne, Layout::Stereo),
-            ("h264.mp4", Layout::Stereo, Layout::Stereo),
+            ("audio-alac.m4a", 2, Layout::Stereo),
+            ("audio-flac.flac", 2, Layout::Stereo),
+            ("audio-mp3.mp3", 2, Layout::Stereo),
+            ("audio-ogg.ogg", 2, Layout::Stereo),
+            ("audio-wav.wav", 2, Layout::Stereo),
+            ("audio-mono.wav", 1, Layout::Mono),
+            ("surround51.wav", 6, Layout::Stereo),
+            ("h264.mp4", 2, Layout::Stereo),
         ];
         for (file, source, target) in cases {
             let mut pipeline = open(&fixture(file), 48000);
-            assert_eq!(pipeline.source_layout(), source, "{file}");
+            assert_eq!(pipeline.source_channels(), source, "{file}");
             assert_eq!(pipeline.target_layout(), target, "{file}");
             let pcm = pipeline.drain_all().expect("drain works");
             let seconds = pcm.len() as f64 / target.channels() as f64 / 48000.0;
@@ -169,7 +169,7 @@ mod tests {
     #[test]
     fn surround_downmix_keeps_both_channels_equal() {
         let mut pipeline = open(&fixture("surround51.wav"), 48000);
-        assert_eq!(pipeline.source_layout(), Layout::FiveOne);
+        assert_eq!(pipeline.source_channels(), 6);
         assert_eq!(pipeline.target_layout(), Layout::Stereo);
         let pcm = pipeline.drain_all().expect("drain works");
         let (left, right): (Vec<f32>, Vec<f32>) =

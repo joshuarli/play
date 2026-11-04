@@ -4,7 +4,6 @@ use symphonia::core::audio::{Channels, Position};
 pub enum Layout {
     Mono,
     Stereo,
-    FiveOne,
 }
 
 impl Layout {
@@ -12,30 +11,18 @@ impl Layout {
         match self {
             Layout::Mono => 1,
             Layout::Stereo => 2,
-            Layout::FiveOne => 6,
         }
     }
 
     pub fn channel_mask(&self) -> u64 {
         match self {
             Layout::Mono => Position::FRONT_CENTER.bits(),
-            Layout::Stereo | Layout::FiveOne => {
+            Layout::Stereo => {
                 Position::FRONT_LEFT.bits() | Position::FRONT_RIGHT.bits()
             }
         }
     }
 }
-
-const CANONICAL: [Position; 8] = [
-    Position::FRONT_LEFT,
-    Position::FRONT_RIGHT,
-    Position::FRONT_CENTER,
-    Position::LFE1,
-    Position::REAR_LEFT,
-    Position::REAR_RIGHT,
-    Position::SIDE_LEFT,
-    Position::SIDE_RIGHT,
-];
 
 pub fn layout_of(channels: &Channels) -> Option<Layout> {
     match channels {
@@ -47,22 +34,12 @@ pub fn layout_of(channels: &Channels) -> Option<Layout> {
                 == (Position::FRONT_LEFT.bits() | Position::FRONT_RIGHT.bits())
             {
                 Some(Layout::Stereo)
-            } else if bits
-                == (Position::FRONT_LEFT.bits()
-                    | Position::FRONT_RIGHT.bits()
-                    | Position::FRONT_CENTER.bits()
-                    | Position::LFE1.bits()
-                    | Position::REAR_LEFT.bits()
-                    | Position::REAR_RIGHT.bits())
-            {
-                Some(Layout::FiveOne)
             } else {
                 None
             }
         }
         Channels::Discrete(1) => Some(Layout::Mono),
         Channels::Discrete(2) => Some(Layout::Stereo),
-        Channels::Discrete(6) => Some(Layout::FiveOne),
         _ => None,
     }
 }
@@ -70,16 +47,9 @@ pub fn layout_of(channels: &Channels) -> Option<Layout> {
 pub fn channel_index(channels: &Channels, position: Position) -> Option<usize> {
     match channels {
         Channels::Positioned(positions) => {
-            let mut index = 0;
-            for candidate in CANONICAL {
-                if positions.bits() & candidate.bits() != 0 {
-                    if candidate.bits() == position.bits() {
-                        return Some(index);
-                    }
-                    index += 1;
-                }
-            }
-            None
+            let bits = positions.bits();
+            (bits & position.bits() != 0)
+                .then(|| (bits & (position.bits() - 1)).count_ones() as usize)
         }
         Channels::Discrete(count) => {
             let order = [
@@ -158,21 +128,50 @@ pub fn mix_into(input: &[f32], from: &Channels, to: Layout, output: &mut Vec<f32
                 output.push(right);
             }
         }
-        Layout::FiveOne => {
-            for frame in input.chunks_exact(from_count) {
-                output.push(at(frame, Position::FRONT_LEFT));
-                output.push(at(frame, Position::FRONT_RIGHT));
-                output.push(at(frame, Position::FRONT_CENTER));
-                output.push(at(frame, Position::LFE1));
-                output.push(at(frame, Position::REAR_LEFT));
-                output.push(at(frame, Position::REAR_RIGHT));
-            }
-        }
     }
 }
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn seven_one_and_side_five_one_downmix_by_position() {
+        let side = Channels::Positioned(
+            Position::FRONT_LEFT
+                | Position::FRONT_RIGHT
+                | Position::FRONT_CENTER
+                | Position::LFE1
+                | Position::SIDE_LEFT
+                | Position::SIDE_RIGHT,
+        );
+        let mut output = Vec::new();
+        mix_into(&[0.0, 0.0, 0.0, 0.0, 1.0, 0.0], &side, Layout::Stereo, &mut output);
+        assert!((output[0] - CENTRE_MIX).abs() < 1e-6 && output[1] == 0.0, "{output:?}");
+
+        let seven = Channels::Positioned(
+            Position::FRONT_LEFT
+                | Position::FRONT_RIGHT
+                | Position::FRONT_CENTER
+                | Position::LFE1
+                | Position::REAR_LEFT
+                | Position::REAR_RIGHT
+                | Position::SIDE_LEFT
+                | Position::SIDE_RIGHT,
+        );
+        mix_into(&[0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], &seven, Layout::Stereo, &mut output);
+        assert_eq!(output, vec![0.0, 1.0]);
+    }
+
+    #[test]
+    fn channel_index_follows_position_bit_order() {
+        let channels = Channels::Positioned(
+            Position::FRONT_LEFT | Position::FRONT_LEFT_CENTER | Position::SIDE_LEFT,
+        );
+        assert_eq!(channel_index(&channels, Position::FRONT_LEFT), Some(0));
+        assert_eq!(channel_index(&channels, Position::FRONT_LEFT_CENTER), Some(1));
+        assert_eq!(channel_index(&channels, Position::SIDE_LEFT), Some(2));
+        assert_eq!(channel_index(&channels, Position::FRONT_RIGHT), None);
+    }
 
     #[test]
     fn any_single_positioned_channel_is_mono() {
