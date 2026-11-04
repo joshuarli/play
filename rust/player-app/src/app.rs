@@ -57,7 +57,6 @@ pub struct App {
     presented_serial: u64,
     osd: Option<Vec<u8>>,
     osd_size: (i32, i32),
-    osd_hash: u64,
     last_osd: Instant,
     rendered_osc: Option<u64>,
     rendered_message: bool,
@@ -109,7 +108,6 @@ impl App {
             presented_serial: 0,
             osd: None,
             osd_size: (0, 0),
-            osd_hash: 0,
             last_osd: Instant::now()
                 .checked_sub(SUBTITLE_INTERVAL)
                 .unwrap_or_else(Instant::now),
@@ -808,9 +806,7 @@ impl App {
 
     fn render_window_overlay(&mut self, width: u32, height: u32) -> bool {
         let Some(backend) = self.backend.as_mut() else {
-            let changed = self.osd.take().is_some();
-            self.osd_hash = 0;
-            return changed;
+            return self.osd.take().is_some();
         };
         let size = (width as i32, height as i32);
         let now = Instant::now();
@@ -844,11 +840,9 @@ impl App {
         self.last_osd = now;
         self.rendered_osc = osc_revision;
         self.rendered_message = message;
-        let hash = rendered.as_deref().map(hash_bytes).unwrap_or(0);
-        let changed = hash != self.osd_hash || size != self.osd_size;
+        let changed = rendered != self.osd || size != self.osd_size;
         self.osd = rendered;
         self.osd_size = size;
-        self.osd_hash = hash;
         changed
     }
 
@@ -1840,15 +1834,6 @@ fn parse_time(value: &str) -> Result<f64, String> {
         return Ok(-rest.parse::<f64>().map_err(|_| "invalid time".to_owned())?);
     }
     value.parse().map_err(|_| "invalid time".to_owned())
-}
-
-fn hash_bytes(data: &[u8]) -> u64 {
-    let mut hash = 0xcbf2_9ce4_8422_2325u64;
-    for byte in data {
-        hash ^= *byte as u64;
-        hash = hash.wrapping_mul(0x100_0000_01b3);
-    }
-    hash
 }
 
 fn toggle_value(toggle: Toggle, current: bool) -> bool {
