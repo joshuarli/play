@@ -420,22 +420,40 @@ pub struct SchedulerEngine {
     worker: Option<thread::JoinHandle<()>>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct StartState {
+    pub volume: f32,
+    pub muted: bool,
+    pub paused: bool,
+}
+
+impl Default for StartState {
+    fn default() -> Self {
+        StartState {
+            volume: 1.0,
+            muted: false,
+            paused: false,
+        }
+    }
+}
+
 impl SchedulerEngine {
-    pub fn load(path: &str, kind: SinkKind) -> Result<Self, String> {
-        Self::start(path, kind, true, true)
+    pub fn load(path: &str, kind: SinkKind, start: StartState) -> Result<Self, String> {
+        Self::start(path, kind, start, true, true)
     }
 
-    pub fn load_null_video(path: &str, kind: SinkKind) -> Result<Self, String> {
-        Self::start(path, kind, true, false)
+    pub fn load_null_video(path: &str, kind: SinkKind, start: StartState) -> Result<Self, String> {
+        Self::start(path, kind, start, true, false)
     }
 
-    pub fn load_audio_only(path: &str, kind: SinkKind) -> Result<Self, String> {
-        Self::start(path, kind, false, false)
+    pub fn load_audio_only(path: &str, kind: SinkKind, start: StartState) -> Result<Self, String> {
+        Self::start(path, kind, start, false, false)
     }
 
     fn start(
         path: &str,
         kind: SinkKind,
+        start: StartState,
         include_video: bool,
         render_video: bool,
     ) -> Result<Self, String> {
@@ -444,8 +462,14 @@ impl SchedulerEngine {
         // Bounded: present blocks when the consumer falls behind instead of
         // buffering frames without limit.
         let (frames_tx, frames_rx) = mpsc::sync_channel(PRESENTED_CHANNEL_DEPTH);
+        let start = StartState {
+            volume: start.volume.clamp(0.0, 2.0),
+            ..start
+        };
         let state = Arc::new(Mutex::new(EngineStatus {
-            volume: 1.0,
+            volume: start.volume,
+            muted: start.muted,
+            paused: start.paused,
             ..EngineStatus::default()
         }));
         let worker_state = state.clone();
@@ -456,6 +480,7 @@ impl SchedulerEngine {
                 run_worker(
                     owned_path,
                     kind,
+                    start,
                     include_video,
                     render_video,
                     command_rx,
@@ -586,6 +611,7 @@ type EngineScheduler = Scheduler<EngineDemux, EngineAudio, EngineVideo, EngineOu
 fn run_worker(
     path: String,
     kind: SinkKind,
+    start: StartState,
     include_video: bool,
     render_video: bool,
     commands: mpsc::Receiver<WorkerCommand>,
@@ -633,8 +659,8 @@ fn run_worker(
         let output = EngineOutput {
             sink,
             written: 0,
-            volume: 1.0,
-            muted: false,
+            volume: start.volume,
+            muted: start.muted,
         };
         let (video, video_out) = match demux.selected_video() {
             Some(stream) => {
@@ -684,14 +710,18 @@ fn run_worker(
         }
         scheduler.set_subs(subs);
         scheduler.open();
+        if start.paused {
+            scheduler.send(Command::Pause(true));
+            scheduler.send(Command::Seek(0.0));
+        }
         Ok((scheduler, duration, video_width, video_height, library, playres))
     };
     let (mut worker, duration, video_width, video_height) = match build() {
         Ok((scheduler, duration, video_width, video_height, library, playres)) => (
             Worker {
                 scheduler,
-                volume: 1.0,
-                muted: false,
+                volume: start.volume,
+                muted: start.muted,
                 library,
                 playres,
             },
@@ -973,7 +1003,7 @@ mod tests {
 
     #[test]
     fn plays_to_end_with_null_sink() {
-        let engine = SchedulerEngine::load(&fixture("audio-wav.wav"), SinkKind::Null).expect("engine loads");
+        let engine = SchedulerEngine::load(&fixture("audio-wav.wav"), SinkKind::Null, StartState::default()).expect("engine loads");
         let status = poll_until(&engine, StdDuration::from_secs(10), |status| status.ended);
         assert!(status.error.is_none(), "unexpected error: {:?}", status.error);
         assert!((2.5..3.6).contains(&status.position), "position {}", status.position);
@@ -981,8 +1011,31 @@ mod tests {
     }
 
     #[test]
+    fn start_state_applies_before_any_audio_plays() {
+        let start = StartState {
+            volume: 0.25,
+            muted: true,
+            paused: true,
+        };
+        let engine = SchedulerEngine::load(&fixture("audio-wav.wav"), SinkKind::Null, start)
+            .expect("engine loads");
+        let first = engine.snapshot();
+        assert!(first.paused && first.muted, "start state is visible at once: {first:?}");
+        assert!((first.volume - 0.25).abs() < 1e-6);
+        std::thread::sleep(StdDuration::from_millis(300));
+        let later = engine.snapshot();
+        assert!(later.paused, "engine left the paused start");
+        assert!(later.position < 0.01, "paused start advanced to {}", later.position);
+
+        let video = SchedulerEngine::load(&fixture("h264.mp4"), SinkKind::Null, start)
+            .expect("video engine loads");
+        let shown = poll_until(&video, StdDuration::from_secs(5), |status| status.presented > 0);
+        assert!(shown.paused && shown.position < 0.05, "paused start shows the first frame: {shown:?}");
+    }
+
+    #[test]
     fn audio_only_load_plays_video_files_without_presenting() {
-        let engine = SchedulerEngine::load_audio_only(&fixture("h264.mp4"), SinkKind::Null)
+        let engine = SchedulerEngine::load_audio_only(&fixture("h264.mp4"), SinkKind::Null, StartState::default())
             .expect("engine loads video audio");
         let status = poll_until(&engine, StdDuration::from_secs(15), |status| status.ended);
         assert!(status.error.is_none(), "unexpected error: {:?}", status.error);
@@ -993,7 +1046,7 @@ mod tests {
 
     #[test]
     fn pause_freezes_position() {
-        let engine = SchedulerEngine::load(&fixture("audio-flac.flac"), SinkKind::Null).expect("engine loads");
+        let engine = SchedulerEngine::load(&fixture("audio-flac.flac"), SinkKind::Null, StartState::default()).expect("engine loads");
         engine.set_paused(true);
         thread::sleep(StdDuration::from_millis(100));
         let frozen = engine.snapshot();
@@ -1009,7 +1062,7 @@ mod tests {
 
     #[test]
     fn seek_moves_position() {
-        let engine = SchedulerEngine::load(&fixture("audio-mp3.mp3"), SinkKind::Null).expect("engine loads");
+        let engine = SchedulerEngine::load(&fixture("audio-mp3.mp3"), SinkKind::Null, StartState::default()).expect("engine loads");
         engine.set_paused(true);
         engine.seek(2.0);
         let status = poll_until(&engine, StdDuration::from_secs(10), |status| {
@@ -1025,7 +1078,7 @@ mod tests {
     )]
     fn seek_video_while_paused_lands_exactly() {
         let engine =
-            SchedulerEngine::load(&fixture("h264.mp4"), SinkKind::Null).expect("engine loads video");
+            SchedulerEngine::load(&fixture("h264.mp4"), SinkKind::Null, StartState::default()).expect("engine loads video");
         engine.set_paused(true);
         let paused = poll_until(&engine, StdDuration::from_secs(10), |status| status.paused);
         assert!(paused.paused);
@@ -1071,7 +1124,7 @@ mod tests {
     #[test]
     fn external_subs_render_on_audio_only() {
         let engine =
-            SchedulerEngine::load(&fixture("audio-wav.wav"), SinkKind::Null).expect("engine loads");
+            SchedulerEngine::load(&fixture("audio-wav.wav"), SinkKind::Null, StartState::default()).expect("engine loads");
         pause_and_seek(&engine, 0.0);
         engine
             .add_sub(&fixture("external.srt"))
@@ -1137,7 +1190,7 @@ mod tests {
     #[test]
     fn external_ass_switches_tracks() {
         let engine =
-            SchedulerEngine::load(&fixture("audio-wav.wav"), SinkKind::Null).expect("engine loads");
+            SchedulerEngine::load(&fixture("audio-wav.wav"), SinkKind::Null, StartState::default()).expect("engine loads");
         pause_and_seek(&engine, 0.0);
         engine
             .add_sub(&fixture("external.srt"))
@@ -1179,7 +1232,7 @@ mod tests {
         ignore = "static-pie test binaries cannot call the container Vulkan loader; run with RUSTFLAGS=\"-C target-feature=-crt-static\""
     )]
     fn embedded_subs_prime_on_a_paused_seek_before_playback() {
-        let engine = SchedulerEngine::load(&fixture("h264-embedded-srt.mkv"), SinkKind::Null)
+        let engine = SchedulerEngine::load(&fixture("h264-embedded-srt.mkv"), SinkKind::Null, StartState::default())
             .expect("engine loads video with subs");
         engine.set_paused(true);
         poll_until(&engine, StdDuration::from_secs(10), |status| status.paused);
@@ -1208,7 +1261,7 @@ mod tests {
         ignore = "static-pie test binaries cannot call the container Vulkan loader; run with RUSTFLAGS=\"-C target-feature=-crt-static\""
     )]
     fn embedded_subs_render_at_cue_time() {
-        let engine = SchedulerEngine::load(&fixture("h264-embedded-srt.mkv"), SinkKind::Null)
+        let engine = SchedulerEngine::load(&fixture("h264-embedded-srt.mkv"), SinkKind::Null, StartState::default())
             .expect("engine loads video with subs");
         engine.select_sub(Some(0));
         poll_until(&engine, StdDuration::from_secs(30), |status| status.ended);
@@ -1247,7 +1300,7 @@ mod tests {
         ignore = "static-pie test binaries cannot call the container Vulkan loader; run with RUSTFLAGS=\"-C target-feature=-crt-static\""
     )]
     fn mov_text_subs_select_and_render() {
-        let engine = SchedulerEngine::load(&fixture("h264-movtext.mp4"), SinkKind::Null)
+        let engine = SchedulerEngine::load(&fixture("h264-movtext.mp4"), SinkKind::Null, StartState::default())
             .expect("engine loads video with movtext");
         let status = poll_until(&engine, StdDuration::from_secs(10), |status| {
             status
@@ -1277,7 +1330,7 @@ mod tests {
 
     #[test]
     fn seek_after_end_restarts() {
-        let engine = SchedulerEngine::load(&fixture("audio-mono.wav"), SinkKind::Null).expect("engine loads");
+        let engine = SchedulerEngine::load(&fixture("audio-mono.wav"), SinkKind::Null, StartState::default()).expect("engine loads");
         poll_until(&engine, StdDuration::from_secs(10), |status| status.ended);
         engine.seek(0.0);
         let status = poll_until(&engine, StdDuration::from_secs(10), |status| {
@@ -1293,7 +1346,7 @@ mod tests {
     )]
     fn plays_video_through_renderer() {
         let engine =
-            SchedulerEngine::load(&fixture("h264.mp4"), SinkKind::Null).expect("engine loads video");
+            SchedulerEngine::load(&fixture("h264.mp4"), SinkKind::Null, StartState::default()).expect("engine loads video");
         let deadline = Instant::now() + StdDuration::from_secs(30);
         let mut frames = Vec::new();
         let status = loop {
@@ -1345,6 +1398,6 @@ mod tests {
 
     #[test]
     fn rejects_missing_files() {
-        assert!(SchedulerEngine::load("/no/such/file.wav", SinkKind::Null).is_err());
+        assert!(SchedulerEngine::load("/no/such/file.wav", SinkKind::Null, StartState::default()).is_err());
     }
 }

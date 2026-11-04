@@ -84,7 +84,7 @@ fn main() -> Result<(), String> {
         ));
     }
     let duration = player_app::properties::probe(&options.fixture)?.duration;
-    let engine = SchedulerEngine::load(&options.fixture, SinkKind::Null)
+    let engine = SchedulerEngine::load(&options.fixture, SinkKind::Null, player_engine::StartState::default())
         .map_err(|error| format!("cannot open {}: {error}", options.fixture))?;
     let mut backend = EngineBackend::open(engine);
     backend.set_paused(true);

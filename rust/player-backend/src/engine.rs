@@ -250,13 +250,13 @@ mod tests {
 
     fn backend() -> EngineBackend {
         let engine =
-            SchedulerEngine::load(&fixture("audio-wav.wav"), SinkKind::Null).expect("engine loads");
+            SchedulerEngine::load(&fixture("audio-wav.wav"), SinkKind::Null, player_engine::StartState::default()).expect("engine loads");
         EngineBackend::open(engine)
     }
 
     fn video_backend() -> EngineBackend {
         let engine =
-            SchedulerEngine::load(&fixture("h264.mp4"), SinkKind::Null).expect("engine loads");
+            SchedulerEngine::load(&fixture("h264.mp4"), SinkKind::Null, player_engine::StartState::default()).expect("engine loads");
         EngineBackend::open(engine)
     }
 

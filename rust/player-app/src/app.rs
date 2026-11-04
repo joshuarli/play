@@ -9,7 +9,7 @@ use player_core::command::{
 };
 use player_core::input::{classify_input, InputPath};
 use player_engine::video::PresentedFrame;
-use player_engine::{EngineStatus, SchedulerEngine, TrackKind};
+use player_engine::{EngineStatus, SchedulerEngine, StartState, TrackKind};
 use player_backend::engine::{EngineBackend, OverlayImage, DEFAULT_OSD_DURATION};
 use player_output::{Overlay, OverlayRect};
 use player_tui::{Control, Cover, Player as TuiPlayer, Snapshot, Track};
@@ -324,12 +324,17 @@ impl App {
         } else {
             SinkKind::Default
         };
+        let start = StartState {
+            volume: (self.options.volume / 100.0) as f32,
+            muted: self.options.muted,
+            paused: self.options.pause,
+        };
         let engine = if self.options.tui || self.options.no_video {
-            SchedulerEngine::load_audio_only(&entry.path, sink)
+            SchedulerEngine::load_audio_only(&entry.path, sink, start)
         } else if self.options.null_video {
-            SchedulerEngine::load_null_video(&entry.path, sink)
+            SchedulerEngine::load_null_video(&entry.path, sink, start)
         } else {
-            SchedulerEngine::load(&entry.path, sink)
+            SchedulerEngine::load(&entry.path, sink, start)
         };
         let engine = match engine {
             Ok(engine) => engine,
