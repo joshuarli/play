@@ -52,6 +52,11 @@ playlist operations, OSC lifecycle, and engine session reloads.
   and Linux artifact scripts build `dist`. The Linux image reads the
   Rust channel from `rust-toolchain.toml` and builds with the repo
   root as context.
+- Budget: the rebuilt release app is 32,079,071 B with both engines
+  linked, 2.54 MB over the 29,542,136 B distributable budget. The
+  cause is the Rust engine beside the C engine; S9 removes C. Timed
+  `measure.sh final` checks were deferred because the host was busy,
+  so no timing result is claimed for S8a.
 
 ## S7e record
 
