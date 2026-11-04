@@ -4,13 +4,11 @@ use player_engine::{video::PresentedFrame, EngineStatus, SchedulerEngine, TrackK
 use std::time::{Duration, Instant};
 
 pub const DEFAULT_OSD_DURATION: Duration = Duration::from_millis(1000);
-const PENDING_FRAME_LIMIT: usize = 8;
 
 pub struct EngineBackend {
     engine: SchedulerEngine,
     sub_visible: bool,
     message: Option<OsdMessage>,
-    pending_frames: Vec<PresentedFrame>,
     osd: Option<OsdState>,
 }
 
@@ -25,7 +23,6 @@ impl EngineBackend {
             engine,
             sub_visible: true,
             message: None,
-            pending_frames: Vec::new(),
             osd: None,
         }
     }
@@ -128,11 +125,7 @@ impl EngineBackend {
     }
 
     pub fn subtitles_selected(&self) -> bool {
-        self.engine
-            .snapshot()
-            .tracks
-            .iter()
-            .any(|track| track.kind == TrackKind::Subtitle && track.selected)
+        subtitles_selected(&self.engine.snapshot())
     }
 
     fn render_images(
@@ -143,11 +136,7 @@ impl EngineBackend {
     ) -> Result<Vec<RenderedImage>, String> {
         let status = self.engine.snapshot();
         let mut images = Vec::new();
-        let subtitle_selected = status
-            .tracks
-            .iter()
-            .any(|track| track.kind == TrackKind::Subtitle && track.selected);
-        if subtitle_selected {
+        if subtitles_selected(&status) {
             let now_ms = (status.position * 1000.0).round() as i64;
             images.extend(self.engine.render_subtitles(
                 width as i32,
@@ -194,15 +183,16 @@ impl EngineBackend {
         Ok(Some(rgba))
     }
 
-    pub fn pump_frames(&mut self) {
-        self.pending_frames.extend(self.engine.drain_frames());
-        let excess = self.pending_frames.len().saturating_sub(PENDING_FRAME_LIMIT);
-        self.pending_frames.drain(..excess);
+    pub fn latest_frame(&self) -> Option<PresentedFrame> {
+        self.engine.drain_frames().pop()
     }
+}
 
-    pub fn take_frames(&mut self) -> Vec<PresentedFrame> {
-        std::mem::take(&mut self.pending_frames)
-    }
+fn subtitles_selected(status: &EngineStatus) -> bool {
+    status
+        .tracks
+        .iter()
+        .any(|track| track.kind == TrackKind::Subtitle && track.selected)
 }
 
 #[cfg(test)]
@@ -239,7 +229,7 @@ mod tests {
     ) -> EngineStatus {
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
-            backend.pump_frames();
+            backend.latest_frame();
             let status = backend.status();
             if done(&status) {
                 return status;

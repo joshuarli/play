@@ -91,7 +91,7 @@ fn main() -> Result<(), String> {
     backend.seek_to(options.position);
     let deadline = Instant::now() + Duration::from_secs(20);
     let status = loop {
-        backend.pump_frames();
+        backend.latest_frame();
         let status = backend.status();
         if status.paused && !status.tracks.is_empty() && (status.position - options.position).abs() < 0.05 {
             break status;

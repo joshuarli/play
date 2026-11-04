@@ -920,15 +920,14 @@ impl App {
             ));
             self.end_sent = true;
         }
-        let Some(backend) = self.backend.as_mut() else {
+        let Some(backend) = self.backend.as_ref() else {
             if self.options.idle && !self.idle_sent {
                 self.defer_event(ipc::event("idle", Vec::new()));
                 self.idle_sent = true;
             }
             return Ok(());
         };
-        backend.pump_frames();
-        if let Some(frame) = backend.take_frames().pop() {
+        if let Some(frame) = backend.latest_frame() {
             self.last_frame = Some(frame);
             self.frame_serial += 1;
         }
