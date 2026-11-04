@@ -332,9 +332,6 @@ def rpaths(path):
 
 def component_for(path):
     lowered = path.lower()
-    name = Path(path).name.lower()
-    if "/ffmpeg" in lowered or name.startswith(("libav", "libsw")):
-        return "FFmpeg"
     if "libplacebo" in lowered:
         return "libplacebo"
     if "moltenvk" in lowered:
@@ -343,8 +340,6 @@ def component_for(path):
         return "Vulkan"
     if "shaderc" in lowered or "glslang" in lowered or "spirv" in lowered:
         return "shaderc"
-    if "dav1d" in lowered:
-        return "dav1d"
     return "remaining external"
 
 
