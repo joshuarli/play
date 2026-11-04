@@ -465,10 +465,8 @@ impl VideoSession {
             };
         }
         set_option(context, "threads", thread_count())?;
-        // Frame threading holds one frame per thread, which puts the first
-        // presented frame behind the audio clock. Slice threading decodes in
-        // parallel without that delay.
-        set_option_text(context, "thread_type", "slice")?;
+        let threading = if info.attached { "slice" } else { "frame+slice" };
+        set_option_text(context, "thread_type", threading)?;
         #[cfg(target_os = "linux")]
         if hw == HwRequest::VaApi && !render_node_present() {
             return Err("vaapi: no DRM render node".to_string());
