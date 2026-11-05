@@ -3,7 +3,8 @@ use std::io::{self, Write};
 use std::process::Command;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::os::fd::AsFd;
+use std::time::{Duration, Instant};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
@@ -123,21 +124,7 @@ impl Kitty {
     }
 
     fn send(&self, sequence: &[u8]) {
-        let mut stdout = io::stdout().lock();
-        if self.in_tmux {
-            let mut wrapped = Vec::with_capacity(sequence.len() + 16);
-            wrapped.extend_from_slice(b"\x1bPtmux;");
-            for byte in sequence {
-                if *byte == 0x1b {
-                    wrapped.push(0x1b);
-                }
-                wrapped.push(*byte);
-            }
-            wrapped.extend_from_slice(b"\x1b\\");
-            let _ = stdout.write_all(&wrapped);
-        } else {
-            let _ = stdout.write_all(sequence);
-        }
+        let _ = io::stdout().lock().write_all(&for_terminal(sequence, self.in_tmux));
     }
 
     fn place(&mut self, cover: &Cover, rect: Rect) {
@@ -196,6 +183,76 @@ impl Drop for Kitty {
     }
 }
 
+fn for_terminal(sequence: &[u8], in_tmux: bool) -> Vec<u8> {
+    if !in_tmux {
+        return sequence.to_vec();
+    }
+    let mut wrapped = Vec::with_capacity(sequence.len() + 16);
+    wrapped.extend_from_slice(b"\x1bPtmux;");
+    for byte in sequence {
+        if *byte == 0x1b {
+            wrapped.push(0x1b);
+        }
+        wrapped.push(*byte);
+    }
+    wrapped.extend_from_slice(b"\x1b\\");
+    wrapped
+}
+
+const KITTY_PROBE_ID: u32 = 31;
+
+fn kitty_answers(in_tmux: bool) -> io::Result<bool> {
+    let query = format!("\x1b_Gi={KITTY_PROBE_ID},s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\");
+    let mut stdout = io::stdout().lock();
+    stdout.write_all(&for_terminal(query.as_bytes(), in_tmux))?;
+    stdout.write_all(b"\x1b[c")?;
+    stdout.flush()?;
+    drop(stdout);
+    let stdin = io::stdin();
+    let fd = stdin.as_fd();
+    let deadline = Instant::now() + Duration::from_millis(if in_tmux { 400 } else { 1000 });
+    let mut reply = Vec::new();
+    loop {
+        if let Some(answer) = kitty_verdict(&reply, in_tmux) {
+            return Ok(answer);
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Ok(false);
+        }
+        let timeout = rustix::event::Timespec::try_from(remaining).map_err(io::Error::other)?;
+        let mut fds = [rustix::event::PollFd::new(&fd, rustix::event::PollFlags::IN)];
+        if rustix::event::poll(&mut fds, Some(&timeout))? == 0 {
+            continue;
+        }
+        let mut chunk = [0u8; 256];
+        let read = rustix::io::read(fd, &mut chunk)?;
+        if read == 0 {
+            return Ok(false);
+        }
+        reply.extend_from_slice(&chunk[..read]);
+    }
+}
+
+/// Some(answer) once the reply settles whether kitty graphics work. Outside
+/// tmux the terminal answers in order, so its DA1 reply means no kitty reply
+/// is coming. tmux answers DA1 itself ahead of the terminal's kitty reply,
+/// so there only an OK, or the caller's deadline, decides.
+fn kitty_verdict(reply: &[u8], in_tmux: bool) -> Option<bool> {
+    let ok = format!("\x1b_Gi={KITTY_PROBE_ID};OK");
+    let has_ok = reply.windows(ok.len()).any(|window| window == ok.as_bytes());
+    let has_da1 = reply
+        .windows(3)
+        .position(|window| window == b"\x1b[?")
+        .is_some_and(|start| reply[start..].contains(&b'c'));
+    match (has_ok, has_da1, in_tmux) {
+        (true, true, _) => Some(true),
+        (true, false, true) => Some(true),
+        (false, true, false) => Some(false),
+        _ => None,
+    }
+}
+
 pub struct Terminal {
     kitty: Kitty,
     pub mode: ArtMode,
@@ -205,6 +262,15 @@ pub struct Terminal {
 impl Terminal {
     pub fn enter(mode: ArtMode) -> io::Result<Self> {
         enable_raw_mode()?;
+        let in_tmux = env::var_os("TMUX").is_some();
+        let mode = if mode == ArtMode::Kitty
+            && env::var_os("PLAYER_TUI_ART").is_none()
+            && !kitty_answers(in_tmux)?
+        {
+            ArtMode::Blocks
+        } else {
+            mode
+        };
         let mut stdout = io::stdout().lock();
         execute!(stdout, EnterAlternateScreen, Hide)?;
         stdout.write_all(b"\x1b[2J")?;
@@ -321,6 +387,22 @@ pub fn read_key(timeout: Duration) -> io::Result<Option<Key>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn kitty_verdict_outside_tmux_waits_for_the_ordered_da1() {
+        assert_eq!(kitty_verdict(b"", false), None);
+        assert_eq!(kitty_verdict(b"\x1b_Gi=31;OK\x1b\\", false), None);
+        assert_eq!(kitty_verdict(b"\x1b_Gi=31;OK\x1b\\\x1b[?62;22;52c", false), Some(true));
+        assert_eq!(kitty_verdict(b"\x1b[?62;22;52c", false), Some(false));
+        assert_eq!(kitty_verdict(b"\x1b_Gi=31;ENOENT\x1b\\\x1b[?62c", false), Some(false));
+    }
+
+    #[test]
+    fn kitty_verdict_in_tmux_ignores_tmux_answering_da1_first() {
+        assert_eq!(kitty_verdict(b"\x1b[?1;2;4c", true), None);
+        assert_eq!(kitty_verdict(b"\x1b[?1;2;4c\x1b_Gi=31;OK\x1b\\", true), Some(true));
+        assert_eq!(kitty_verdict(b"\x1b_Gi=31;OK", true), Some(true));
+    }
 
     #[test]
     fn explicit_art_mode_wins() {

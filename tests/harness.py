@@ -706,6 +706,33 @@ def gate_tui(results, args):
                 pass
 
 
+    proc = None
+    master = None
+    try:
+        silent_env = {"GHOSTTY_RESOURCES_DIR": "/nonexistent", "TERM_PROGRAM": "ghostty"}
+        proc, master, buf = pty_session(
+            ["--no-config", "--ao=null", "--volume=0", "--pause=yes", str(path)],
+            env_extra=silent_env, wait_for=b"\xe2\x96\x80", timeout=8,
+        )
+        results.check("tui: kitty-looking terminal that never answers falls back to half-blocks",
+                      b"\xe2\x96\x80" in buf and b"a=T" not in buf,
+                      ANSI_RE.sub("", bytes(buf).decode("utf-8", "replace"))[-200:])
+        buf, stderr = pty_finish(proc, master, buf)
+        master = None
+        results.check("tui: kitty fallback exits cleanly", proc.returncode == 0,
+                      f"exit {proc.returncode}: {stderr[-300:]}")
+    except Exception as exc:
+        results.check("tui: kitty fallback", False, str(exc))
+    finally:
+        if proc is not None and proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=5)
+        if master is not None:
+            try:
+                os.close(master)
+            except OSError:
+                pass
+
     for name, wants_tui, extra in (("audio-cover", True, ["--pause=yes"]),
                                    ("audio-mp3", True, ["--pause=yes"]),
                                    ("h264", False, ["--vo=null"])):
