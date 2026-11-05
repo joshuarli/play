@@ -211,6 +211,9 @@ if ! have libplacebo; then
         -Dshaderc=enabled -Dglslang=disabled -Dlcms=disabled -Dopengl=disabled \
         -Dd3d11=disabled -Dlibdovi=disabled -Ddemos=false -Dtests=false -Dbench=false
     run_log libplacebo-build ninja -C "$SRC/libplacebo-v$LIBPLACEBO_VERSION/build" install
+    placebo_api=${LIBPLACEBO_VERSION#*.}
+    placebo_dylib="libplacebo.${placebo_api%.*}.dylib"
+    run_log libplacebo-id install_name_tool -id "@rpath/$placebo_dylib" "$PREFIX/lib/$placebo_dylib"
     stamp libplacebo
 fi
 
@@ -222,8 +225,13 @@ if ! have moltenvk; then
     tar -xf "$SRC/$MV" -C "$SRC"
     cp "$SRC/MoltenVK/MoltenVK/dynamic/dylib/macOS/libMoltenVK.dylib" "$PREFIX/lib/"
     mkdir -p "$PREFIX/share/vulkan/icd.d"
-    cp "$SRC/MoltenVK/MoltenVK/dynamic/dylib/macOS/MoltenVK_icd.json" \
-        "$PREFIX/share/vulkan/icd.d/"
+    sed "s#\"\./libMoltenVK\.dylib\"#\"$PREFIX/lib/libMoltenVK.dylib\"#" \
+        "$SRC/MoltenVK/MoltenVK/dynamic/dylib/macOS/MoltenVK_icd.json" \
+        >"$PREFIX/share/vulkan/icd.d/MoltenVK_icd.json"
+    rg -qF "\"$PREFIX/lib/libMoltenVK.dylib\"" "$PREFIX/share/vulkan/icd.d/MoltenVK_icd.json" || {
+        printf 'error: MoltenVK ICD no longer names ./libMoltenVK.dylib\n' >&2
+        exit 1
+    }
     stamp moltenvk
 fi
 

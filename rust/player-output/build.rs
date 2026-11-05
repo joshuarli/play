@@ -9,9 +9,15 @@ fn main() {
         );
         return;
     }
+    let dir = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
+    let prefix = player_build::release_prefix("player-output", &dir);
+    let pkgconfig = prefix.join("lib/pkgconfig");
     for package in ["libplacebo", "vulkan"] {
+        println!("cargo:rerun-if-changed={}", pkgconfig.join(format!("{package}.pc")).display());
         let output = std::process::Command::new("pkg-config")
             .args(["--libs", package])
+            .env("PKG_CONFIG_LIBDIR", &pkgconfig)
+            .env_remove("PKG_CONFIG_PATH")
             .output()
             .unwrap_or_else(|_| panic!("player-output: pkg-config {package} failed"));
         assert!(
@@ -20,6 +26,7 @@ fn main() {
         );
         emit_pkg_libs(&String::from_utf8_lossy(&output.stdout));
     }
+    player_build::emit_macos_prefix_rpath("player-output", &dir);
 }
 
 fn emit_pkg_libs(libs: &str) {

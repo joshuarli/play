@@ -38,9 +38,7 @@ ifeq ($(shell uname -s),Darwin)
 		grep -qxF '.work/' "$$d/exclude" 2>/dev/null || echo '.work/' >> "$$d/exclude"; \
 	fi
 	@command -v brew >/dev/null 2>&1 || { echo 'error: Homebrew required for macOS test deps' >&2; exit 1; }
-	@if ! pkg-config --exists libplacebo vulkan 2>/dev/null; then \
-		brew install libplacebo vulkan-loader vulkan-headers molten-vk shaderc; \
-	fi
+	@scripts/build-deps.sh
 	@FFMPEG_BIN_DIR=""; \
 	if command -v ffmpeg >/dev/null 2>&1 && ffmpeg -hide_banner -encoders 2>/dev/null | grep -q 'libx264'; then \
 		:; \

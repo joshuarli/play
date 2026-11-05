@@ -44,6 +44,18 @@ def dependencies(path):
     return result
 
 
+def rpaths_of(path):
+    result = []
+    lines = otool(path, "-l").splitlines()
+    for index, line in enumerate(lines):
+        if line.strip() == "cmd LC_RPATH":
+            for detail in lines[index + 1:index + 4]:
+                detail = detail.strip()
+                if detail.startswith("path "):
+                    result.append(detail[len("path "):].split(" (offset")[0])
+    return result
+
+
 def resolve(dep):
     if dep.startswith("@rpath/"):
         name = dep[len("@rpath/"):]
@@ -139,6 +151,12 @@ def main():
                     check=True,
                 )
 
+    for rpath in rpaths_of(executable):
+        if rpath.startswith(str(ROOT)):
+            subprocess.run(
+                ["install_name_tool", "-delete_rpath", rpath, str(executable)],
+                check=True,
+            )
     rpaths = otool(executable, "-l")
     if "@executable_path/../Frameworks" not in rpaths:
         subprocess.run(

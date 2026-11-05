@@ -17,5 +17,7 @@ fn main() {
             .compile("player_display_bridge");
         println!("cargo:rustc-link-lib=framework=AppKit");
         println!("cargo:rustc-link-lib=framework=QuartzCore");
+        let dir = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
+        player_build::emit_macos_prefix_rpath("player-display", &dir);
     }
 }

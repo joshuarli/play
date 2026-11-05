@@ -1950,7 +1950,7 @@ def gate_release(results, args):
     bad = []
     targets = [binary] + sorted(frameworks.glob("*.dylib"))
     for target in targets:
-        linked = subprocess.check_output(["otool", "-L", str(target)], text=True)
+        linked = subprocess.check_output(["otool", "-l", str(target)], text=True)
         if "/opt/homebrew" in linked or ".work/deps" in linked:
             bad.append(str(target))
     results.check("release: no Homebrew or build paths", not bad, ", ".join(bad))

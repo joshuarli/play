@@ -24,3 +24,18 @@ pub fn emit_linux_closure(owner: &str, args_file: &Path, prefix: &Path) {
         }
     }
 }
+
+pub fn release_prefix(owner: &str, manifest_dir: &Path) -> std::path::PathBuf {
+    let prefix = manifest_dir.join("../../.work/deps/release");
+    prefix.canonicalize().unwrap_or_else(|error| {
+        panic!(
+            "{owner}: no release dependency prefix at {} ({error}); run scripts/build-deps.sh",
+            prefix.display()
+        )
+    })
+}
+
+pub fn emit_macos_prefix_rpath(owner: &str, manifest_dir: &Path) {
+    let lib = release_prefix(owner, manifest_dir).join("lib");
+    println!("cargo:rustc-link-arg=-Wl,-rpath,{}", lib.display());
+}

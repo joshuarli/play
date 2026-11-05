@@ -30,11 +30,6 @@ command -v brew >/dev/null || {
 }
 
 pin ffmpeg 9.0.2_1
-pin libplacebo 7.387.0
-pin molten-vk 1.4.2
-pin vulkan-loader 1.4.363.0
-pin vulkan-headers 1.4.363.0
-pin shaderc 2026.4
 pin meson 1.12.1
 pin ninja 1.13.2
 pin pkgconf 3.0.10

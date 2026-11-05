@@ -24,3 +24,7 @@ else
 fi
 mkdir -p "$(dirname "$OUTPUT")"
 install -m 755 "${CARGO_TARGET_DIR:-$ROOT/rust/target}/debug/player" "$OUTPUT"
+if [ "$(uname -s)" = "Darwin" ]; then
+    mkdir -p "$ROOT/build/vulkan/icd.d"
+    cp "$ROOT/.work/deps/release/share/vulkan/icd.d/MoltenVK_icd.json" "$ROOT/build/vulkan/icd.d/"
+fi
