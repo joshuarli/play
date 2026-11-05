@@ -225,6 +225,7 @@ pub fn get(app: &App, name: &str) -> Result<NativeValue, String> {
         } else {
             "auto".to_owned()
         })),
+        "options/gpu-api" => Ok(NativeValue::String(app.options.gpu_api.name().to_owned())),
         "options/vo" => Ok(NativeValue::String(if app.options.null_video || app.options.no_video {
             "null".to_owned()
         } else {

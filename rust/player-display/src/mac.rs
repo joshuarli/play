@@ -1,6 +1,6 @@
 use player_output::{
-    render_to_target, ColorSpec, Instance, Overlay, PixelLayout, Plane, Renderer, Surface,
-    Swapchain, Gpu,
+    render_to_target, ColorSpec, Gpu, GpuApi, Instance, Overlay, PixelLayout, Plane, Renderer,
+    Surface, Swapchain,
 };
 use std::ffi::{c_char, c_int, c_void, CStr, CString};
 
@@ -133,45 +133,102 @@ pub enum MacInput {
 }
 
 pub struct MacWindow {
-    swapchain: Swapchain,
-    surface: Surface,
-    renderer: Renderer,
-    gpu: Gpu,
-    instance: Instance,
+    presenter: Presenter,
     bridge: Bridge,
     width: i32,
     height: i32,
     presented: u64,
 }
 
+// Variant fields drop in declaration order: the swapchain, then the Vulkan
+// surface while its device lives, then the renderer, the device, and last
+// the Vulkan instance.
+enum Presenter {
+    Vulkan {
+        swapchain: Swapchain,
+        _surface: Surface,
+        renderer: Renderer,
+        gpu: Gpu,
+        _instance: Instance,
+    },
+    Metal {
+        swapchain: Swapchain,
+        renderer: Renderer,
+        gpu: Gpu,
+    },
+}
+
+impl Presenter {
+    fn open(api: GpuApi, layer: *mut c_void, width: i32, height: i32) -> Result<Self, String> {
+        match api {
+            GpuApi::Vulkan => {
+                let instance = Instance::new()?;
+                let surface = instance.create_metal_surface(layer)?;
+                let gpu = Gpu::vulkan_for_surface(&instance, &surface)?;
+                let renderer = gpu.create_renderer()?;
+                let swapchain = Swapchain::vulkan(&gpu, &surface, width, height)?;
+                Ok(Presenter::Vulkan {
+                    swapchain,
+                    _surface: surface,
+                    renderer,
+                    gpu,
+                    _instance: instance,
+                })
+            }
+            GpuApi::Metal => {
+                let gpu = Gpu::metal()?;
+                let renderer = gpu.create_renderer()?;
+                let swapchain = Swapchain::metal(&gpu, layer, width, height)?;
+                Ok(Presenter::Metal {
+                    swapchain,
+                    renderer,
+                    gpu,
+                })
+            }
+        }
+    }
+
+    fn swapchain(&mut self) -> &mut Swapchain {
+        self.parts().0
+    }
+
+    fn parts(&mut self) -> (&mut Swapchain, &Renderer, &Gpu) {
+        match self {
+            Presenter::Vulkan {
+                swapchain,
+                renderer,
+                gpu,
+                ..
+            }
+            | Presenter::Metal {
+                swapchain,
+                renderer,
+                gpu,
+            } => (swapchain, renderer, gpu),
+        }
+    }
+}
+
 impl MacWindow {
-    pub fn open(title: &str, width: i32, height: i32) -> Result<Self, String> {
+    pub fn open(title: &str, width: i32, height: i32, api: GpuApi) -> Result<Self, String> {
         let bridge = Bridge::open(title, width, height)?;
         // SAFETY: the bridge owns the layer for the window lifetime.
         let layer = unsafe { player_mac_window_layer(bridge.handle) };
         if layer.is_null() {
             return Err("window has no metal layer".to_string());
         }
-        let instance = Instance::new()?;
-        let surface = instance.create_metal_surface(layer)?;
-        let gpu = Gpu::vulkan_for_surface(&instance, &surface)?;
-        let renderer = gpu.create_renderer()?;
-        let mut swapchain = Swapchain::vulkan(&gpu, &surface, width, height)?;
+        let mut presenter = Presenter::open(api, layer, width, height)?;
         let (mut width, mut height) = (width, height);
         let (w, h) = bridge.size();
         if w > 0 && h > 0 {
             if (w, h) != (width, height) {
-                swapchain.resize(w, h)?;
+                presenter.swapchain().resize(w, h)?;
             }
             width = w;
             height = h;
         }
         Ok(MacWindow {
-            swapchain,
-            surface,
-            renderer,
-            gpu,
-            instance,
+            presenter,
             bridge,
             width,
             height,
@@ -273,7 +330,7 @@ impl MacWindow {
         }
         let (width, height) = self.bridge.size();
         if width > 0 && height > 0 && (width, height) != (self.width, self.height) {
-            self.swapchain.resize(width, height)?;
+            self.presenter.swapchain().resize(width, height)?;
             self.width = width;
             self.height = height;
         }
@@ -287,10 +344,11 @@ impl MacWindow {
         planes: &[Plane<'_>],
         overlay: Option<&Overlay>,
     ) -> Result<(), String> {
-        let frame = self.swapchain.start_frame()?;
+        let (swapchain, renderer, gpu) = self.presenter.parts();
+        let frame = swapchain.start_frame()?;
         if let Err(message) = render_to_target(
-            &self.gpu,
-            &self.renderer,
+            gpu,
+            renderer,
             layout,
             color,
             planes,
@@ -300,10 +358,10 @@ impl MacWindow {
             frame.flipped,
             overlay,
         ) {
-            let _ = self.swapchain.submit();
+            let _ = swapchain.submit();
             return Err(message);
         }
-        self.swapchain.submit()?;
+        swapchain.submit()?;
         self.presented += 1;
         Ok(())
     }

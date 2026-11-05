@@ -6,7 +6,7 @@ use player_media::{
     AV_PIX_FMT_YUV420P, AV_PIX_FMT_YUV422P, AV_PIX_FMT_YUV444P,
 };
 use player_output::{
-    render_frame, ColorSpec, PixelLayout, Plane, Renderer, Gpu, PL_COLOR_LEVELS_FULL,
+    render_frame, ColorSpec, PixelLayout, Plane, Renderer, Gpu, GpuApi, PL_COLOR_LEVELS_FULL,
     PL_COLOR_LEVELS_LIMITED, PL_COLOR_SYSTEM_BT_2020_NC, PL_COLOR_SYSTEM_BT_601,
     PL_COLOR_SYSTEM_BT_709,
 };
@@ -181,8 +181,12 @@ struct GpuRenderer {
 }
 
 impl EngineVideoOutput {
-    pub fn open(shared: SharedHandle, sink: mpsc::SyncSender<PresentedFrame>) -> Result<Self, String> {
-        let device = Gpu::vulkan()?;
+    pub fn open(
+        shared: SharedHandle,
+        sink: mpsc::SyncSender<PresentedFrame>,
+        api: GpuApi,
+    ) -> Result<Self, String> {
+        let device = Gpu::headless(api)?;
         let renderer = device.create_renderer()?;
         Ok(EngineVideoOutput {
             shared,

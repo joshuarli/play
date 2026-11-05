@@ -1,5 +1,5 @@
 use player_engine::video::PresentedFrame;
-use player_output::{ColorSpec, Overlay, PixelLayout, Plane};
+use player_output::{ColorSpec, GpuApi, Overlay, PixelLayout, Plane};
 
 #[cfg(target_os = "linux")]
 use player_display::{InputEvent, Window};
@@ -24,9 +24,10 @@ pub struct HostWindow {
 }
 
 impl HostWindow {
-    pub fn open(title: &str, width: i32, height: i32) -> Result<Self, String> {
+    pub fn open(title: &str, width: i32, height: i32, api: GpuApi) -> Result<Self, String> {
         #[cfg(target_os = "linux")]
         {
+            let GpuApi::Vulkan = api;
             let window = Window::open(title, width, height)?;
             Ok(HostWindow {
                 window,
@@ -35,7 +36,7 @@ impl HostWindow {
         }
         #[cfg(target_os = "macos")]
         {
-            let window = MacWindow::open(title, width, height)?;
+            let window = MacWindow::open(title, width, height, api)?;
             Ok(HostWindow {
                 window,
                 presented: 0,
@@ -43,7 +44,7 @@ impl HostWindow {
         }
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         {
-            let _ = (title, width, height);
+            let _ = (title, width, height, api);
             Err("no window backend for this platform".to_owned())
         }
     }

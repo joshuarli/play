@@ -1,3 +1,4 @@
+use player_output::GpuApi;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy)]
@@ -46,6 +47,7 @@ pub struct Options {
     pub audio_files: Vec<String>,
     pub geometry: Option<(i32, i32)>,
     pub quiet: bool,
+    pub gpu_api: GpuApi,
 }
 
 impl Default for Options {
@@ -85,6 +87,7 @@ impl Default for Options {
             audio_files: Vec::new(),
             geometry: None,
             quiet: false,
+            gpu_api: GpuApi::Vulkan,
         }
     }
 }
@@ -214,6 +217,7 @@ pub fn parse(args: &[String]) -> Result<Options, String> {
             "vo" => options.null_video = value(&name)? == "null",
             "ao" => options.null_audio = value(&name)? == "null",
             "hwdec" => options.hwdec = value(&name)?,
+            "gpu-api" => options.gpu_api = parse_gpu_api(&value(&name)?)?,
             "hwdec-codecs" => {
                 let _ = value(&name)?;
             }
@@ -285,6 +289,13 @@ fn needs_value(name: &str) -> bool {
     )
 }
 
+fn parse_gpu_api(value: &str) -> Result<GpuApi, String> {
+    match value {
+        "auto" => Ok(GpuApi::Vulkan),
+        name => GpuApi::from_name(name).ok_or_else(|| format!("--gpu-api: unsupported value {name}")),
+    }
+}
+
 fn parse_start(value: &str) -> Result<Start, String> {
     if let Some(percent) = value.strip_suffix('%') {
         let percent: f64 = percent
@@ -353,6 +364,24 @@ mod tests {
         assert_eq!(options.fullscreen, Some(false));
         assert_eq!(options.files, vec!["a.mkv".to_owned()]);
         assert_eq!(with_environment(None, &args(&["b.mp4"])).unwrap(), args(&["b.mp4"]));
+    }
+
+    #[test]
+    fn gpu_api_selects_a_backend_and_rejects_unknown_values() {
+        assert_eq!(parse(&args(&[])).unwrap().gpu_api, GpuApi::Vulkan);
+        assert_eq!(parse(&args(&["--gpu-api=auto"])).unwrap().gpu_api, GpuApi::Vulkan);
+        assert_eq!(parse(&args(&["--gpu-api", "vulkan"])).unwrap().gpu_api, GpuApi::Vulkan);
+        #[cfg(target_os = "macos")]
+        assert_eq!(parse(&args(&["--gpu-api=metal"])).unwrap().gpu_api, GpuApi::Metal);
+        #[cfg(not(target_os = "macos"))]
+        assert_eq!(
+            parse(&args(&["--gpu-api=metal"])).unwrap_err(),
+            "--gpu-api: unsupported value metal"
+        );
+        assert_eq!(
+            parse(&args(&["--gpu-api=bogus"])).unwrap_err(),
+            "--gpu-api: unsupported value bogus"
+        );
     }
 
     #[test]

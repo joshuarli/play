@@ -3,6 +3,32 @@ use crate::{Instance, Surface};
 use core::ffi::{c_int, c_void};
 use std::ffi::CStr;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GpuApi {
+    Vulkan,
+    #[cfg(target_os = "macos")]
+    Metal,
+}
+
+impl GpuApi {
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "vulkan" => Some(GpuApi::Vulkan),
+            #[cfg(target_os = "macos")]
+            "metal" => Some(GpuApi::Metal),
+            _ => None,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            GpuApi::Vulkan => "vulkan",
+            #[cfg(target_os = "macos")]
+            GpuApi::Metal => "metal",
+        }
+    }
+}
+
 pub struct Gpu {
     log: sys::PlLog,
     backend: Backend,
@@ -16,6 +42,14 @@ enum Backend {
 }
 
 impl Gpu {
+    pub fn headless(api: GpuApi) -> Result<Self, String> {
+        match api {
+            GpuApi::Vulkan => Self::vulkan(),
+            #[cfg(target_os = "macos")]
+            GpuApi::Metal => Self::metal(),
+        }
+    }
+
     pub fn vulkan() -> Result<Self, String> {
         Self::create_vulkan(core::ptr::null_mut(), 0)
     }

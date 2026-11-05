@@ -13,7 +13,7 @@ CARGO = shutil.which("cargo") or "cargo"
 PASS_LINE = re.compile(r"player-gui gate: PASS frames=(\d+) overlay_ink=(\d+)")
 
 
-def gate_command():
+def gate_command(extra_args):
     fixture = str(fixture_path(fixture_entry("h264")))
     if os.environ.get("PLAYER_BIN"):
         return [
@@ -23,6 +23,7 @@ def gate_command():
             "--gate",
             "--ao=null",
             "--geometry=640x480",
+            *extra_args,
             fixture,
         ]
     return [
@@ -40,18 +41,19 @@ def gate_command():
         "640",
         "--height",
         "480",
+        *extra_args,
         fixture,
     ]
 
 
-def run(results, env=None):
+def run(results, env=None, extra_args=(), name="gui"):
     compositor = None
     if env is None and sys.platform.startswith("linux"):
         from wayland import Compositor
 
         compositor = Compositor()
         env = compositor.env
-    command = gate_command()
+    command = gate_command(extra_args)
     process_env = os.environ.copy()
     if env:
         process_env.update(env)
@@ -69,8 +71,8 @@ def run(results, env=None):
             timeout=900,
         )
     except Exception as exc:  # noqa: BLE001 - report the gate's own failure
-        results.check("gui", False, repr(exc))
-        return
+        results.check(name, False, repr(exc))
+        return None
     finally:
         if compositor is not None:
             compositor.close()
@@ -82,17 +84,18 @@ def run(results, env=None):
             match = found
     if proc.returncode != 0 or match is None:
         results.check(
-            "gui: gate passes",
+            f"{name}: gate passes",
             False,
             f"exit {proc.returncode}: {tail(lines, 20)}",
         )
-        return
+        return None
     frames = int(match.group(1))
     overlay_ink = int(match.group(2))
-    results.check("gui: gate passes", True)
-    results.check("gui: presents video frames", frames >= 24, f"frames {frames}")
+    results.check(f"{name}: gate passes", True)
+    results.check(f"{name}: presents video frames", frames >= 24, f"frames {frames}")
     results.check(
-        "gui: renders the osc overlay",
+        f"{name}: renders the osc overlay",
         overlay_ink >= 100,
         f"overlay ink {overlay_ink}",
     )
+    return lines

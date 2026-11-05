@@ -1520,6 +1520,46 @@ def gate_mpv_diff(results, args):
 def gate_gui(results, args):
     from gui import run as run_gui
     run_gui(results)
+    if sys.platform == "darwin":
+        run_gui(results, extra_args=["--gpu-api=metal"], name="gui (metal)")
+
+
+def gate_gpu_api(results, args):
+    from gui import run as run_gui
+    metal = run_gui(results, extra_args=["--gpu-api=metal"], name="gpu-api: metal gui")
+    if metal is not None:
+        devices = [line for line in metal if "libplacebo: GPU 0:" in line]
+        results.check(
+            "gpu-api: metal opens two Metal devices and no Vulkan",
+            len(devices) == 2
+            and all("Metal device" in line for line in devices)
+            and not any("mvk-info" in line or "Vulkan device" in line for line in metal),
+            tail(devices + [line for line in metal if "mvk-" in line], 8),
+        )
+    default = run_gui(results, name="gpu-api: default gui")
+    if default is not None:
+        results.check(
+            "gpu-api: default is Vulkan",
+            any("Vulkan device" in line for line in default)
+            and not any("Metal device" in line for line in default),
+            tail([line for line in default if "libplacebo: GPU 0:" in line]),
+        )
+    for value, expected in (("metal", "metal"), ("vulkan", "vulkan"), ("auto", "vulkan")):
+        with Mpv(["--vo=null", "--ao=null", f"--gpu-api={value}"]) as mpv:
+            got = mpv.get_property("options/gpu-api")
+        results.check(f"gpu-api: options/gpu-api reads {expected} for {value}",
+                      got == expected, repr(got))
+    proc = subprocess.run(
+        [str(MPV), "--no-config", "--gpu-api=bogus", "--vo=null", "--ao=null",
+         str(fixture_path(fixture_entry("h264")))],
+        capture_output=True, text=True, timeout=30,
+    )
+    results.check(
+        "gpu-api: unsupported value fails startup",
+        proc.returncode != 0
+        and "player: --gpu-api: unsupported value bogus" in proc.stderr,
+        f"exit {proc.returncode}: {tail((proc.stdout + proc.stderr).splitlines())}",
+    )
 
 
 def gate_input(results, args):
@@ -2131,6 +2171,7 @@ GATES = {
     "osc-input": gate_osc_input,
     "mpv-diff": gate_mpv_diff,
     "gui": gate_gui,
+    "gpu-api": gate_gpu_api,
     "input": gate_input,
     "playlist": gate_playlist,
     "state": gate_state,
@@ -2147,7 +2188,7 @@ GATES = {
 SUITE = [
     "fixtures", "corpus", "audio", "cover-art", "hwdec", "seek", "local-paths",
     "local-only", "osc", "osc-input", "input", "playlist", "cli", "state", "failures",
-    "rust-link", "tui", "release", "traces", "dispatch",
+    "rust-link", "tui", "release", "traces", "dispatch", "gpu-api",
 ]
 
 

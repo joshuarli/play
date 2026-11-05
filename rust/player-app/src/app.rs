@@ -332,6 +332,7 @@ impl App {
             volume: (self.options.volume / 100.0) as f32,
             muted: self.options.muted,
             paused: self.options.pause,
+            gpu_api: self.options.gpu_api,
         };
         let engine = if self.options.tui
             || self.options.no_video
@@ -716,7 +717,7 @@ impl App {
             .and_then(|entry| Path::new(&entry.path).file_name())
             .and_then(|name| name.to_str())
             .unwrap_or("player");
-        let mut window = HostWindow::open(title, width.max(64), height.max(64))?;
+        let mut window = HostWindow::open(title, width.max(64), height.max(64), self.options.gpu_api)?;
         let fullscreen = self
             .options
             .fullscreen

@@ -7,6 +7,7 @@ use crate::sub::{EngineSub, TrackInfo, TrackKind};
 use crate::video::{EngineVideo, EngineVideoOutput, PresentedFrame};
 use player_audio::decode::PacketDecoder;
 use player_audio::sink::{AudioSink, NullSink, SinkKind};
+use player_output::GpuApi;
 use player_media::{MediaError, MediaSession, Packet as MediaPacket, StreamInfo, StreamKind as MediaKind};
 use std::collections::VecDeque;
 use std::sync::{mpsc, Arc, Mutex};
@@ -418,6 +419,7 @@ pub struct StartState {
     pub volume: f32,
     pub muted: bool,
     pub paused: bool,
+    pub gpu_api: GpuApi,
 }
 
 impl Default for StartState {
@@ -426,6 +428,7 @@ impl Default for StartState {
             volume: 1.0,
             muted: false,
             paused: false,
+            gpu_api: GpuApi::Vulkan,
         }
     }
 }
@@ -640,7 +643,7 @@ fn run_worker(
                 let decoder = EngineVideo::open(demux.session(), stream)?;
                 let shared = decoder.shared();
                 let output = if render_video {
-                    EngineVideoOutput::open(shared, frames_tx)?
+                    EngineVideoOutput::open(shared, frames_tx, start.gpu_api)?
                 } else {
                     EngineVideoOutput::null(shared, frames_tx)
                 };
@@ -1025,6 +1028,7 @@ mod tests {
             volume: 0.25,
             muted: true,
             paused: true,
+            ..StartState::default()
         };
         let engine = SchedulerEngine::load(&fixture("audio-wav.wav"), SinkKind::Null, start)
             .expect("engine loads");
