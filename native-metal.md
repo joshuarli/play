@@ -1,113 +1,135 @@
-# macOS native Metal backend plan (draft)
+# Native Metal backend for macOS
 
-## Goal
+## Status
 
-Add a **native Metal-backed rendering path on macOS** alongside the current Vulkan→MoltenVK path, keep both, and make them comparable at runtime (and in measurements). “Compare the two” means: same input/content, same window/presentation conditions where possible, and an explicit way to select backend + collect timings/behavior.
+- **Goal:** a libplacebo Metal backend on macOS beside Vulkan/MoltenVK, chosen at run time with `--gpu-api`, shipped in `Player.app`, and measured against MoltenVK. The default stays Vulkan.
+- **Last accepted revision:** none. Preflight ended at `1c4de78`.
+- **Accepted:** none. **Red:** none. **Parked:** none.
+- **Next:** M1 (patched libplacebo and SPIRV-Cross). M3 may run beside it in a second lane.
+- **Resume:** "Execute `native-metal.md` from **Status**." First command: `scripts/build-deps.sh`.
 
-Default behavior stays unchanged (current MoltenVK/Vulkan path) unless a selector is explicitly set.
+## Charter
 
-## Prior art: `~/d/p` (take with a grain of salt)
+- Decide and keep going. Record a decision here only when a later slice depends on it, by rewriting the relevant section.
+- The owner's grant is everything in **Execution boundary**. A plan does not grant missing permission; park an item that needs more.
+- Hard stops park the item: an action outside the repo or irreversible, a boundary this doc forbids, a loop that cannot check anything. Never push.
+- A failing item gets the `root-cause` method before any retry: name the cause, then change one thing. After three failed attempts, park it on its branch with the cause and a retry condition in **Status**.
+- Fix egregious problems met on the way in their own commit: a crash or hang over 10 s, a gate that ran under a minute now taking over 3× as long, or default-path GUI CPU worse than baseline by more than 10% and more than the spread (the `scripts/measure.sh cpu` rule). Add anything smaller to `TODO.md` and leave it.
+- Parity before optimization. The comparison (M8) waits until both backends pass every parity check.
+- One writer by default. The only parallel pair is M1 ‖ M3 (disjoint files), in worktrees at `.work/wt/<item>`, following `orchestrate`'s worktree lifecycle. Scratch goes in `.work/tmp`, never `/tmp`.
+- After each accepted slice, run `orchestrate`'s parent steering checkpoint (`references/campaigns.md`, "Parent steering checkpoint"), then update **Status**.
+- Commits are Conventional Commits scoped by workstream (`deps`, `output`, `app`, `bench`, `docs`); the item ID goes in the body. Code comments never cite this doc. The repo rules in `AGENTS.md` and the owner's global rules apply. Notably: no formatters; `unsafe` only in the crates `AGENTS.md` lists, each block with its safety argument; only `rg`/`fd` for search.
 
-`~/d/p` is useful prior art for a *macOS-native presentation* approach, but it is **not** the same architecture as `play`.
+## Decisions
 
-- It hands decoded frames to Apple’s display stack: `AVSampleBufferDisplayLayer` driven by a `CMTimebase` (`~/d/p/src/video_out.rs`: `enqueueSampleBuffer`, `controlTimebase`, `CMTimebaseSetTime/Rate`, drift correction, seek flush). Frames are `CVPixelBuffer`s.
-- Decode/display path: FFmpeg demux/decode with VideoToolbox hwaccel when available; for VideoToolbox frames it retains `AVFrame.data[3]` as a `CVPixelBufferRef` (`~/d/p/src/decode_video.rs:get_hw_format` prefers `AV_PIX_FMT_VIDEOTOOLBOX`). Software fallback converts to NV12 into an **IOSurface-backed** `CVPixelBuffer` (required by `AVSampleBufferDisplayLayer`) and copies planes.
-- Windowing/AppKit integration is straightforward layer hosting (`~/d/p/src/window.rs` adds the display layer as a sublayer, resizes with autoresizing mask).
-- OSD/subtitles are handled as separate UI layers/state, not composited by a GPU video renderer.
+Owner decisions (2026-11-05):
 
-**Caveat (owner-reported):** seek performance in `~/d/p` really sucks. Treat its seek/sync/enqueue model as reference material, not a target to copy blindly; measure any adaptation in `play`.
+1. **Carry upstream MR !858 as a pinned patch.** Upstream libplacebo has no Metal backend: none in v7.387.0 (the newest tag), none on master. The only implementation is the closed, unmerged [libplacebo MR !858](https://code.videolan.org/videolan/libplacebo/-/merge_requests/858) by `simonch`, head `ea7599ef9e71f66930b567f25e2c2de73913b38c`. It adds a `pl_gpu` over Metal and compiles shaders GLSL → SPIR-V (shaderc) → MSL (SPIRV-Cross). The draft's alternatives, an `AVSampleBufferDisplayLayer` path modeled on `~/d/p` and a hand-written Metal renderer, are out of scope; neither is a fallback. If M1's go/no-go fails, park the campaign and report.
+2. **Switch both GPU devices; keep the readback.** Each frame uses two libplacebo devices. The engine renders YUV→RGBA on a headless device and reads it back to the CPU (`rust/player-engine/src/video.rs:185`, `render_frame`). The window then uploads that RGBA and composites overlays (`rust/player-display/src/mac.rs:157`, `render_to_target`). `--gpu-api` selects the backend for both. Collapsing them into one device is a separate campaign: M9 files a `TODO.md` ticket for it.
+3. **Ship both backends in `Player.app`.** The bundle carries both; Vulkan stays the default.
 
-**Implication for `play`:** `~/d/p` shows a viable native macOS video presentation/display primitive, but `play` currently renders via libplacebo and composites overlays (subtitle text, `show-text`/OSD message, OSC display list) into the render target (`docs/architecture.md:25,31,39`, `rust/player-output/src/frame.rs` takes an `Overlay`; `render_to_target`/present path composes). An `AVSampleBufferDisplayLayer`-style path would change where video is presented and how overlays are composed/HDR/tone-mapping behave. That makes it a different class of comparison than “same renderer pipeline, different GPU backend”.
+Prescribed (reason; what would reverse it):
 
-## Current coupling (what has to move)
+- **Selector `--gpu-api=auto|vulkan|metal`**, mpv's option name. `auto` means `vulkan`. `metal` exists on macOS only; on Linux, and for any other value, startup fails with `player: --gpu-api: unsupported value <v>` and a nonzero exit. The value is stored as a closed `GpuApi` enum in `Options` and readable as the `options/gpu-api` property. Today `rust/player-app/src/options.rs` silently drops unknown options (`_ => {}` at `:253`), so `--gpu-api` must get its own match arm. *Reverse:* the owner wants a non-mpv name.
+- **No fallback.** If Metal creation fails, the error surfaces exactly as a Vulkan failure does today. There is no silent retry on Vulkan.
+- **Backend-neutral context in `player-output`.** Rename the public `Vulkan` (`rust/player-output/src/context.rs:6`) to `Gpu`, holding `log`, `gpu`, and a private backend enum: Vulkan `pl_vulkan`, or Metal `pl_metal` under `cfg(target_os = "macos")`. Every texture, format, upload, and download method already runs over `pl_gpu` and stays as it is. Only creation and swapchain creation differ: `Gpu::vulkan()`, `Gpu::vulkan_for_surface(..)`, `Gpu::metal()`, `Swapchain::vulkan(&Gpu, &Surface, ..)`, `Swapchain::metal(&Gpu, layer, ..)`. On Metal, `MacWindow` holds no `Instance` or `Surface` and passes the existing `CAMetalLayer` from `player_mac_window_layer` straight to `pl_metal_create_swapchain`. Callers to update: `player-display/src/{mac,display}.rs`, `player-engine/src/video.rs`, and the tests and examples that name `Vulkan`. No aliases. *Reverse:* none expected.
+- **Log identity.** Creation logs `libplacebo: GPU 0: Metal device (libplacebo <version>)` beside the existing `... Vulkan device ...` (`context.rs:68`). A Metal run logs it twice (engine and window) and contains no `mvk-info` or `Vulkan device` lines.
+- **The patch.** It is committed as `scripts/patches/libplacebo-metal.patch` and applied by `scripts/build-deps.sh` after extraction. It carries only `meson_options.txt` and `src/**` from the MR diff; `.gitlab-ci.yml` and `demos/**` are dropped. One hunk is rejected against v7.387.0: the `tdep_static` include list in `src/meson.build` (around line 301) needs `inc_dirs` appended by hand. Everything else applies cleanly (checked at preflight). Get the MR diff from `https://code.videolan.org/videolan/libplacebo/-/merge_requests/858.diff` and confirm it is still the head named above. The build script may carry one comment linking the MR, because the patch's origin is a constraint the code cannot express.
+- **SPIRV-Cross.** Pin the KhronosGroup tag `vulkan-sdk-$VULKAN_VERSION` (`vulkan-sdk-1.4.363.0`; the archive exists) and checksum it like the other fetches. Build only static `core`, `glsl`, `msl`, and the C API, with the CLI and tests off. Link it into `libplacebo.387.dylib` so the bundle gains no file. Configure libplacebo with `-Dmetal=enabled` beside the existing `-Dvulkan=enabled -Dshaderc=enabled`. Linux (`scripts/build-deps-linux.sh`) is unchanged.
+- **Dev builds link the release prefix on macOS.** Homebrew's libplacebo will never have Metal, so `scripts/build.sh`, `cargo test --manifest-path rust/Cargo.toml -p <crate>`, and the examples must link `.work/deps/release`. Preflight showed what that takes: the prefix's dylibs use `@rpath` install names, so dev and test binaries need an rpath to `.work/deps/release/lib`. The prefix's `MoltenVK_icd.json` points at `./libMoltenVK.dylib` next to itself, which does not exist; `scripts/bundle.py` rewrites it only inside the bundle. The prefix's loader also does not search the prefix for ICDs. With an rpath and `VK_DRIVER_FILES` set to a JSON with the absolute library path, all 10 `player-output` tests pass. Drop the `libplacebo` pin from `scripts/dev-deps.sh`, and any other pin that falls out of use. `scripts/build.sh` on macOS requires `scripts/build-deps.sh` to have run. *Reverse:* a Homebrew libplacebo with Metal.
+- **Comparison method.** It reuses `scripts/bench.py` (`frames`, `gui-cpu`, `seek`) and `scripts/measure.sh` rules: `perf-gate-ready` before and `-1` after, interleaved runs, medians with spread, exit 75 when the host is busy. Both backends run in the same binary, Vulkan as baseline. Every row names its backend.
 
-- `rust/player-output` is the rendering boundary, but it is Vulkan-shaped today:
-  - `context.rs` owns libplacebo init as `pl_vulkan_create` (`Vulkan`), plus `find_format`/`create_tex`/`upload_strided`/`destroy_tex`/`download` - `rust/player-output/src/context.rs`.
-  - `swapchain.rs` wraps `pl_vulkan_create_swapchain` + generic `pl_swapchain_*` - `rust/player-output/src/swapchain.rs`.
-  - `render.rs` wraps `pl_renderer` (already mostly backend-agnostic over `pl_gpu`/`PlRenderer`). `frame.rs` does plane upload + `pl_render_image` and takes `&Vulkan` for GPU ops - `rust/player-output/src/{render,frame}.rs`.
-  - `instance.rs`/`sys.rs` contain Vulkan instance/surface (`VK_EXT_metal_surface`, `vkCreateMetalSurfaceEXT` on macOS) and transcribed libplacebo/Vulkan layouts with layout tests - `rust/player-output/src/{instance,sys}.rs`.
-- `rust/player-display/src/mac.rs` wires a concrete stack: `Instance` → `create_metal_surface(layer)` → `Vulkan::create_for_surface` → `Renderer` → `Swapchain::open(&Vulkan, &Surface, ...)` → `render_to_target(&self.vulkan, ...)`.
-- Build/release: macOS `scripts/build-deps.sh` builds libplacebo with `-Dvulkan=enabled -Dshaderc=enabled -Dopengl=disabled` and bundles Vulkan loader + MoltenVK + shaderc (`scripts/bundle.py`, `tests/harness.py` expectations). Dev deps pin Vulkan/MoltenVK/shaderc (`scripts/dev-deps.sh`).
-- Option plumbing: `player-app/src/options.rs` currently *accepts* (consumes) `--gpu-context` and `--vulkan-swap-mode` but does not store them in `Options` (the catch-all arm handles them as known/valued options). Any runtime backend selector must be explicitly parsed/stored and passed through to display/backend creation.
+Delegated (bound; tie-break):
 
-## Viable approaches
+- Rust-side names and internal shape inside the seam above. Bound: no new public type beyond `Gpu`, `GpuApi`, and the swapchain constructors. Tie-break: the smaller diff.
+- How dev builds get the rpath and find the ICD (M2). Bound: no absolute `.work` or `/opt/homebrew` path in the release binary or bundled dylibs (`tests/run.sh release` checks this). Nothing the user must export in their shell. No fallback to Homebrew. Tie-break: build-script output over wrapper scripts.
+- The `bench.py` flag that passes `--gpu-api` to the player. Tie-break: a repeatable `--player-arg`.
+- Which `frame.rs`/`render.rs`/`context.rs` tests run per backend. Bound: every GPU test runs on both backends on macOS, with the same tolerances as today (`frame.rs:501`, `:587`, `:686`).
 
-### 1) libplacebo `pl_metal` backend (best fit for an apples-to-apples backend comparison)
+## Baseline
 
-Keep libplacebo as the renderer (preserves the existing video-correct path: plane mapping, color/transfer, scaling, tone mapping, overlay blending via `frame.rs`/`render.rs`). Add a Metal GPU context (`pl_metal_*` / `CAMetalLayer` params, per pinned libplacebo API) and a Metal-appropriate swapchain/present path, behind the same high-level operations.
+Preflight measured these on `1c4de78`, macOS arm64 (Apple M5 Max), warm caches.
 
-- *Pros:* closest to “same rendering pipeline, different GPU backend/present path”; reuses most of `frame.rs`/`render.rs` and overlay composition; fits “alongside MoltenVK”.
-- *Cons/unknowns:* depends on pinned **libplacebo v7.387.0** having a usable Metal backend and on meson build flags/symbol availability (can Vulkan and Metal coexist in one build?). Needs new FFI transcriptions in `sys.rs` (`PlMetal`/params/symbols, any Metal swapchain creation) + layout tests pinned to 7.387.0, same discipline as Vulkan today. Maturity/perf/HDR/EDR behavior vs Vulkan+MoltenVK is part of what to measure.
-- *Comparison quality:* high, if the libplacebo render path is shared.
+| Command | Result | Wall |
+| --- | --- | --- |
+| `cargo test --manifest-path rust/Cargo.toml -p player-output` | 10 passed | 2 s |
+| `scripts/build.sh` | ok | 4 s |
+| `tests/run.sh` gates `cover-art gui play playlist cli state tui osc osc-input input failures` | all pass | 32 s total |
+| `tests/run.sh mpv-diff` | 134 passed | 3 m 11 s |
+| `scripts/build-deps.sh` after a script edit (the input hash rebuilds every dependency) | ok | 68 s |
+| `scripts/release.sh` with dependencies ready | ok | 11 s |
+| `tests/run.sh release` | 14 passed | under 1 min |
+| `tests/run.sh` gates `fixtures corpus audio hwdec seek local-paths local-only rust-link traces dispatch` | all pass | 96 s total (corpus 62 s) |
+| Full macOS suite (the two gate rows above plus `release`) | all pass | about 2.5 min |
 
-### 2) Custom Metal renderer (wgpu/metal-rs/hand-written), no libplacebo on that path
+Known red: none. Not run at preflight: the Linux suite. `cover-art` is new in `LINUX_SUITE` and has not run on Linux. Distributable size: about 19.7 MB against the 29,542,136 B budget.
 
-- *Pros:* truly Metal-native/Rust-native on macOS.
-- *Cons:* large scope and poor parity by default - must reimplement plane upload/layouts, YUV→RGB/color conversion, primaries/transfer, scaling, tone mapping/HDR, and overlay blending semantics. Behavioral drift makes results noisy; overlay/OSC/subtitle composition must be reproduced. Not a small “add alongside”.
-- *Use only if* approach (1) is unavailable and the project explicitly accepts a renderer rewrite/parallel implementation.
+## Sequence
 
-### 3) Apple native display path (`AVSampleBufferDisplayLayer` + `CVPixelBuffer`), informed by `~/d/p`
+The loop: an item ends when its acceptance command passes on the integrated tree. Red work never lands on `main`. The full macOS suite (`tests/run.sh suite`) runs after M5, M6, and at close. The Linux check (`scripts/linux-container.sh tests/run.sh suite`) runs after M3 and at close; report its wall time the first time.
 
-Display video through `AVSampleBufferDisplayLayer`/`CMTimebase` (and `CVPixelBuffer`, potentially VideoToolbox-backed where available), similar in primitives to `~/d/p/src/{video_out,decode_video}.rs`.
+**Phase 1: foundation and parity**
 
-- *Pros:* very macOS-native presentation; can reduce copies/GPU shader work for the video image path in some cases; aligns with Apple frameworks (`~/d/p` shows the CoreMedia/objc2 shape).
-- *Cons/foundation mismatch:* bypasses libplacebo’s render pipeline. `play`’s overlays (subtitles/OSD/OSC) are currently composed by libplacebo into the presented frame; AVSBDL shows *video*, so overlay composition needs a new strategy (separate layer/compositor, render overlays to buffers, or hybrid). Color/tone-mapping/HDR behavior follows Apple/CoreMedia/VideoToolbox expectations, which may differ from libplacebo - good to compare, but not the same variable. Seek/sync model differs (`~/d/p` caveat). Integrating VideoToolbox `CVPixelBuffer`s also intersects `player-media`/scheduler decode choices (TODO PLAY-20 wires HW decode through engine; scheduler currently requests software decode).
-- *Comparison quality:* useful as a “native Apple presentation” experiment, but not an apples-to-apples comparison to the libplacebo+MoltenVK renderer unless overlay/color/seek behavior is carefully normalized and documented.
+- **M1 · deps · patched libplacebo with Metal.** Prereqs: none. Owns `scripts/build-deps.sh`, `scripts/patches/libplacebo-metal.patch`.
+  Go/no-go first. Build the patched tree separately with `-Dtests=true -Dmetal=enabled` in `.work/tmp/metal-tests` and run its Metal GPU tests (`meson test -C .work/tmp/metal-tests/build`, Metal suite). They must pass. If they still fail after three attempts, park the campaign.
+  Acceptance: `scripts/build-deps.sh && nm -gU .work/deps/release/lib/libplacebo.387.dylib | rg -q '_pl_metal_create$' && ! otool -L .work/deps/release/lib/libplacebo.387.dylib | rg -q spirv-cross && strings .work/deps/release/lib/libplacebo.387.dylib | rg -qx 'v7\.387\.0'`, plus `scripts/release.sh && tests/run.sh release` still green.
+- **M2 · deps · dev and tests link the release prefix.** Prereqs: M1. Owns `rust/player-output/build.rs`, `scripts/build.sh`, `scripts/dev-deps.sh`, the ICD written by `scripts/build-deps.sh`, and any build-script rpath in `rust/player-app`. Acceptance, in a fresh shell with no `PKG_CONFIG_*`, `VK_*`, or `DYLD_*` set: `cargo test --manifest-path rust/Cargo.toml -p player-output && scripts/build.sh && otool -L build/mpv | rg -q '@rpath/libplacebo' && tests/run.sh gui && scripts/release.sh && tests/run.sh release`.
+- **M3 · output · backend-neutral seam, no behavior change.** Prereqs: none (may run beside M1). Owns `rust/player-output/src/{context,swapchain,lib,frame,render}.rs`, `rust/player-display/src/{mac,display}.rs`, `rust/player-engine/src/video.rs`, and the tests and examples naming `Vulkan`. Acceptance: `cargo test --manifest-path rust/Cargo.toml -p player-output -p player-engine -p player-display && scripts/build.sh && tests/run.sh gui`, then the Linux check.
+- **M4 · output · Metal backend.** Prereqs: M2, M3. Owns `rust/player-output/src/{sys,context,swapchain}.rs` and the `player-output` tests. Add the Metal FFI from the patched `metal.h`: `pl_metal_t`, `pl_metal_params`, `pl_metal_swapchain_params`, `pl_metal_create`/`destroy`/`create_swapchain`, all `cfg(target_os = "macos")`. Extend `transcribed_layouts_match_pinned_headers` (`sys.rs:418`) with their sizes and offsets. Run every GPU test on both backends. Add `metal_matches_vulkan`: the same YUV420 and NV12 frames with an overlay, rendered on each backend, must differ by at most 2 in any channel. Acceptance: `cargo test --manifest-path rust/Cargo.toml -p player-output` shows each GPU test passing per backend, plus the new test.
+- **M5 · app · `--gpu-api` end to end.** Prereqs: M4. Owns `rust/player-app/src/{options,app,window,properties}.rs`, `rust/player-engine/src/{backend,video}.rs` (threading `GpuApi` into `EngineVideoOutput::open`), `rust/player-display/src/mac.rs` (`MacWindow::open(.., GpuApi)`), `rust/player-display/examples/mac_window_check.rs` (backend from argv), `tests/gui.py`, `tests/harness.py`. The `gui` gate runs once per backend on macOS. A new `gpu-api` gate in `SUITE` checks four things. Under `--gpu-api=metal`, the GUI gate passes and the log has exactly two `Metal device` lines and no `mvk-info`. `options/gpu-api` reads back the value. `--gpu-api=bogus` exits nonzero with the message above. With no flag, the run logs `Vulkan device`. Acceptance: `scripts/build.sh && tests/run.sh gpu-api && tests/run.sh gui && cargo run --manifest-path rust/Cargo.toml -p player-display --example mac_window_check -- metal`, then the full macOS suite.
+- **M6 · deps · bundle both.** Prereqs: M5. Owns `scripts/bundle.py`, the `gate_release` section of `tests/harness.py`. The release gate also requires `_pl_metal_create` in the bundled libplacebo and no `spirv-cross` dylib. Run `release: renders through the bundled libplacebo` once per backend. The expected closure set is unchanged. Acceptance: `scripts/release.sh && tests/run.sh release && scripts/measure.sh final`. Size budgets must pass; timing budgets may print `perf gate deferred: host busy`, which does not count as a pass. Then the full macOS suite.
 
-**Recommended order:** evaluate **(1)** first for the stated “renderer backend alongside MoltenVK” comparison. Treat **(3)** as a follow-on/spike if the goal becomes “best macOS-native path overall”, with explicit design for overlays/composition and seek.
+**Phase 2: hardening**
 
-## Proposed design (keep both, selectable) — assumes approach (1)
+- **M7 · output/docs · edge cases and documentation.** Prereqs: M6. Cases: resize and fullscreen round trips on Metal (`mac_window_check -- metal`); teardown order (swapchain → renderer → `pl_metal` → window); file-to-file reload and seek on Metal (`tests/run.sh seek` and `osc-input` under Metal; `Mpv` in `tests/harness.py` strips `PLAYER_OPTIONS`, so pass the backend as a gate argument); the error when Metal creation fails. Docs: `docs/architecture.md` (renderer backends, carried patch), `docs/scope.md` (CLI `--gpu-api`), `docs/install.md` (dev build now needs `scripts/build-deps.sh`; `dev-deps.sh` changes), `docs/manual-checklist.md` (rows in **Needs environment**), `AGENTS.md` commands if any changed. Acceptance: `tests/run.sh suite` green with `--gpu-api=metal` applied to the GPU gates, and `mdtool check --untracked` (or a manual link check) clean on the touched docs.
 
-1. **Abstract the GPU backend in `player-output` without changing render semantics.**
-   - Introduce a backend-neutral “GPU context” surface for the operations `frame.rs` actually needs: renderer creation/log/gpu access as needed, `find_format`, `create_tex` (sampleable + render-target paths as used), `upload_strided`, `download` (for tests/headless helpers that use it), `destroy_tex`. `Renderer`/`render_to_target`/`render_frame` should work over that abstraction (trait, generic, or small enum) rather than hard-coding `&Vulkan`.
-   - Keep `Vulkan`/MoltenVK implementation intact as one backend. Add a macOS-only Metal backend implemented via libplacebo metal FFI.
-   - Abstract swapchain/presentation: `pl_swapchain_*` start/submit/resize/latency are generic; creation is backend-specific today (`pl_vulkan_create_swapchain`). Model swapchain creation per backend (or a factory) so `MacWindow` doesn’t own `Vulkan`/`Instance`/`Surface` concretely.
-   - Preserve public behavior used by tests/other callers; if renaming exported types, provide compatible aliases or update all in-tree call sites (`player-display`, benches/tests, consumers).
+**Phase 3: comparison and optimization**
 
-2. **Resolve the libplacebo Metal API/packaging unknown early (first gate).**
-   - Confirm for pinned **libplacebo v7.387.0**: `pl_metal` availability, headers/symbols/param structs, swapchain creation model for `CAMetalLayer`, and meson options to enable Metal (and whether it coexists with Vulkan in the same build/install). Inspect fetched source under `.work/tmp/release/libplacebo-v7.387.0` (or the equivalent build source) - not by guessing.
-   - If 7.387 lacks a viable path: decision point is bumping the libplacebo pin (blast radius: `sys.rs` layout tests, `PLACEBO_API_VERSION`/version strings, dylib naming like `libplacebo.387.dylib`, macOS+Linux dep builds, bundle/harness expectations) or stopping/choosing a different approach. Record the decision.
+- **M8 · bench · Vulkan vs Metal.** Prereqs: M7. Owns `scripts/bench.py`, `docs/metrics.md`. Run `bench.py frames`, `gui-cpu` (candidate `--gpu-api=metal`, baseline `--gpu-api=vulkan`, same binary), and `seek` on both fixtures, interleaved. Write a "Metal backend" section in `docs/metrics.md`: medians and spread per scenario and backend, host-busy deferrals stated, and a note that both backends pay the engine readback. Optimize only a measured gap above the spread with a named cause; for each, the before/after numbers go in the commit body. Acceptance: `scripts/bench.py frames --player-arg=--gpu-api=metal` (and the other modes) exit 0, or exit 75 with the deferral recorded in **Status**.
 
-3. **FFI + safety (`sys.rs`).**
-   - Add transcribed Metal structs/constants/symbols with `#[cfg(target_os = "macos")]` and **layout/offset tests against pinned headers**, mirroring the existing Vulkan/Wayland/Metal-surface discipline.
-   - Document safety invariants on every `unsafe` block (repo rule). Keep backend-specific unsafe isolated.
+**Close**
 
-4. **macOS display selection (`player-display` + `player-app`).**
-   - Plumb an explicit backend selector end-to-end: parse/store it in `player-app/src/options.rs` (note: `--gpu-context` is accepted today but not stored) and pass a backend choice into display/window creation. Decide compatibility vs clarity (extend `--gpu-context` semantics, or add a dedicated option) and document it; default remains MoltenVK/Vulkan.
-   - In `rust/player-display/src/mac.rs` `MacWindow::open` (and resize/present assumptions), choose backend. For the Metal path, use the existing `CAMetalLayer` from `metal_window.m` directly (no `VkInstance`/`VkSurfaceKHR`/`VK_EXT_metal_surface`). Manage lifetimes/drop order carefully (swapchain/renderer/gpu before window/layer teardown).
-   - Make the active backend unambiguous in logs/stats/build stamp (today logs “Vulkan device”; e.g. `backend=vulkan+moltenvk` vs `backend=metal(libplacebo)`).
+- **M9 · close.** Prereqs: M8. Delete code the seam left dead: unused Vulkan-only helpers, and `sys.rs` items the `dead_code` warnings name that M3 or M4 orphaned. Prove liveness with `rg` over `rust/` and a clean build. Run the `review` skill over `1c4de78..HEAD` and fix every P1 and P2 finding. File `TODO.md` tickets for: (a) one GPU device with no CPU readback; (b) VideoToolbox zero-copy through `pl_metal_wrap_iosurface` (ties to PLAY-20); (c) EDR/10-bit output on Metal, since the patch's swapchain fixes `BGRA8Unorm`; (d) the OSD error `OSC was laid out for 2560x1440 but the overlay is 3024x1898`, seen at preflight in a default-fullscreen window, if it still reproduces. Acceptance: `tests/run.sh suite`, the Linux check, `cargo test --manifest-path rust/Cargo.toml`, and `scripts/measure.sh final` green; **Status** rewritten as final.
 
-5. **Build & packaging (both kept).**
-   - `scripts/build-deps.sh`: enable/build required libplacebo Metal support *in addition* to Vulkan if supported, keeping Vulkan+MoltenVK+shaderc outputs. Ensure stamp/input-hash behavior invalidates correctly when meson options change.
-   - `scripts/bundle.py` and `tests/harness.py`: currently require/bundle MoltenVK + Vulkan loader dylibs and assert specific framework names/ICD. For “compare the two” in one build, prefer bundling both backends’ runtime deps and selecting at runtime; update assertions accordingly. If Metal adds/removes dylibs, update the expected closure.
-   - `scripts/dev-deps.sh` / `scripts/build.sh`: keep dev flow working; don’t break Linux.
-   - Linux remains Vulkan/Wayland. Gate all Metal FFI/build code with `target_os = "macos"`.
+## Acceptance
 
-6. **Validation & comparison plan (define before/with implementation).**
-   - *Correctness parity:* parameterize backend-neutral `player-output` tests where feasible (macOS/headless constraints apply; some existing Vulkan tests are ignored on Linux static-pie contexts - keep that discipline). Add Metal-specific smoke/parity tests: RGBA passthrough, YUV420/NV12 mapping, overlay alpha/blend, crop/fit/flip. Compare within tolerance.
-   - *Behavior checks:* run relevant macOS suite/GUI gates on both backends; confirm **no regressions on the default (MoltenVK)** path.
-   - *Performance comparison:* repeatable matrix (codecs, pixel formats/layouts, resolutions, HDR if applicable, windowed/fullscreen, with/without overlays/OSC/subtitles). Measure frame pacing/present latency, dropped frames (`frame-drop-count` where meaningful), CPU/GPU impact, and power/thermals qualitatively if relevant. Use existing measurement practice (`scripts/measure.sh` patterns; automated headless `--vo=null` gates don’t cover GUI renderer behavior - owner-run/real-window measurements needed) and the benchmark-checklist mindset: like-for-like, warmup, interleaving, report variance; don’t claim wins from noisy runs. Attribute every result to `vulkan+moltenvk` vs `metal`.
-   - *Visual parity:* color/tone mapping, subtitle/OSC overlay positioning, scaling/crop, resize/fullscreen, HDR behavior. Expect close results under approach (1), but verify.
-   - *Seek (informed by `~/d/p`):* include interactive/step seek cases in the comparison; `~/d/p` had poor seek performance with an AVSBDL/CMTimebase model - if approach (3) is ever prototyped, treat seek as a primary risk.
+| Deliverable | Proof | Fails when |
+| --- | --- | --- |
+| Patched libplacebo exports Metal, still reports the pinned version | M1 command | symbol missing, a `spirv-cross` dylib appears, or the version string is not exactly `v7.387.0` |
+| Default path unchanged | `tests/run.sh suite` with no flag; `gui` logs `Vulkan device` | any gate red, or a `Metal device` line without the flag |
+| Metal renders correctly | M4 tests: every GPU test per backend, `metal_matches_vulkan` ≤ 2 | any channel delta over the existing tolerance |
+| Selection works end to end, fails loudly | `tests/run.sh gpu-api` | wrong device count, Vulkan lines under Metal, bad value accepted |
+| Release ships both | `tests/run.sh release` (both backends render) + `scripts/measure.sh final` size budgets | either backend fails to render; distributable over 29,542,136 B; executable over 10 MB; extra bundled dylib |
+| Linux untouched | Linux check after M3 and at close | any Linux gate red |
+| Comparison recorded | `docs/metrics.md` "Metal backend" section from M8 | numbers without spread, without backend attribution, or from a busy host presented as a result |
 
-## Risks / watch-outs
+## Needs environment
 
-- **libplacebo v7.387.0 Metal availability/maturity** is the main unknown for approach (1); resolve before deep refactors.
-- **Present/timing differences** (swapchain present modes, vsync/mailbox semantics, EDR/HDR colorspace, `flipped`/coordinate conventions) can confound comparisons - log/normalize and document.
-- **Overlay composition** is central in `play` (libplacebo composes overlays). Any path that bypasses libplacebo (approach 3) must solve overlays explicitly.
-- **libplacebo pin bump** has wide blast radius: FFI layouts, API version, dylib names, bundle/harness, macOS+Linux deps.
-- **Scope creep** into a pure-Rust renderer rewrite. Keep libplacebo as the rendering engine for the backend comparison unless deliberately decided.
+The owner runs these; they do not hold the campaign open. M7 adds them to `docs/manual-checklist.md`.
 
-## Suggested execution order
+- Visual parity on a real display: `build/mpv --gpu-api=metal FILE` beside `--gpu-api=vulkan` for color, scaling, subtitle and OSC placement, resize, fullscreen.
+- HDR/EDR content and an external or ProMotion display: frame pacing and tone mapping (`bench.py frames` on that display).
+- Any non-Apple-Silicon Mac: the patch was validated only on Apple GPUs.
+- Keyboard focus and window behavior under `--gpu-api=metal` (as PLAY-21, agents cannot test focus).
 
-1. **Gate:** inspect pinned libplacebo 7.387.0 for `pl_metal` + build flags/coexistence; record findings and go/no-go (and whether pin bump is needed).
-2. **Seam, no behavior change:** refactor `player-output` internals to a backend-neutral GPU context/swapchain creation seam; Vulkan path + tests green, bundle unchanged.
-3. **Metal backend:** add Metal FFI + implementation + layout tests (macOS), behind the seam.
-4. **Selection/plumbing:** store/plumb backend selector in `player-app` + `player-display` (default MoltenVK); unambiguous logs.
-5. **Build/package:** update macOS deps/build/bundle/harness to carry both; verify default path unchanged.
-6. **Parity + compare:** add parity tests, run comparison matrix (including seek), write up results.
-7. **(Optional spike):** evaluate approach (3) / AVSBDL path for macOS-native presentation only if approach (1) is insufficient or the goal shifts - design overlay composition and seek behavior first.
+## Execution boundary and non-goals
 
-## Concrete next planning step (still no implementation)
+Authorized: edit anything under the repo; fetch the MR diff and the pinned SPIRV-Cross archive; build under `.work/`; run Docker through `scripts/linux-container.sh`; commit to `main` as slices are accepted.
 
-Map exact functions/types to touch for step (2)+(4): `player-output`’s `Vulkan`/`Instance`/`Surface`/`Swapchain` API surface and all `frame.rs` call sites; `player-display/src/mac.rs` construction; `player-app` option parsing (`--gpu-context` currently consumed-but-not-stored) and where display config flows into `player-display`. Also enumerate `scripts/bundle.py`/`tests/harness.py` assertions that encode the current Vulkan/MoltenVK closure.
+Forbidden: push or tag; `make install` or other writes outside the repo; notarizing; changing the pinned Rust nightly; changing the libplacebo version pin; adding a glibc build; any fallback from Metal to Vulkan; an `AVSampleBufferDisplayLayer` or hand-written Metal renderer.
+
+Non-goals: removing MoltenVK; making Metal the default; collapsing the engine readback (ticket at M9); hardware decode wiring (PLAY-20); Linux Metal (does not exist).
+
+Contract changes for the owner:
+
+- New CLI option `--gpu-api=auto|vulkan|metal` and property `options/gpu-api`; unsupported values are a startup error.
+- `player-output` public API: `Vulkan` becomes `Gpu`; swapchain construction becomes per-backend constructors. In-tree callers only.
+- Build contract: macOS dev builds and Rust tests link `.work/deps/release`, so `scripts/build-deps.sh` must run before `scripts/build.sh`; `scripts/dev-deps.sh` no longer pins Homebrew libplacebo.
+- Dependencies: a carried LGPL-2.1 patch on libplacebo (unreviewed upstream, owned by this repo from now on) and SPIRV-Cross (Apache-2.0), statically linked into `libplacebo.387.dylib`. Gates they must stay within: the distributable and executable size budgets and no new bundled dylib (always), and `scripts/build-deps.sh` wall time (reported in the M1 commit body, not gated).
+
+## Reference
+
+- Rendering boundary: `rust/player-output/src/context.rs` (`Vulkan`, creation at `:24`), `swapchain.rs` (`pl_vulkan_create_swapchain` at `:26`; mailbox, depth 3), `frame.rs` (`render_frame` `:53`, `render_to_target` `:112`, tests from `:415`), `sys.rs` (layout test `:418`), `instance.rs` (`create_metal_surface` `:80`).
+- Callers: `rust/player-display/src/mac.rs` (`MacWindow::open` `:148`), `rust/player-display/src/display.rs` (Linux), `rust/player-engine/src/video.rs` (`EngineVideoOutput::open` `:184`), `rust/player-engine/src/backend.rs:643`, `rust/player-app/src/window.rs` (`HostWindow::open` `:27`).
+- Patched API (`src/include/libplacebo/metal.h` in the MR): `pl_metal_create(log, {device, queue})` (NULL means the system default device), `pl_metal_create_swapchain(metal, {layer})` (sets the layer's device, `BGRA8Unorm`, `framebufferOnly = NO`), `pl_metal_wrap_tex`, `pl_metal_wrap_iosurface`. Shaders still go through shaderc.
+- Build and bundle: `scripts/build-deps.sh` (libplacebo meson at `:184`), `scripts/bundle.py` (MoltenVK and ICD at `:84-116`), `tests/harness.py` `gate_release` (closure set, ICD, bundled-render check).
