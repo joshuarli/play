@@ -55,12 +55,13 @@ Removing Lua took the executable from 7,600,640 B to 7,074,160 B; headless timin
 
 ## Interactive benchmarks
 
-`scripts/bench.py MODE` measures what a user feels in the GUI player, against Homebrew mpv where it can. Fixtures are generated into `.work/fixtures/bench`: `h264-gop10.mp4` (1080p24 x264, 250-frame GOP, AAC) and `vp9-opus.webm` (1080p VP9 realtime, 150-frame GOP, Opus). Every mode checks `perf-gate-ready` before and `perf-gate-ready -1` after, writes `.work/tmp/bench-MODE.json`, and exits 75 with `perf gate deferred: host busy` when either check fails.
+`scripts/bench.py MODE` measures what a user feels in the GUI player, against Homebrew mpv where it can. Fixtures are generated into `.work/fixtures/bench`: `h264-gop10.mp4` (1080p24 x264, 250-frame GOP, AAC) and `vp9-opus.webm` (1080p VP9 realtime, 150-frame GOP, Opus). Every mode checks `perf-gate-ready` before and `perf-gate-ready -1` after, writes `.work/tmp/bench-MODE.json` (with the `--player-arg` options appended to the name, as in `bench-frames-gpu-api-metal.json`), and exits 75 with `perf gate deferred: host busy` when either check fails.
 
 - `seek`: random absolute seeks at least 13 s from the current position; latency runs from the command to the first `time-pos` advance past the target. Medians of 15 per fixture and precision (`exact`, `keyframes`); mpv runs exact only.
 - `audio-cpu`: CPU percent over 10 s of `--no-video --ao=null` playback.
 - `frames`: fullscreen playback with the OSC hidden then shown: dropped frames, CPU, and RSS.
-- `gui-cpu --baseline OLD_PLAYER`: interleaved candidate and baseline runs of four scenarios (paused with the OSC hidden or shown, the pointer sweeping the seek bar at 60 Hz, playing with the OSC hidden), medians of `--runs`.
+- `gui-cpu --baseline OLD_PLAYER` or `--baseline-arg OPTION`: interleaved candidate and baseline runs of four scenarios (paused with the OSC hidden or shown, the pointer sweeping the seek bar at 60 Hz, playing with the OSC hidden), medians and max-min spread of `--runs`.
+- `--player-arg OPTION` (repeatable) passes an option such as `--gpu-api=metal` to the measured player; `--baseline-arg` does the same for the `gui-cpu` baseline, so one binary can be compared against itself. Every row names the options it ran with.
 
 Results from 2026-11-03 on the native-OSC build. The host was not quiet for every run, so treat them as indicative:
 
