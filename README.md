@@ -32,7 +32,7 @@ The window opens fullscreen; pass `--fs=no` or `--geometry=WxH` for a window. Th
 
 ## Terminal UI
 
-`player --tui FILE` plays in the current terminal instead of opening a window. It uses the alternate screen buffer, centers the embedded album art, and keeps the transport and metadata in one column:
+`player --tui FILE` plays in the current terminal instead of opening a window. Music starts here by default: when stdin and stdout are a terminal and the first playlist entry is audio with no video beyond cover art, the player enters the terminal UI without `--tui` (`--gui` opts out). It uses the alternate screen buffer, centers the embedded album art, and keeps the transport and metadata in one column:
 
 - **space** pause, **←/→** seek, **↑/↓** volume, **m** mute, **n/p** previous or next playlist entry, **r** restart, **q** quit.
 - On Ghostty, kitty, and WezTerm the cover is sent with the kitty graphics protocol. Terminals without it get a truecolor half-block rendering. `PLAYER_TUI_ART=blocks` forces the fallback.

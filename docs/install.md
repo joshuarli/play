@@ -45,7 +45,7 @@ The app is `dist/Player.app`. Open it from Finder, or run a file directly:
 dist/Player.app/Contents/MacOS/player FILE
 ```
 
-For the terminal UI, pass `--tui`:
+Music played from a terminal opens the terminal UI by default. To use it for any file, pass `--tui`:
 
 ```sh
 dist/Player.app/Contents/MacOS/player --tui FILE

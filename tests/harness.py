@@ -706,6 +706,46 @@ def gate_tui(results, args):
                 pass
 
 
+    for name, wants_tui, extra in (("audio-cover", True, ["--pause=yes"]),
+                                   ("audio-mp3", True, ["--pause=yes"]),
+                                   ("h264", False, ["--vo=null"])):
+        proc = None
+        master = None
+        try:
+            proc, master, buf = pty_session(
+                ["--no-config", "--ao=null", "--volume=0", *extra,
+                 fixture_path(fixture_entry(name))],
+                env_extra={"PLAYER_TUI_ART": "kitty"},
+                wait_for=b"\x1b[?1049h" if wants_tui else b"Playing:",
+                timeout=8,
+            )
+            entered = b"\x1b[?1049h" in buf
+            label = "enters" if wants_tui else "stays out of"
+            results.check(f"tui: terminal {name} {label} the music tui", entered == wants_tui,
+                          ANSI_RE.sub("", bytes(buf).decode("utf-8", "replace"))[-300:])
+            if name == "audio-cover":
+                deadline = time.monotonic() + 3
+                while time.monotonic() < deadline and b"\x1b_G" not in buf:
+                    ready, _, _ = select.select([master], [], [], 0.1)
+                    if ready:
+                        buf.extend(os.read(master, 262144))
+                results.check("tui: terminal music shows kitty cover art", b"\x1b_G" in buf)
+            buf, stderr = pty_finish(proc, master, buf)
+            master = None
+            results.check(f"tui: terminal {name} exits cleanly", proc.returncode == 0,
+                          f"exit {proc.returncode}: {stderr[-300:]}")
+        except Exception as exc:
+            results.check(f"tui: terminal {name}", False, str(exc))
+        finally:
+            if proc is not None and proc.poll() is None:
+                proc.kill()
+                proc.wait(timeout=5)
+            if master is not None:
+                try:
+                    os.close(master)
+                except OSError:
+                    pass
+
 def gate_play(results, args):
     name = args[0] if args else "h264"
     entry = fixture_entry(name)

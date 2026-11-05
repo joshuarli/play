@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::io::IsTerminal;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -614,6 +615,17 @@ impl App {
         if self.options.gui_gate {
             self.options.gui = true;
             self.options.keep_open = true;
+        }
+        if !self.options.tui
+            && !self.options.gui
+            && !bundled
+            && std::io::stdin().is_terminal()
+            && std::io::stdout().is_terminal()
+            && self.playlist.entries().first().is_some_and(|entry| {
+                properties::probe(&entry.path).is_ok_and(|probe| probe.is_music())
+            })
+        {
+            self.options.tui = true;
         }
         if (self.options.gui && self.playlist.count() > 0) || bundled {
             self.open_window()?;

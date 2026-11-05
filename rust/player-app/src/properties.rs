@@ -27,6 +27,10 @@ impl Probe {
         let has_audio = self.streams.iter().any(|stream| stream.kind == StreamKind::Audio);
         !has_audio || video.any(|stream| !is_cover_art(stream))
     }
+
+    pub fn is_music(&self) -> bool {
+        self.streams.iter().any(|stream| stream.kind == StreamKind::Audio) && !self.displays_video()
+    }
 }
 
 fn is_cover_art(stream: &StreamInfo) -> bool {
