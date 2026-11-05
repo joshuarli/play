@@ -14,6 +14,10 @@ export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig"
 export PKG_CONFIG_LIBDIR="$PKG_CONFIG_PATH"
 
 mkdir -p "$PREFIX" "$SRC" "$LOGS"
+# Release tarballs carry no .git, so a build-time `git describe` (meson's
+# vcs_tag in libplacebo) would describe this checkout instead and stamp
+# Player's own version into the dependency. Stop git's search at $SRC.
+export GIT_CEILING_DIRECTORIES="$SRC"
 
 INPUT_HASH=$(shasum -a 256 "$ROOT/scripts/build-deps.sh" | awk '{print $1}')
 

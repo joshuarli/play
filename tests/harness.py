@@ -1879,6 +1879,16 @@ def gate_release(results, args):
     results.check("release: playback", proc.returncode == 0,
                   tail((proc.stdout + proc.stderr).splitlines(), 20))
 
+    from gui import PASS_LINE
+    proc = subprocess.run(
+        [str(binary), "--no-config", "--gui", "--gate", "--ao=null", "--geometry=640x480",
+         str(fixture_path(fixture_entry("h264")))],
+        capture_output=True, text=True, timeout=120,
+    )
+    results.check("release: renders through the bundled libplacebo",
+                  proc.returncode == 0 and PASS_LINE.search(proc.stdout) is not None,
+                  f"exit {proc.returncode}: " + tail((proc.stdout + proc.stderr).splitlines(), 20))
+
     proc = subprocess.run(
         ["codesign", "--verify", "--deep", "--strict", str(app)],
         capture_output=True, text=True, timeout=60,
