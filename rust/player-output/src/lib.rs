@@ -1,3 +1,31 @@
+#[cfg(test)]
+type OpenGpu = fn() -> Result<context::Gpu, String>;
+
+#[cfg(test)]
+macro_rules! gpu_tests {
+    ($($name:ident),* $(,)?) => {
+        mod vulkan {
+            $(
+                #[test]
+                #[cfg_attr(target_os = "linux", ignore = "static-pie test binaries cannot call the container Vulkan loader; run with RUSTFLAGS=\"-C target-feature=-crt-static\"")]
+                fn $name() {
+                    super::$name(crate::Gpu::vulkan)
+                }
+            )*
+        }
+
+        #[cfg(target_os = "macos")]
+        mod metal {
+            $(
+                #[test]
+                fn $name() {
+                    super::$name(crate::Gpu::metal)
+                }
+            )*
+        }
+    };
+}
+
 mod context;
 mod frame;
 mod instance;

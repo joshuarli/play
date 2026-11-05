@@ -11,6 +11,8 @@ pub struct Gpu {
 
 enum Backend {
     Vulkan(sys::PlVulkan),
+    #[cfg(target_os = "macos")]
+    Metal(sys::PlMetal),
 }
 
 impl Gpu {
@@ -66,6 +68,31 @@ impl Gpu {
         })
     }
 
+    #[cfg(target_os = "macos")]
+    pub fn metal() -> Result<Self, String> {
+        let (log, version) = create_log()?;
+        let params = sys::PlMetalParams {
+            device: core::ptr::null_mut(),
+            queue: core::ptr::null_mut(),
+        };
+        // SAFETY: the log is live; NULL device and queue select the system
+        // default device and a new queue on it.
+        let metal = unsafe { sys::pl_metal_create(log, &params) };
+        if metal.is_null() {
+            // SAFETY: the log was created above and is still live.
+            unsafe { sys::pl_log_destroy(&mut (log as sys::PlLog)) };
+            return Err("pl_metal_create failed".to_string());
+        }
+        // SAFETY: metal is live; gpu is its first field.
+        let gpu = unsafe { (*metal).gpu };
+        eprintln!("libplacebo: GPU 0: Metal device (libplacebo {version})");
+        Ok(Gpu {
+            log,
+            backend: Backend::Metal(metal),
+            gpu,
+        })
+    }
+
     pub fn gpu(&self) -> sys::PlGpu {
         self.gpu
     }
@@ -73,6 +100,16 @@ impl Gpu {
     pub(crate) fn vulkan_handle(&self) -> Option<sys::PlVulkan> {
         match self.backend {
             Backend::Vulkan(vk) => Some(vk),
+            #[cfg(target_os = "macos")]
+            Backend::Metal(_) => None,
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(crate) fn metal_handle(&self) -> Option<sys::PlMetal> {
+        match self.backend {
+            Backend::Metal(metal) => Some(metal),
+            Backend::Vulkan(_) => None,
         }
     }
 
@@ -282,6 +319,10 @@ impl Drop for Gpu {
         match &mut self.backend {
             // SAFETY: all textures must be destroyed before this runs.
             Backend::Vulkan(vk) => unsafe { sys::pl_vulkan_destroy(vk) },
+            #[cfg(target_os = "macos")]
+            // SAFETY: all textures, renderers, and swapchains on this device
+            // are destroyed before this runs.
+            Backend::Metal(metal) => unsafe { sys::pl_metal_destroy(metal) },
         }
         // SAFETY: the log was created with the context and is still live.
         unsafe { sys::pl_log_destroy(&mut (self.log as sys::PlLog)) };
@@ -292,6 +333,7 @@ impl Drop for Gpu {
 mod tests {
     use super::*;
     use crate::sys;
+    use crate::OpenGpu;
 
     #[test]
     fn linked_placebo_matches_pin() {
@@ -303,13 +345,8 @@ mod tests {
         assert_eq!(sys::PLACEBO_API_VERSION, 387);
     }
 
-    #[test]
-    #[cfg_attr(
-        target_os = "linux",
-        ignore = "static-pie test binaries cannot call the container Vulkan loader; run with RUSTFLAGS=\"-C target-feature=-crt-static\""
-    )]
-    fn init_and_tex_roundtrip() {
-        let vk = Gpu::vulkan().expect("vulkan initializes headlessly");
+    fn init_and_tex_roundtrip(open: OpenGpu) {
+        let vk = open().expect("gpu initializes headlessly");
         let fmt = vk
             .find_rgba8(sys::PL_FMT_CAP_HOST_READABLE)
             .expect("rgba8 format exists");
@@ -320,4 +357,6 @@ mod tests {
         assert_eq!(back, pattern);
         vk.destroy_tex(tex);
     }
+
+    gpu_tests!(init_and_tex_roundtrip);
 }

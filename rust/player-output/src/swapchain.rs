@@ -33,6 +33,29 @@ impl Swapchain {
         Self::sized(sw, width, height)
     }
 
+    #[cfg(target_os = "macos")]
+    pub fn metal(
+        gpu: &Gpu,
+        layer: *mut core::ffi::c_void,
+        width: c_int,
+        height: c_int,
+    ) -> Result<Self, String> {
+        let metal = gpu
+            .metal_handle()
+            .ok_or_else(|| "a Metal swapchain needs a Metal device".to_string())?;
+        if layer.is_null() {
+            return Err("a Metal swapchain needs a CAMetalLayer".to_string());
+        }
+        let params = sys::PlMetalSwapchainParams { layer };
+        // SAFETY: the Metal device is live and the caller keeps the layer
+        // alive for the swapchain's lifetime.
+        let sw = unsafe { sys::pl_metal_create_swapchain(metal, &params) };
+        if sw.is_null() {
+            return Err("pl_metal_create_swapchain failed".to_string());
+        }
+        Self::sized(sw, width, height)
+    }
+
     fn sized(sw: sys::PlSwapchain, width: c_int, height: c_int) -> Result<Self, String> {
         let mut chain = Swapchain { sw };
         chain.resize(width, height)?;

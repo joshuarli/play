@@ -187,6 +187,30 @@ pub struct PlVulkanHead {
 
 pub type PlVulkan = *mut PlVulkanHead;
 
+#[cfg(target_os = "macos")]
+#[repr(C)]
+pub struct PlMetalT {
+    pub gpu: PlGpu,
+    pub device: *mut c_void,
+    pub queue: *mut c_void,
+}
+
+#[cfg(target_os = "macos")]
+pub type PlMetal = *const PlMetalT;
+
+#[cfg(target_os = "macos")]
+#[repr(C)]
+pub struct PlMetalParams {
+    pub device: *mut c_void,
+    pub queue: *mut c_void,
+}
+
+#[cfg(target_os = "macos")]
+#[repr(C)]
+pub struct PlMetalSwapchainParams {
+    pub layer: *mut c_void,
+}
+
 pub type PlSwapchain = *mut c_void;
 
 pub type VkInstance = *mut c_void;
@@ -409,6 +433,16 @@ pub struct PlSwapchainFrame {
     pub color_space: PlColorSpace,
 }
 
+#[cfg(target_os = "macos")]
+unsafe extern "C" {
+    pub fn pl_metal_create(log: PlLog, params: *const PlMetalParams) -> PlMetal;
+    pub fn pl_metal_destroy(metal: *mut PlMetal);
+    pub fn pl_metal_create_swapchain(
+        metal: PlMetal,
+        params: *const PlMetalSwapchainParams,
+    ) -> PlSwapchain;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -443,6 +477,19 @@ mod tests {
         assert_eq!(size_of::<PlRect3d>(), 24);
         assert_eq!(align_of::<PlVulkanHead>(), align_of::<*mut c_void>());
         assert_eq!(offset_of!(PlVulkanHead, gpu), 0);
+
+        #[cfg(target_os = "macos")]
+        {
+            assert_eq!(size_of::<PlMetalT>(), 24);
+            assert_eq!(offset_of!(PlMetalT, gpu), 0);
+            assert_eq!(offset_of!(PlMetalT, device), 8);
+            assert_eq!(offset_of!(PlMetalT, queue), 16);
+            assert_eq!(size_of::<PlMetalParams>(), 16);
+            assert_eq!(offset_of!(PlMetalParams, device), 0);
+            assert_eq!(offset_of!(PlMetalParams, queue), 8);
+            assert_eq!(size_of::<PlMetalSwapchainParams>(), 8);
+            assert_eq!(offset_of!(PlMetalSwapchainParams, layer), 0);
+        }
 
         assert_eq!(PL_COLOR_SYSTEM_RGB, 12);
         assert_eq!(PL_COLOR_LEVELS_FULL, 2);

@@ -414,9 +414,10 @@ fn empty_plane() -> sys::PlPlane {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::OpenGpu;
 
-    fn setup() -> (Gpu, Renderer) {
-        let vk = Gpu::vulkan().expect("vulkan initializes headlessly");
+    fn setup(open: OpenGpu) -> (Gpu, Renderer) {
+        let vk = open().expect("gpu initializes headlessly");
         let renderer = vk.create_renderer().expect("renderer creates");
         (vk, renderer)
     }
@@ -443,8 +444,8 @@ mod tests {
         ]
     }
 
-    fn render_solid(y: u8, u: u8, v: u8) -> Vec<u8> {
-        let (vk, renderer) = setup();
+    fn render_solid(open: OpenGpu, y: u8, u: u8, v: u8) -> Vec<u8> {
+        let (vk, renderer) = setup(open);
         let w = 8;
         let h = 8;
         let (yp, up, vp) = solid_yuv420(y, u, v, w, h);
@@ -483,12 +484,10 @@ mod tests {
         out
     }
 
-    #[test]
-    #[cfg_attr(target_os = "linux", ignore = "static-pie test binaries cannot call the container Vulkan loader; run with RUSTFLAGS=\"-C target-feature=-crt-static\"")]
-    fn yuv420_solid_colors_match_software_reference() {
+    fn yuv420_solid_colors_match_software_reference(open: OpenGpu) {
         for (y, u, v) in [(54, 99, 255), (182, 30, 12), (18, 255, 117), (255, 128, 128), (0, 128, 128)] {
             let expected = bt709_full_to_rgb(y, u, v);
-            let out = render_solid(y, u, v);
+            let out = render_solid(open, y, u, v);
             let worst = out
                 .chunks_exact(4)
                 .map(|px| {
@@ -502,10 +501,8 @@ mod tests {
         }
     }
 
-    #[test]
-    #[cfg_attr(target_os = "linux", ignore = "static-pie test binaries cannot call the container Vulkan loader; run with RUSTFLAGS=\"-C target-feature=-crt-static\"")]
-    fn presented_frame_fits_the_target_with_letterbox_bars() {
-        let (vk, renderer) = setup();
+    fn presented_frame_fits_the_target_with_letterbox_bars(open: OpenGpu) {
+        let (vk, renderer) = setup(open);
         let rgba = [255u8; 32 * 16 * 4];
         let planes = [Plane {
             data: &rgba,
@@ -540,10 +537,8 @@ mod tests {
         }
     }
 
-    #[test]
-    #[cfg_attr(target_os = "linux", ignore = "static-pie test binaries cannot call the container Vulkan loader; run with RUSTFLAGS=\"-C target-feature=-crt-static\"")]
-    fn nv12_matches_yuv420() {
-        let (vk, renderer) = setup();
+    fn nv12_matches_yuv420(open: OpenGpu) {
+        let (vk, renderer) = setup(open);
         let w = 8;
         let h = 8;
         let (yp, up, vp) = solid_yuv420(54, 99, 255, w, h);
@@ -577,7 +572,7 @@ mod tests {
             None,
         )
         .expect("nv12 renders");
-        let planar = render_solid(54, 99, 255);
+        let planar = render_solid(open, 54, 99, 255);
         let worst = nv
             .iter()
             .zip(planar.iter())
@@ -587,10 +582,8 @@ mod tests {
         assert!(worst <= 2, "nv12 deviates from planar: {worst}");
     }
 
-    #[test]
-    #[cfg_attr(target_os = "linux", ignore = "static-pie test binaries cannot call the container Vulkan loader; run with RUSTFLAGS=\"-C target-feature=-crt-static\"")]
-    fn overlay_alpha_blends_with_the_base() {
-        let (vk, renderer) = setup();
+    fn overlay_alpha_blends_with_the_base(open: OpenGpu) {
+        let (vk, renderer) = setup(open);
         let base = vec![64u8; 64 * 64 * 4];
         let planes = [Plane {
             data: &base,
@@ -646,10 +639,8 @@ mod tests {
         assert_eq!(at(&plain, 4, 4), at(&covered, 4, 4));
     }
 
-    #[test]
-    #[cfg_attr(target_os = "linux", ignore = "static-pie test binaries cannot call the container Vulkan loader; run with RUSTFLAGS=\"-C target-feature=-crt-static\"")]
-    fn rgba8_passthrough_matches_input() {
-        let (vk, renderer) = setup();
+    fn rgba8_passthrough_matches_input(open: OpenGpu) {
+        let (vk, renderer) = setup(open);
         let mut input = vec![0u8; 8 * 8 * 4];
         for y in 0..8 {
             for x in 0..8 {
@@ -686,10 +677,8 @@ mod tests {
         assert!(worst <= 4, "rgba deviates: {worst}");
     }
 
-    #[test]
-    #[cfg_attr(target_os = "linux", ignore = "static-pie test binaries cannot call the container Vulkan loader; run with RUSTFLAGS=\"-C target-feature=-crt-static\"")]
-    fn overlay_covers_only_its_rect() {
-        let (vk, renderer) = setup();
+    fn overlay_covers_only_its_rect(open: OpenGpu) {
+        let (vk, renderer) = setup(open);
         let base = vec![128u8; 64 * 64 * 4];
         let planes = [Plane {
             data: &base,
@@ -742,5 +731,90 @@ mod tests {
             "overlay pixel barely moved: {before} -> {after}"
         );
         assert!(after > 200, "overlay pixel not near white: {after}");
+    }
+
+    gpu_tests!(
+        yuv420_solid_colors_match_software_reference,
+        presented_frame_fits_the_target_with_letterbox_bars,
+        nv12_matches_yuv420,
+        overlay_alpha_blends_with_the_base,
+        rgba8_passthrough_matches_input,
+        overlay_covers_only_its_rect,
+    );
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn metal_matches_vulkan() {
+        let (w, h) = (64usize, 32usize);
+        let (cw, ch) = (w / 2, h / 2);
+        let luma: Vec<u8> = (0..w * h).map(|i| ((i % w) * 3 + (i / w) * 2) as u8).collect();
+        let cb: Vec<u8> = (0..cw * ch).map(|i| (64 + (i % cw) * 4) as u8).collect();
+        let cr: Vec<u8> = (0..cw * ch).map(|i| (200 - (i / cw) * 6) as u8).collect();
+        let cbcr: Vec<u8> = cb.iter().zip(cr.iter()).flat_map(|(b, r)| [*b, *r]).collect();
+        let mut ink = vec![0u8; 16 * 8 * 4];
+        for (i, pixel) in ink.chunks_exact_mut(4).enumerate() {
+            pixel.copy_from_slice(&[255, (i * 2) as u8, 40, (i * 2) as u8]);
+        }
+        let overlay = Overlay {
+            data: &ink,
+            stride: 16 * 4,
+            width: 16,
+            height: 8,
+            dst: OverlayRect {
+                x0: 10.0,
+                y0: 6.0,
+                x1: 42.0,
+                y1: 22.0,
+            },
+        };
+        fn plane(data: &[u8], stride: usize, width: usize, height: usize) -> Plane<'_> {
+            Plane {
+                data,
+                stride,
+                width: width as c_int,
+                height: height as c_int,
+            }
+        }
+        let cases = [
+            (
+                PixelLayout::Yuv420,
+                vec![plane(&luma, w, w, h), plane(&cb, cw, cw, ch), plane(&cr, cw, cw, ch)],
+            ),
+            (PixelLayout::Nv12, vec![plane(&luma, w, w, h), plane(&cbcr, w, cw, ch)]),
+        ];
+        let render = |open: OpenGpu, layout: PixelLayout, planes: &[Plane<'_>]| {
+            let (gpu, renderer) = setup(open);
+            render_frame(
+                &gpu,
+                &renderer,
+                layout,
+                ColorSpec::bt709_full(),
+                planes,
+                w as c_int,
+                h as c_int,
+                Some(&overlay),
+            )
+            .expect("frame renders")
+        };
+        for (layout, planes) in &cases {
+            let vulkan = render(Gpu::vulkan, *layout, planes);
+            let metal = render(Gpu::metal, *layout, planes);
+            assert_eq!(vulkan.len(), metal.len());
+            let (worst, at) = vulkan
+                .iter()
+                .zip(metal.iter())
+                .enumerate()
+                .map(|(i, (a, b))| (a.abs_diff(*b), i))
+                .max()
+                .unwrap_or((0, 0));
+            let pixel = at / 4;
+            assert!(
+                worst <= 2,
+                "{layout:?}: Metal differs from Vulkan by {worst} at ({}, {}) channel {}",
+                pixel % w,
+                pixel / w,
+                at % 4
+            );
+        }
     }
 }
