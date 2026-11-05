@@ -27,6 +27,7 @@ Owner decisions (2026-11-05):
 1. **Carry upstream MR !858 as a pinned patch.** Upstream libplacebo has no Metal backend: none in v7.387.0 (the newest tag), none on master. The only implementation is the closed, unmerged [libplacebo MR !858](https://code.videolan.org/videolan/libplacebo/-/merge_requests/858) by `simonch`, head `ea7599ef9e71f66930b567f25e2c2de73913b38c`. It adds a `pl_gpu` over Metal and compiles shaders GLSL → SPIR-V (shaderc) → MSL (SPIRV-Cross). The draft's alternatives, an `AVSampleBufferDisplayLayer` path modeled on `~/d/p` and a hand-written Metal renderer, are out of scope; neither is a fallback. If M1's go/no-go fails, park the campaign and report.
 2. **Switch both GPU devices; keep the readback.** Each frame uses two libplacebo devices. The engine renders YUV→RGBA on a headless device and reads it back to the CPU (`rust/player-engine/src/video.rs:185`, `render_frame`). The window then uploads that RGBA and composites overlays (`rust/player-display/src/mac.rs:157`, `render_to_target`). `--gpu-api` selects the backend for both. Collapsing them into one device is a separate campaign: M9 files a `TODO.md` ticket for it.
 3. **Ship both backends in `Player.app`.** The bundle carries both; Vulkan stays the default.
+4. **The prescribed decisions below are approved.** That covers `--gpu-api`, no fallback, the `Gpu` seam, and dev builds linking the release prefix. Do not reopen them without new evidence.
 
 Prescribed (reason; what would reverse it):
 
