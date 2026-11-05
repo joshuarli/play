@@ -23,6 +23,8 @@ pub const AV_DISPOSITION_DEFAULT: c_int = 1 << 0;
 pub const AV_DISPOSITION_FORCED: c_int = 1 << 6;
 pub const AV_DISPOSITION_ATTACHED_PIC: c_int = 1 << 10;
 
+pub const AV_LOG_ERROR: c_int = 16;
+
 pub const AVFMT_FLAG_CUSTOM_IO: c_int = 0x0080;
 pub const AV_DICT_IGNORE_SUFFIX: c_int = 2;
 
@@ -430,6 +432,7 @@ pub type AvioSeek =
     unsafe extern "C" fn(opaque: *mut c_void, offset: i64, whence: c_int) -> i64;
 
 unsafe extern "C" {
+    pub fn av_log_set_level(level: c_int);
     pub fn av_malloc(size: usize) -> *mut c_void;
     pub fn av_free(ptr: *mut c_void);
     pub fn avformat_alloc_context() -> *mut AvFormatContext;

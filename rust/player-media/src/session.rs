@@ -126,6 +126,11 @@ pub struct MediaSession {
 
 impl MediaSession {
     pub fn open(path: &str) -> Result<Self, MediaError> {
+        static QUIET_PROBE_WARNINGS: std::sync::Once = std::sync::Once::new();
+        QUIET_PROBE_WARNINGS.call_once(|| {
+            // SAFETY: av_log_set_level only stores the global log threshold.
+            unsafe { av_log_set_level(AV_LOG_ERROR) }
+        });
         let version = unsafe { avformat_version() };
         if (version >> 16) & 0xff != AVFORMAT_VERSION_MAJOR {
             return Err(MediaError::Unsupported(format!(

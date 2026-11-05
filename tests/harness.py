@@ -723,6 +723,9 @@ def gate_tui(results, args):
             label = "enters" if wants_tui else "stays out of"
             results.check(f"tui: terminal {name} {label} the music tui", entered == wants_tui,
                           ANSI_RE.sub("", bytes(buf).decode("utf-8", "replace"))[-300:])
+            if wants_tui:
+                results.check(f"tui: terminal {name} prints nothing before the tui",
+                              bytes(buf).startswith(b"\x1b[?1049h"), repr(bytes(buf[:120])))
             if name == "audio-cover":
                 deadline = time.monotonic() + 3
                 while time.monotonic() < deadline and b"\x1b_G" not in buf:
@@ -1009,6 +1012,10 @@ def gate_cover_art(results, args):
                           not any("libplacebo:" in line for line in mpv.lines),
                           tail(mpv.lines, 10))
             mpv.wait_eof(timeout=entry.get("duration", 3) + 10)
+            results.check(f"cover-art {name}: no FFmpeg probe warnings",
+                          not any("Could not find codec parameters" in line
+                                  for line in mpv.lines),
+                          tail(mpv.lines, 6))
             check_no_errors(results, f"cover-art {name}", mpv)
         results.check(f"cover-art {name}: exit", mpv.returncode == 0, f"exit {mpv.returncode}")
 

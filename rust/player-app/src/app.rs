@@ -627,6 +627,9 @@ impl App {
         {
             self.options.tui = true;
         }
+        if self.options.tui {
+            self.options.quiet = true;
+        }
         if (self.options.gui && self.playlist.count() > 0) || bundled {
             self.open_window()?;
             self.gui = true;
