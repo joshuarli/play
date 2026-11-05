@@ -3,11 +3,19 @@
 ## Status
 
 - **Goal:** a libplacebo Metal backend on macOS beside Vulkan/MoltenVK, chosen at run time with `--gpu-api`, shipped in `Player.app`, and measured against MoltenVK. The default stays Vulkan.
-- **Last accepted revision:** `000c99b` (M7).
-- **Accepted:** M1 `410e9a3`, M3 `586688e` (Linux suite 385 passed; first run 13 m 06 s wall including the image and Linux dependency build), M2 `8cdc0c8`, M4 `743551c`, M5 `81adbe7` (suite 406 passed), M6 `bb83ce1` (suite 409 passed; distributable 21,845,744 B; timing budgets deferred: host busy), M7 `000c99b` (suite 410 passed; `seek --gpu-api=metal` 6 passed). **Red:** none. **Parked:** none.
-- **Next:** M8 (Vulkan vs Metal comparison).
-- **Resume:** "Execute `native-metal.md` from **Status**." First command: `scripts/build-deps.sh`.
-- **Learned:** the MR's own Metal suite passes on the patched v7.387.0 (go). This cargo nightly puts each test binary in its own `build/<pkg>/<hash>/out` directory, so dev ICD discovery uses a macOS cargo runner (`.cargo/pinned-moltenvk.sh` sets `VK_DRIVER_FILES`) for cargo-run processes and an ICD beside `build/mpv` for the dev binary. Cargo finds `.cargo/config.toml` from the working directory, so it lives at the repo root.
+- **Last accepted revision:** `398b1b3`.
+- **Accepted:** M1 `410e9a3`, M3 `586688e`, M2 `8cdc0c8`, M4 `743551c`, M5 `81adbe7`, M6 `bb83ce1`, M7 `000c99b`. M8 tooling and fix landed (`949d851` Metal leak fix, `5b0bfe0`/`5e8e87f` bench options). M9 code work landed (`83f478c`, `5e8e87f`, `f82a6e9`). **Red:** none. **Parked:** none.
+- **Open: M8 measurements and M9 timing gate, both deferred because the host is busy** (another session held about 200% CPU for over an hour; `perf-gate-ready` failed throughout). Everything else in M8 and M9 is done.
+- **Resume (needs a quiet host):** run `perf-gate-ready` first. Then, from the repo root with `PATH=/opt/homebrew/Cellar/ffmpeg/9.0.2_1/bin:$PATH` (the first `ffmpeg` on this host's PATH lacks libx264, and the `fixtures` gate deletes `.work/fixtures` when regeneration fails):
+  1. `scripts/build.sh`.
+  2. Interleave three rounds of `scripts/bench.py frames --player-arg=--gpu-api=vulkan` and `... --gpu-api=metal`, plus the same for `seek`.
+  3. Run `scripts/bench.py gui-cpu --player-arg=--gpu-api=metal --baseline-arg=--gpu-api=vulkan` (already interleaved).
+  4. Write the "Metal backend" section in `docs/metrics.md`: medians and spread per scenario and backend, deferrals stated, and a note that both backends pay the engine readback (PLAY-31).
+  5. Optimize only a gap above the spread that has a named cause.
+  6. Run `scripts/measure.sh final`. Its size budgets already passed at M6 (21,845,744 B); only timing remains.
+- **Indicative only (busy host, not a result):** after the leak fix, a windowed 640x360 run holds about 256 MB on Metal and 294 MB on Vulkan. Before the fix, `gui-cpu` (3 runs) showed playing-hidden 28.3% Metal vs 23.8% Vulkan and hover 6.8% vs 5.9%; both need re-measuring.
+- **Close verification done at `5e8e87f`–`398b1b3`:** macOS `tests/run.sh suite` 410 passed; Linux check 386 passed (7 m 09 s); `cargo test` all green except PLAY-34 (an existing `player-audio` timing test that fails under load); independent review found no P1 or P2 issues, and its P3s are fixed. The preflight OSD layout error (M9 item d) does not reproduce on this display, so it has no ticket.
+- **Learned:** the MR's own Metal suite passes on patched v7.387.0. This cargo nightly puts each test binary in its own `build/<pkg>/<hash>/out` directory, so dev ICD discovery uses a macOS cargo runner (`.cargo/pinned-moltenvk.sh` sets `VK_DRIVER_FILES`) and an ICD beside `build/mpv`. Cargo finds `.cargo/config.toml` from the working directory, so it lives at the repo root. The Metal backend autoreleases per frame, so every Rust thread that renders must sit inside `with_autorelease_pool`. Do not reuse a Linux target dir from another worktree: both mount at `/work`, so cargo's mtime check accepts stale artifacts.
 
 ## Charter
 
