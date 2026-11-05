@@ -1,5 +1,5 @@
 Prefix: PLAY
-Next: 31
+Next: 34
 
 # Backlog
 
@@ -11,11 +11,15 @@ Next: 31
 - PLAY-24: AAC layouts outside channel configurations 1-6 and 7.1 wide fail to open: configuration 12 (7.1 rear, what FFmpeg writes) and program-config-element layouts such as quad. `tests/run.sh mpv-diff` lists them in `KNOWN_GAPS`.
 - PLAY-25: With `--gui` or in the bundled app, audio files with embedded cover art show a black window: the attached-picture frame never reaches it. Without `--gui` such files play audio-only and open no window. The TUI shows the cover through its own decode.
 
+- PLAY-31: Each frame uses two libplacebo devices. The engine renders YUV to RGBA on a headless device and reads it back to the CPU (`player-engine::video` `render_frame`); the window uploads that RGBA and composites overlays on its own device (`player-display::mac` `present_planes`). Both `--gpu-api` backends pay the readback. Render decoded planes straight into the window's swapchain on one device, with no CPU readback, and keep `--vo=null` and screenshots working.
+- PLAY-32: VideoToolbox zero-copy on Metal: once PLAY-20 decodes through VideoToolbox, hand its `CVPixelBuffer` IOSurfaces to libplacebo with `pl_metal_wrap_iosurface` (in the carried Metal patch) instead of copying planes to the CPU. Depends on PLAY-20 and PLAY-31.
+
 ## P3
 
 - PLAY-26: SubRip `<i>`, `<b>`, `<u>`, and `<font color>` are stripped, not styled. `player-overlay::TextBlock` carries one style; styled spans need per-run attributes in both text backends (Core Text attributed ranges; HarfBuzz runs per span on Linux).
 - PLAY-27: A right-to-left paragraph with `Align::Start` starts at the left edge. Subtitles centre, so only OSD messages and the OSC title see it; base direction should pick the start edge.
 - PLAY-28: Line height is the tallest font's ascent plus descent across every fallback font on the block, on both platforms, so one CJK or Thai character spreads all lines apart; on Linux Noto Sans CJK makes it visibly wider than macOS. Line spacing should come from the primary font, with tall glyphs kept inside the inset.
+- PLAY-33: `--gpu-api=metal` presents SDR only. The carried patch's swapchain fixes the layer at `BGRA8Unorm`, so 10-bit and EDR/HDR output need a wider pixel format, `wantsExtendedDynamicRangeContent`, and an EDR color space on the `CAMetalLayer`, reported through the swapchain's color space.
 - PLAY-30: `tests/run.sh osc-input` passes only headless. Given a window (`tests/run.sh osc-input --gpu-api=vulkan --fs=no --geometry=1280x720`, either backend), four checks fail on a Retina display: `osc-areas` comes back in 2560x1440 backing pixels where the gate expects the 720p layout, and IPC pointer motion neither shows the OSC nor starts the hide timer. Decide whether `osc-areas` should report logical points and whether injected pointer input should reach a windowed OSC, then make the gate hold windowed.
 - PLAY-29: Re-measure `scripts/bench.py gui-cpu --baseline` (libass build `d0e94ad`) on a quiet host. A loaded run showed seek-bar hover at 14.3% CPU against 9.0% on h264 but parity on VP9. If it holds, the likely cost is re-rasterizing the whole bar and recompositing the union in floats each time the tooltip moves; cache the static layer and repaint only the tooltip and progress.
 
