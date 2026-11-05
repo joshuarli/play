@@ -1542,6 +1542,21 @@ def gate_playlist(results, args):
                       str(playlist))
     results.check("playlist: exit", mpv.returncode == 0, f"exit {mpv.returncode}")
 
+    folder = TMP / "playlist-dir"
+    shutil.rmtree(folder, ignore_errors=True)
+    (folder / "nested").mkdir(parents=True)
+    shutil.copy(fixture_path(fixture_entry("audio-mp3")), folder / "b.MP3")
+    shutil.copy(first_path, folder / "a.mp4")
+    shutil.copy(first_path, folder / "nested" / "c.mp4")
+    (folder / "notes.txt").write_text("not media\n")
+    with Mpv(["--vo=null", "--ao=null", str(folder)]) as mpv:
+        mpv.wait_property("playlist-count", lambda value: value == 2, timeout=10)
+        names = [Path(item["filename"]).name for item in mpv.get_property("playlist")]
+        results.check("playlist: directory expands to sorted media files",
+                      names == ["a.mp4", "b.MP3"], str(names))
+    results.check("playlist: directory exit", mpv.returncode == 0, f"exit {mpv.returncode}")
+    shutil.rmtree(folder, ignore_errors=True)
+
 
 def gate_state(results, args):
     entry = fixture_entry("multiaudio")

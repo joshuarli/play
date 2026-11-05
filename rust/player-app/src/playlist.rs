@@ -110,8 +110,17 @@ pub fn local_entry(path: &str) -> Result<Entry, String> {
     }
 }
 
+const DIRECTORY_MEDIA_EXTENSIONS: &[&str] = &[
+    "mp4", "m4v", "m4a", "m4b", "mov", "mkv", "mka", "webm", "avi", "mp3", "flac", "wav", "ogg",
+    "oga", "opus",
+];
+
 pub fn entries_for_path(path: &str) -> Result<Vec<Entry>, String> {
-    classify_input(path, false).map_err(|error| error.to_string())?;
+    if let InputPath::Local(local) = classify_input(path, false).map_err(|error| error.to_string())?
+        && local.is_dir()
+    {
+        return directory_entries(&local);
+    }
     let extension = Path::new(path)
         .extension()
         .and_then(|extension| extension.to_str())
@@ -122,6 +131,37 @@ pub fn entries_for_path(path: &str) -> Result<Vec<Entry>, String> {
     } else {
         local_entry(path).map(|entry| vec![entry])
     }
+}
+
+fn directory_entries(directory: &Path) -> Result<Vec<Entry>, String> {
+    let listing = std::fs::read_dir(directory)
+        .map_err(|error| format!("cannot read directory {}: {error}", directory.display()))?;
+    let mut files = Vec::new();
+    for item in listing {
+        let item = item
+            .map_err(|error| format!("cannot read directory {}: {error}", directory.display()))?;
+        let file = item.path();
+        let media = file
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| {
+                DIRECTORY_MEDIA_EXTENSIONS.contains(&extension.to_ascii_lowercase().as_str())
+            });
+        if media && file.is_file() {
+            files.push(file);
+        }
+    }
+    if files.is_empty() {
+        return Err(format!("directory {} has no playable files", directory.display()));
+    }
+    files.sort();
+    Ok(files
+        .into_iter()
+        .map(|file| Entry {
+            path: file.to_string_lossy().into_owned(),
+            title: None,
+        })
+        .collect())
 }
 
 pub fn read_playlist(path: &str) -> Result<Vec<Entry>, String> {
