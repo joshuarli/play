@@ -60,6 +60,21 @@ pub fn render_frame(
     height: c_int,
     overlay: Option<&Overlay>,
 ) -> Result<Vec<u8>, String> {
+    crate::with_autorelease_pool(|| {
+        render_frame_in_pool(gpu, renderer, layout, color, planes, width, height, overlay)
+    })
+}
+
+fn render_frame_in_pool(
+    gpu: &Gpu,
+    renderer: &Renderer,
+    layout: PixelLayout,
+    color: ColorSpec,
+    planes: &[Plane<'_>],
+    width: c_int,
+    height: c_int,
+    overlay: Option<&Overlay>,
+) -> Result<Vec<u8>, String> {
     let indexed = plane_specs(layout)?;
     if planes.len() != indexed.len() {
         return Err(format!(
@@ -741,6 +756,43 @@ mod tests {
         rgba8_passthrough_matches_input,
         overlay_covers_only_its_rect,
     );
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn metal_frames_on_a_plain_thread_do_not_accumulate_memory() {
+        fn resident_mb() -> f64 {
+            let out = std::process::Command::new("ps")
+                .args(["-o", "rss=", "-p", &std::process::id().to_string()])
+                .output()
+                .expect("ps runs");
+            String::from_utf8_lossy(&out.stdout).trim().parse::<f64>().expect("rss parses") / 1024.0
+        }
+        let growth = std::thread::spawn(|| {
+            let (gpu, renderer) = setup(Gpu::metal);
+            let rgba = vec![90u8; 512 * 512 * 4];
+            let planes = [Plane {
+                data: &rgba,
+                stride: 512 * 4,
+                width: 512,
+                height: 512,
+            }];
+            let mut render = || {
+                render_frame(&gpu, &renderer, PixelLayout::Rgba8, ColorSpec::bt709_full(), &planes, 512, 512, None)
+                    .expect("frame renders");
+            };
+            for _ in 0..20 {
+                render();
+            }
+            let before = resident_mb();
+            for _ in 0..300 {
+                render();
+            }
+            resident_mb() - before
+        })
+        .join()
+        .expect("render thread finishes");
+        assert!(growth < 64.0, "300 Metal frames grew resident memory by {growth:.0} MB");
+    }
 
     #[cfg(target_os = "macos")]
     #[test]

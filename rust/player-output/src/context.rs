@@ -332,6 +332,21 @@ impl Gpu {
     }
 }
 
+pub fn with_autorelease_pool<T>(body: impl FnOnce() -> T) -> T {
+    #[cfg(target_os = "macos")]
+    {
+        // SAFETY: push has no preconditions; the token is popped exactly once
+        // below, on this thread, after every object autoreleased inside.
+        let pool = unsafe { sys::objc_autoreleasePoolPush() };
+        let result = body();
+        // SAFETY: pool came from the matching push on this thread.
+        unsafe { sys::objc_autoreleasePoolPop(pool) };
+        result
+    }
+    #[cfg(not(target_os = "macos"))]
+    body()
+}
+
 fn create_log() -> Result<(sys::PlLog, String), String> {
     // SAFETY: pl_version returns a static string.
     let version = unsafe { CStr::from_ptr(sys::pl_version()) }

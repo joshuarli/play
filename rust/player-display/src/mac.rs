@@ -1,5 +1,5 @@
 use player_output::{
-    render_to_target, ColorSpec, Gpu, GpuApi, Instance, Overlay, PixelLayout, Plane, Renderer,
+    render_to_target, with_autorelease_pool, ColorSpec, Gpu, GpuApi, Instance, Overlay, PixelLayout, Plane, Renderer,
     Surface, Swapchain,
 };
 use std::ffi::{c_char, c_int, c_void, CStr, CString};
@@ -330,7 +330,7 @@ impl MacWindow {
         }
         let (width, height) = self.bridge.size();
         if width > 0 && height > 0 && (width, height) != (self.width, self.height) {
-            self.presenter.swapchain().resize(width, height)?;
+            with_autorelease_pool(|| self.presenter.swapchain().resize(width, height))?;
             self.width = width;
             self.height = height;
         }
@@ -344,24 +344,27 @@ impl MacWindow {
         planes: &[Plane<'_>],
         overlay: Option<&Overlay>,
     ) -> Result<(), String> {
+        let (width, height) = (self.width, self.height);
         let (swapchain, renderer, gpu) = self.presenter.parts();
-        let frame = swapchain.start_frame()?;
-        if let Err(message) = render_to_target(
-            gpu,
-            renderer,
-            layout,
-            color,
-            planes,
-            frame.fbo,
-            self.width,
-            self.height,
-            frame.flipped,
-            overlay,
-        ) {
-            let _ = swapchain.submit();
-            return Err(message);
-        }
-        swapchain.submit()?;
+        with_autorelease_pool(|| {
+            let frame = swapchain.start_frame()?;
+            if let Err(message) = render_to_target(
+                gpu,
+                renderer,
+                layout,
+                color,
+                planes,
+                frame.fbo,
+                width,
+                height,
+                frame.flipped,
+                overlay,
+            ) {
+                let _ = swapchain.submit();
+                return Err(message);
+            }
+            swapchain.submit()
+        })?;
         self.presented += 1;
         Ok(())
     }

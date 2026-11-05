@@ -33,7 +33,7 @@ mod render;
 mod swapchain;
 mod sys;
 
-pub use context::{Gpu, GpuApi};
+pub use context::{with_autorelease_pool, Gpu, GpuApi};
 pub use frame::{
     render_frame, render_to_target, ColorSpec, Overlay, OverlayRect, PixelLayout, Plane,
 };

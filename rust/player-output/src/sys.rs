@@ -434,6 +434,13 @@ pub struct PlSwapchainFrame {
 }
 
 #[cfg(target_os = "macos")]
+#[link(name = "objc")]
+unsafe extern "C" {
+    pub fn objc_autoreleasePoolPush() -> *mut c_void;
+    pub fn objc_autoreleasePoolPop(pool: *mut c_void);
+}
+
+#[cfg(target_os = "macos")]
 unsafe extern "C" {
     pub fn pl_metal_create(log: PlLog, params: *const PlMetalParams) -> PlMetal;
     pub fn pl_metal_destroy(metal: *mut PlMetal);
