@@ -85,11 +85,11 @@ def summary(values):
     }
 
 
-def seek_latency(player, path, precision, runs, seed):
+def seek_latency(player, path, precision, runs, seed, player_args=()):
     """Time from the seek command until time-pos leaves its pre-seek value and then advances."""
     rng = random.Random(seed)
     latencies, offsets = [], []
-    with open_player(player, ["--mute=yes"]) as mpv:
+    with open_player(player, ["--mute=yes", *player_args]) as mpv:
         mpv.load(path)
         mpv.wait_event("file-loaded", timeout=30)
         time.sleep(2)
@@ -132,9 +132,9 @@ def audio_cpu(player, path, seconds=10):
     return {"cpu_percent": round(used / seconds * 100, 2)}
 
 
-def frame_drops(player, path, seconds=8):
+def frame_drops(player, path, seconds=8, player_args=()):
     results = {}
-    with open_player(player, ["--mute=yes", "--fs=yes"]) as mpv:
+    with open_player(player, ["--mute=yes", "--fs=yes", *player_args]) as mpv:
         mpv.load(path)
         mpv.wait_event("file-loaded", timeout=30)
         time.sleep(3)
@@ -155,8 +155,8 @@ def frame_drops(player, path, seconds=8):
     return results
 
 
-def gui_scenario(player, path, name, seconds=5):
-    args = ["--keep-open=yes", "--geometry=1280x720", "--mute=yes"]
+def gui_scenario(player, path, name, seconds=5, player_args=()):
+    args = ["--keep-open=yes", "--geometry=1280x720", "--mute=yes", *player_args]
     if name != "playing-hidden":
         args.append("--pause=yes")
     with open_player(player, args) as mpv:
@@ -191,15 +191,16 @@ def gui_cpu(candidate, baseline, path, runs):
         samples = {"candidate": [], "baseline": []}
         for index in range(runs):
             order = [("candidate", candidate), ("baseline", baseline)]
-            for side, player in order if index % 2 == 0 else order[::-1]:
-                samples[side].append(gui_scenario(player, path, name))
-        results[name] = {
-            side: {
-                "cpu_percent_median": statistics.median(s["cpu_percent"] for s in values),
-                "rss_mb_median": statistics.median(s["rss_mb"] for s in values),
+            for side, (player, player_args) in order if index % 2 == 0 else order[::-1]:
+                samples[side].append(gui_scenario(player, path, name, player_args=player_args))
+        results[name] = {}
+        for side, values in samples.items():
+            cpu = [sample["cpu_percent"] for sample in values]
+            results[name][side] = {
+                "cpu_percent_median": round(statistics.median(cpu), 2),
+                "cpu_percent_spread": round(max(cpu) - min(cpu), 2),
+                "rss_mb_median": statistics.median(sample["rss_mb"] for sample in values),
             }
-            for side, values in samples.items()
-        }
     return results
 
 
@@ -210,6 +211,10 @@ def main():
     parser.add_argument("--reference", default=str(REFERENCE) if REFERENCE.exists() else None,
                         help="player to compare against (default: Homebrew mpv when installed)")
     parser.add_argument("--baseline", help="earlier build of this player, for gui-cpu")
+    parser.add_argument("--player-arg", action="append", default=[],
+                        help="option passed to the player, such as --gpu-api=metal; repeatable")
+    parser.add_argument("--baseline-arg", action="append", default=[],
+                        help="option passed to the gui-cpu baseline; repeatable")
     parser.add_argument("--fixture", choices=sorted(FIXTURE_RECIPES), action="append")
     parser.add_argument("--precision", choices=["exact", "keyframes"], action="append")
     parser.add_argument("--runs", type=int, default=15)
@@ -224,20 +229,25 @@ def main():
     players = {"player": options.player}
     if options.reference and options.mode in ("seek", "audio-cpu", "all"):
         players["reference"] = options.reference
-    report = {"player": options.player, "reference": options.reference, "results": {}}
+    player_args = options.player_arg
+    label = " ".join(player_args) or "default"
+    report = {"player": options.player, "player_args": player_args,
+              "reference": options.reference, "results": {}}
 
     for name in names:
         path = fixture(name)
         entry = report["results"].setdefault(name, {})
         if options.mode in ("seek", "all"):
             for precision in precisions:
-                for label, player in players.items():
-                    if label == "reference" and precision == "keyframes":
+                for label_name, player in players.items():
+                    if label_name == "reference" and precision == "keyframes":
                         continue
-                    result = seek_latency(player, path, precision, options.runs, options.seed)
-                    entry[f"seek_{precision}_{label}"] = result
+                    result = seek_latency(player, path, precision, options.runs, options.seed,
+                                          player_args if label_name == "player" else ())
+                    entry[f"seek_{precision}_{label_name}"] = result
                     latency = result["latency_ms"]
-                    print(f"{name:11s} seek {precision:9s} {label:9s} median {latency['median']:6.0f} ms"
+                    who = label if label_name == "player" else label_name
+                    print(f"{name:11s} seek {precision:9s} [{who}] median {latency['median']:6.0f} ms"
                           f"  p90 {latency['p90']:6.0f}  max {latency['max']:6.0f}"
                           f"  land {result['land_offset_s']:+.2f} s", flush=True)
         if options.mode in ("audio-cpu", "all"):
@@ -246,26 +256,33 @@ def main():
                 entry[f"audio_cpu_{label}"] = result
                 print(f"{name:11s} audio-only CPU {label:9s} {result['cpu_percent']:5.2f} %", flush=True)
         if options.mode in ("frames", "all"):
-            result = frame_drops(options.player, path)
+            result = frame_drops(options.player, path, player_args=player_args)
             entry["frames"] = result
             for key, value in result.items():
-                print(f"{name:11s} fullscreen {key:10s} dropped {value['dropped']:3d} in "
+                print(f"{name:11s} [{label}] fullscreen {key:10s} dropped {value['dropped']:3d} in "
                       f"{value['played_s']:.1f} s, CPU {value['cpu_percent']:5.1f} %, "
                       f"RSS {value['rss_mb']:.0f} MB", flush=True)
         if options.mode == "gui-cpu":
-            if not options.baseline:
-                parser.error("gui-cpu needs --baseline")
-            result = gui_cpu(options.player, options.baseline, path, max(3, options.runs // 3))
+            if not options.baseline and not options.baseline_arg:
+                parser.error("gui-cpu needs --baseline or --baseline-arg")
+            baseline = (options.baseline or options.player, options.baseline_arg)
+            baseline_label = " ".join(options.baseline_arg) or "default"
+            result = gui_cpu((options.player, player_args), baseline, path,
+                             max(3, options.runs // 3))
             entry["gui_cpu"] = result
             for scenario, sides in result.items():
-                print(f"{name:11s} {scenario:15s} candidate {sides['candidate']['cpu_percent_median']:6.2f} %"
-                      f"  baseline {sides['baseline']['cpu_percent_median']:6.2f} %", flush=True)
+                candidate, base = sides["candidate"], sides["baseline"]
+                print(f"{name:11s} {scenario:15s} [{label}] {candidate['cpu_percent_median']:6.2f} %"
+                      f" ± {candidate['cpu_percent_spread']:.2f}"
+                      f"  [{baseline_label}] {base['cpu_percent_median']:6.2f} %"
+                      f" ± {base['cpu_percent_spread']:.2f}", flush=True)
 
     if not host_quiet(once=True):
         print("perf gate deferred: host busy")
         return HOST_BUSY
     RESULTS.mkdir(parents=True, exist_ok=True)
-    out = RESULTS / f"bench-{options.mode}.json"
+    suffix = "".join(f"-{arg.lstrip('-').replace('=', '-')}" for arg in player_args)
+    out = RESULTS / f"bench-{options.mode}{suffix}.json"
     out.write_text(json.dumps(report, indent=2) + "\n")
     print(f"wrote {out.relative_to(ROOT)}")
     return 0
