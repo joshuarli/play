@@ -14,6 +14,25 @@ pub struct Probe {
     pub format: String,
 }
 
+impl Probe {
+    pub fn displays_video(&self) -> bool {
+        let mut video = self
+            .streams
+            .iter()
+            .filter(|stream| stream.kind == StreamKind::Video)
+            .peekable();
+        if video.peek().is_none() {
+            return false;
+        }
+        let has_audio = self.streams.iter().any(|stream| stream.kind == StreamKind::Audio);
+        !has_audio || video.any(|stream| !is_cover_art(stream))
+    }
+}
+
+fn is_cover_art(stream: &StreamInfo) -> bool {
+    stream.attached || matches!(stream.codec_name.as_str(), "png" | "bmp" | "tiff" | "webp")
+}
+
 pub fn probe(path: &str) -> Result<Probe, String> {
     let session = player_media::MediaSession::open(path).map_err(|error| error.to_string())?;
     let duration = session
@@ -94,11 +113,7 @@ pub fn get(app: &App, name: &str) -> Result<NativeValue, String> {
         "fullscreen" => Ok(NativeValue::Bool(app.fullscreen)),
         "eof-reached" => Ok(NativeValue::Bool(app.eof_reached)),
         "vo-configured" => Ok(NativeValue::Bool(
-            app.backend.is_some()
-                && app
-                    .probe
-                    .as_ref()
-                    .is_some_and(|probe| probe.streams.iter().any(|stream| stream.kind == StreamKind::Video)),
+            app.backend.is_some() && app.probe.as_ref().is_some_and(Probe::displays_video),
         )),
         "ao-configured" => Ok(NativeValue::Bool(
             app.backend.is_some()

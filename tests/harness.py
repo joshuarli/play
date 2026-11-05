@@ -949,6 +949,30 @@ def gate_audio(results, args):
             results.check(f"audio {name}", False, str(exc))
 
 
+def gate_cover_art(results, args):
+    manifest = load_manifest()
+    for name, entry in manifest["fixtures"].items():
+        if entry.get("role") != "cover":
+            continue
+        with Mpv(["--ao=null"]) as mpv:
+            mpv.load(fixture_path(entry))
+            mpv.wait_event("file-loaded", timeout=10)
+            mpv.wait_property(
+                "time-pos", lambda value: isinstance(value, (int, float)) and value > 0,
+                timeout=10,
+            )
+            results.check(f"cover-art {name}: no video output",
+                          mpv.get_property("vo-configured") is False
+                          and not any(line.startswith("VO: ") for line in mpv.lines),
+                          tail(mpv.lines, 10))
+            results.check(f"cover-art {name}: no GPU device",
+                          not any("libplacebo:" in line for line in mpv.lines),
+                          tail(mpv.lines, 10))
+            mpv.wait_eof(timeout=entry.get("duration", 3) + 10)
+            check_no_errors(results, f"cover-art {name}", mpv)
+        results.check(f"cover-art {name}: exit", mpv.returncode == 0, f"exit {mpv.returncode}")
+
+
 def gate_linux_audio(results, args):
     manifest = load_manifest()
     for name, entry in manifest["fixtures"].items():
@@ -1999,6 +2023,7 @@ GATES = {
     "cli": gate_cli,
     "corpus": gate_corpus,
     "audio": gate_audio,
+    "cover-art": gate_cover_art,
     "linux-audio": gate_linux_audio,
     "linux-corpus": gate_corpus,
     "linux-local-only": gate_local_only,
@@ -2031,14 +2056,14 @@ GATES = {
 }
 
 SUITE = [
-    "fixtures", "corpus", "audio", "hwdec", "seek", "local-paths",
+    "fixtures", "corpus", "audio", "cover-art", "hwdec", "seek", "local-paths",
     "local-only", "osc", "osc-input", "input", "playlist", "cli", "state", "failures",
     "rust-link", "tui", "release", "traces", "dispatch",
 ]
 
 
 LINUX_SUITE = [
-    "fixtures", "linux-corpus", "linux-audio", "linux-gpu-next", "linux-local-only", "linux-osc",
+    "fixtures", "linux-corpus", "linux-audio", "cover-art", "linux-gpu-next", "linux-local-only", "linux-osc",
     "linux-mostly-static", "linux-hwdec-default", "local-paths", "seek", "input", "playlist", "cli", "state",
     "failures", "tui", "linux-rust-link", "traces", "dispatch",
 ]

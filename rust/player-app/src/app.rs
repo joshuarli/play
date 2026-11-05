@@ -290,15 +290,6 @@ impl App {
     }
 
     pub fn load_current(&mut self) -> Result<(), String> {
-        if !self.gui
-            && !self.options.tui
-            && !self.options.null_video
-            && !self.options.no_video
-            && self.window.is_none()
-        {
-            self.open_window()?;
-            self.gui = true;
-        }
         self.unload();
         self.defer_event(ipc::event(
             "start-file",
@@ -317,6 +308,17 @@ impl App {
             .streams
             .iter()
             .any(|stream| stream.kind == player_media::StreamKind::Video);
+        let displays_video = probe.displays_video();
+        if displays_video
+            && !self.gui
+            && !self.options.tui
+            && !self.options.null_video
+            && !self.options.no_video
+            && self.window.is_none()
+        {
+            self.open_window()?;
+            self.gui = true;
+        }
         let sink = if self.options.null_audio || self.options.no_audio {
             SinkKind::Null
         } else if let Some(device) = &self.options.audio_device {
@@ -330,7 +332,10 @@ impl App {
             muted: self.options.muted,
             paused: self.options.pause,
         };
-        let engine = if self.options.tui || self.options.no_video {
+        let engine = if self.options.tui
+            || self.options.no_video
+            || (has_audio && !displays_video && self.window.is_none())
+        {
             SchedulerEngine::load_audio_only(&entry.path, sink, start)
         } else if self.options.null_video {
             SchedulerEngine::load_null_video(&entry.path, sink, start)
@@ -452,11 +457,7 @@ impl App {
         let Some(probe) = &self.probe else {
             return;
         };
-        if probe
-            .streams
-            .iter()
-            .any(|stream| stream.kind == player_media::StreamKind::Video)
-        {
+        if probe.displays_video() {
             let output = if self.options.null_video || self.options.no_video {
                 "null"
             } else {
@@ -614,10 +615,7 @@ impl App {
             self.options.gui = true;
             self.options.keep_open = true;
         }
-        let wants_gui = self.options.gui
-            || bundled
-            || (!self.options.tui && !self.options.null_video && !self.options.no_video);
-        if wants_gui && (self.playlist.count() > 0 || bundled) {
+        if (self.options.gui && self.playlist.count() > 0) || bundled {
             self.open_window()?;
             self.gui = true;
         }
