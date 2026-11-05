@@ -19,7 +19,8 @@ mkdir -p "$PREFIX" "$SRC" "$LOGS"
 # Player's own version into the dependency. Stop git's search at $SRC.
 export GIT_CEILING_DIRECTORIES="$SRC"
 
-INPUT_HASH=$(shasum -a 256 "$ROOT/scripts/build-deps.sh" | awk '{print $1}')
+INPUT_HASH=$(cat "$ROOT/scripts/build-deps.sh" "$ROOT/scripts/patches/libplacebo-metal.patch" |
+    shasum -a 256 | awk '{print $1}')
 
 for tool in curl tar shasum xcrun; do
     command -v "$tool" >/dev/null || {
@@ -158,6 +159,24 @@ if ! have shaderc; then
     stamp shaderc
 fi
 
+if ! have spirv-cross; then
+    SC="SPIRV-Cross-$VULKAN_VERSION.tar.gz"
+    fetch "https://github.com/KhronosGroup/SPIRV-Cross/archive/refs/tags/vulkan-sdk-$VULKAN_VERSION.tar.gz" \
+        f708982e88b763ef5b0394ed468fc2c3628f68cdab89f2e7a946cd628c04e721 "$SRC/$SC"
+    extract "$SRC/$SC" "$SRC/SPIRV-Cross-vulkan-sdk-$VULKAN_VERSION"
+    rm -rf "$SRC/build-spirv-cross"
+    run_log spirv-cross cmake -S "$SRC/SPIRV-Cross-vulkan-sdk-$VULKAN_VERSION" \
+        -B "$SRC/build-spirv-cross" -DCMAKE_INSTALL_PREFIX="$PREFIX" \
+        -DCMAKE_BUILD_TYPE=MinSizeRel -DSPIRV_CROSS_SHARED=OFF \
+        -DSPIRV_CROSS_STATIC=ON -DSPIRV_CROSS_CLI=OFF \
+        -DSPIRV_CROSS_ENABLE_TESTS=OFF -DSPIRV_CROSS_ENABLE_HLSL=OFF \
+        -DSPIRV_CROSS_ENABLE_CPP=OFF -DSPIRV_CROSS_ENABLE_REFLECT=OFF \
+        -DSPIRV_CROSS_ENABLE_UTIL=OFF -DSPIRV_CROSS_FORCE_PIC=ON
+    run_log spirv-cross-build cmake --build "$SRC/build-spirv-cross" -j"$JOBS"
+    run_log spirv-cross-install cmake --install "$SRC/build-spirv-cross"
+    stamp spirv-cross
+fi
+
 if ! have libplacebo; then
     LP="libplacebo-v$LIBPLACEBO_VERSION.tar.bz2"
     fetch "https://code.videolan.org/videolan/libplacebo/-/archive/v$LIBPLACEBO_VERSION/libplacebo-v$LIBPLACEBO_VERSION.tar.bz2" \
@@ -181,9 +200,13 @@ if ! have libplacebo; then
     cp -R "$SRC/glad2-$GLAD_VERSION/glad" "$third/glad/"
     cp -R "$SRC/jinja2-$JINJA_VERSION/src/jinja2" "$third/jinja/src/"
     cp -R "$SRC/markupsafe-$MARKUPSAFE_VERSION/src/markupsafe" "$third/markupsafe/src/"
+    # Metal backend from https://code.videolan.org/videolan/libplacebo/-/merge_requests/858
+    # (head ea7599ef9e71f66930b567f25e2c2de73913b38c), which upstream never merged.
+    run_log libplacebo-patch patch -d "$SRC/libplacebo-v$LIBPLACEBO_VERSION" -p1 --forward \
+        -i "$ROOT/scripts/patches/libplacebo-metal.patch"
     run_log libplacebo meson setup "$SRC/libplacebo-v$LIBPLACEBO_VERSION/build" \
         "$SRC/libplacebo-v$LIBPLACEBO_VERSION" --prefix="$PREFIX" --buildtype=release \
-        --default-library=shared -Dvulkan=enabled \
+        --default-library=shared -Dvulkan=enabled -Dmetal=enabled \
         -Dvulkan-registry="$PREFIX/share/vulkan/registry/vk.xml" \
         -Dshaderc=enabled -Dglslang=disabled -Dlcms=disabled -Dopengl=disabled \
         -Dd3d11=disabled -Dlibdovi=disabled -Ddemos=false -Dtests=false -Dbench=false

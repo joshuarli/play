@@ -1,0 +1,2555 @@
+diff -ruN a/meson_options.txt b/meson_options.txt
+--- a/meson_options.txt
++++ b/meson_options.txt
+@@ -14,6 +14,9 @@
+ option('opengl', type: 'feature', value: 'auto',
+        description: 'OpenGL-based renderer')
+ 
++option('metal', type: 'feature', value: 'auto',
++       description: 'Metal-based renderer (Apple)')
++
+ option('gl-proc-addr', type: 'feature', value: 'auto',
+        description: 'Enable built-in OpenGL loader (uses dlopen, dlsym...)')
+ 
+diff -ruN a/src/cache.h b/src/cache.h
+--- a/src/cache.h
++++ b/src/cache.h
+@@ -69,4 +69,5 @@
+     CACHE_KEY_VK_PIPE   = UINT64_C(0x4bdab2817ad02ad4), // VkPipelineCache
+     CACHE_KEY_GL_PROG   = UINT64_C(0x4274c309f4f0477b), // GL_ARB_get_program_binary
+     CACHE_KEY_D3D_DXBC  = UINT64_C(0xae98785f760f768c), // DXBC bytecode
++    CACHE_KEY_METAL_MSL = UINT64_C(0x6d6574616c4d5332), // MSL + threadgroup dims (v2)
+ };
+diff -ruN a/src/glsl/meson.build b/src/glsl/meson.build
+--- a/src/glsl/meson.build
++++ b/src/glsl/meson.build
+@@ -29,10 +29,6 @@
+ 
+ elif not glslang_req.disabled()
+ 
+-  glslang_deps = [
+-    cxx.find_library('glslang-default-resource-limits', required: false)
+-  ]
+-
+   # meson doesn't respect generator expressions in INTERFACE_LINK_LIBRARIES
+   # https://github.com/mesonbuild/meson/issues/8232
+   # TODO: Use the following once it's fixed
+@@ -43,6 +39,12 @@
+   if vulkan_sdk != ''
+     vulkan_lib_dirs += [vulkan_sdk / 'lib']
+   endif
++
++  glslang_deps = [
++    cxx.find_library('glslang-default-resource-limits', required: false,
++                     dirs: vulkan_lib_dirs)
++  ]
++
+   prefer_static = get_option('prefer_static')
+   found_lib = false
+   foreach arg : [[prefer_static, false], [not prefer_static, glslang_req]]
+@@ -59,7 +61,8 @@
+ 
+     # Glslang 15.0.0 moved some code around, add also linking to glslang, while
+     # this is not needed for older versions, it will still work.
+-    glslang_deps += cxx.find_library('glslang', required: required, static: static)
++    glslang_deps += cxx.find_library('glslang', required: required, static: static,
++                                     dirs: vulkan_lib_dirs)
+ 
+     if static
+       glslang_deps += [
+diff -ruN a/src/include/libplacebo/metal.h b/src/include/libplacebo/metal.h
+--- a/src/include/libplacebo/metal.h
++++ b/src/include/libplacebo/metal.h
+@@ -0,0 +1,93 @@
++/*
++ * This file is part of libplacebo.
++ *
++ * libplacebo is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * libplacebo is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with libplacebo. If not, see <http://www.gnu.org/licenses/>.
++ */
++
++#ifndef LIBPLACEBO_METAL_H_
++#define LIBPLACEBO_METAL_H_
++
++#include <libplacebo/gpu.h>
++#include <libplacebo/swapchain.h>
++
++PL_API_BEGIN
++
++// Note: Objective-C objects are passed across this API as opaque `void *`
++// (bridged from `id<MTL...>` / `CAMetalLayer *`) so the header stays usable
++// from plain C. The backend retains them for its own lifetime.
++
++// Structure representing a Metal device and associated GPU instance.
++typedef const struct pl_metal_t {
++    pl_gpu gpu;
++    void *device;   // id<MTLDevice>       used by this instance
++    void *queue;    // id<MTLCommandQueue> used by this instance
++} *pl_metal;
++
++struct pl_metal_params {
++    // An existing id<MTLDevice> to use (bridged to void *). If NULL, the
++    // system default device (MTLCreateSystemDefaultDevice) is used.
++    void *device;
++
++    // Optional existing id<MTLCommandQueue> to submit all GPU work on
++    // (bridged to void *). If NULL, a new queue is created from `device`.
++    // Sharing the host app's queue gives automatic submission ordering
++    // between libplacebo's rendering and host work (e.g. readback blits or
++    // a presentDrawable encoded by the host after pl_gpu_flush) — no
++    // events or CPU-side waits needed.
++    void *queue;
++};
++
++#define pl_metal_params(...) (&(struct pl_metal_params) { __VA_ARGS__ })
++
++// Creates a new Metal device based on the given parameters, or NULL on failure.
++PL_API pl_metal pl_metal_create(pl_log log, const struct pl_metal_params *params);
++
++// Release the Metal device. The `pl_gpu` becomes invalid after this call.
++PL_API void pl_metal_destroy(pl_metal *metal);
++
++struct pl_metal_swapchain_params {
++    // The CAMetalLayer to present onto (bridged to void *). Required. Its
++    // `device` / `pixelFormat` / `framebufferOnly` are configured by this call.
++    void *layer;
++};
++
++#define pl_metal_swapchain_params(...) \
++    (&(struct pl_metal_swapchain_params) { __VA_ARGS__ })
++
++// Creates a `pl_swapchain` that presents onto the given CAMetalLayer.
++PL_API pl_swapchain pl_metal_create_swapchain(pl_metal metal,
++    const struct pl_metal_swapchain_params *params);
++
++// Wrap an externally-owned MTLTexture (bridged to void *) as a renderable
++// pl_tex, for callers that own their own drawable/render target (e.g. the
++// libmpv render API, which hands a destination texture per frame). The
++// returned pl_tex does not own the texture's lifetime beyond a balanced
++// retain/release; destroy it with pl_tex_destroy before the frame is presented.
++// Returns NULL if the texture's MTLPixelFormat has no matching pl_fmt.
++PL_API pl_tex pl_metal_wrap_tex(pl_metal metal, void *mtl_texture);
++
++// Wrap one plane of an IOSurface (e.g. `IOSurfaceRef`, bridged to void *) as a
++// sampleable pl_tex, via Metal's native `newTextureWithDescriptor:iosurface:plane:`.
++// Lets callers feed externally produced frames (VideoToolbox/CVPixelBuffer, camera)
++// into the renderer with no CPU copy — the Metal backend's counterpart to the
++// Vulkan IOSurface import (PL_HANDLE_IOSURFACE). `width`/`height` are the plane's
++// dimensions, `fmt` its libplacebo format (e.g. r8 for the luma plane, rg8 for the
++// chroma plane of an NV12 surface). Destroy with pl_tex_destroy when done; lifetime
++// is a balanced retain/release on the underlying MTLTexture. Returns NULL on failure.
++PL_API pl_tex pl_metal_wrap_iosurface(pl_metal metal, void *iosurface, int plane,
++                                      int width, int height, pl_fmt fmt);
++
++PL_API_END
++
++#endif // LIBPLACEBO_METAL_H_
+diff -ruN a/src/meson.build b/src/meson.build
+--- a/src/meson.build
++++ b/src/meson.build
+@@ -65,6 +65,7 @@
+   'gamut_mapping.h',
+   'gpu.h',
+   'log.h',
++  'metal.h',
+   'opengl.h',
+   'options.h',
+   'renderer.h',
+@@ -163,6 +164,7 @@
+ subdir('d3d11')
+ subdir('opengl')
+ subdir('vulkan')
++subdir('metal')
+ 
+ lcms = dependency('lcms2', version: '>=2.9', required: get_option('lcms'))
+ components.set('lcms', lcms.found())
+@@ -172,14 +174,18 @@
+ endif
+ 
+ # Check to see if libplacebo built this way is sane
+-if not (components.get('vulkan') or components.get('opengl') or components.get('d3d11'))
++if not (components.get('vulkan') or components.get('opengl') or components.get('d3d11') or components.get('metal'))
+   warning('Building without any graphics API. libplacebo built this way still ' +
+           'has some limited use (e.g. generating GLSL shaders), but most of ' +
+           'its functionality will be missing or impaired!')
+ endif
+ 
++if components.get('metal')
++  tests += 'metal.m'
++endif
++
+ has_spirv = components.get('shaderc') or components.get('glslang')
+-needs_spirv = components.get('vulkan') or components.get('d3d11')
++needs_spirv = components.get('vulkan') or components.get('d3d11') or components.get('metal')
+ if needs_spirv and not has_spirv
+   warning('Building without any GLSL compiler (shaderc, glslang), but with ' +
+           'APIs required that require one (vulkan, d3d11). This build is very ' +
+@@ -306,7 +312,7 @@
+ ### Testing
+ tdep_static = declare_dependency(
+     dependencies: build_deps,
+-    include_directories: [ inc, include_directories('.') ],
++    include_directories: [ inc, include_directories('.'), inc_dirs ],
+     compile_args: '-DPL_STATIC',
+     objects: lib.extract_all_objects(recursive: false)
+   )
+diff -ruN a/src/metal/formats.m b/src/metal/formats.m
+--- a/src/metal/formats.m
++++ b/src/metal/formats.m
+@@ -0,0 +1,188 @@
++/*
++ * This file is part of libplacebo.
++ *
++ * libplacebo is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * libplacebo is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with libplacebo. If not, see <http://www.gnu.org/licenses/>.
++ */
++
++/* Metal GPU backend — format table.
++ * Maps MTLPixelFormat → pl_fmt. Per-format backend-private holds the
++ * MTLPixelFormat.
++ *
++ * Most entries are component-uniform (every component the same byte size) so
++ * texel_size / host_bits derive from comp_size. Packed formats (rgb10a2,
++ * bgr565) carry an explicit per-component bit layout in `packed_bits`.
++ */
++
++#import <Metal/Metal.h>
++#import <TargetConditionals.h>
++
++#include "gpu.h"
++
++struct mtl_fmt_desc {
++    const char       *name;
++    MTLPixelFormat    mtl;
++    enum pl_fmt_type  type;
++    int               num_comp;
++    int               comp_size;    // bytes per component (uniform formats; 0 if packed)
++    bool              bgr;          // host component order is B,G,R(,A)
++    bool              linear;       // filterable
++    bool              renderable;
++    bool              storable;     // usable as storage image
++    bool              vertex_only;  // no MTL texture format; vertex attrib only
++    int8_t            packed_bits[4]; // per-component bit depths for packed
++                                      // formats (component order); {0} = uniform
++};
++
++static const struct mtl_fmt_desc mtl_fmts[] = {
++    // 8-bit UNORM
++    { "r8",       MTLPixelFormatR8Unorm,     PL_FMT_UNORM, 1, 1, false, true,  true,  true  },
++    { "rg8",      MTLPixelFormatRG8Unorm,    PL_FMT_UNORM, 2, 1, false, true,  true,  true  },
++    { "rgba8",    MTLPixelFormatRGBA8Unorm,  PL_FMT_UNORM, 4, 1, false, true,  true,  true  },
++    { "bgra8",    MTLPixelFormatBGRA8Unorm,  PL_FMT_UNORM, 4, 1, true,  true,  true,  false },
++    // 16-bit UNORM
++    { "r16",      MTLPixelFormatR16Unorm,    PL_FMT_UNORM, 1, 2, false, true,  true,  true  },
++    { "rg16",     MTLPixelFormatRG16Unorm,   PL_FMT_UNORM, 2, 2, false, true,  true,  true  },
++    { "rgba16",   MTLPixelFormatRGBA16Unorm, PL_FMT_UNORM, 4, 2, false, true,  true,  true  },
++    // 16-bit float
++    { "r16f",     MTLPixelFormatR16Float,    PL_FMT_FLOAT, 1, 2, false, true,  true,  true  },
++    { "rg16f",    MTLPixelFormatRG16Float,   PL_FMT_FLOAT, 2, 2, false, true,  true,  true  },
++    { "rgba16f",  MTLPixelFormatRGBA16Float, PL_FMT_FLOAT, 4, 2, false, true,  true,  true  },
++    // 32-bit float
++    { "r32f",     MTLPixelFormatR32Float,    PL_FMT_FLOAT, 1, 4, false, true,  true,  true  },
++    { "rg32f",    MTLPixelFormatRG32Float,   PL_FMT_FLOAT, 2, 4, false, true,  true,  true  },
++    { "rgba32f",  MTLPixelFormatRGBA32Float, PL_FMT_FLOAT, 4, 4, false, true,  true,  true  },
++    // 8-bit UINT (non-filterable)
++    { "r8ui",     MTLPixelFormatR8Uint,      PL_FMT_UINT,  1, 1, false, false, true,  true  },
++    { "rg8ui",    MTLPixelFormatRG8Uint,     PL_FMT_UINT,  2, 1, false, false, true,  true  },
++    { "rgba8ui",  MTLPixelFormatRGBA8Uint,   PL_FMT_UINT,  4, 1, false, false, true,  true  },
++    // 32-bit UINT / SINT (LUTs, integer storage; non-filterable)
++    { "r32ui",    MTLPixelFormatR32Uint,     PL_FMT_UINT,  1, 4, false, false, true,  true  },
++    { "rg32ui",   MTLPixelFormatRG32Uint,    PL_FMT_UINT,  2, 4, false, false, true,  true  },
++    { "rgba32ui", MTLPixelFormatRGBA32Uint,  PL_FMT_UINT,  4, 4, false, false, true,  true  },
++    { "r32i",     MTLPixelFormatR32Sint,     PL_FMT_SINT,  1, 4, false, false, true,  true  },
++    { "rg32i",    MTLPixelFormatRG32Sint,    PL_FMT_SINT,  2, 4, false, false, true,  true  },
++    { "rgba32i",  MTLPixelFormatRGBA32Sint,  PL_FMT_SINT,  4, 4, false, false, true,  true  },
++    // 3-component formats: no Metal texture equivalent (RGB textures don't
++    // exist), but valid as vertex attributes. vertex_only → VERTEX cap only.
++    { "rgb32f",   MTLPixelFormatInvalid,     PL_FMT_FLOAT, 3, 4, false, false, false, false, true },
++    { "rgb16f",   MTLPixelFormatInvalid,     PL_FMT_FLOAT, 3, 2, false, false, false, false, true },
++    // Packed: components share one machine word, non-uniform widths. comp_size
++    // is 0 — the layout comes from packed_bits (LSB-first, component order).
++    // rgb10a2 (10/10/10/2) is the HDR intermediate; matches the natural R,G,B,A
++    // order so no bgr swap. Renderable + filterable on all supported families,
++    // but not a valid storage-image format → storable stays false.
++    { "rgb10a2",  MTLPixelFormatRGB10A2Unorm, PL_FMT_UNORM, 4, 0, false, true, true, false, false, {10, 10, 10, 2} },
++#if TARGET_OS_IPHONE || TARGET_OS_TV
++    // bgr565 (5/6/5) only exists as an MTLPixelFormat on iOS/tvOS — the enum is
++    // unavailable on the macOS SDK, so guard it out there. B5G6R5 stores R in
++    // the low bits → bgr component order (sample_order 2,1,0), same layout the
++    // d3d11 backend uses for its "bgr565".
++    { "bgr565",   MTLPixelFormatB5G6R5Unorm,  PL_FMT_UNORM, 3, 0, true,  true, true, false, false, {5, 6, 5} },
++#endif
++};
++
++#define METAL_NUM_FORMATS (sizeof(mtl_fmts) / sizeof(mtl_fmts[0]))
++
++// Minimum MTLReadWriteTextureTier that supports read-write access for this
++// format, or 0 if Metal never allows read-write on it. Tier 1 covers R32
++// (float/uint/sint); tier 2 additionally covers R8/RGBA8 (any), R16/RGBA16
++// (float/uint/sint, NOT unorm) and RGBA32. Only R and RGBA layouts qualify —
++// RG, BGRA, packed and vertex-only formats are never read-write.
++static int mtl_readwrite_tier(const struct mtl_fmt_desc *d)
++{
++    if (d->packed_bits[0] != 0 || d->vertex_only || d->bgr)
++        return 0;
++    if (d->num_comp != 1 && d->num_comp != 4)
++        return 0;
++    switch (d->comp_size) {
++    case 1:  return 2;                                   // r8 / rgba8 (unorm/uint/sint)
++    case 2:  return d->type == PL_FMT_UNORM ? 0 : 2;     // r16f/rgba16f…, not 16-unorm
++    case 4:  return d->num_comp == 1 ? 1 : 2;            // r32 = tier1, rgba32 = tier2
++    default: return 0;
++    }
++}
++
++void mtl_setup_formats(struct pl_gpu_t *gpu)
++{
++    id<MTLDevice> dev = mtl_device(gpu);
++    MTLReadWriteTextureTier rw_tier =
++        dev ? dev.readWriteTextureSupport : MTLReadWriteTextureTierNone;
++
++    for (size_t i = 0; i < METAL_NUM_FORMATS; i++) {
++        const struct mtl_fmt_desc *d = &mtl_fmts[i];
++        struct pl_fmt_t *fmt = pl_alloc_obj(gpu, fmt, struct mtl_format_priv);
++        struct mtl_format_priv *fp = PL_PRIV(fmt);
++        fp->mtl = d->mtl;
++
++        bool packed = d->packed_bits[0] != 0;
++
++        fmt->name           = d->name;
++        fmt->signature      = (uint64_t) d->mtl;   // MTLPixelFormat is stable+unique
++        fmt->type           = d->type;
++        fmt->num_components  = d->num_comp;
++        int total_bits = 0;
++        for (int c = 0; c < d->num_comp; c++)
++            total_bits += packed ? d->packed_bits[c] : d->comp_size * 8;
++        fmt->internal_size  = (total_bits + 7) / 8;
++        fmt->texel_size     = fmt->internal_size;
++        fmt->texel_align    = 1;
++        for (int c = 0; c < d->num_comp; c++) {
++            int bits = packed ? d->packed_bits[c] : d->comp_size * 8;
++            fmt->component_depth[c] = bits;
++            fmt->host_bits[c]       = bits;
++            // bgr* swaps the R and B component slots (B,G,R,A)
++            fmt->sample_order[c]    = (d->bgr && c < 3) ? (2 - c) : c;
++        }
++
++        enum pl_fmt_caps caps = 0;
++        if (d->vertex_only) {
++            // No texture format — vertex attribute use only.
++            caps = PL_FMT_CAP_VERTEX;
++        } else {
++            caps = PL_FMT_CAP_SAMPLEABLE | PL_FMT_CAP_BLITTABLE |
++                   PL_FMT_CAP_HOST_READABLE;
++            if (d->linear)
++                caps |= PL_FMT_CAP_LINEAR;
++            if (d->renderable) {
++                caps |= PL_FMT_CAP_RENDERABLE;
++                if (d->type != PL_FMT_UINT && d->type != PL_FMT_SINT)
++                    caps |= PL_FMT_CAP_BLENDABLE;
++            }
++            if (d->storable && gpu->glsl.compute) {
++                caps |= PL_FMT_CAP_STORABLE;
++                // Read-write access (imageLoad+imageStore on the same image) is
++                // tiered in Metal; only advertise it where the device supports it.
++                int rw = mtl_readwrite_tier(d);
++                if (rw > 0 && (int) rw_tier >= rw)
++                    caps |= PL_FMT_CAP_READWRITE;
++            }
++            // Vertex use needs a plain (non-packed) layout + glsl_type; non-bgr
++            // numeric only. Packed formats have no matching MTLVertexFormat.
++            if (!d->bgr && d->type != PL_FMT_UINT && !packed)
++                caps |= PL_FMT_CAP_VERTEX;
++        }
++        fmt->caps = caps;
++
++        // Storage images need a GLSL format qualifier (e.g. `layout(rgba8)`).
++        if (caps & PL_FMT_CAP_STORABLE)
++            fmt->glsl_format = pl_fmt_glsl_format(fmt, fmt->num_components);
++        fmt->glsl_type = pl_var_glsl_type_name(pl_var_from_fmt(fmt, ""));
++        fmt->fourcc    = pl_fmt_fourcc(fmt);
++        pl_assert(fmt->glsl_type);
++
++        PL_ARRAY_APPEND_RAW(gpu, gpu->formats, gpu->num_formats, fmt);
++    }
++
++    PL_INFO(gpu, "Registered %d Metal formats", gpu->num_formats);
++}
+diff -ruN a/src/metal/gpu.h b/src/metal/gpu.h
+--- a/src/metal/gpu.h
++++ b/src/metal/gpu.h
+@@ -0,0 +1,149 @@
++/*
++ * This file is part of libplacebo.
++ *
++ * libplacebo is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * libplacebo is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with libplacebo. If not, see <http://www.gnu.org/licenses/>.
++ */
++
++/* Metal GPU backend for libplacebo — internal header.
++ * Shared types + internal entry points for the Metal pl_gpu backend.
++ */
++#pragma once
++
++#import <Metal/Metal.h>
++
++// common.h MUSS vor ../gpu.h kommen: es definiert PL_DEPRECATED_IN leer, bevor es
++// <libplacebo/config.h> zieht (damit interner Code keine deprecation-Warnings
++// bekommt). Zieht ../gpu.h zuerst config.h mit der echten __attribute__-Variante,
++// gibt's eine Makro-Redefinition (unter --werror fatal, z.B. im macOS-CI-Job).
++#include "../common.h"
++#include "../gpu.h"
++#include "../glsl/spirv.h"
++#include <libplacebo/swapchain.h>
++
++// Backend-private object. First member MUST be the pl_gpu_fns vtable so that
++// PL_PRIV(gpu) can be cast to it (same convention as struct pl_gl).
++struct pl_gpu_metal {
++    struct pl_gpu_fns impl;
++    pl_log log;
++    void *device;   // id<MTLDevice>        (bridged, +1 retained)
++    void *queue;    // id<MTLCommandQueue>  (bridged, +1 retained)
++    pl_spirv spirv; // GLSL → SPIR-V (shaderc/glslang); SPIR-V → MSL is ours
++    // Lazily-built MTLSamplerState cache, [sample_mode][address_mode].
++    void *samplers[PL_TEX_SAMPLE_MODE_COUNT][PL_TEX_ADDRESS_MODE_COUNT];
++    // Shared per-frame command buffer (+1 retained, NULL when none open).
++    // All passes/clears/blits encode into this one CB; it is committed at
++    // flush/finish (and lazily whenever host access must wait on it). One
++    // submit per frame instead of one per pass.
++    void *frame_cb; // id<MTLCommandBuffer> or NULL
++    bool failed;
++};
++
++static inline id<MTLDevice> mtl_device(pl_gpu gpu)
++{
++    struct pl_gpu_metal *p = PL_PRIV(gpu);
++    return (__bridge id<MTLDevice>) p->device;
++}
++
++static inline id<MTLCommandQueue> mtl_queue(pl_gpu gpu)
++{
++    struct pl_gpu_metal *p = PL_PRIV(gpu);
++    return (__bridge id<MTLCommandQueue>) p->queue;
++}
++
++// Per-format private: the MTLPixelFormat. Attached to each pl_fmt via
++// PL_PRIV(fmt). gpu_tex.m reads it to build MTLTextureDescriptors.
++struct mtl_format_priv {
++    MTLPixelFormat mtl;
++};
++
++static inline MTLPixelFormat mtl_fmt(pl_fmt fmt)
++{
++    const struct mtl_format_priv *fp = PL_PRIV(fmt);
++    return fp->mtl;
++}
++
++// Per-texture private. Holds the MTLTexture (+1) and the last command buffer
++// that touched it (for pl_tex_poll-style waits, +1 while pending).
++struct pl_tex_metal {
++    void *tex;          // id<MTLTexture>
++    void *pending_cb;   // id<MTLCommandBuffer> or NULL
++};
++
++// Per-buffer private. MTLBuffer is Shared-storage (host-coherent on Apple
++// unified memory), so pl_buf.data points straight at [buf contents].
++struct pl_buf_metal {
++    void *buf;          // id<MTLBuffer>
++    void *pending_cb;   // id<MTLCommandBuffer> or NULL
++};
++
++// Per-pass private. One of render_pso / compute_pso is set.
++struct pl_pass_metal {
++    void *render_pso;       // id<MTLRenderPipelineState>
++    void *compute_pso;      // id<MTLComputePipelineState>
++    void *library;          // id<MTLLibrary> kept alive for the pass
++    int push_constant_slot; // MSL [[buffer(N)]] for push consts, -1 if none
++    int compute_threads[3]; // threadgroup size from GLSL local_size
++};
++
++// Internal creation entry point. `mtl_device` is an `id<MTLDevice>` opaque
++// pointer (bridged from ObjC). Returns a finalized pl_gpu or NULL on failure.
++pl_gpu pl_gpu_create_metal(pl_log log, void *mtl_device, void *mtl_queue);
++
++// Create a swapchain over a CAMetalLayer (`layer` is a bridged CAMetalLayer*).
++pl_swapchain pl_metal_swapchain_create(pl_gpu gpu, void *layer);
++
++// Format table setup (formats.m). Takes the mutable in-construction gpu.
++void    mtl_setup_formats(struct pl_gpu_t *gpu);
++
++// Retain `cb` into *slot, releasing whatever was there (gpu_tex.m). Used to
++// mark an object as having in-flight GPU work that readback must wait on.
++void    mtl_set_pending(void **slot, id<MTLCommandBuffer> cb);
++
++// The shared per-frame command buffer: lazily opened on first use (gpu.m).
++id<MTLCommandBuffer> mtl_frame_cb(pl_gpu gpu);
++// Commit + release the open frame CB, if any. The flush/finish entry points
++// and any host access that must wait on in-frame work call this first —
++// waiting on an uncommitted CB would deadlock.
++void    mtl_frame_commit(pl_gpu gpu);
++// Commit-aware pending-wait: commits the frame CB first if *slot refers to it,
++// then waits for completion and clears the slot. No-op when *slot is NULL.
++void    mtl_wait_pending(pl_gpu gpu, void **slot);
++
++// pl_gpu_fns slot implementations (defined across gpu.m / gpu_tex.m / gpu_pass.m).
++void    mtl_gpu_destroy(pl_gpu);
++bool    mtl_gpu_is_failed(pl_gpu);
++pl_tex  mtl_tex_create(pl_gpu, const struct pl_tex_params *);
++void    mtl_tex_destroy(pl_gpu, pl_tex);
++void    mtl_tex_invalidate(pl_gpu, pl_tex);
++void    mtl_tex_clear_ex(pl_gpu, pl_tex, const union pl_clear_color);
++void    mtl_tex_blit(pl_gpu, const struct pl_tex_blit_params *);
++bool    mtl_tex_upload(pl_gpu, const struct pl_tex_transfer_params *);
++bool    mtl_tex_download(pl_gpu, const struct pl_tex_transfer_params *);
++pl_buf  mtl_buf_create(pl_gpu, const struct pl_buf_params *);
++void    mtl_buf_destroy(pl_gpu, pl_buf);
++void    mtl_buf_write(pl_gpu, pl_buf, size_t offset, const void *src, size_t size);
++bool    mtl_buf_read(pl_gpu, pl_buf, size_t offset, void *dst, size_t size);
++void    mtl_buf_copy(pl_gpu, pl_buf dst, size_t dst_offset,
++                       pl_buf src, size_t src_offset, size_t size);
++bool    mtl_buf_poll(pl_gpu, pl_buf, uint64_t timeout);
++int     mtl_desc_namespace(pl_gpu, enum pl_desc_type type);
++pl_pass mtl_pass_create(pl_gpu, const struct pl_pass_params *);
++void    mtl_pass_destroy(pl_gpu, pl_pass);
++void    mtl_pass_run(pl_gpu, const struct pl_pass_run_params *);
++void    mtl_gpu_finish(pl_gpu);
++void    mtl_gpu_flush(pl_gpu);
++
++// Attach GPU timestamping for `timer` to `cb` before commit (no-op if NULL).
++// Defined in gpu.m alongside the timer ring; called from mtl_pass_run.
++void    mtl_timer_attach(pl_timer timer, id<MTLCommandBuffer> cb);
+diff -ruN a/src/metal/gpu.m b/src/metal/gpu.m
+--- a/src/metal/gpu.m
++++ b/src/metal/gpu.m
+@@ -0,0 +1,279 @@
++/*
++ * This file is part of libplacebo.
++ *
++ * libplacebo is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * libplacebo is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with libplacebo. If not, see <http://www.gnu.org/licenses/>.
++ */
++
++/* Metal GPU backend for libplacebo — gpu object + pl_gpu_fns vtable.
++ * pl_gpu_create_metal() owns the MTLDevice/queue and wires the pl_gpu_fns
++ * vtable; the per-area implementations live in gpu_tex.m, gpu_pass.m,
++ * formats.m and swapchain.m.
++ */
++
++#import <Metal/Metal.h>
++
++#include <stdatomic.h>
++#include <sched.h>
++
++#include "gpu.h"
++
++static const struct pl_gpu_fns pl_fns_metal;
++
++void mtl_gpu_destroy(pl_gpu gpu)
++{
++    struct pl_gpu_metal *p = PL_PRIV(gpu);
++    mtl_gpu_finish(gpu);   // flush + drain a possibly-open frame CB
++    pl_spirv_destroy(&p->spirv);
++    for (int s = 0; s < PL_TEX_SAMPLE_MODE_COUNT; s++)
++        for (int a = 0; a < PL_TEX_ADDRESS_MODE_COUNT; a++)
++            if (p->samplers[s][a])
++                [(__bridge id<MTLSamplerState>) p->samplers[s][a] release];
++    if (p->queue)  CFRelease(p->queue);
++    if (p->device) CFRelease(p->device);
++    pl_free((void *) gpu);
++}
++
++bool mtl_gpu_is_failed(pl_gpu gpu)
++{
++    struct pl_gpu_metal *p = PL_PRIV(gpu);
++    return p->failed;
++}
++
++// ---- Shared per-frame command buffer --------------------------------------
++//
++// All GPU work of a frame (passes, clears, blits) is encoded into one shared
++// command buffer instead of one CB per pass: one queue submit per frame, and
++// Metal can pipeline the encoders back-to-back. The CB is committed at
++// flush/finish, or earlier when host access must wait on in-frame work
++// (mtl_wait_pending) — waiting on an uncommitted CB would deadlock.
++
++id<MTLCommandBuffer> mtl_frame_cb(pl_gpu gpu)
++{
++    struct pl_gpu_metal *p = PL_PRIV(gpu);
++    if (!p->frame_cb) {
++        id<MTLCommandBuffer> cb = [mtl_queue(gpu) commandBuffer];
++        [cb retain];
++        p->frame_cb = (__bridge void *) cb;
++    }
++    return (__bridge id<MTLCommandBuffer>) p->frame_cb;
++}
++
++void mtl_frame_commit(pl_gpu gpu)
++{
++    struct pl_gpu_metal *p = PL_PRIV(gpu);
++    if (!p->frame_cb)
++        return;
++    id<MTLCommandBuffer> cb = (__bridge id<MTLCommandBuffer>) p->frame_cb;
++    [cb commit];
++    [cb release];
++    p->frame_cb = NULL;
++}
++
++void mtl_wait_pending(pl_gpu gpu, void **slot)
++{
++    if (!*slot)
++        return;
++    struct pl_gpu_metal *p = PL_PRIV(gpu);
++    if (*slot == p->frame_cb)
++        mtl_frame_commit(gpu);
++    id<MTLCommandBuffer> cb = (__bridge id<MTLCommandBuffer>) *slot;
++    [cb waitUntilCompleted];
++    [cb release];
++    *slot = NULL;
++}
++
++// Wait for all submitted GPU work to complete. Command buffers on our single
++// queue execute in commit order, so an empty cb that we wait on is done only
++// after everything committed before it.
++void mtl_gpu_finish(pl_gpu gpu)
++{
++    mtl_frame_commit(gpu);
++    id<MTLCommandBuffer> cb = [mtl_queue(gpu) commandBuffer];
++    [cb commit];
++    [cb waitUntilCompleted];
++}
++
++// Kick off all recorded work without blocking: commit the open frame CB.
++void mtl_gpu_flush(pl_gpu gpu)
++{
++    mtl_frame_commit(gpu);
++}
++
++// ---- GPU timers ----------------------------------------------------------
++//
++// Metal exposes per-command-buffer GPU timestamps (GPUStartTime/GPUEndTime, in
++// seconds) once the buffer has completed — no query pool needed. We attach a
++// completion handler per timed pass that publishes the elapsed nanoseconds into
++// a small lock-free ring; pl_timer_query drains it. Completion handlers run on
++// an arbitrary thread, so the ring is a single-consumer / multi-producer SPSC-
++// style buffer keyed on the slot value (0 == empty), and `pending` keeps the
++// timer alive until every in-flight handler that captured it has run.
++
++#define MTL_TIMER_RING 8
++
++struct pl_timer_t {
++    _Atomic(uint64_t) ring[MTL_TIMER_RING]; // elapsed ns; 0 == empty slot
++    _Atomic(uint_fast32_t) widx;            // producer slot allocator
++    uint_fast32_t ridx;                     // consumer cursor (single-threaded)
++    _Atomic(int) pending;                   // handlers still referencing `timer`
++};
++
++static pl_timer mtl_timer_create(pl_gpu gpu)
++{
++    (void) gpu;
++    pl_timer t = pl_zalloc_ptr(NULL, t);
++    return t;
++}
++
++static void mtl_timer_destroy(pl_gpu gpu, pl_timer t)
++{
++    // A completion handler may still hold `t` — and seit dem Frame-CB-Batching
++    // kann der Handler am noch UNCOMMITTETEN frame_cb hängen (committen, sonst
++    // feuert er nie → Endlos-Spin). Danach drained der Loop wie gehabt.
++    mtl_frame_commit(gpu);
++    while (atomic_load_explicit(&t->pending, memory_order_acquire))
++        sched_yield();
++    pl_free(t);
++}
++
++static uint64_t mtl_timer_query(pl_gpu gpu, pl_timer t)
++{
++    (void) gpu;
++    uint_fast32_t i = t->ridx % MTL_TIMER_RING;
++    uint64_t ns = atomic_load_explicit(&t->ring[i], memory_order_acquire);
++    if (!ns)
++        return 0; // nothing ready at the read cursor
++    atomic_store_explicit(&t->ring[i], 0, memory_order_relaxed); // mark consumed
++    t->ridx++;
++    return ns;
++}
++
++// Attach GPU timestamping for `timer` to `cb` (no-op if timer is NULL). Called
++// from mtl_pass_run just before commit.
++void mtl_timer_attach(pl_timer t, id<MTLCommandBuffer> cb)
++{
++    if (!t)
++        return;
++    atomic_fetch_add_explicit(&t->pending, 1, memory_order_relaxed);
++    [cb addCompletedHandler:^(id<MTLCommandBuffer> _Nonnull c) {
++        double dt = c.GPUEndTime - c.GPUStartTime;
++        uint64_t ns = dt > 0 ? (uint64_t) (dt * 1e9) : 1; // never publish 0
++        uint_fast32_t i = atomic_fetch_add_explicit(&t->widx, 1,
++                                                    memory_order_relaxed)
++                          % MTL_TIMER_RING;
++        atomic_store_explicit(&t->ring[i], ns, memory_order_release);
++        atomic_fetch_sub_explicit(&t->pending, 1, memory_order_release);
++    }];
++}
++
++// ---- texture / buffer impls live in gpu_tex.m, pass impls in gpu_pass.m ----
++
++static const struct pl_gpu_fns pl_fns_metal = {
++    .destroy        = mtl_gpu_destroy,
++    .tex_create     = mtl_tex_create,
++    .tex_destroy    = mtl_tex_destroy,
++    .tex_invalidate = mtl_tex_invalidate,
++    .tex_clear_ex   = mtl_tex_clear_ex,
++    .tex_blit       = mtl_tex_blit,
++    .tex_upload     = mtl_tex_upload,
++    .tex_download   = mtl_tex_download,
++    .buf_create     = mtl_buf_create,
++    .buf_destroy    = mtl_buf_destroy,
++    .buf_write      = mtl_buf_write,
++    .buf_read       = mtl_buf_read,
++    .buf_copy       = mtl_buf_copy,
++    .buf_poll       = mtl_buf_poll,
++    .desc_namespace = mtl_desc_namespace,
++    .pass_create    = mtl_pass_create,
++    .pass_destroy   = mtl_pass_destroy,
++    .pass_run       = mtl_pass_run,
++    .timer_create   = mtl_timer_create,
++    .timer_destroy  = mtl_timer_destroy,
++    .timer_query    = mtl_timer_query,
++    .gpu_flush      = mtl_gpu_flush,
++    .gpu_finish     = mtl_gpu_finish,
++    .gpu_is_failed  = mtl_gpu_is_failed,
++};
++
++pl_gpu pl_gpu_create_metal(pl_log log, void *mtl_device, void *mtl_queue)
++{
++    struct pl_gpu_t *gpu = pl_zalloc_obj(NULL, gpu, struct pl_gpu_metal);
++    gpu->log = log;
++
++    struct pl_gpu_metal *p = PL_PRIV(gpu);
++    p->impl   = pl_fns_metal;
++    p->log    = log;
++    p->device = mtl_device ? (void *) CFRetain(mtl_device) : NULL;
++    p->queue  = mtl_queue  ? (void *) CFRetain(mtl_queue)  : NULL;
++
++    // Minimal GLSL caps — Metal goes GLSL → (libplacebo spirv) → SPIRV-Cross MSL.
++    // We emit Vulkan-flavoured GLSL, same as the vulkan backend.
++    struct pl_glsl_version *glsl = &gpu->glsl;
++    id<MTLDevice> dev = (__bridge id<MTLDevice>) mtl_device;
++
++    glsl->version = 450;
++    glsl->vulkan  = true;
++    glsl->compute = true;
++    // Compute limits. Apple GPUs: 1024 threads/threadgroup, 32 KiB threadgroup
++    // memory (queried from the device).
++    glsl->max_group_threads = 1024;
++    glsl->max_group_size[0] = 1024;
++    glsl->max_group_size[1] = 1024;
++    glsl->max_group_size[2] = 1024;
++    glsl->max_shmem_size = dev ? (size_t) dev.maxThreadgroupMemoryLength : (32 << 10);
++
++    // Minimal device limits so pl_gpu_finalize() validates. Apple-silicon is
++    // unified memory, so the whole buffer budget is host-mappable. Texture
++    // dimension is 16384 on GPU family Apple4+ (A11/2017+), our deployment
++    // floor. Refined against real MTLDevice queries in the caps phase.
++    size_t max_buf = dev ? (size_t) dev.maxBufferLength : (256 << 20);
++    struct pl_gpu_limits *lim = &gpu->limits;
++    lim->max_tex_1d_dim   = 16384;
++    lim->max_tex_2d_dim   = 16384;
++    lim->max_tex_3d_dim   = 2048;
++    lim->max_buf_size     = max_buf;
++    lim->max_ubo_size     = max_buf;
++    lim->max_ssbo_size    = max_buf;
++    lim->max_vbo_size     = max_buf;
++    lim->max_mapped_size  = max_buf;
++    lim->max_mapped_vram  = max_buf;
++    lim->align_tex_xfer_pitch   = 1;
++    lim->align_tex_xfer_offset  = 1;
++    lim->align_vertex_stride    = 4;
++    lim->max_pushc_size         = 4096;   // Metal setBytes inline limit
++    lim->max_variable_comps     = 0;      // no loose uniforms → pl uses pushc/UBO
++    lim->compute_queues         = 1;
++    lim->max_dispatch[0]        = 65535;  // threadgroups per grid dimension
++    lim->max_dispatch[1]        = 65535;
++    lim->max_dispatch[2]        = 65535;
++
++    // GLSL → SPIR-V compiler (shaderc/glslang). We cross-compile the SPIR-V to
++    // MSL ourselves via SPIRV-Cross in gpu_pass.m. SPIR-V 1.3 is broadly
++    // supported by SPIRV-Cross's MSL backend.
++    uint32_t spv_ver = PL_SPV_VERSION(1, 3);
++    p->spirv = pl_spirv_create(log, (struct pl_spirv_version) {
++        .env_version = pl_spirv_version_to_vulkan(spv_ver),
++        .spv_version = spv_ver,
++    });
++    if (!p->spirv) {
++        PL_ERR(gpu, "Failed creating SPIR-V compiler (no shaderc/glslang?)");
++        mtl_gpu_destroy(gpu);
++        return NULL;
++    }
++
++    mtl_setup_formats(gpu);
++
++    PL_INFO(gpu, "Initialized Metal GPU backend");
++    return pl_gpu_finalize(gpu);
++}
+diff -ruN a/src/metal/gpu_pass.m b/src/metal/gpu_pass.m
+--- a/src/metal/gpu_pass.m
++++ b/src/metal/gpu_pass.m
+@@ -0,0 +1,660 @@
++/*
++ * This file is part of libplacebo.
++ *
++ * libplacebo is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * libplacebo is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with libplacebo. If not, see <http://www.gnu.org/licenses/>.
++ */
++
++/* Metal GPU backend — passes (shaders + pipelines).
++ *
++ * Pipeline: GLSL → SPIR-V (libplacebo's pl_spirv / shaderc) → MSL (SPIRV-Cross)
++ *           → MTLLibrary → MTLRenderPipelineState / MTLComputePipelineState.
++ *
++ * Binding model: libplacebo hands out globally-unique descriptor bindings
++ * (single namespace, see mtl_desc_namespace), and we pin each MSL resource
++ * slot == its SPIR-V binding via spvc_compiler_msl_add_resource_binding so the
++ * Metal-side bind index matches what the emitted MSL actually reads. Push
++ * constants are pinned to a fixed high buffer slot; the vertex stream sits
++ * one above that.
++ *
++ * Loose GLSL uniforms are NOT supported (max_variable_comps stays 0), so
++ * libplacebo packs everything into push constants / uniform buffers, which
++ * SPIRV-Cross turns into plain `constant T&` MSL buffer arguments.
++ *
++ * MRC (no -fobjc-arc): created objects are +1 and explicitly released.
++ */
++
++#import <Metal/Metal.h>
++
++#include <spirv_cross_c.h>
++
++#include "gpu.h"
++#include "../cache.h"
++#include "../pl_clock.h"   // pl_clock_now/diff für Compile-Time-Tracking
++
++#define METAL_VERTEX_BUF_SLOT     30   // MSL [[buffer(30)]] for vertex stream
++#define METAL_PUSH_CONST_SLOT     28   // MSL [[buffer(28)]] for push constants
++#define METAL_STORAGE_IMG_OFFSET  16   // keep storage images clear of sampled
++
++// libplacebo numbers all descriptors in one shared space → unique bindings.
++int mtl_desc_namespace(pl_gpu gpu, enum pl_desc_type type)
++{
++    (void) gpu; (void) type;
++    return 0;
++}
++
++// ----------------------------------------------------------- small mappings
++
++static MTLVertexFormat mtl_vertex_format(pl_fmt fmt)
++{
++    int n = fmt->num_components;
++    if (fmt->type == PL_FMT_FLOAT && fmt->component_depth[0] == 32) {
++        switch (n) {
++        case 1: return MTLVertexFormatFloat;
++        case 2: return MTLVertexFormatFloat2;
++        case 3: return MTLVertexFormatFloat3;
++        case 4: return MTLVertexFormatFloat4;
++        }
++    }
++    if (fmt->type == PL_FMT_FLOAT && fmt->component_depth[0] == 16) {
++        switch (n) {
++        case 2: return MTLVertexFormatHalf2;
++        case 3: return MTLVertexFormatHalf3;
++        case 4: return MTLVertexFormatHalf4;
++        }
++    }
++    if (fmt->type == PL_FMT_UNORM && fmt->component_depth[0] == 8) {
++        switch (n) {
++        case 1: return MTLVertexFormatUCharNormalized;
++        case 2: return MTLVertexFormatUChar2Normalized;
++        case 4: return MTLVertexFormatUChar4Normalized;
++        }
++    }
++    return MTLVertexFormatInvalid;
++}
++
++static MTLBlendFactor mtl_blend_factor(enum pl_blend_mode m)
++{
++    switch (m) {
++    case PL_BLEND_ONE:                 return MTLBlendFactorOne;
++    case PL_BLEND_SRC_ALPHA:           return MTLBlendFactorSourceAlpha;
++    case PL_BLEND_ONE_MINUS_SRC_ALPHA: return MTLBlendFactorOneMinusSourceAlpha;
++    case PL_BLEND_ZERO:
++    default:                           return MTLBlendFactorZero;
++    }
++}
++
++static id<MTLSamplerState> mtl_get_sampler(pl_gpu gpu,
++                                             enum pl_tex_sample_mode sample,
++                                             enum pl_tex_address_mode addr)
++{
++    struct pl_gpu_metal *p = PL_PRIV(gpu);
++    if (p->samplers[sample][addr])
++        return (__bridge id<MTLSamplerState>) p->samplers[sample][addr];
++
++    MTLSamplerAddressMode am =
++        addr == PL_TEX_ADDRESS_REPEAT ? MTLSamplerAddressModeRepeat :
++        addr == PL_TEX_ADDRESS_MIRROR ? MTLSamplerAddressModeMirrorRepeat :
++                                        MTLSamplerAddressModeClampToEdge;
++    MTLSamplerMinMagFilter mf =
++        sample == PL_TEX_SAMPLE_LINEAR ? MTLSamplerMinMagFilterLinear
++                                       : MTLSamplerMinMagFilterNearest;
++
++    MTLSamplerDescriptor *sd = [[MTLSamplerDescriptor alloc] init];
++    sd.minFilter = mf;
++    sd.magFilter = mf;
++    sd.sAddressMode = am;
++    sd.tAddressMode = am;
++    sd.rAddressMode = am;
++    id<MTLSamplerState> s = [mtl_device(gpu) newSamplerStateWithDescriptor:sd];
++    [sd release];
++    p->samplers[sample][addr] = (__bridge void *) s;   // +1, owned by gpu
++    return s;
++}
++
++// ------------------------------------------------------- shader compilation
++
++struct mtl_shader_stage {
++    pl_str spv;                 // SPIR-V (child of the tmp alloc)
++    spvc_context sc_ctx;        // owns parsed_ir + compiler
++    spvc_compiler sc_compiler;
++    const char *msl;            // lifetime tied to sc_ctx
++    unsigned tg[3];             // compute LocalSize (threadgroup dims); from the
++                                // SPIR-V on a fresh compile, or the cache on a hit
++                                // (sc_compiler is NULL on a cache hit, so pass
++                                // creation must read these, not query the compiler)
++    id<MTLLibrary> library;
++    id<MTLFunction> function;
++};
++
++static void mtl_stage_uninit(struct mtl_shader_stage *st)
++{
++    if (st->function) [st->function release];
++    if (st->library)  [st->library release];
++    st->function = nil;
++    st->library  = nil;
++    if (st->sc_ctx) {                       // also frees sc_compiler + msl
++        spvc_context_destroy(st->sc_ctx);
++        st->sc_ctx = NULL;
++        st->sc_compiler = NULL;
++        st->msl = NULL;
++    }
++}
++
++static SpvExecutionModel spv_stage(enum glsl_shader_stage s)
++{
++    return s == GLSL_SHADER_VERTEX   ? SpvExecutionModelVertex
++         : s == GLSL_SHADER_FRAGMENT ? SpvExecutionModelFragment
++                                     : SpvExecutionModelGLCompute;
++}
++
++// Highest Metal Shading Language version the running OS supports, encoded the
++// way SPIRV-Cross expects (major*10000 + minor*100). We target the OS maximum:
++// the emitted MSL always compiles (it never exceeds device support) and the
++// transpiler gets the newest constructs (e.g. the threadgroup atomics/barriers
++// the compute path relies on). Goes into the shader-cache key so an OS upgrade
++// transparently regenerates the cache.
++static unsigned mtl_msl_version(void)
++{
++    if (@available(macOS 15.0, iOS 18.0, tvOS 18.0, *)) return 30200;
++    if (@available(macOS 14.0, iOS 17.0, tvOS 17.0, *)) return 30100;
++    if (@available(macOS 13.0, iOS 16.0, tvOS 16.0, *)) return 30000;
++    if (@available(macOS 12.0, iOS 15.0, tvOS 15.0, *)) return 20400;
++    if (@available(macOS 11.0, iOS 14.0, tvOS 14.0, *)) return 20300;
++    return 20200; // floor: MSL 2.2 (macOS 10.15 / iOS 13)
++}
++
++static bool mtl_compile_stage(pl_gpu gpu, void *tmp,
++                                enum glsl_shader_stage stage_type,
++                                const char *glsl,
++                                struct mtl_shader_stage *st)
++{
++    struct pl_gpu_metal *p = PL_PRIV(gpu);
++    unsigned msl_version = mtl_msl_version();
++
++    // Compile-Time-Tracking: per-Sub-Step-Timings (0 = übersprungen, z.B. bei
++    // Cache-Hit). Eine PL_INFO-Summary-Zeile pro Stage vor dem return.
++    pl_clock_t _t;
++    double spirv_ms = 0, cross_ms = 0, mtllib_ms = 0;
++
++    // The expensive part below is GLSL → SPIR-V (shaderc) → MSL (SPIRV-Cross),
++    // ~100-300ms per stage and ~15 stages on a cold renderer. Cache the emitted
++    // MSL keyed by the GLSL source, so a pl_cache loaded from disk by the
++    // embedder skips the whole transpile on later launches. (The MSL → MTLLibrary
++    // / PSO step is cached by the Metal driver itself.)
++    pl_cache cache = pl_gpu_cache(gpu);
++    pl_cache_obj obj = {0};
++    const char *msl = NULL;
++    bool from_cache = false;
++    if (cache) {
++        uint64_t key = CACHE_KEY_METAL_MSL;
++        pl_hash_merge(&key, p->spirv->signature);
++        pl_hash_merge(&key, pl_str0_hash(glsl));
++        pl_hash_merge(&key, msl_version);   // OS-dependent MSL target
++        obj.key = key;
++        // Blob layout: [3 × uint (threadgroup dims)][NUL-terminated MSL].
++        if (pl_cache_get(cache, &obj) && obj.size > sizeof(st->tg)) {
++            memcpy(st->tg, obj.data, sizeof(st->tg));
++            msl = (const char *) obj.data + sizeof(st->tg);
++            from_cache = true;
++        }
++    }
++
++    if (!msl) {
++    // GLSL → SPIR-V (libplacebo)
++    _t = pl_clock_now();
++    st->spv = pl_spirv_compile_glsl(p->spirv, tmp, gpu->glsl, stage_type, glsl);
++    if (!st->spv.len) {
++        PL_ERR(gpu, "metal: GLSL → SPIR-V failed");
++        return false;
++    }
++    spirv_ms = pl_clock_diff(pl_clock_now(), _t) * 1e3;
++
++    // SPIR-V → MSL (SPIRV-Cross)
++    _t = pl_clock_now();
++    if (spvc_context_create(&st->sc_ctx) != SPVC_SUCCESS) {
++        PL_ERR(gpu, "metal: spvc_context_create failed");
++        return false;
++    }
++
++    spvc_parsed_ir ir = NULL;
++    if (spvc_context_parse_spirv(st->sc_ctx, (const SpvId *) st->spv.buf,
++                                 st->spv.len / sizeof(SpvId), &ir) != SPVC_SUCCESS) {
++        PL_ERR(gpu, "metal: parse_spirv: %s",
++               spvc_context_get_last_error_string(st->sc_ctx));
++        return false;
++    }
++    if (spvc_context_create_compiler(st->sc_ctx, SPVC_BACKEND_MSL, ir,
++                                     SPVC_CAPTURE_MODE_TAKE_OWNERSHIP,
++                                     &st->sc_compiler) != SPVC_SUCCESS) {
++        PL_ERR(gpu, "metal: create_compiler: %s",
++               spvc_context_get_last_error_string(st->sc_ctx));
++        return false;
++    }
++
++    spvc_compiler_options opts = NULL;
++    spvc_compiler_create_compiler_options(st->sc_compiler, &opts);
++    spvc_compiler_options_set_uint(opts, SPVC_COMPILER_OPTION_MSL_VERSION, msl_version);
++    spvc_compiler_options_set_bool(opts,
++        SPVC_COMPILER_OPTION_MSL_ARGUMENT_BUFFERS, SPVC_FALSE);
++    // Metal clip-space is y-flipped vs Vulkan/GL (like D3D11): a vertex at
++    // (0,-1) lands where you'd sample (0,1). Inject gl_Position.y = -y in the
++    // vertex stage so framebuffer-space matches what libplacebo expects.
++    if (stage_type == GLSL_SHADER_VERTEX) {
++        spvc_compiler_options_set_bool(opts,
++            SPVC_COMPILER_OPTION_FLIP_VERTEX_Y, SPVC_TRUE);
++    }
++    spvc_compiler_install_compiler_options(st->sc_compiler, opts);
++
++    // Pin MSL slots == SPIR-V bindings so our setFragment*/setCompute* indices
++    // line up with the emitted MSL. (Auto-renumbering otherwise samples the
++    // wrong texture.) Storage images are bumped clear of sampled textures.
++    spvc_resources res = NULL;
++    if (spvc_compiler_create_shader_resources(st->sc_compiler, &res) == SPVC_SUCCESS) {
++        static const spvc_resource_type kinds[] = {
++            SPVC_RESOURCE_TYPE_SAMPLED_IMAGE,
++            SPVC_RESOURCE_TYPE_STORAGE_IMAGE,
++            SPVC_RESOURCE_TYPE_UNIFORM_BUFFER,
++            SPVC_RESOURCE_TYPE_STORAGE_BUFFER,
++        };
++        for (size_t k = 0; k < sizeof(kinds) / sizeof(kinds[0]); k++) {
++            const spvc_reflected_resource *list = NULL;
++            size_t count = 0;
++            if (spvc_resources_get_resource_list_for_type(res, kinds[k],
++                                                          &list, &count) != SPVC_SUCCESS)
++                continue;
++            for (size_t i = 0; i < count; i++) {
++                unsigned set = spvc_compiler_get_decoration(st->sc_compiler,
++                                  list[i].id, SpvDecorationDescriptorSet);
++                unsigned bind = spvc_compiler_get_decoration(st->sc_compiler,
++                                  list[i].id, SpvDecorationBinding);
++                if (kinds[k] == SPVC_RESOURCE_TYPE_STORAGE_IMAGE) {
++                    bind += METAL_STORAGE_IMG_OFFSET;
++                    spvc_compiler_set_decoration(st->sc_compiler, list[i].id,
++                                                 SpvDecorationBinding, bind);
++                }
++                spvc_msl_resource_binding rb = {0};
++                rb.stage       = spv_stage(stage_type);
++                rb.desc_set    = set;
++                rb.binding     = bind;
++                rb.msl_buffer  = bind;
++                rb.msl_texture = bind;
++                rb.msl_sampler = bind;
++                spvc_compiler_msl_add_resource_binding(st->sc_compiler, &rb);
++            }
++        }
++        // Push constants have no binding decoration; pin to a fixed slot so
++        // SPIRV-Cross doesn't collide them with buffer(0).
++        spvc_msl_resource_binding pc = {0};
++        pc.stage      = spv_stage(stage_type);
++        pc.desc_set   = SPVC_MSL_PUSH_CONSTANT_DESC_SET;
++        pc.binding    = SPVC_MSL_PUSH_CONSTANT_BINDING;
++        pc.msl_buffer = METAL_PUSH_CONST_SLOT;
++        spvc_compiler_msl_add_resource_binding(st->sc_compiler, &pc);
++    }
++
++    if (spvc_compiler_compile(st->sc_compiler, &st->msl) != SPVC_SUCCESS) {
++        PL_ERR(gpu, "metal: MSL emit: %s",
++               spvc_context_get_last_error_string(st->sc_ctx));
++        return false;
++    }
++    // Capture the compute threadgroup dims now, while the compiler exists — a
++    // cache hit later won't have it. (LocalSize is unset for vertex/fragment;
++    // SPIRV-Cross returns 0 there, which pass creation ignores.)
++    for (int i = 0; i < 3; i++)
++        st->tg[i] = spvc_compiler_get_execution_mode_argument_by_index(
++            st->sc_compiler, SpvExecutionModeLocalSize, i);
++    msl = st->msl;
++    cross_ms = pl_clock_diff(pl_clock_now(), _t) * 1e3;
++    }  // end cache-miss transpile
++
++    // MSL → MTLLibrary → MTLFunction("main0")
++    NSError *err = nil;
++    NSString *src = [[NSString alloc] initWithUTF8String:msl];
++    MTLCompileOptions *co = [[MTLCompileOptions alloc] init];
++    _t = pl_clock_now();
++    st->library = [mtl_device(gpu) newLibraryWithSource:src options:co error:&err];
++    mtllib_ms = pl_clock_diff(pl_clock_now(), _t) * 1e3;
++    [co release];
++    [src release];
++    if (!st->library) {
++        PL_ERR(gpu, "metal: newLibraryWithSource failed: %s",
++               err.localizedDescription ? err.localizedDescription.UTF8String : "?");
++        PL_ERR(gpu, "metal: MSL was:\n%s", msl);
++        pl_cache_obj_free(&obj);
++        return false;
++    }
++    st->function = [st->library newFunctionWithName:@"main0"];
++    if (!st->function) {
++        PL_ERR(gpu, "metal: no 'main0' entry point");
++        pl_cache_obj_free(&obj);
++        return false;
++    }
++
++    // Persist [threadgroup dims][NUL-terminated MSL] for the next launch.
++    if (cache && !from_cache) {
++        size_t msl_size = strlen(msl) + 1;
++        pl_cache_obj_resize(NULL, &obj, sizeof(st->tg) + msl_size);
++        if (obj.data) {
++            memcpy(obj.data, st->tg, sizeof(st->tg));
++            memcpy((uint8_t *) obj.data + sizeof(st->tg), msl, msl_size);
++            pl_cache_set(cache, &obj);   // takes ownership of obj.data
++        }
++    }
++    pl_cache_obj_free(&obj);             // no-op after set; frees the loaded blob on hit
++
++    const char *sname = stage_type == GLSL_SHADER_VERTEX   ? "vert"
++                      : stage_type == GLSL_SHADER_FRAGMENT ? "frag" : "comp";
++    PL_INFO(gpu, "metal-compile: stage=%s cache=%s spirv=%.1fms cross=%.1fms mtllib=%.1fms",
++            sname, from_cache ? "hit" : "miss", spirv_ms, cross_ms, mtllib_ms);
++    return true;
++}
++
++// ------------------------------------------------------------ pass lifecycle
++
++void mtl_pass_destroy(pl_gpu gpu, pl_pass pass)
++{
++    struct pl_pass_metal *pm = PL_PRIV(pass);
++    if (pm->render_pso)  [(__bridge id<MTLRenderPipelineState>) pm->render_pso release];
++    if (pm->compute_pso) [(__bridge id<MTLComputePipelineState>) pm->compute_pso release];
++    if (pm->library)     [(__bridge id<MTLLibrary>) pm->library release];
++    pl_free((void *) pass);
++    (void) gpu;
++}
++
++pl_pass mtl_pass_create(pl_gpu gpu, const struct pl_pass_params *params)
++{
++    struct pl_pass_t *pass = pl_zalloc_obj(NULL, pass, struct pl_pass_metal);
++    pass->params = pl_pass_params_copy(pass, params);
++    struct pl_pass_metal *pm = PL_PRIV(pass);
++    pm->push_constant_slot = params->push_constants_size > 0 ? METAL_PUSH_CONST_SLOT : -1;
++
++    void *tmp = pl_tmp(NULL);
++    struct mtl_shader_stage vert = {0}, frag = {0}, comp = {0};
++    id<MTLDevice> dev = mtl_device(gpu);
++
++    if (params->type == PL_PASS_RASTER) {
++        if (!mtl_compile_stage(gpu, tmp, GLSL_SHADER_VERTEX, params->vertex_shader, &vert))
++            goto error;
++        if (!mtl_compile_stage(gpu, tmp, GLSL_SHADER_FRAGMENT, params->glsl_shader, &frag))
++            goto error;
++
++        MTLVertexDescriptor *vd = [MTLVertexDescriptor vertexDescriptor];
++        for (int i = 0; i < params->num_vertex_attribs; i++) {
++            const struct pl_vertex_attrib *va = &params->vertex_attribs[i];
++            MTLVertexFormat vf = mtl_vertex_format(va->fmt);
++            if (vf == MTLVertexFormatInvalid) {
++                PL_ERR(gpu, "metal: unsupported vertex attrib '%s'", va->name);
++                goto error;
++            }
++            vd.attributes[va->location].format      = vf;
++            vd.attributes[va->location].offset      = va->offset;
++            vd.attributes[va->location].bufferIndex = METAL_VERTEX_BUF_SLOT;
++        }
++        vd.layouts[METAL_VERTEX_BUF_SLOT].stride = params->vertex_stride;
++        vd.layouts[METAL_VERTEX_BUF_SLOT].stepFunction = MTLVertexStepFunctionPerVertex;
++
++        MTLRenderPipelineDescriptor *pd = [[MTLRenderPipelineDescriptor alloc] init];
++        pd.vertexFunction   = vert.function;
++        pd.fragmentFunction = frag.function;
++        pd.vertexDescriptor = vd;
++        pd.colorAttachments[0].pixelFormat = mtl_fmt(params->target_format);
++        if (params->blend_params) {
++            const struct pl_blend_params *b = params->blend_params;
++            pd.colorAttachments[0].blendingEnabled = YES;
++            pd.colorAttachments[0].sourceRGBBlendFactor        = mtl_blend_factor(b->src_rgb);
++            pd.colorAttachments[0].destinationRGBBlendFactor   = mtl_blend_factor(b->dst_rgb);
++            pd.colorAttachments[0].sourceAlphaBlendFactor      = mtl_blend_factor(b->src_alpha);
++            pd.colorAttachments[0].destinationAlphaBlendFactor = mtl_blend_factor(b->dst_alpha);
++            pd.colorAttachments[0].rgbBlendOperation   = MTLBlendOperationAdd;
++            pd.colorAttachments[0].alphaBlendOperation = MTLBlendOperationAdd;
++        }
++
++        NSError *err = nil;
++        pl_clock_t _tp = pl_clock_now();
++        id<MTLRenderPipelineState> pso =
++            [dev newRenderPipelineStateWithDescriptor:pd error:&err];
++        PL_INFO(gpu, "metal-compile: pso=render %.1fms",
++                pl_clock_diff(pl_clock_now(), _tp) * 1e3);
++        [pd release];
++        if (!pso) {
++            PL_ERR(gpu, "metal: newRenderPipelineState failed: %s",
++                   err.localizedDescription ? err.localizedDescription.UTF8String : "?");
++            goto error;
++        }
++        pm->render_pso = (__bridge void *) pso;
++        pm->library = (__bridge void *) [frag.library retain];
++    } else {
++        if (!mtl_compile_stage(gpu, tmp, GLSL_SHADER_COMPUTE, params->glsl_shader, &comp))
++            goto error;
++
++        MTLComputePipelineDescriptor *cd = [[MTLComputePipelineDescriptor alloc] init];
++        cd.computeFunction = comp.function;
++        NSError *err = nil;
++        pl_clock_t _tp = pl_clock_now();
++        id<MTLComputePipelineState> pso =
++            [dev newComputePipelineStateWithDescriptor:cd
++                                               options:MTLPipelineOptionNone
++                                            reflection:nil error:&err];
++        PL_INFO(gpu, "metal-compile: pso=compute %.1fms",
++                pl_clock_diff(pl_clock_now(), _tp) * 1e3);
++        [cd release];
++        if (!pso) {
++            PL_ERR(gpu, "metal: newComputePipelineState failed: %s",
++                   err.localizedDescription ? err.localizedDescription.UTF8String : "?");
++            goto error;
++        }
++        pm->compute_pso = (__bridge void *) pso;
++        pm->library = (__bridge void *) [comp.library retain];
++
++        // From the stage (captured at compile time or restored from cache) —
++        // comp.sc_compiler is NULL on a cache hit, so don't query it here.
++        pm->compute_threads[0] = comp.tg[0] ? comp.tg[0] : 1;
++        pm->compute_threads[1] = comp.tg[1] ? comp.tg[1] : 1;
++        pm->compute_threads[2] = comp.tg[2] ? comp.tg[2] : 1;
++    }
++
++    mtl_stage_uninit(&vert);
++    mtl_stage_uninit(&frag);
++    mtl_stage_uninit(&comp);
++    pl_free(tmp);
++    return pass;
++
++error:
++    mtl_stage_uninit(&vert);
++    mtl_stage_uninit(&frag);
++    mtl_stage_uninit(&comp);
++    pl_free(tmp);
++    pl_free((void *) pass);
++    return NULL;
++}
++
++// ------------------------------------------------------------------ pass run
++
++// Bind one descriptor onto whichever encoder is active. Exactly one of renc /
++// cenc is non-nil.
++static void mtl_bind_desc(pl_gpu gpu, id<MTLRenderCommandEncoder> renc,
++                            id<MTLComputeCommandEncoder> cenc,
++                            const struct pl_desc *desc,
++                            const struct pl_desc_binding *db,
++                            id<MTLCommandBuffer> cb)
++{
++    int slot = desc->binding;
++    switch (desc->type) {
++    case PL_DESC_SAMPLED_TEX: {
++        pl_tex tex = db->object;
++        struct pl_tex_metal *tp = PL_PRIV(tex);
++        id<MTLTexture> mt = (__bridge id<MTLTexture>) tp->tex;
++        id<MTLSamplerState> samp = mtl_get_sampler(gpu, db->sample_mode, db->address_mode);
++        if (renc) {
++            [renc setFragmentTexture:mt atIndex:slot];
++            [renc setFragmentSamplerState:samp atIndex:slot];
++        } else {
++            [cenc setTexture:mt atIndex:slot];
++            [cenc setSamplerState:samp atIndex:slot];
++        }
++        // Auch LESE-Bindings tracken: replaceRegion/Host-Writes auf eine noch
++        // in-flight gesampelte Textur wären ein Hazard. Der Wait ist nach dem
++        // Frame-Commit praktisch gratis (CB längst fertig).
++        mtl_set_pending(&tp->pending_cb, cb);
++        break;
++    }
++    case PL_DESC_STORAGE_IMG: {
++        pl_tex tex = db->object;
++        struct pl_tex_metal *tp = PL_PRIV(tex);
++        id<MTLTexture> mt = (__bridge id<MTLTexture>) tp->tex;
++        int s = slot + METAL_STORAGE_IMG_OFFSET;
++        if (renc) [renc setFragmentTexture:mt atIndex:s];
++        else      [cenc setTexture:mt atIndex:s];
++        mtl_set_pending(&tp->pending_cb, cb);
++        break;
++    }
++    case PL_DESC_BUF_UNIFORM:
++    case PL_DESC_BUF_STORAGE: {
++        pl_buf buf = db->object;
++        struct pl_buf_metal *bp = PL_PRIV(buf);
++        id<MTLBuffer> mb = (__bridge id<MTLBuffer>) bp->buf;
++        if (renc) [renc setFragmentBuffer:mb offset:0 atIndex:slot];
++        else      [cenc setBuffer:mb offset:0 atIndex:slot];
++        // Uniform-Buffer ebenfalls tracken (Read-Binding): pl_dispatch pollt
++        // vor dem Recycling — ohne Tracking würde ein noch referenzierter
++        // Buffer per CPU-memcpy überschrieben (Shared-Storage liest zur
++        // AUSFÜHRUNGS-Zeit, nicht zur Encode-Zeit).
++        mtl_set_pending(&bp->pending_cb, cb);
++        break;
++    }
++    default:
++        PL_WARN(gpu, "metal: unhandled descriptor type %d", desc->type);
++        break;
++    }
++}
++
++void mtl_pass_run(pl_gpu gpu, const struct pl_pass_run_params *params)
++{
++    pl_pass pass = params->pass;
++    struct pl_pass_metal *pm = PL_PRIV(pass);
++    // Alle Passes eines Frames encoden in den geteilten Frame-CB (ein Submit
++    // pro Frame statt pro Pass); committed wird in flush/finish.
++    id<MTLCommandBuffer> cb = mtl_frame_cb(gpu);
++
++    if (pass->params.type == PL_PASS_RASTER) {
++        struct pl_tex_metal *tt = PL_PRIV(params->target);
++        id<MTLTexture> target = (__bridge id<MTLTexture>) tt->tex;
++
++        MTLRenderPassDescriptor *rpd = [MTLRenderPassDescriptor renderPassDescriptor];
++        rpd.colorAttachments[0].texture = target;
++        rpd.colorAttachments[0].loadAction =
++            pass->params.load_target ? MTLLoadActionLoad : MTLLoadActionDontCare;
++        rpd.colorAttachments[0].storeAction = MTLStoreActionStore;
++
++        id<MTLRenderCommandEncoder> enc = [cb renderCommandEncoderWithDescriptor:rpd];
++        [enc setRenderPipelineState:(__bridge id<MTLRenderPipelineState>) pm->render_pso];
++
++        if (pm->push_constant_slot >= 0 && params->push_constants) {
++            [enc setVertexBytes:params->push_constants
++                         length:pass->params.push_constants_size
++                        atIndex:pm->push_constant_slot];
++            [enc setFragmentBytes:params->push_constants
++                           length:pass->params.push_constants_size
++                          atIndex:pm->push_constant_slot];
++        }
++
++        MTLViewport vp = {
++            .originX = params->viewport.x0, .originY = params->viewport.y0,
++            .width  = pl_rect_w(params->viewport),
++            .height = pl_rect_h(params->viewport),
++            .znear = 0, .zfar = 1,
++        };
++        [enc setViewport:vp];
++
++        NSUInteger tw = target.width, th = target.height;
++        NSInteger sx = PL_CLAMP(params->scissors.x0, 0, (int) tw);
++        NSInteger sy = PL_CLAMP(params->scissors.y0, 0, (int) th);
++        NSInteger sw = PL_CLAMP(params->scissors.x1, sx, (int) tw) - sx;
++        NSInteger sh = PL_CLAMP(params->scissors.y1, sy, (int) th) - sy;
++        [enc setScissorRect:(MTLScissorRect){ sx, sy, PL_MAX(sw, 0), PL_MAX(sh, 0) }];
++
++        for (int i = 0; i < pass->params.num_descriptors; i++)
++            mtl_bind_desc(gpu, enc, nil, &pass->params.descriptors[i],
++                            &params->desc_bindings[i], cb);
++
++        // Vertex stream: from a pl_buf, or inline host data.
++        size_t vbytes = (size_t) params->vertex_count * pass->params.vertex_stride;
++        if (params->vertex_buf) {
++            struct pl_buf_metal *vb = PL_PRIV(params->vertex_buf);
++            [enc setVertexBuffer:(__bridge id<MTLBuffer>) vb->buf
++                          offset:params->buf_offset
++                         atIndex:METAL_VERTEX_BUF_SLOT];
++        } else if (vbytes <= 4096) {
++            [enc setVertexBytes:params->vertex_data length:vbytes
++                        atIndex:METAL_VERTEX_BUF_SLOT];
++        } else {
++            id<MTLBuffer> vbuf = [mtl_device(gpu) newBufferWithBytes:params->vertex_data
++                                  length:vbytes options:MTLResourceStorageModeShared];
++            [enc setVertexBuffer:vbuf offset:0 atIndex:METAL_VERTEX_BUF_SLOT];
++            [cb addCompletedHandler:^(id<MTLCommandBuffer> _Nonnull c) { (void) c; [vbuf release]; }];
++        }
++
++        MTLPrimitiveType prim = pass->params.vertex_type == PL_PRIM_TRIANGLE_STRIP
++                              ? MTLPrimitiveTypeTriangleStrip : MTLPrimitiveTypeTriangle;
++        if (params->index_data || params->index_buf) {
++            // Index buffer path: stage indices into a Shared buffer.
++            size_t isz = params->index_fmt == PL_INDEX_UINT16 ? 2 : 4;
++            MTLIndexType it = params->index_fmt == PL_INDEX_UINT16
++                            ? MTLIndexTypeUInt16 : MTLIndexTypeUInt32;
++            id<MTLBuffer> ibuf;
++            size_t ioff = 0;
++            if (params->index_buf) {
++                ibuf = (__bridge id<MTLBuffer>) ((struct pl_buf_metal *) PL_PRIV(params->index_buf))->buf;
++                ioff = params->index_offset;
++            } else {
++                ibuf = [mtl_device(gpu) newBufferWithBytes:params->index_data
++                        length:params->vertex_count * isz
++                        options:MTLResourceStorageModeShared];
++                [cb addCompletedHandler:^(id<MTLCommandBuffer> _Nonnull c) { (void) c; [ibuf release]; }];
++            }
++            [enc drawIndexedPrimitives:prim
++                            indexCount:params->vertex_count
++                             indexType:it
++                           indexBuffer:ibuf
++                     indexBufferOffset:ioff];
++        } else {
++            [enc drawPrimitives:prim vertexStart:0 vertexCount:params->vertex_count];
++        }
++        [enc endEncoding];
++        mtl_set_pending(&tt->pending_cb, cb);
++    } else {
++        id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
++        [enc setComputePipelineState:(__bridge id<MTLComputePipelineState>) pm->compute_pso];
++
++        if (pm->push_constant_slot >= 0 && params->push_constants) {
++            [enc setBytes:params->push_constants
++                   length:pass->params.push_constants_size
++                  atIndex:pm->push_constant_slot];
++        }
++        for (int i = 0; i < pass->params.num_descriptors; i++)
++            mtl_bind_desc(gpu, nil, enc, &pass->params.descriptors[i],
++                            &params->desc_bindings[i], cb);
++
++        MTLSize tg = MTLSizeMake(pm->compute_threads[0], pm->compute_threads[1],
++                                 pm->compute_threads[2]);
++        MTLSize grid = MTLSizeMake(params->compute_groups[0], params->compute_groups[1],
++                                   params->compute_groups[2]);
++        [enc dispatchThreadgroups:grid threadsPerThreadgroup:tg];
++        [enc endEncoding];
++    }
++
++    // NB: mit dem geteilten Frame-CB liefern GPU-Timer Frame- statt Pass-
++    // Granularität (GPUStartTime/GPUEndTime gelten pro CB).
++    mtl_timer_attach(params->timer, cb);
++}
+diff -ruN a/src/metal/gpu_tex.m b/src/metal/gpu_tex.m
+--- a/src/metal/gpu_tex.m
++++ b/src/metal/gpu_tex.m
+@@ -0,0 +1,401 @@
++/*
++ * This file is part of libplacebo.
++ *
++ * libplacebo is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * libplacebo is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with libplacebo. If not, see <http://www.gnu.org/licenses/>.
++ */
++
++/* Metal GPU backend — textures + buffers.
++ *
++ * Storage model: Apple unified memory. Host-accessed textures (host_writable/
++ * host_readable/initial_data) and all buffers use MTLStorageModeShared, so
++ * host transfers are direct CPU memcpy / replaceRegion / getBytes — no staging
++ * buffer, no blit for uploads. GPU-only textures (renderer intermediates) use
++ * MTLStorageModePrivate so they stay eligible for Apple's lossless texture
++ * compression (Shared disables it → uncompressed bandwidth on every pass).
++ * Command buffers only enter the picture once render passes write textures
++ * (Phase 5); a per-object pending command buffer is waited on before readback.
++ *
++ * MRC (no -fobjc-arc): created objects are +1 and explicitly released.
++ */
++
++#import <Metal/Metal.h>
++
++#include "gpu.h"
++
++// Retain `cb` into *slot, releasing whatever was there. cb may be nil.
++// (The commit-aware wait counterpart, mtl_wait_pending, lives in gpu.m — it
++// needs the gpu handle to commit the shared frame CB before waiting on it.)
++void mtl_set_pending(void **slot, id<MTLCommandBuffer> cb)
++{
++    if (*slot)
++        [(__bridge id<MTLCommandBuffer>) *slot release];
++    *slot = (__bridge void *) cb;
++    if (cb)
++        [cb retain];
++}
++
++static int tex_dimensions(const struct pl_tex_params *p)
++{
++    return p->d ? 3 : (p->h ? 2 : 1);
++}
++
++// ---------------------------------------------------------------- buffers
++
++void mtl_buf_destroy(pl_gpu gpu, pl_buf buf)
++{
++    struct pl_buf_metal *bp = PL_PRIV(buf);
++    // KEIN Completion-Wait: ein Command-Buffer retained alle referenzierten
++    // Ressourcen bis zu seinem Abschluss — unser Release hier zerstört den
++    // MTLBuffer nicht, solange er noch in flight ist. Nur den Pending-Ref
++    // freigeben (ohne zu warten — wäre sonst ein Per-Frame-Stall, sobald der
++    // Host ohne pl_gpu_finish arbeitet).
++    mtl_set_pending(&bp->pending_cb, nil);
++    if (bp->buf)
++        [(__bridge id<MTLBuffer>) bp->buf release];
++    pl_free((void *) buf);
++    (void) gpu;
++}
++
++pl_buf mtl_buf_create(pl_gpu gpu, const struct pl_buf_params *params)
++{
++    struct pl_buf_t *buf = pl_zalloc_obj(NULL, buf, struct pl_buf_metal);
++    buf->params = *params;
++    buf->params.initial_data = NULL;
++    struct pl_buf_metal *bp = PL_PRIV(buf);
++
++    NSUInteger len = PL_MAX(params->size, 1);
++    MTLResourceOptions opts = MTLResourceStorageModeShared;
++    id<MTLBuffer> mbuf;
++    if (params->initial_data) {
++        mbuf = [mtl_device(gpu) newBufferWithBytes:params->initial_data
++                                              length:len
++                                             options:opts];
++    } else {
++        mbuf = [mtl_device(gpu) newBufferWithLength:len options:opts];
++    }
++    if (!mbuf) {
++        PL_ERR(gpu, "metal: newBuffer(%zu) failed", (size_t) len);
++        pl_free((void *) buf);
++        return NULL;
++    }
++    bp->buf = (__bridge void *) mbuf;   // owns the +1 from newBuffer
++
++    if (params->host_mapped)
++        buf->data = [mbuf contents];
++
++    return buf;
++}
++
++void mtl_buf_write(pl_gpu gpu, pl_buf buf, size_t offset,
++                     const void *data, size_t size)
++{
++    struct pl_buf_metal *bp = PL_PRIV(buf);
++    id<MTLBuffer> mbuf = (__bridge id<MTLBuffer>) bp->buf;
++    // Shared storage is host-coherent on Apple silicon — direct write.
++    memcpy((uint8_t *) [mbuf contents] + offset, data, size);
++    (void) gpu;
++}
++
++bool mtl_buf_read(pl_gpu gpu, pl_buf buf, size_t offset,
++                    void *dest, size_t size)
++{
++    struct pl_buf_metal *bp = PL_PRIV(buf);
++    mtl_wait_pending(gpu, &bp->pending_cb);
++    id<MTLBuffer> mbuf = (__bridge id<MTLBuffer>) bp->buf;
++    memcpy(dest, (uint8_t *) [mbuf contents] + offset, size);
++    (void) gpu;
++    return true;
++}
++
++void mtl_buf_copy(pl_gpu gpu, pl_buf dst, size_t dst_offset,
++                    pl_buf src, size_t src_offset, size_t size)
++{
++    struct pl_buf_metal *sp = PL_PRIV(src);
++    struct pl_buf_metal *dp = PL_PRIV(dst);
++    mtl_wait_pending(gpu, &sp->pending_cb);
++    id<MTLBuffer> s = (__bridge id<MTLBuffer>) sp->buf;
++    id<MTLBuffer> d = (__bridge id<MTLBuffer>) dp->buf;
++    memcpy((uint8_t *) [d contents] + dst_offset,
++           (uint8_t *) [s contents] + src_offset, size);
++    (void) gpu;
++}
++
++bool mtl_buf_poll(pl_gpu gpu, pl_buf buf, uint64_t timeout)
++{
++    struct pl_buf_metal *bp = PL_PRIV(buf);
++    if (!bp->pending_cb)
++        return false;
++    if (timeout > 0) {
++        // Blocking poll — commit-aware (waiting on the still-open frame CB
++        // would deadlock).
++        mtl_wait_pending(gpu, &bp->pending_cb);
++        return false;
++    }
++    id<MTLCommandBuffer> cb = (__bridge id<MTLCommandBuffer>) bp->pending_cb;
++    MTLCommandBufferStatus st = cb.status;
++    if (st == MTLCommandBufferStatusCompleted || st == MTLCommandBufferStatusError) {
++        [cb release];
++        bp->pending_cb = NULL;
++        return false;
++    }
++    return true;   // still in flight (incl. recorded-but-uncommitted frame CB)
++}
++
++// --------------------------------------------------------------- textures
++
++void mtl_tex_destroy(pl_gpu gpu, pl_tex tex)
++{
++    struct pl_tex_metal *tp = PL_PRIV(tex);
++    // KEIN Completion-Wait (s. mtl_buf_destroy): der CB retained die Textur
++    // (und bei IOSurface-Wraps die Surface via Use-Count) bis zum Abschluss.
++    // Load-bearing für den No-finish-Pfad: render_pl zerstört das gewrappte
++    // Drawable-Target direkt nach dem Flush — ein Wait hier wäre der volle
++    // GPU-Frame-Stall, den wir gerade entfernen.
++    mtl_set_pending(&tp->pending_cb, nil);
++    if (tp->tex)
++        [(__bridge id<MTLTexture>) tp->tex release];
++    pl_free((void *) tex);
++    (void) gpu;
++}
++
++pl_tex mtl_tex_create(pl_gpu gpu, const struct pl_tex_params *params)
++{
++    struct pl_tex_t *tex = pl_zalloc_obj(NULL, tex, struct pl_tex_metal);
++    tex->params = *params;
++    tex->params.initial_data = NULL;
++    tex->sampler_type = PL_SAMPLER_NORMAL;
++    struct pl_tex_metal *tp = PL_PRIV(tex);
++
++    int dims = tex_dimensions(params);
++
++    MTLTextureDescriptor *desc = [[MTLTextureDescriptor alloc] init];
++    desc.pixelFormat = mtl_fmt(params->format);
++    desc.textureType = dims == 1 ? MTLTextureType1D :
++                       dims == 3 ? MTLTextureType3D : MTLTextureType2D;
++    desc.width  = PL_MAX(params->w, 1);
++    desc.height = PL_MAX(params->h, 1);
++    desc.depth  = PL_MAX(params->d, 1);
++    desc.mipmapLevelCount = 1;
++    // GPU-only textures use Private storage: on Apple GPUs, host-visible
++    // (Shared) textures are ineligible for lossless texture compression, so
++    // every intermediate FBO the renderer creates would be written and
++    // re-sampled uncompressed — pure bandwidth waste. Only textures the host
++    // actually touches (uploads via replaceRegion, downloads via getBytes,
++    // creation-time initial_data) need Shared.
++    bool host_access = params->host_writable || params->host_readable ||
++                       params->initial_data;
++    desc.storageMode = host_access ? MTLStorageModeShared
++                                   : MTLStorageModePrivate;
++
++    MTLTextureUsage usage = 0;
++    if (params->sampleable)
++        usage |= MTLTextureUsageShaderRead;
++    if (params->renderable)
++        usage |= MTLTextureUsageRenderTarget;
++    if (params->storable)
++        usage |= MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite;
++    desc.usage = usage ? usage : MTLTextureUsageShaderRead;
++
++    id<MTLTexture> mtex = [mtl_device(gpu) newTextureWithDescriptor:desc];
++    [desc release];
++    if (!mtex) {
++        PL_ERR(gpu, "metal: newTextureWithDescriptor (%dx%dx%d) failed",
++               params->w, params->h, params->d);
++        pl_free((void *) tex);
++        return NULL;
++    }
++    tp->tex = (__bridge void *) mtex;   // owns the +1
++
++    if (params->initial_data) {
++        struct pl_tex_transfer_params ul = {
++            .tex = tex,
++            .ptr = (void *) params->initial_data,
++            .rc  = { 0, 0, 0, params->w, params->h, params->d },
++        };
++        if (!mtl_tex_upload(gpu, &ul)) {
++            mtl_tex_destroy(gpu, tex);
++            return NULL;
++        }
++    }
++
++    return tex;
++}
++
++void mtl_tex_invalidate(pl_gpu gpu, pl_tex tex)
++{
++    // Shared-storage contents are CPU-backed; nothing to discard. No-op until
++    // we add transient/memoryless render targets in the swapchain phase.
++    (void) gpu; (void) tex;
++}
++
++// Resolve row/image pitch defaults (pl normally fills these, but be safe).
++static void xfer_pitches(const struct pl_tex_transfer_params *params,
++                         int dims, size_t *row_pitch, size_t *img_pitch)
++{
++    pl_tex tex = params->tex;
++    size_t texel = tex->params.format->texel_size;
++    int w = pl_rect_w(params->rc);
++    int h = dims >= 2 ? pl_rect_h(params->rc) : 1;
++    *row_pitch = params->row_pitch   ? params->row_pitch   : (size_t) w * texel;
++    *img_pitch = params->depth_pitch ? params->depth_pitch : (size_t) h * *row_pitch;
++}
++
++bool mtl_tex_upload(pl_gpu gpu, const struct pl_tex_transfer_params *params)
++{
++    pl_tex tex = params->tex;
++    struct pl_tex_metal *tp = PL_PRIV(tex);
++    id<MTLTexture> mtex = (__bridge id<MTLTexture>) tp->tex;
++    int dims = tex_dimensions(&tex->params);
++
++    // Make sure any in-flight GPU writes to this texture are visible before we
++    // overwrite its backing store from the CPU.
++    mtl_wait_pending(gpu, &tp->pending_cb);
++
++    size_t row_pitch, img_pitch;
++    xfer_pitches(params, dims, &row_pitch, &img_pitch);
++
++    const uint8_t *src;
++    if (params->buf) {
++        struct pl_buf_metal *bp = PL_PRIV(params->buf);
++        mtl_wait_pending(gpu, &bp->pending_cb);
++        src = (uint8_t *) [(__bridge id<MTLBuffer>) bp->buf contents] + params->buf_offset;
++    } else {
++        src = params->ptr;
++    }
++
++    pl_rect3d rc = params->rc;
++    MTLRegion region = {
++        .origin = { rc.x0, dims >= 2 ? rc.y0 : 0, dims >= 3 ? rc.z0 : 0 },
++        .size   = { pl_rect_w(rc), dims >= 2 ? pl_rect_h(rc) : 1,
++                                   dims >= 3 ? pl_rect_d(rc) : 1 },
++    };
++
++    [mtex replaceRegion:region
++            mipmapLevel:0
++                  slice:0
++              withBytes:src
++            bytesPerRow:(dims == 1 ? 0 : row_pitch)
++          bytesPerImage:(dims == 3 ? img_pitch : 0)];
++
++    if (params->callback)
++        params->callback(params->priv);   // transfer is synchronous (CPU)
++    (void) gpu;
++    return true;
++}
++
++bool mtl_tex_download(pl_gpu gpu, const struct pl_tex_transfer_params *params)
++{
++    pl_tex tex = params->tex;
++    struct pl_tex_metal *tp = PL_PRIV(tex);
++    id<MTLTexture> mtex = (__bridge id<MTLTexture>) tp->tex;
++    int dims = tex_dimensions(&tex->params);
++
++    mtl_wait_pending(gpu, &tp->pending_cb);   // ensure GPU writes landed
++
++    size_t row_pitch, img_pitch;
++    xfer_pitches(params, dims, &row_pitch, &img_pitch);
++
++    uint8_t *dst;
++    if (params->buf) {
++        struct pl_buf_metal *bp = PL_PRIV(params->buf);
++        mtl_wait_pending(gpu, &bp->pending_cb);
++        dst = (uint8_t *) [(__bridge id<MTLBuffer>) bp->buf contents] + params->buf_offset;
++    } else {
++        dst = params->ptr;
++    }
++
++    pl_rect3d rc = params->rc;
++    MTLRegion region = {
++        .origin = { rc.x0, dims >= 2 ? rc.y0 : 0, dims >= 3 ? rc.z0 : 0 },
++        .size   = { pl_rect_w(rc), dims >= 2 ? pl_rect_h(rc) : 1,
++                                   dims >= 3 ? pl_rect_d(rc) : 1 },
++    };
++
++    [mtex getBytes:dst
++       bytesPerRow:(dims == 1 ? 0 : row_pitch)
++     bytesPerImage:(dims == 3 ? img_pitch : 0)
++        fromRegion:region
++       mipmapLevel:0
++             slice:0];
++
++    if (params->callback)
++        params->callback(params->priv);
++    (void) gpu;
++    return true;
++}
++
++void mtl_tex_clear_ex(pl_gpu gpu, pl_tex tex, const union pl_clear_color color)
++{
++    struct pl_tex_metal *tp = PL_PRIV(tex);
++    id<MTLTexture> mtex = (__bridge id<MTLTexture>) tp->tex;
++
++    // Pure clear via a render pass with loadAction=Clear and no draws — needs
++    // no pipeline state. Works for any renderable format.
++    MTLRenderPassDescriptor *rpd = [MTLRenderPassDescriptor renderPassDescriptor];
++    rpd.colorAttachments[0].texture = mtex;
++    rpd.colorAttachments[0].loadAction  = MTLLoadActionClear;
++    rpd.colorAttachments[0].storeAction = MTLStoreActionStore;
++    rpd.colorAttachments[0].clearColor =
++        MTLClearColorMake(color.f[0], color.f[1], color.f[2], color.f[3]);
++
++    id<MTLCommandBuffer> cb = mtl_frame_cb(gpu);
++    id<MTLRenderCommandEncoder> enc = [cb renderCommandEncoderWithDescriptor:rpd];
++    [enc endEncoding];
++    mtl_set_pending(&tp->pending_cb, cb);
++}
++
++void mtl_tex_blit(pl_gpu gpu, const struct pl_tex_blit_params *params)
++{
++    struct pl_tex_metal *sp = PL_PRIV(params->src);
++    struct pl_tex_metal *dp = PL_PRIV(params->dst);
++    id<MTLTexture> s = (__bridge id<MTLTexture>) sp->tex;
++    id<MTLTexture> d = (__bridge id<MTLTexture>) dp->tex;
++
++    pl_rect3d src_rc = params->src_rc, dst_rc = params->dst_rc;
++    int sw = abs(pl_rect_w(src_rc)), dw = abs(pl_rect_w(dst_rc));
++    int sh = abs(pl_rect_h(src_rc)), dh = abs(pl_rect_h(dst_rc));
++    int sd = abs(pl_rect_d(src_rc)), dd = abs(pl_rect_d(dst_rc));
++
++    // Scaling blits need a sampler+shader pass — deferred to the render phase.
++    if (sw != dw || sh != dh || sd != dd) {
++        PL_ERR(gpu, "metal: scaling pl_tex_blit not yet implemented "
++                    "(src %dx%dx%d → dst %dx%dx%d)", sw, sh, sd, dw, dh, dd);
++        return;
++    }
++
++    // Quelle muss fertig geschrieben sein. Innerhalb des offenen Frame-CB ist
++    // die Reihenfolge Encoder-seitig garantiert (gleicher CB) — nur fremde,
++    // bereits committete CBs brauchen den Wait.
++    struct pl_gpu_metal *pg = PL_PRIV(gpu);
++    if (sp->pending_cb && sp->pending_cb != pg->frame_cb)
++        mtl_wait_pending(gpu, &sp->pending_cb);
++
++    id<MTLCommandBuffer> cb = mtl_frame_cb(gpu);
++    id<MTLBlitCommandEncoder> enc = [cb blitCommandEncoder];
++    [enc copyFromTexture:s
++             sourceSlice:0
++             sourceLevel:0
++            sourceOrigin:MTLOriginMake(PL_MIN(src_rc.x0, src_rc.x1),
++                                       PL_MIN(src_rc.y0, src_rc.y1),
++                                       PL_MIN(src_rc.z0, src_rc.z1))
++              sourceSize:MTLSizeMake(PL_MAX(sw, 1), PL_MAX(sh, 1), PL_MAX(sd, 1))
++               toTexture:d
++        destinationSlice:0
++        destinationLevel:0
++       destinationOrigin:MTLOriginMake(PL_MIN(dst_rc.x0, dst_rc.x1),
++                                       PL_MIN(dst_rc.y0, dst_rc.y1),
++                                       PL_MIN(dst_rc.z0, dst_rc.z1))];
++    [enc endEncoding];
++    mtl_set_pending(&dp->pending_cb, cb);
++}
+diff -ruN a/src/metal/meson.build b/src/metal/meson.build
+--- a/src/metal/meson.build
++++ b/src/metal/meson.build
+@@ -0,0 +1,49 @@
++metal_opt = get_option('metal')
++metal_build = metal_opt.require(host_machine.system() == 'darwin',
++    error_message: 'the Metal backend requires an Apple (darwin) host')
++
++# The Metal backend needs SPIRV-Cross (SPIR-V → MSL). Its homebrew pkg-config
++# (spirv-cross-c) only advertises -lspirv-cross-c and omits the transitive
++# static C++ libs, so pull those in explicitly.
++spvc = dependency('spirv-cross-c', required: false)
++metal_build = metal_build.require(spvc.found(),
++    error_message: 'the Metal backend requires SPIRV-Cross (spirv-cross-c)')
++components.set('metal', metal_build.allowed())
++
++if metal_build.allowed()
++  add_languages('objc', native: false, required: true)
++  # The backend is written in manual-retain-release Objective-C; never ARC.
++  add_project_arguments('-fno-objc-arc', language: 'objc')
++  # The shared C warning policy (top-level meson.build `c_opts`) is only
++  # registered for language 'c', so the .m files would otherwise warn on things
++  # the rest of the tree mutes (e.g. -Wno-sign-compare for PL_ARRAY_APPEND_RAW,
++  # -Wno-missing-field-initializers for the positional format table). Apply the
++  # same policy to Objective-C so the backend builds as cleanly as the C sources.
++  add_project_arguments(c_opts, language: 'objc')
++  sources += [
++    'metal/formats.m',
++    'metal/gpu_tex.m',
++    'metal/gpu_pass.m',
++    'metal/gpu.m',
++    'metal/metal.m',
++    'metal/swapchain.m',
++  ]
++  build_deps += dependency('appleframeworks',
++    modules: ['Metal', 'Foundation', 'QuartzCore'])
++  build_deps += spvc
++  spvc_libdir = spvc.get_variable(pkgconfig: 'libdir',
++                                  default_value: '/opt/homebrew/lib')
++  # core/glsl/msl are always required; hlsl/cpp/reflect/util may be absent when
++  # SPIRV-Cross was built without those backends. Link only the ones present —
++  # the C API lib only references the backends it was compiled with.
++  foreach l : ['spirv-cross-core', 'spirv-cross-glsl', 'spirv-cross-msl']
++    build_deps += cc.find_library(l, dirs: [spvc_libdir], required: true)
++  endforeach
++  foreach l : ['spirv-cross-hlsl', 'spirv-cross-cpp', 'spirv-cross-reflect',
++               'spirv-cross-util']
++    optlib = cc.find_library(l, dirs: [spvc_libdir], required: false)
++    if optlib.found()
++      build_deps += optlib
++    endif
++  endforeach
++endif
+diff -ruN a/src/metal/metal.m b/src/metal/metal.m
+--- a/src/metal/metal.m
++++ b/src/metal/metal.m
+@@ -0,0 +1,102 @@
++/*
++ * This file is part of libplacebo.
++ *
++ * libplacebo is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * libplacebo is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with libplacebo. If not, see <http://www.gnu.org/licenses/>.
++ */
++
++/* Metal GPU backend — public API entry points (libplacebo/metal.h).
++ *
++ * Thin wrappers around the internal pl_gpu_create_metal / swapchain code that
++ * own the MTLDevice + MTLCommandQueue lifetime. MRC (no -fobjc-arc).
++ */
++
++#import <Metal/Metal.h>
++
++// Interne Header (→ common.h, das PL_DEPRECATED_IN leer setzt) VOR dem Public-
++// Header <libplacebo/metal.h>, sonst zieht der config.h mit der echten
++// __attribute__-Variante zuerst → PL_DEPRECATED_IN-Redefinition (--werror).
++#include "gpu.h"
++#include "common.h"
++
++#include <libplacebo/metal.h>
++
++pl_metal pl_metal_create(pl_log log, const struct pl_metal_params *params)
++{
++    struct pl_metal_params defaults = {0};
++    params = params ? params : &defaults;
++
++    id<MTLDevice> dev;
++    if (params->device) {
++        dev = (__bridge id<MTLDevice>) params->device;
++        [dev retain];                       // we hand a +1 to the wrapper
++    } else {
++        dev = MTLCreateSystemDefaultDevice(); // +1
++    }
++    if (!dev) {
++        pl_err(log, "Metal: no device available");
++        return NULL;
++    }
++
++    id<MTLCommandQueue> queue;
++    if (params->queue) {
++        // Vom Host geteilte Queue: Submissions des Hosts (z.B. Readback-Blit,
++        // presentDrawable nach pl_gpu_flush) ordnen sich automatisch hinter
++        // unser Frame-CB — keine Events/CPU-Waits nötig.
++        queue = (__bridge id<MTLCommandQueue>) params->queue;
++        [queue retain];                     // +1, symmetrisch zum Create-Pfad
++    } else {
++        queue = [dev newCommandQueue];      // +1
++    }
++    if (!queue) {
++        pl_err(log, "Metal: failed creating command queue");
++        [dev release];
++        return NULL;
++    }
++
++    pl_gpu gpu = pl_gpu_create_metal(log, (__bridge void *) dev,
++                                          (__bridge void *) queue);
++    if (!gpu) {
++        [queue release];
++        [dev release];
++        return NULL;
++    }
++
++    struct pl_metal_t *m = pl_zalloc_ptr(NULL, m);
++    m->gpu    = gpu;
++    m->device = (__bridge void *) dev;   // wrapper owns the +1 created above
++    m->queue  = (__bridge void *) queue; // (the gpu holds its own retains)
++    return m;
++}
++
++void pl_metal_destroy(pl_metal *pmetal)
++{
++    pl_metal metal = *pmetal;
++    if (!metal)
++        return;
++    pl_gpu_destroy(metal->gpu);
++    [(__bridge id<MTLCommandQueue>) metal->queue release];
++    [(__bridge id<MTLDevice>) metal->device release];
++    pl_free((void *) metal);
++    *pmetal = NULL;
++}
++
++pl_swapchain pl_metal_create_swapchain(pl_metal metal,
++    const struct pl_metal_swapchain_params *params)
++{
++    if (!params->layer) {
++        pl_err(metal->gpu->log, "pl_metal_create_swapchain: NULL layer");
++        return NULL;
++    }
++    return pl_metal_swapchain_create(metal->gpu, params->layer);
++}
+diff -ruN a/src/metal/swapchain.m b/src/metal/swapchain.m
+--- a/src/metal/swapchain.m
++++ b/src/metal/swapchain.m
+@@ -0,0 +1,252 @@
++/*
++ * This file is part of libplacebo.
++ *
++ * libplacebo is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 2.1 of the License, or (at your option) any later version.
++ *
++ * libplacebo is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU Lesser General Public
++ * License along with libplacebo. If not, see <http://www.gnu.org/licenses/>.
++ */
++
++/* Metal GPU backend — swapchain (CAMetalLayer present).
++ *
++ * start_frame vends the next CAMetalDrawable and wraps its texture as a
++ * renderable pl_tex; the caller renders into it via the normal pass path;
++ * swap_buffers presents the drawable on the queue.
++ *
++ * MRC (no -fobjc-arc): drawable/layer are explicitly retained/released.
++ */
++
++#import <Metal/Metal.h>
++#import <QuartzCore/CAMetalLayer.h>
++
++// Interne Header VOR <libplacebo/metal.h> (PL_DEPRECATED_IN-Redefine, siehe gpu.h).
++#include "gpu.h"
++#include "../swapchain.h"
++
++#include <libplacebo/metal.h>
++
++struct pl_sw_metal {
++    struct pl_sw_fns impl;
++    void *layer;      // CAMetalLayer            (+1 retained)
++    void *drawable;   // id<CAMetalDrawable>     current frame, or NULL
++    pl_tex fbo;       // wrapped drawable texture, or NULL
++};
++
++// Wrap an externally-owned MTLTexture as a renderable pl_tex. We retain it so
++// the standard mtl_tex_destroy (which releases) stays balanced.
++static pl_tex mtl_wrap_tex(pl_gpu gpu, id<MTLTexture> mtex, pl_fmt fmt)
++{
++    struct pl_tex_t *tex = pl_zalloc_obj(NULL, tex, struct pl_tex_metal);
++    tex->params = (struct pl_tex_params) {
++        .w = (int) mtex.width,
++        .h = (int) mtex.height,
++        .format = fmt,
++        .renderable = true,
++        .blit_dst = true,   // allow pl_tex_clear / blits onto the drawable
++    };
++    tex->sampler_type = PL_SAMPLER_NORMAL;
++    struct pl_tex_metal *tp = PL_PRIV(tex);
++    tp->tex = (__bridge void *) [mtex retain];
++    (void) gpu;
++    return tex;
++}
++
++static void mtl_sw_destroy(pl_swapchain sw)
++{
++    struct pl_sw_metal *p = PL_PRIV(sw);
++    if (p->fbo)
++        pl_tex_destroy(sw->gpu, &p->fbo);
++    if (p->drawable)
++        [(__bridge id<CAMetalDrawable>) p->drawable release];
++    if (p->layer)
++        [(__bridge CAMetalLayer *) p->layer release];
++    pl_free((void *) sw);
++}
++
++static int mtl_sw_latency(pl_swapchain sw)
++{
++    struct pl_sw_metal *p = PL_PRIV(sw);
++    CAMetalLayer *layer = (__bridge CAMetalLayer *) p->layer;
++    return (int) layer.maximumDrawableCount;   // typically 3 (triple-buffered)
++}
++
++static bool mtl_sw_resize(pl_swapchain sw, int *width, int *height)
++{
++    struct pl_sw_metal *p = PL_PRIV(sw);
++    CAMetalLayer *layer = (__bridge CAMetalLayer *) p->layer;
++    CGSize sz = layer.drawableSize;
++    int w = PL_DEF(*width, (int) sz.width);
++    int h = PL_DEF(*height, (int) sz.height);
++    if (w != (int) sz.width || h != (int) sz.height)
++        layer.drawableSize = CGSizeMake(w, h);
++    *width = w;
++    *height = h;
++    return true;
++}
++
++static bool mtl_sw_start_frame(pl_swapchain sw, struct pl_swapchain_frame *out)
++{
++    struct pl_sw_metal *p = PL_PRIV(sw);
++    if (p->drawable) {
++        PL_ERR(sw, "start_frame called with a frame already in progress");
++        return false;
++    }
++    CAMetalLayer *layer = (__bridge CAMetalLayer *) p->layer;
++    id<CAMetalDrawable> drawable = [layer nextDrawable];
++    if (!drawable) {
++        PL_ERR(sw, "CAMetalLayer vended no drawable");
++        return false;
++    }
++    p->drawable = (__bridge void *) [drawable retain];
++
++    pl_fmt fmt = pl_find_named_fmt(sw->gpu, "bgra8");
++    p->fbo = mtl_wrap_tex(sw->gpu, drawable.texture, fmt);
++
++    int bits = 8;
++    *out = (struct pl_swapchain_frame) {
++        .fbo = p->fbo,
++        .flipped = false,
++        .color_repr = {
++            .sys = PL_COLOR_SYSTEM_RGB,
++            .levels = PL_COLOR_LEVELS_FULL,
++            .alpha = PL_ALPHA_UNKNOWN,
++            .bits = { .sample_depth = bits, .color_depth = bits },
++        },
++        .color_space = pl_color_space_srgb,
++    };
++    return true;
++}
++
++static bool mtl_sw_submit_frame(pl_swapchain sw)
++{
++    // Rendering went onto its own (already-committed) command buffers. We keep
++    // the drawable + fbo until swap_buffers presents them.
++    (void) sw;
++    return true;
++}
++
++static void mtl_sw_swap_buffers(pl_swapchain sw)
++{
++    struct pl_sw_metal *p = PL_PRIV(sw);
++    if (!p->drawable)
++        return;
++    id<CAMetalDrawable> drawable = (__bridge id<CAMetalDrawable>) p->drawable;
++
++    // Mit dem geteilten Frame-CB hängt das Rendering dieses Frames ggf. noch
++    // uncommitted im frame_cb — den Present DARAN anhängen und committen
++    // (ein CB pro Frame, Present korrekt nach dem Rendering geordnet).
++    // Ohne offenen Frame-CB (Rendering schon geflusht): eigener Present-CB,
++    // Queue-Reihenfolge ordnet ihn hinter die committeten Render-CBs.
++    struct pl_gpu_metal *pg = PL_PRIV(sw->gpu);
++    if (pg->frame_cb) {
++        [(__bridge id<MTLCommandBuffer>) pg->frame_cb presentDrawable:drawable];
++        mtl_frame_commit(sw->gpu);
++    } else {
++        id<MTLCommandBuffer> cb = [mtl_queue(sw->gpu) commandBuffer];
++        [cb presentDrawable:drawable];
++        [cb commit];
++    }
++
++    pl_tex_destroy(sw->gpu, &p->fbo);
++    [drawable release];
++    p->drawable = NULL;
++}
++
++static const struct pl_sw_fns pl_fns_metal_sw = {
++    .destroy      = mtl_sw_destroy,
++    .latency      = mtl_sw_latency,
++    .resize       = mtl_sw_resize,
++    .start_frame  = mtl_sw_start_frame,
++    .submit_frame = mtl_sw_submit_frame,
++    .swap_buffers = mtl_sw_swap_buffers,
++};
++
++pl_tex pl_metal_wrap_tex(pl_metal metal, void *mtl_texture)
++{
++    pl_gpu gpu = metal->gpu;
++    id<MTLTexture> mtex = (__bridge id<MTLTexture>) mtl_texture;
++    if (!mtex) {
++        PL_ERR(gpu, "pl_metal_wrap_tex: NULL texture");
++        return NULL;
++    }
++    MTLPixelFormat pf = mtex.pixelFormat;
++    pl_fmt fmt = NULL;
++    for (int i = 0; i < gpu->num_formats; i++) {
++        if (mtl_fmt(gpu->formats[i]) == pf) {
++            fmt = gpu->formats[i];
++            break;
++        }
++    }
++    if (!fmt) {
++        PL_ERR(gpu, "pl_metal_wrap_tex: no pl_fmt for MTLPixelFormat %lu",
++               (unsigned long) pf);
++        return NULL;
++    }
++    return mtl_wrap_tex(gpu, mtex, fmt);
++}
++
++pl_tex pl_metal_wrap_iosurface(pl_metal metal, void *iosurface, int plane,
++                               int width, int height, pl_fmt fmt)
++{
++    pl_gpu gpu = metal->gpu;
++    if (!iosurface || !fmt) {
++        PL_ERR(gpu, "pl_metal_wrap_iosurface: NULL surface or format");
++        return NULL;
++    }
++    // Metal-native IOSurface import: a MTLTexture backed by one plane of an
++    // IOSurface (e.g. a CVPixelBuffer plane). Lets callers feed externally
++    // produced frames (VideoToolbox, camera, ...) into the renderer without a
++    // CPU copy — the Metal backend's counterpart to the Vulkan IOSurface import.
++    MTLTextureDescriptor *desc =
++        [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:mtl_fmt(fmt)
++                                                           width:width
++                                                          height:height
++                                                       mipmapped:NO];
++    desc.usage = MTLTextureUsageShaderRead;
++    desc.storageMode = MTLStorageModeShared;   // IOSurface-backed (shared on Apple GPUs)
++    id<MTLTexture> mtex = [mtl_device(gpu) newTextureWithDescriptor:desc
++                                                         iosurface:(IOSurfaceRef) iosurface
++                                                             plane:plane];
++    if (!mtex) {
++        PL_ERR(gpu, "pl_metal_wrap_iosurface: newTextureWithDescriptor:iosurface: failed");
++        return NULL;
++    }
++    struct pl_tex_t *tex = pl_zalloc_obj(NULL, tex, struct pl_tex_metal);
++    tex->params = (struct pl_tex_params) {
++        .w = width,
++        .h = height,
++        .format = fmt,
++        .sampleable = true,   // input texture sampled by the renderer
++    };
++    tex->sampler_type = PL_SAMPLER_NORMAL;
++    struct pl_tex_metal *tp = PL_PRIV(tex);
++    tp->tex = (__bridge void *) [mtex retain];   // mtl_tex_destroy releases (balanced)
++    return tex;
++}
++
++pl_swapchain pl_metal_swapchain_create(pl_gpu gpu, void *layer_ptr)
++{
++    CAMetalLayer *layer = (__bridge CAMetalLayer *) layer_ptr;
++    if (!layer) {
++        PL_ERR(gpu, "pl_metal_swapchain_create: NULL layer");
++        return NULL;
++    }
++    layer.device = mtl_device(gpu);
++    layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
++    layer.framebufferOnly = NO;   // allow blit/readback off the drawable
++
++    struct pl_swapchain_t *sw = pl_zalloc_obj(NULL, sw, struct pl_sw_metal);
++    *sw = (struct pl_swapchain_t) { .log = gpu->log, .gpu = gpu };
++    struct pl_sw_metal *p = PL_PRIV(sw);
++    p->impl  = pl_fns_metal_sw;
++    p->layer = (__bridge void *) [layer retain];
++    return sw;
++}
+diff -ruN a/src/tests/meson.build b/src/tests/meson.build
+--- a/src/tests/meson.build
++++ b/src/tests/meson.build
+@@ -1,5 +1,5 @@
+ gpu_tests = [
+-  'vulkan.c', 'opengl_surfaceless.c', 'd3d11.c', 'dummy.c'
++  'vulkan.c', 'opengl_surfaceless.c', 'd3d11.c', 'dummy.c', 'metal.m'
+ ]
+ 
+ ts = []
+diff -ruN a/src/tests/metal.m b/src/tests/metal.m
+--- a/src/tests/metal.m
++++ b/src/tests/metal.m
+@@ -0,0 +1,224 @@
++/* Metal backend smoke test.
++ *
++ * Skeleton/Phase-3 scope: create a real pl_gpu over the system MTLDevice and
++ * verify the format table registers and survives pl_gpu_finalize() validation.
++ * Texture/buffer/pass coverage (the full gpu_tests suite) lands once those
++ * slots are implemented.
++ */
++
++#import <Metal/Metal.h>
++#import <QuartzCore/CAMetalLayer.h>
++
++#include "gpu_tests.h"
++#include "metal/gpu.h"
++
++int main()
++{
++    pl_log log = pl_test_logger();
++
++    id<MTLDevice> dev = MTLCreateSystemDefaultDevice();
++    if (!dev) {
++        printf("no Metal device available — skipping\n");
++        return SKIP;
++    }
++    id<MTLCommandQueue> queue = [dev newCommandQueue];
++
++    pl_gpu gpu = pl_gpu_create_metal(log, (__bridge void *) dev,
++                                          (__bridge void *) queue);
++    if (!gpu) {
++        // pl_gpu_create_metal needs a SPIR-V compiler (libshaderc/glslang) for
++        // the GLSL → SPIR-V step. A build/runner without one (e.g. a CI box that
++        // only has SPIRV-Cross for the SPIR-V → MSL half) can't create the gpu —
++        // skip rather than fail, the backend still got compile-tested.
++        printf("no SPIR-V compiler (shaderc/glslang) available — skipping\n");
++        pl_log_destroy(&log);
++        return SKIP;
++    }
++
++    // Format table registered + survived pl_gpu_finalize() validation.
++    REQUIRE(gpu->num_formats > 0);
++    printf("metal: %d formats registered\n", gpu->num_formats);
++
++    // Named lookups the renderer relies on must resolve.
++    REQUIRE(pl_find_named_fmt(gpu, "r8"));
++    REQUIRE(pl_find_named_fmt(gpu, "rgba8"));
++    REQUIRE(pl_find_named_fmt(gpu, "rgba16f"));
++
++    // Sampleable+renderable rgba8 is the renderer's workhorse format.
++    pl_fmt rgba8 = pl_find_named_fmt(gpu, "rgba8");
++    REQUIRE(rgba8->caps & PL_FMT_CAP_SAMPLEABLE);
++    REQUIRE(rgba8->caps & PL_FMT_CAP_RENDERABLE);
++    REQUIRE(rgba8->caps & PL_FMT_CAP_LINEAR);
++
++    // ---- buffer round-trip (gpu_tex.m: buf_create/write/read) ----
++    {
++        uint8_t src[256], dst[256];
++        for (int i = 0; i < 256; i++)
++            src[i] = (uint8_t) (i ^ 0x5a);
++        pl_buf buf = pl_buf_create(gpu, pl_buf_params(
++            .size = sizeof(src),
++            .host_writable = true,
++            .host_readable = true,
++        ));
++        REQUIRE(buf);
++        pl_buf_write(gpu, buf, 0, src, sizeof(src));
++        memset(dst, 0, sizeof(dst));
++        REQUIRE(pl_buf_read(gpu, buf, 0, dst, sizeof(dst)));
++        REQUIRE_MEMEQ(src, dst, sizeof(src));
++        pl_buf_destroy(gpu, &buf);
++        printf("metal: buffer round-trip ok\n");
++    }
++
++    // ---- texture round-trip (gpu_tex.m: tex_create/upload/download) ----
++    {
++        const int W = 4, H = 4;
++        uint8_t src[W * H * 4], dst[W * H * 4];
++        for (int i = 0; i < W * H * 4; i++)
++            src[i] = (uint8_t) (i * 7 + 3);
++        pl_tex tex = pl_tex_create(gpu, pl_tex_params(
++            .w = W, .h = H,
++            .format = rgba8,
++            .sampleable = true,
++            .host_writable = true,
++            .host_readable = true,
++        ));
++        REQUIRE(tex);
++        REQUIRE(pl_tex_upload(gpu, pl_tex_transfer_params(
++            .tex = tex,
++            .ptr = src,
++        )));
++        memset(dst, 0, sizeof(dst));
++        REQUIRE(pl_tex_download(gpu, pl_tex_transfer_params(
++            .tex = tex,
++            .ptr = dst,
++        )));
++        REQUIRE_MEMEQ(src, dst, sizeof(src));
++        pl_tex_destroy(gpu, &tex);
++        printf("metal: texture round-trip ok\n");
++    }
++
++    // ---- render round-trip: GLSL → SPIR-V → MSL → PSO → draw → readback ----
++    {
++        const int W = 8, H = 8;
++        pl_tex target = pl_tex_create(gpu, pl_tex_params(
++            .w = W, .h = H,
++            .format = rgba8,
++            .renderable = true,
++            .host_readable = true,
++        ));
++        REQUIRE(target);
++
++        static const char *vert =
++            "#version 450\n"
++            "layout(location = 0) in vec2 pos;\n"
++            "void main() { gl_Position = vec4(pos, 0.0, 1.0); }\n";
++        static const char *frag =
++            "#version 450\n"
++            "layout(location = 0) out vec4 color;\n"
++            "void main() { color = vec4(0.25, 0.5, 0.75, 1.0); }\n";
++
++        struct pl_vertex_attrib attr = {
++            .name = "pos",
++            .fmt = pl_find_named_fmt(gpu, "rg32f"),
++            .offset = 0,
++            .location = 0,
++        };
++        pl_pass pass = pl_pass_create(gpu, pl_pass_params(
++            .type = PL_PASS_RASTER,
++            .glsl_shader = frag,
++            .vertex_shader = vert,
++            .vertex_type = PL_PRIM_TRIANGLE_LIST,
++            .vertex_attribs = &attr,
++            .num_vertex_attribs = 1,
++            .vertex_stride = 2 * sizeof(float),
++            .target_format = rgba8,
++        ));
++        REQUIRE(pass);
++        printf("metal: render pass created (GLSL→MSL→PSO ok)\n");
++
++        // Time the pass with a pl_timer (GPU timestamps via completion handler).
++        pl_timer timer = pl_timer_create(gpu);
++        REQUIRE(timer);
++
++        // Oversized triangle covering the whole [-1,1] clip square.
++        static const float verts[6] = { -1, -1,  3, -1,  -1, 3 };
++        pl_pass_run(gpu, pl_pass_run_params(
++            .pass = pass,
++            .target = target,
++            .vertex_count = 3,
++            .vertex_data = verts,
++            .viewport = {0, 0, W, H},
++            .scissors = {0, 0, W, H},
++            .timer = timer,
++        ));
++
++        uint8_t px[W * H * 4];
++        REQUIRE(pl_tex_download(gpu, pl_tex_transfer_params(
++            .tex = target, .ptr = px,
++        )));
++
++        // The completion handler that publishes the timing fires asynchronously
++        // shortly after the command buffer completes — drain with a bounded poll.
++        pl_gpu_finish(gpu);
++        uint64_t gpu_ns = 0;
++        for (int i = 0; i < 10000 && !gpu_ns; i++)
++            gpu_ns = pl_timer_query(gpu, timer);
++        printf("metal: render pass GPU time = %llu ns\n",
++               (unsigned long long) gpu_ns);
++        REQUIRE(gpu_ns > 0);
++        // Ring is drained: the next query yields no further result.
++        REQUIRE(pl_timer_query(gpu, timer) == 0);
++        pl_timer_destroy(gpu, &timer);
++        // Expect ~ (0.25, 0.5, 0.75, 1.0) * 255 = (64, 128, 191, 255).
++        printf("metal: rendered pixel[0] = (%d,%d,%d,%d) expect ~(64,128,191,255)\n",
++               px[0], px[1], px[2], px[3]);
++        REQUIRE(abs((int) px[0] - 64)  <= 2);
++        REQUIRE(abs((int) px[1] - 128) <= 2);
++        REQUIRE(abs((int) px[2] - 191) <= 2);
++        REQUIRE(px[3] == 255);
++
++        pl_pass_destroy(gpu, &pass);
++        pl_tex_destroy(gpu, &target);
++        printf("metal: render round-trip ok\n");
++    }
++
++    // ---- swapchain lifecycle over a headless CAMetalLayer ----
++    {
++        CAMetalLayer *layer = [CAMetalLayer layer];
++        layer.drawableSize = CGSizeMake(16, 16);
++        pl_swapchain sw = pl_metal_swapchain_create(gpu, (__bridge void *) layer);
++        REQUIRE(sw);
++
++        struct pl_swapchain_frame frame;
++        if (pl_swapchain_start_frame(sw, &frame)) {
++            REQUIRE(frame.fbo);
++            REQUIRE(frame.fbo->params.w == 16);
++            REQUIRE(frame.fbo->params.h == 16);
++            REQUIRE(frame.fbo->params.renderable);
++            printf("metal: swapchain frame %dx%d fmt=%s\n",
++                   frame.fbo->params.w, frame.fbo->params.h,
++                   frame.fbo->params.format->name);
++            // The drawable's texture is a valid render target: clear it.
++            pl_tex_clear(gpu, frame.fbo, (float[4]){0.1f, 0.2f, 0.3f, 1.0f});
++            REQUIRE(pl_swapchain_submit_frame(sw));
++            pl_swapchain_swap_buffers(sw);
++            printf("metal: swapchain start→clear→submit→swap ok\n");
++        } else {
++            printf("metal: no drawable in headless mode — swapchain plumbing built\n");
++        }
++        pl_swapchain_destroy(&sw);
++    }
++
++    // ---- full libplacebo GPU test suite against the Metal backend ----
++    printf("metal: --- running libplacebo gpu test suite ---\n");
++    pl_buffer_tests(gpu);
++    printf("metal: pl_buffer_tests passed\n");
++    pl_texture_tests(gpu);
++    printf("metal: pl_texture_tests passed\n");
++    gpu_shader_tests(gpu);
++    printf("metal: gpu_shader_tests passed\n");
++
++    pl_gpu_destroy(gpu);
++    pl_log_destroy(&log);
++    return 0;
++}
