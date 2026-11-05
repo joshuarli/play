@@ -5,7 +5,7 @@ mod render;
 mod swapchain;
 mod sys;
 
-pub use context::Vulkan;
+pub use context::Gpu;
 pub use frame::{
     render_frame, render_to_target, ColorSpec, Overlay, OverlayRect, PixelLayout, Plane,
 };

@@ -1,6 +1,6 @@
 use player_output::{
     render_to_target, ColorSpec, Instance, Overlay, PixelLayout, Plane, Renderer, Surface,
-    Swapchain, Vulkan,
+    Swapchain, Gpu,
 };
 use std::ffi::{c_char, c_int, c_void, CStr, CString};
 
@@ -136,7 +136,7 @@ pub struct MacWindow {
     swapchain: Swapchain,
     surface: Surface,
     renderer: Renderer,
-    vulkan: Vulkan,
+    gpu: Gpu,
     instance: Instance,
     bridge: Bridge,
     width: i32,
@@ -154,9 +154,9 @@ impl MacWindow {
         }
         let instance = Instance::new()?;
         let surface = instance.create_metal_surface(layer)?;
-        let vulkan = Vulkan::create_for_surface(&instance, &surface)?;
-        let renderer = vulkan.create_renderer()?;
-        let mut swapchain = Swapchain::open(&vulkan, &surface, width, height)?;
+        let gpu = Gpu::vulkan_for_surface(&instance, &surface)?;
+        let renderer = gpu.create_renderer()?;
+        let mut swapchain = Swapchain::vulkan(&gpu, &surface, width, height)?;
         let (mut width, mut height) = (width, height);
         let (w, h) = bridge.size();
         if w > 0 && h > 0 {
@@ -170,7 +170,7 @@ impl MacWindow {
             swapchain,
             surface,
             renderer,
-            vulkan,
+            gpu,
             instance,
             bridge,
             width,
@@ -289,7 +289,7 @@ impl MacWindow {
     ) -> Result<(), String> {
         let frame = self.swapchain.start_frame()?;
         if let Err(message) = render_to_target(
-            &self.vulkan,
+            &self.gpu,
             &self.renderer,
             layout,
             color,

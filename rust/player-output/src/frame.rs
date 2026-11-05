@@ -1,5 +1,5 @@
 use crate::sys;
-use crate::{Renderer, Vulkan};
+use crate::{Gpu, Renderer};
 use core::ffi::c_int;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -51,7 +51,7 @@ pub struct Overlay<'a> {
 }
 
 pub fn render_frame(
-    vk: &Vulkan,
+    gpu: &Gpu,
     renderer: &Renderer,
     layout: PixelLayout,
     color: ColorSpec,
@@ -70,26 +70,26 @@ pub fn render_frame(
     }
     let mut texs: Vec<sys::PlTex> = Vec::with_capacity(indexed.len());
     for (plane, spec) in planes.iter().zip(indexed.iter()) {
-        let fmt = vk
+        let fmt = gpu
             .find_format(sys::PL_FMT_UNORM, spec.components, 8, sys::PL_FMT_CAP_SAMPLEABLE)
             .ok_or_else(|| "no sampleable texture format".to_string())?;
-        let tex = vk.create_tex(plane.width, plane.height, fmt)?;
-        if vk
+        let tex = gpu.create_tex(plane.width, plane.height, fmt)?;
+        if gpu
             .upload_strided(tex, plane.width, plane.height, plane.stride, plane.data)
             .is_err()
         {
-            vk.destroy_tex(tex);
+            gpu.destroy_tex(tex);
             for done in texs {
-                vk.destroy_tex(done);
+                gpu.destroy_tex(done);
             }
             return Err("plane upload failed".to_string());
         }
         texs.push(tex);
     }
-    let target_fmt = vk.find_rgba8(sys::PL_FMT_CAP_RENDERABLE)?;
-    let target = vk.create_render_target(width, height, target_fmt)?;
+    let target_fmt = gpu.find_rgba8(sys::PL_FMT_CAP_RENDERABLE)?;
+    let target = gpu.create_render_target(width, height, target_fmt)?;
     let result = render_planes(
-        vk,
+        gpu,
         renderer,
         layout,
         color,
@@ -101,16 +101,16 @@ pub fn render_frame(
         overlay,
     );
     for tex in texs {
-        vk.destroy_tex(tex);
+        gpu.destroy_tex(tex);
     }
     let target = result?;
-    let bytes = vk.download(target, width, height)?;
-    vk.destroy_tex(target);
+    let bytes = gpu.download(target, width, height)?;
+    gpu.destroy_tex(target);
     Ok(bytes)
 }
 
 pub fn render_to_target(
-    vk: &Vulkan,
+    gpu: &Gpu,
     renderer: &Renderer,
     layout: PixelLayout,
     color: ColorSpec,
@@ -131,17 +131,17 @@ pub fn render_to_target(
     }
     let mut texs: Vec<sys::PlTex> = Vec::with_capacity(indexed.len());
     for (plane, spec) in planes.iter().zip(indexed.iter()) {
-        let fmt = vk
+        let fmt = gpu
             .find_format(sys::PL_FMT_UNORM, spec.components, 8, sys::PL_FMT_CAP_SAMPLEABLE)
             .ok_or_else(|| "no sampleable texture format".to_string())?;
-        let tex = vk.create_tex(plane.width, plane.height, fmt)?;
-        if vk
+        let tex = gpu.create_tex(plane.width, plane.height, fmt)?;
+        if gpu
             .upload_strided(tex, plane.width, plane.height, plane.stride, plane.data)
             .is_err()
         {
-            vk.destroy_tex(tex);
+            gpu.destroy_tex(tex);
             for done in texs {
-                vk.destroy_tex(done);
+                gpu.destroy_tex(done);
             }
             return Err("plane upload failed".to_string());
         }
@@ -152,7 +152,7 @@ pub fn render_to_target(
         .map(|plane| (plane.width, plane.height))
         .ok_or_else(|| "no planes to render".to_string())?;
     let result = render_planes(
-        vk,
+        gpu,
         renderer,
         layout,
         color,
@@ -164,7 +164,7 @@ pub fn render_to_target(
         overlay,
     );
     for tex in texs {
-        vk.destroy_tex(tex);
+        gpu.destroy_tex(tex);
     }
     result?;
     Ok(())
@@ -210,7 +210,7 @@ fn plane_specs(layout: PixelLayout) -> Result<Vec<PlaneSpec>, String> {
 }
 
 fn render_planes(
-    vk: &Vulkan,
+    gpu: &Gpu,
     renderer: &Renderer,
     layout: PixelLayout,
     color: ColorSpec,
@@ -301,15 +301,15 @@ fn render_planes(
         num_parts: 0,
     };
     if let Some(image) = overlay {
-        let format = vk
+        let format = gpu
             .find_format(sys::PL_FMT_UNORM, 4, 8, sys::PL_FMT_CAP_SAMPLEABLE)
             .ok_or_else(|| "no sampleable overlay format".to_string())?;
-        let tex = vk.create_tex(image.width, image.height, format)?;
-        if vk
+        let tex = gpu.create_tex(image.width, image.height, format)?;
+        if gpu
             .upload_strided(tex, image.width, image.height, image.stride, image.data)
             .is_err()
         {
-            vk.destroy_tex(tex);
+            gpu.destroy_tex(tex);
             return Err("overlay upload failed".to_string());
         }
         overlay_part.src.x1 = image.width as f32;
@@ -347,12 +347,12 @@ fn render_planes(
     // SAFETY: frames and textures are live for the call.
     if unsafe { sys::pl_render_image(renderer.as_raw(), &frame, &target_frame, &params) } {
         if !overlay_tex.is_null() {
-            vk.destroy_tex(overlay_tex);
+            gpu.destroy_tex(overlay_tex);
         }
         Ok(target)
     } else {
         if !overlay_tex.is_null() {
-            vk.destroy_tex(overlay_tex);
+            gpu.destroy_tex(overlay_tex);
         }
         Err("pl_render_image failed".to_string())
     }
@@ -415,8 +415,8 @@ fn empty_plane() -> sys::PlPlane {
 mod tests {
     use super::*;
 
-    fn setup() -> (Vulkan, Renderer) {
-        let vk = Vulkan::create().expect("vulkan initializes headlessly");
+    fn setup() -> (Gpu, Renderer) {
+        let vk = Gpu::vulkan().expect("vulkan initializes headlessly");
         let renderer = vk.create_renderer().expect("renderer creates");
         (vk, renderer)
     }

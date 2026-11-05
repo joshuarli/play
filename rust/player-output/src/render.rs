@@ -135,7 +135,7 @@ fn empty_plane() -> sys::PlPlane {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Vulkan;
+    use crate::Gpu;
 
     #[test]
     #[cfg_attr(
@@ -143,7 +143,7 @@ mod tests {
         ignore = "static-pie test binaries cannot call the container Vulkan loader; run with RUSTFLAGS=\"-C target-feature=-crt-static\""
     )]
     fn rgba_renders_near_identity() {
-        let vk = Vulkan::create().expect("vulkan initializes");
+        let vk = Gpu::vulkan().expect("vulkan initializes");
         let sample_fmt = vk
             .find_rgba8(sys::PL_FMT_CAP_SAMPLEABLE)
             .expect("sampleable rgba8");

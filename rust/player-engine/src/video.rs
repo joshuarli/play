@@ -6,7 +6,7 @@ use player_media::{
     AV_PIX_FMT_YUV420P, AV_PIX_FMT_YUV422P, AV_PIX_FMT_YUV444P,
 };
 use player_output::{
-    render_frame, ColorSpec, PixelLayout, Plane, Renderer, Vulkan, PL_COLOR_LEVELS_FULL,
+    render_frame, ColorSpec, PixelLayout, Plane, Renderer, Gpu, PL_COLOR_LEVELS_FULL,
     PL_COLOR_LEVELS_LIMITED, PL_COLOR_SYSTEM_BT_2020_NC, PL_COLOR_SYSTEM_BT_601,
     PL_COLOR_SYSTEM_BT_709,
 };
@@ -168,25 +168,25 @@ impl VideoDecoder for EngineVideo {
 
 pub struct EngineVideoOutput {
     shared: SharedHandle,
-    gpu: Option<Gpu>,
+    gpu: Option<GpuRenderer>,
     discard: bool,
     sink: mpsc::SyncSender<PresentedFrame>,
 }
 
-struct Gpu {
+struct GpuRenderer {
     // Field order is the drop order: the renderer must be destroyed before
-    // the Vulkan device that owns it.
+    // the GPU device that owns it.
     renderer: Renderer,
-    vk: Vulkan,
+    device: Gpu,
 }
 
 impl EngineVideoOutput {
     pub fn open(shared: SharedHandle, sink: mpsc::SyncSender<PresentedFrame>) -> Result<Self, String> {
-        let vk = Vulkan::create()?;
-        let renderer = vk.create_renderer()?;
+        let device = Gpu::vulkan()?;
+        let renderer = device.create_renderer()?;
         Ok(EngineVideoOutput {
             shared,
-            gpu: Some(Gpu { renderer, vk }),
+            gpu: Some(GpuRenderer { renderer, device }),
             discard: false,
             sink,
         })
@@ -304,7 +304,7 @@ impl VideoOutput for EngineVideoOutput {
             });
         }
         let rgba = render_frame(
-            &gpu.vk, &gpu.renderer, layout, color, &planes, width, height, None,
+            &gpu.device, &gpu.renderer, layout, color, &planes, width, height, None,
         )?;
         let _ = self.sink.send(PresentedFrame {
             pts,

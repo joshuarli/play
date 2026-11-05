@@ -1,5 +1,5 @@
 use crate::sys;
-use crate::{Surface, Vulkan};
+use crate::{Gpu, Surface};
 use core::ffi::c_int;
 
 pub struct Swapchain {
@@ -12,7 +12,10 @@ pub struct SwapFrame {
 }
 
 impl Swapchain {
-    pub fn open(vk: &Vulkan, surface: &Surface, width: c_int, height: c_int) -> Result<Self, String> {
+    pub fn vulkan(gpu: &Gpu, surface: &Surface, width: c_int, height: c_int) -> Result<Self, String> {
+        let vk = gpu
+            .vulkan_handle()
+            .ok_or_else(|| "a Vulkan swapchain needs a Vulkan device".to_string())?;
         let params = sys::PlVulkanSwapchainParams {
             surface: surface.raw(),
             present_mode: sys::VK_PRESENT_MODE_MAILBOX_KHR,
@@ -23,10 +26,14 @@ impl Swapchain {
             color_bits: 0,
         };
         // SAFETY: the Vulkan device is live and the surface belongs to it.
-        let sw = unsafe { sys::pl_vulkan_create_swapchain(vk.as_raw(), &params) };
+        let sw = unsafe { sys::pl_vulkan_create_swapchain(vk, &params) };
         if sw.is_null() {
             return Err("pl_vulkan_create_swapchain failed".to_string());
         }
+        Self::sized(sw, width, height)
+    }
+
+    fn sized(sw: sys::PlSwapchain, width: c_int, height: c_int) -> Result<Self, String> {
         let mut chain = Swapchain { sw };
         chain.resize(width, height)?;
         Ok(chain)

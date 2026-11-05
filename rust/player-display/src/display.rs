@@ -7,7 +7,7 @@
 
 use player_output::{
     render_to_target, ColorSpec, Instance, Overlay, PixelLayout, Plane, Renderer, Surface,
-    Swapchain, Vulkan,
+    Swapchain, Gpu,
 };
 use std::collections::VecDeque;
 use std::os::fd::{AsRawFd, FromRawFd};
@@ -270,13 +270,13 @@ delegate_noop!(App: ignore wl_surface::WlSurface);
 pub struct Window {
     // Destruction order is declaration order: the swapchain, then the
     // surface while the device is still live, then the renderer, then
-    // the Vulkan device, then the instance, and only then the Wayland
+    // the GPU device, then the instance, and only then the Wayland
     // protocol objects.
     swapchain: Swapchain,
     #[allow(dead_code)]
     surface: Surface,
     renderer: Renderer,
-    vulkan: Vulkan,
+    gpu: Gpu,
     #[allow(dead_code)]
     instance: Instance,
     queue: EventQueue<App>,
@@ -352,17 +352,17 @@ impl Window {
         }
         let instance = Instance::new()?;
         let surface = instance.create_surface(display as *mut _, raw_surface)?;
-        let vulkan = Vulkan::create_for_surface(&instance, &surface)?;
-        let renderer = vulkan.create_renderer()?;
+        let gpu = Gpu::vulkan_for_surface(&instance, &surface)?;
+        let renderer = gpu.create_renderer()?;
         let width = app_width(&app, width);
         let height = app_height(&app, height);
-        let swapchain = Swapchain::open(&vulkan, &surface, width, height)?;
+        let swapchain = Swapchain::vulkan(&gpu, &surface, width, height)?;
         eprintln!("vo/gpu-next/wayland: Registered output {width}x{height}");
         Ok(Window {
             swapchain,
             surface,
             renderer,
-            vulkan,
+            gpu,
             instance,
             queue,
             app,
@@ -472,7 +472,7 @@ impl Window {
     ) -> Result<(), String> {
         let frame = self.swapchain.start_frame()?;
         if let Err(message) = render_to_target(
-            &self.vulkan,
+            &self.gpu,
             &self.renderer,
             layout,
             color,

@@ -3,37 +3,30 @@ use crate::{Instance, Surface};
 use core::ffi::{c_int, c_void};
 use std::ffi::CStr;
 
-pub struct Vulkan {
+pub struct Gpu {
     log: sys::PlLog,
-    vk: sys::PlVulkan,
+    backend: Backend,
     gpu: sys::PlGpu,
 }
 
-impl Vulkan {
-    pub fn create() -> Result<Self, String> {
-        Self::create_inner(core::ptr::null_mut(), 0)
+enum Backend {
+    Vulkan(sys::PlVulkan),
+}
+
+impl Gpu {
+    pub fn vulkan() -> Result<Self, String> {
+        Self::create_vulkan(core::ptr::null_mut(), 0)
     }
 
-    pub fn create_for_surface(instance: &Instance, surface: &Surface) -> Result<Self, String> {
+    pub fn vulkan_for_surface(instance: &Instance, surface: &Surface) -> Result<Self, String> {
         if instance.raw().is_null() || surface.raw() == 0 {
             return Err("vulkan surface needs a live instance and surface".to_string());
         }
-        Self::create_inner(instance.raw(), surface.raw())
+        Self::create_vulkan(instance.raw(), surface.raw())
     }
 
-    fn create_inner(instance: sys::VkInstance, surface: sys::VkSurfaceKHR) -> Result<Self, String> {
-        // SAFETY: pl_version returns a static string.
-        let version = unsafe { CStr::from_ptr(sys::pl_version()) }
-            .to_string_lossy()
-            .into_owned();
-        if version != sys::PLACEBO_VERSION {
-            return Err(format!("libplacebo version mismatch: got {version}"));
-        }
-        // SAFETY: NULL params select the library defaults.
-        let log = unsafe { sys::pl_log_create(sys::PLACEBO_API_VERSION, core::ptr::null()) };
-        if log.is_null() {
-            return Err("pl_log_create failed".to_string());
-        }
+    fn create_vulkan(instance: sys::VkInstance, surface: sys::VkSurfaceKHR) -> Result<Self, String> {
+        let (log, version) = create_log()?;
         let params = sys::PlVulkanParams {
             instance,
             get_proc_addr: core::ptr::null_mut(),
@@ -66,15 +59,21 @@ impl Vulkan {
         // SAFETY: vk is live; gpu is its first field.
         let gpu = unsafe { (*vk).gpu };
         eprintln!("libplacebo: GPU 0: Vulkan device (libplacebo {version})");
-        Ok(Vulkan { log, vk, gpu })
+        Ok(Gpu {
+            log,
+            backend: Backend::Vulkan(vk),
+            gpu,
+        })
     }
 
     pub fn gpu(&self) -> sys::PlGpu {
         self.gpu
     }
 
-    pub(crate) fn as_raw(&self) -> sys::PlVulkan {
-        self.vk
+    pub(crate) fn vulkan_handle(&self) -> Option<sys::PlVulkan> {
+        match self.backend {
+            Backend::Vulkan(vk) => Some(vk),
+        }
     }
 
     pub fn find_rgba8(&self, caps: c_int) -> Result<sys::PlFmt, String> {
@@ -262,10 +261,28 @@ impl Vulkan {
     }
 }
 
-impl Drop for Vulkan {
+fn create_log() -> Result<(sys::PlLog, String), String> {
+    // SAFETY: pl_version returns a static string.
+    let version = unsafe { CStr::from_ptr(sys::pl_version()) }
+        .to_string_lossy()
+        .into_owned();
+    if version != sys::PLACEBO_VERSION {
+        return Err(format!("libplacebo version mismatch: got {version}"));
+    }
+    // SAFETY: NULL params select the library defaults.
+    let log = unsafe { sys::pl_log_create(sys::PLACEBO_API_VERSION, core::ptr::null()) };
+    if log.is_null() {
+        return Err("pl_log_create failed".to_string());
+    }
+    Ok((log, version))
+}
+
+impl Drop for Gpu {
     fn drop(&mut self) {
-        // SAFETY: all textures must be destroyed before this runs.
-        unsafe { sys::pl_vulkan_destroy(&mut self.vk) };
+        match &mut self.backend {
+            // SAFETY: all textures must be destroyed before this runs.
+            Backend::Vulkan(vk) => unsafe { sys::pl_vulkan_destroy(vk) },
+        }
         // SAFETY: the log was created with the context and is still live.
         unsafe { sys::pl_log_destroy(&mut (self.log as sys::PlLog)) };
     }
@@ -292,7 +309,7 @@ mod tests {
         ignore = "static-pie test binaries cannot call the container Vulkan loader; run with RUSTFLAGS=\"-C target-feature=-crt-static\""
     )]
     fn init_and_tex_roundtrip() {
-        let vk = Vulkan::create().expect("vulkan initializes headlessly");
+        let vk = Gpu::vulkan().expect("vulkan initializes headlessly");
         let fmt = vk
             .find_rgba8(sys::PL_FMT_CAP_HOST_READABLE)
             .expect("rgba8 format exists");
