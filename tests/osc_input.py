@@ -41,16 +41,16 @@ def _overlap(left, right):
                 or left["y"] + left["h"] <= right["y"] or right["y"] + right["h"] <= left["y"])
 
 
-def gate_osc_input(results, mpv_class, fixture_entry, fixture_path):
-    playback_controls(results, mpv_class, fixture_entry, fixture_path)
-    track_controls(results, mpv_class, fixture_entry, fixture_path)
-    pointer_visibility(results, mpv_class, fixture_entry, fixture_path)
+def gate_osc_input(results, mpv_class, fixture_entry, fixture_path, video_args):
+    playback_controls(results, mpv_class, fixture_entry, fixture_path, video_args)
+    track_controls(results, mpv_class, fixture_entry, fixture_path, video_args)
+    pointer_visibility(results, mpv_class, fixture_entry, fixture_path, video_args)
 
 
-def playback_controls(results, mpv_class, fixture_entry, fixture_path):
+def playback_controls(results, mpv_class, fixture_entry, fixture_path, video_args):
     entry = fixture_entry("h264")
     duration = float(entry["duration"])
-    with mpv_class(["--vo=null", "--ao=null", "--keep-open=yes"]) as mpv:
+    with mpv_class([*video_args, "--ao=null", "--keep-open=yes"]) as mpv:
         mpv.load(fixture_path(entry))
         mpv.wait_event("file-loaded", timeout=10)
         mpv.wait_property("time-pos", lambda value: _number(value) and value > 0, timeout=10)
@@ -169,10 +169,10 @@ def playback_controls(results, mpv_class, fixture_entry, fixture_path):
     results.check("osc-input: exit", mpv.returncode == 0, f"exit {mpv.returncode}")
 
 
-def track_controls(results, mpv_class, fixture_entry, fixture_path):
+def track_controls(results, mpv_class, fixture_entry, fixture_path, video_args):
     entry = fixture_entry("multiaudio")
     subtitle = fixture_path(fixture_entry("external-srt"))
-    with mpv_class(["--vo=null", "--ao=null", "--keep-open=yes", "--pause=yes"]) as mpv:
+    with mpv_class([*video_args, "--ao=null", "--keep-open=yes", "--pause=yes"]) as mpv:
         mpv.load(fixture_path(entry))
         mpv.wait_event("file-loaded", timeout=10)
         mpv.command("set", "osc-visibility", "always")
@@ -206,9 +206,9 @@ def track_controls(results, mpv_class, fixture_entry, fixture_path):
     results.check("osc-input: tracks exit", mpv.returncode == 0, f"exit {mpv.returncode}")
 
 
-def pointer_visibility(results, mpv_class, fixture_entry, fixture_path):
+def pointer_visibility(results, mpv_class, fixture_entry, fixture_path, video_args):
     entry = fixture_entry("h264")
-    with mpv_class(["--vo=null", "--ao=null", "--keep-open=yes", "--pause=yes"]) as mpv:
+    with mpv_class([*video_args, "--ao=null", "--keep-open=yes", "--pause=yes"]) as mpv:
         mpv.load(fixture_path(entry))
         mpv.wait_event("file-loaded", timeout=10)
         results.check("osc-input: shown at file start",

@@ -26,7 +26,16 @@ make linux
 
 ## Release app
 
-The macOS build needs the Xcode command-line tools, the pinned Rust toolchain, Meson, Ninja, pkg-config, CMake, Python 3, curl, and `shasum`; `scripts/dev-deps.sh` installs the pinned Homebrew packages. Build the dependency closure and the app:
+The macOS build needs the Xcode command-line tools, the pinned Rust toolchain, Meson, Ninja, pkg-config, CMake, Python 3, curl, and `shasum`; `scripts/dev-deps.sh` installs the pinned Homebrew build tools and the FFmpeg used to generate test fixtures. The development build and the Rust tests link the same pinned closure as the app, so build it first; `scripts/build.sh` and `cargo test` fail until it exists:
+
+```sh
+scripts/build-deps.sh
+scripts/build.sh
+build/mpv FILE
+build/mpv --gpu-api=metal FILE
+```
+
+Build the release app:
 
 ```sh
 scripts/build-deps.sh
@@ -53,7 +62,7 @@ dist/Player.app/Contents/MacOS/player --tui FILE
 
 Kitty-capable terminals show the embedded cover at full resolution; others use truecolor half-blocks. See [Terminal UI](tui-design.md).
 
-The bundle carries its own pinned dylibs, Vulkan loader, and MoltenVK; FFmpeg, dav1d, and zlib are linked statically into the executable. It does not use Homebrew, a global FFmpeg, or `usr` at runtime. It is ad-hoc signed and not notarized. Do not distribute the build without a signing identity. It declares `MPVBUNDLE` and the supported document types in `Info.plist`.
+The bundle carries its own pinned dylibs, Vulkan loader, and MoltenVK, and its libplacebo includes the Metal backend (`--gpu-api=metal`); FFmpeg, dav1d, and zlib are linked statically into the executable. It does not use Homebrew, a global FFmpeg, or `usr` at runtime. It is ad-hoc signed and not notarized. Do not distribute the build without a signing identity. It declares `MPVBUNDLE` and the supported document types in `Info.plist`.
 
 ## Local-only contract
 

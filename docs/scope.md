@@ -22,7 +22,7 @@ The local-only gate creates a hostile temporary `HOME` with `mpv.conf`, `input.c
 - `player-engine`: the session scheduler, packet and frame queues, seek and pause state machine, frame pacing, subtitle tracks, and the engine worker.
 - `player-overlay`: the overlay display list, rasterizer, and native text shaping (Core Text; Fontconfig, HarfBuzz, and FreeType).
 - `player-backend`: the engine-facing backend and the subtitle, OSD, and OSC overlay layers.
-- `player-output`: libplacebo/Vulkan renderer, swapchain, overlays, and frame download.
+- `player-output`: libplacebo renderer over Vulkan or Metal (macOS), swapchain, overlays, and frame download.
 - `player-display`: Cocoa/Metal window bridge on macOS and Wayland window/input on Linux.
 - `player-tui`: the terminal renderer and input surface.
 - `player-app`: CLI, IPC, playlist, chapters, track switching, properties and events, command dispatch, the native OSC, GUI and TUI modes, Finder open, drag-and-drop, and screenshots.
@@ -48,7 +48,7 @@ There is no C playback loop or Meson player build.
 
 ## CLI
 
-Supported: `player FILE...`, `--tui`, `--gui`, `--gate` (GUI gate), `--fullscreen` and `--fs` (a window opens fullscreen unless `--fs=no` or `--geometry` is given), `--start`, `--playlist`, `--audio-file` and `--audio-files`, `--sub-file` and `--sub-files`, `--osc` and `--no-osc`, `--input-ipc-server`, `--audio-device` (Linux ALSA), `--geometry`, `--frames`, `--term-playing-msg`, `--list-protocols`, `--version`, `--help`, and the playback, track, and OSD controls used by the OSC and local playback. `--tui` is audio-first and keeps `vo=null`; it is not a terminal video output.
+Supported: `player FILE...`, `--tui`, `--gui`, `--gate` (GUI gate), `--fullscreen` and `--fs` (a window opens fullscreen unless `--fs=no` or `--geometry` is given), `--start`, `--playlist`, `--audio-file` and `--audio-files`, `--sub-file` and `--sub-files`, `--osc` and `--no-osc`, `--input-ipc-server`, `--audio-device` (Linux ALSA), `--geometry`, `--gpu-api=auto|vulkan|metal` (renderer backend; `auto` means `vulkan`, `metal` is macOS-only, any other value fails startup; readable as `options/gpu-api`), `--frames`, `--term-playing-msg`, `--list-protocols`, `--version`, `--help`, and the playback, track, and OSD controls used by the OSC and local playback. `--tui` is audio-first and keeps `vo=null`; it is not a terminal video output.
 
 Removed: `--ytdl*`, `--hls-bitrate`, `--lavfi-complex`, `--stream-dump`, `--stretch-dvd-subs`, the encoding group (`--o`, `--of`, `--ovc`, `--oac`, their option tables, `--orawts`, and metadata flags), the Windows window and capture group, the scripting options (`--script`, `--scripts`, `--script-opts`, and `--load-scripts=yes` fail with an unsupported-option error), `--audio-spdif`, and `--ad-lavc-*`. `--http-header-fields` and the other network groups were removed with the network modules.
 

@@ -1207,9 +1207,13 @@ def gate_hwdec(results, args):
         results.check("hwdec fallback", False, str(exc))
 
 
+def video_output_args(args):
+    return list(args) if args else ["--vo=null"]
+
+
 def gate_seek(results, args):
     entry = fixture_entry("h264")
-    with Mpv(["--vo=null", "--ao=null", "--pause=yes"]) as mpv:
+    with Mpv([*video_output_args(args), "--ao=null", "--pause=yes"]) as mpv:
         mpv.load(fixture_path(entry))
         mpv.wait_event("file-loaded", timeout=10)
         duration = mpv.wait_property(
@@ -1241,6 +1245,16 @@ def gate_seek(results, args):
                 timeout=5,
             )
         results.check("seek repeated 10", True)
+
+        mpv.load(fixture_path(fixture_entry("vp9")))
+        mpv.wait_event("file-loaded", timeout=10)
+        mpv.command("seek", 0.5, "absolute+exact")
+        mpv.wait_property(
+            "time-pos",
+            lambda value: isinstance(value, (int, float)) and abs(value - 0.5) <= 0.25,
+            timeout=5,
+        )
+        results.check("seek after loading the next file", True)
     results.check("seek exit", mpv.returncode == 0, f"exit {mpv.returncode}")
 
 
@@ -1509,7 +1523,7 @@ def gate_osc(results, args):
 
 def gate_osc_input(results, args):
     from osc_input import gate_osc_input as run_osc_input
-    run_osc_input(results, Mpv, fixture_entry, fixture_path)
+    run_osc_input(results, Mpv, fixture_entry, fixture_path, video_output_args(args))
 
 
 def gate_mpv_diff(results, args):

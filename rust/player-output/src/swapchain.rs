@@ -106,3 +106,21 @@ impl Drop for Swapchain {
         unsafe { sys::pl_swapchain_destroy(&mut self.sw) };
     }
 }
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn metal_swapchain_rejects_a_vulkan_device_and_a_missing_layer() {
+        let vulkan = Gpu::vulkan().expect("vulkan initializes headlessly");
+        let err = Swapchain::metal(&vulkan, core::ptr::null_mut(), 64, 64).err().expect("vulkan device refused");
+        assert_eq!(err, "a Metal swapchain needs a Metal device");
+        drop(vulkan);
+        let metal = Gpu::metal().expect("metal initializes headlessly");
+        let err = Swapchain::metal(&metal, core::ptr::null_mut(), 64, 64)
+            .err()
+            .expect("missing layer refused");
+        assert_eq!(err, "a Metal swapchain needs a CAMetalLayer");
+    }
+}

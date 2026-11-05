@@ -29,6 +29,7 @@ Automated playback is headless (`--vo=null --ao=null`), so GUI and renderer beha
 | 2026-11-03 | c12a3c3df488 | final | 7074160 | 7074160 | 15127360 | 12 | 17.56 | 15.9 | 34.65 | 14.25 | 218.22 | 2.96 | 2.97 | 44.45 | 10.41 | 1 | headless, 3 s clips |
 | 2026-11-04 | da0c70dbde2b | final | 7107568 | 7107568 | 12606880 | 8 | 17.22 | 16.36 | 38.47 | 14.05 | 262.41 | 2.51 | 2.78 | 11.7 | 12.11 | 1 | headless, 3 s clips |
 | 2026-11-04 | 3c2f7e61356d | final | 7881984 | 7881984 | 11796736 | 7 | 15.77 | 14.2 | 34.18 | 14.0 | 262.08 | 3.24 | 3.54 | 12.44 | 11.07 | 1 | headless, 3 s clips |
+| 2026-11-05 | 81adbe76aa1e-dirty | final | 7898752 | 7898752 | 13946992 | 7 | 19.18 | 22.71 | 75.78 | 13.62 | 256.09 | 2.15 | 2.73 | 180.03 | 39.76 | 1 | headless, 3 s clips; perf gate deferred |
 <!-- measure:end -->
 
 The `baseline` row is the original C player. The distributable budget is half of its unique closure, 29,542,136 B.

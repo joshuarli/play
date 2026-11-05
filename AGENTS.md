@@ -4,7 +4,7 @@ Player is a local-only media player built on a Rust playback engine, a minimal p
 
 ## Commands
 
-- `scripts/build.sh` builds the development player at `build/mpv`.
+- `scripts/build.sh` builds the development player at `build/mpv`. On macOS it and the Rust tests link `.work/deps/release`, so run `scripts/build-deps.sh` first.
 - `tests/run.sh suite` runs the full suite. `tests/run.sh <gate>` runs one gate.
 - `scripts/audit.sh` runs the FFmpeg manifest, build-surface, and local-only audits.
 - `scripts/build-deps.sh` builds the pinned release dependency closure under `.work/deps/release`.
@@ -13,7 +13,7 @@ Player is a local-only media player built on a Rust playback engine, a minimal p
 - `scripts/measure.sh final` checks the release budgets.
 - `make linux` builds the Linux dependency prefix and tarball in the pinned Alpine image; `scripts/linux-container.sh COMMAND` runs any command there, such as `tests/run.sh suite` or `scripts/audit-linux.sh`.
 - `cargo test --manifest-path rust/Cargo.toml` runs the Rust tests.
-- `build/mpv --tui FILE` runs the terminal player.
+- `build/mpv --tui FILE` runs the terminal player; `build/mpv --gpu-api=metal FILE` renders through libplacebo's Metal backend on macOS.
 
 ## Invariants
 

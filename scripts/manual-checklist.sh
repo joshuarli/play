@@ -82,6 +82,14 @@ Linux (real compositor, GPU, and sound card):
   [ ] 10-bit HEVC and AV1 decode with --hwdec=vaapi, and a decode GPU that differs from the display GPU.
   [ ] The tarball extracts and runs on a second musl host, if distributed.
 LINUX_CHECKS
+else
+    cat <<'METAL_CHECKS'
+Metal (--gpu-api=metal):
+  [ ] Beside --gpu-api=vulkan on a real display: color, scaling, subtitle and OSC placement, resize, fullscreen.
+  [ ] HDR/EDR content and an external or ProMotion display: frame pacing and tone mapping.
+  [ ] A non-Apple-Silicon Mac, if available; the carried patch was validated only on Apple GPUs.
+  [ ] Keyboard focus and window behavior match Vulkan.
+METAL_CHECKS
 fi
 
 echo
