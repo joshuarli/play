@@ -2032,15 +2032,29 @@ def gate_release(results, args):
     results.check("release: playback", proc.returncode == 0,
                   tail((proc.stdout + proc.stderr).splitlines(), 20))
 
+    placebo = frameworks / "libplacebo.387.dylib"
+    exported = subprocess.run(["nm", "-gU", str(placebo)], capture_output=True, text=True,
+                              timeout=30).stdout
+    results.check("release: bundled libplacebo has Metal",
+                  re.search(r"^\S+ T _pl_metal_create$", exported, re.MULTILINE) is not None)
+    spirv_cross = sorted(name for name in present if "spirv-cross" in name)
+    linked_placebo = subprocess.check_output(["otool", "-L", str(placebo)], text=True)
+    results.check("release: SPIRV-Cross linked statically",
+                  not spirv_cross and "spirv-cross" not in linked_placebo,
+                  ",".join(spirv_cross))
+
     from gui import PASS_LINE
-    proc = subprocess.run(
-        [str(binary), "--no-config", "--gui", "--gate", "--ao=null", "--geometry=640x480",
-         str(fixture_path(fixture_entry("h264")))],
-        capture_output=True, text=True, timeout=120,
-    )
-    results.check("release: renders through the bundled libplacebo",
-                  proc.returncode == 0 and PASS_LINE.search(proc.stdout) is not None,
-                  f"exit {proc.returncode}: " + tail((proc.stdout + proc.stderr).splitlines(), 20))
+    for api in ("vulkan", "metal"):
+        proc = subprocess.run(
+            [str(binary), "--no-config", "--gui", "--gate", "--ao=null", "--geometry=640x480",
+             f"--gpu-api={api}", str(fixture_path(fixture_entry("h264")))],
+            capture_output=True, text=True, timeout=120,
+        )
+        device = "Metal device" if api == "metal" else "Vulkan device"
+        results.check(f"release: renders through the bundled libplacebo ({api})",
+                      proc.returncode == 0 and PASS_LINE.search(proc.stdout) is not None
+                      and device in proc.stderr,
+                      f"exit {proc.returncode}: " + tail((proc.stdout + proc.stderr).splitlines(), 20))
 
     proc = subprocess.run(
         ["codesign", "--verify", "--deep", "--strict", str(app)],
