@@ -251,10 +251,11 @@ def main():
                           f"  p90 {latency['p90']:6.0f}  max {latency['max']:6.0f}"
                           f"  land {result['land_offset_s']:+.2f} s", flush=True)
         if options.mode in ("audio-cpu", "all"):
-            for label, player in players.items():
+            for label_name, player in players.items():
                 result = audio_cpu(player, path)
-                entry[f"audio_cpu_{label}"] = result
-                print(f"{name:11s} audio-only CPU {label:9s} {result['cpu_percent']:5.2f} %", flush=True)
+                entry[f"audio_cpu_{label_name}"] = result
+                print(f"{name:11s} audio-only CPU {label_name:9s} {result['cpu_percent']:5.2f} %",
+                      flush=True)
         if options.mode in ("frames", "all"):
             result = frame_drops(options.player, path, player_args=player_args)
             entry["frames"] = result

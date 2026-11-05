@@ -55,6 +55,7 @@ def run(results, env=None, extra_args=(), name="gui"):
         env = compositor.env
     command = gate_command(extra_args)
     process_env = os.environ.copy()
+    process_env.pop("PLAYER_OPTIONS", None)
     if env:
         process_env.update(env)
     if sys.platform.startswith("linux"):
