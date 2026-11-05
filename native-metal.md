@@ -3,9 +3,9 @@
 ## Status
 
 - **Goal:** a libplacebo Metal backend on macOS beside Vulkan/MoltenVK, chosen at run time with `--gpu-api`, shipped in `Player.app`, and measured against MoltenVK. The default stays Vulkan.
-- **Last accepted revision:** `8cdc0c8` (M2).
-- **Accepted:** M1 `410e9a3`, M3 `586688e` (Linux suite 385 passed; first run 13 m 06 s wall including the image and Linux dependency build), M2 `8cdc0c8`. **Red:** none. **Parked:** none.
-- **Next:** M4 (Metal backend in `player-output`).
+- **Last accepted revision:** `000c99b` (M7).
+- **Accepted:** M1 `410e9a3`, M3 `586688e` (Linux suite 385 passed; first run 13 m 06 s wall including the image and Linux dependency build), M2 `8cdc0c8`, M4 `743551c`, M5 `81adbe7` (suite 406 passed), M6 `bb83ce1` (suite 409 passed; distributable 21,845,744 B; timing budgets deferred: host busy), M7 `000c99b` (suite 410 passed; `seek --gpu-api=metal` 6 passed). **Red:** none. **Parked:** none.
+- **Next:** M8 (Vulkan vs Metal comparison).
 - **Resume:** "Execute `native-metal.md` from **Status**." First command: `scripts/build-deps.sh`.
 - **Learned:** the MR's own Metal suite passes on the patched v7.387.0 (go). This cargo nightly puts each test binary in its own `build/<pkg>/<hash>/out` directory, so dev ICD discovery uses a macOS cargo runner (`.cargo/pinned-moltenvk.sh` sets `VK_DRIVER_FILES`) for cargo-run processes and an ICD beside `build/mpv` for the dev binary. Cargo finds `.cargo/config.toml` from the working directory, so it lives at the repo root.
 
