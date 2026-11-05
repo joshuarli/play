@@ -210,7 +210,7 @@
       "kind": "corrupt",
       "path": "corrupt.mkv",
       "role": "failure",
-      "sha256": "b6bd39013655b20421a7697a935be131b62cfbef23654f02664ef65df19bc0da"
+      "sha256": "5c23b2436cafbfad1b96306466e45c072e289569d54ae67a431fafa512656fcf"
     },
     "external-ass": {
       "audio": [],
@@ -383,7 +383,7 @@
       "duration": 3,
       "path": "hevc.mkv",
       "role": "corpus",
-      "sha256": "306667b26b245f90e2126989c34d62445644388034ea1316726c8e120be9d6c6",
+      "sha256": "0a8eee98c841c36eef37f3a1959e0a18e61deced20e49e122dccc7eedfd71703",
       "subtitle": [],
       "video": [
         "hevc"
@@ -410,14 +410,14 @@
       "audio": [
         "mp3"
       ],
-      "bytes": 240640,
+      "bytes": 238744,
       "channels": [
         2
       ],
       "duration": 2,
       "path": "mpeg4.avi",
       "role": "corpus",
-      "sha256": "2f9b04ff866c3c168dd52efaac072bab5d2048aec4352853f1274631af226a8b",
+      "sha256": "cf56a15813ebb3846a99e8eea90d837d7500745812846b37c11ccdcf97ba03af",
       "subtitle": [],
       "video": [
         "mpeg4"

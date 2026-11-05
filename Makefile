@@ -5,7 +5,7 @@ APP := dist/Player.app
 INSTALLED_APP := $(DESTDIR)$(PREFIX)/Player.app
 INSTALLED_PLAYER := $(DESTDIR)$(BINDIR)/player
 
-.PHONY: all release linux install uninstall
+.PHONY: all release linux test install uninstall
 
 ifeq ($(shell uname -s),Darwin)
 all: release
@@ -28,6 +28,31 @@ install: linux
 
 uninstall:
 	rm -f "$(INSTALLED_PLAYER)"
+endif
+
+test:
+ifeq ($(shell uname -s),Darwin)
+	@mkdir -p .work/tmp .work/fixtures .work/deps
+	@if git rev-parse --git-dir >/dev/null 2>&1; then \
+		d=$$(git rev-parse --git-dir)/info; mkdir -p "$$d"; \
+		grep -qxF '.work/' "$$d/exclude" 2>/dev/null || echo '.work/' >> "$$d/exclude"; \
+	fi
+	@command -v brew >/dev/null 2>&1 || { echo 'error: Homebrew required for macOS test deps' >&2; exit 1; }
+	@if ! pkg-config --exists libplacebo vulkan 2>/dev/null; then \
+		brew install libplacebo vulkan-loader vulkan-headers molten-vk shaderc; \
+	fi
+	@FFMPEG_BIN_DIR=""; \
+	if command -v ffmpeg >/dev/null 2>&1 && ffmpeg -hide_banner -encoders 2>/dev/null | grep -q 'libx264'; then \
+		:; \
+	elif [ -x /opt/homebrew/Cellar/ffmpeg/9.0.2_1/bin/ffmpeg ]; then \
+		FFMPEG_BIN_DIR=/opt/homebrew/Cellar/ffmpeg/9.0.2_1/bin; \
+	elif command -v brew >/dev/null 2>&1 && [ -x "$$(brew --prefix 2>/dev/null)/opt/ffmpeg/bin/ffmpeg" ]; then \
+		FFMPEG_BIN_DIR="$$(brew --prefix)/opt/ffmpeg/bin"; \
+	fi; \
+	if [ -n "$$FFMPEG_BIN_DIR" ]; then export PATH="$$FFMPEG_BIN_DIR:$$PATH"; fi; \
+	scripts/build.sh && tests/run.sh suite
+else
+	scripts/linux-container.sh tests/run.sh suite
 endif
 
 release:
