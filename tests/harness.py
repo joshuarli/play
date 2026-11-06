@@ -1535,7 +1535,7 @@ def gate_gui(results, args):
     from gui import run as run_gui
     run_gui(results)
     if sys.platform == "darwin":
-        run_gui(results, extra_args=["--gpu-api=metal"], name="gui (metal)")
+        run_gui(results, extra_args=["--gpu-api=vulkan"], name="gui (vulkan)")
 
 
 def gate_gpu_api(results, args):
@@ -1550,15 +1550,25 @@ def gate_gpu_api(results, args):
             and not any("mvk-info" in line or "Vulkan device" in line for line in metal),
             tail(devices + [line for line in metal if "mvk-" in line], 8),
         )
+    vulkan = run_gui(results, extra_args=["--gpu-api=vulkan"], name="gpu-api: vulkan gui")
+    if vulkan is not None:
+        devices = [line for line in vulkan if "libplacebo: GPU 0:" in line]
+        results.check(
+            "gpu-api: vulkan opens two Vulkan devices and no Metal",
+            len(devices) == 2
+            and all("Vulkan device" in line for line in devices)
+            and not any("Metal device" in line for line in vulkan),
+            tail(devices, 8),
+        )
     default = run_gui(results, name="gpu-api: default gui")
     if default is not None:
         results.check(
-            "gpu-api: default is Vulkan",
-            any("Vulkan device" in line for line in default)
-            and not any("Metal device" in line for line in default),
+            "gpu-api: default is Metal",
+            any("Metal device" in line for line in default)
+            and not any("mvk-info" in line or "Vulkan device" in line for line in default),
             tail([line for line in default if "libplacebo: GPU 0:" in line]),
         )
-    for value, expected in (("metal", "metal"), ("vulkan", "vulkan"), ("auto", "vulkan")):
+    for value, expected in (("metal", "metal"), ("vulkan", "vulkan"), ("auto", "metal")):
         with Mpv(["--vo=null", "--ao=null", f"--gpu-api={value}"]) as mpv:
             got = mpv.get_property("options/gpu-api")
         results.check(f"gpu-api: options/gpu-api reads {expected} for {value}",

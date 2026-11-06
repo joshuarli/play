@@ -32,7 +32,7 @@ The macOS build needs the Xcode command-line tools, the pinned Rust toolchain, M
 scripts/build-deps.sh
 scripts/build.sh
 build/mpv FILE
-build/mpv --gpu-api=metal FILE
+build/mpv --gpu-api=vulkan FILE
 ```
 
 Build the release app:
@@ -62,7 +62,7 @@ dist/Player.app/Contents/MacOS/player --tui FILE
 
 Kitty-capable terminals show the embedded cover at full resolution; others use truecolor half-blocks. See [Terminal UI](tui-design.md).
 
-The bundle carries its own pinned dylibs, Vulkan loader, and MoltenVK, and its libplacebo includes the Metal backend (`--gpu-api=metal`); FFmpeg, dav1d, and zlib are linked statically into the executable. It does not use Homebrew, a global FFmpeg, or `usr` at runtime. It is ad-hoc signed and not notarized. Do not distribute the build without a signing identity. It declares `MPVBUNDLE` and the supported document types in `Info.plist`.
+The bundle carries its own pinned dylibs, Vulkan loader, and MoltenVK, and its libplacebo includes the default Metal backend beside Vulkan (`--gpu-api=vulkan`); FFmpeg, dav1d, and zlib are linked statically into the executable. It does not use Homebrew, a global FFmpeg, or `usr` at runtime. It is ad-hoc signed and not notarized. Do not distribute the build without a signing identity. It declares `MPVBUNDLE` and the supported document types in `Info.plist`.
 
 ## Local-only contract
 

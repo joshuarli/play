@@ -13,7 +13,7 @@ Player is a local-only media player built on a Rust playback engine, a minimal p
 - `scripts/measure.sh final` checks the release budgets.
 - `make linux` builds the Linux dependency prefix and tarball in the pinned Alpine image; `scripts/linux-container.sh COMMAND` runs any command there, such as `tests/run.sh suite` or `scripts/audit-linux.sh`.
 - `cargo test --manifest-path rust/Cargo.toml` runs the Rust tests.
-- `build/mpv --tui FILE` runs the terminal player; `build/mpv --gpu-api=metal FILE` renders through libplacebo's Metal backend on macOS.
+- `build/mpv --tui FILE` runs the terminal player; `build/mpv FILE` renders through libplacebo's native Metal backend on macOS (`--gpu-api=vulkan` selects Vulkan/MoltenVK).
 
 ## Invariants
 

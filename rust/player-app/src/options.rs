@@ -87,7 +87,7 @@ impl Default for Options {
             audio_files: Vec::new(),
             geometry: None,
             quiet: false,
-            gpu_api: GpuApi::Vulkan,
+            gpu_api: GpuApi::default(),
         }
     }
 }
@@ -291,7 +291,7 @@ fn needs_value(name: &str) -> bool {
 
 fn parse_gpu_api(value: &str) -> Result<GpuApi, String> {
     match value {
-        "auto" => Ok(GpuApi::Vulkan),
+        "auto" => Ok(GpuApi::default()),
         name => GpuApi::from_name(name).ok_or_else(|| format!("--gpu-api: unsupported value {name}")),
     }
 }
@@ -368,8 +368,8 @@ mod tests {
 
     #[test]
     fn gpu_api_selects_a_backend_and_rejects_unknown_values() {
-        assert_eq!(parse(&args(&[])).unwrap().gpu_api, GpuApi::Vulkan);
-        assert_eq!(parse(&args(&["--gpu-api=auto"])).unwrap().gpu_api, GpuApi::Vulkan);
+        assert_eq!(parse(&args(&[])).unwrap().gpu_api, GpuApi::default());
+        assert_eq!(parse(&args(&["--gpu-api=auto"])).unwrap().gpu_api, GpuApi::default());
         assert_eq!(parse(&args(&["--gpu-api", "vulkan"])).unwrap().gpu_api, GpuApi::Vulkan);
         #[cfg(target_os = "macos")]
         assert_eq!(parse(&args(&["--gpu-api=metal"])).unwrap().gpu_api, GpuApi::Metal);

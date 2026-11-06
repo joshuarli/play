@@ -35,7 +35,7 @@ fn gray(window: &mut MacWindow, width: i32, height: i32) {
 fn main() {
     let api = match std::env::args().nth(1) {
         Some(name) => GpuApi::from_name(&name).unwrap_or_else(|| panic!("unknown backend {name}")),
-        None => GpuApi::Vulkan,
+        None => GpuApi::default(),
     };
     let mut window = MacWindow::open("player", 320, 240, api).expect("window opens");
     assert_eq!((window.width(), window.height()), (640, 480));

@@ -22,7 +22,7 @@ FFmpeg is configured with `--disable-network` and a `file`-only protocol allowli
 
 ## Playback pipeline
 
-FFmpeg demuxes every container and decodes video. `player-media` can open VideoToolbox and VA-API decoders with a software fallback; the scheduler currently requests software decode for playback. Symphonia decodes AAC, ALAC, FLAC, MP3, Opus, PCM, and Vorbis from packets supplied by the FFmpeg demuxer. A Rust mixer and resampler feed the audio sink; a decode error logs and skips the packet, while argument, unsupported, and panic statuses fail the audio path. The renderer is libplacebo. On Linux it runs over Vulkan and the Wayland surface. On macOS `--gpu-api` chooses Vulkan over MoltenVK (the default; `auto` means Vulkan) or libplacebo's Metal backend; the choice applies to both devices a frame uses, the engine's headless device that renders YUV to RGBA and reads it back, and the window's device that uploads that RGBA, blends the overlay, and presents. `player-output::Gpu` holds either backend over one `pl_gpu`, so textures, uploads, downloads, and rendering share one path; only device and swapchain creation differ. On Metal the window presents straight to its `CAMetalLayer` and no Vulkan instance or MoltenVK is loaded. A failed Metal device is a startup error, with no retry on Vulkan.
+FFmpeg demuxes every container and decodes video. `player-media` can open VideoToolbox and VA-API decoders with a software fallback; the scheduler currently requests software decode for playback. Symphonia decodes AAC, ALAC, FLAC, MP3, Opus, PCM, and Vorbis from packets supplied by the FFmpeg demuxer. A Rust mixer and resampler feed the audio sink; a decode error logs and skips the packet, while argument, unsupported, and panic statuses fail the audio path. The renderer is libplacebo. On Linux it runs over Vulkan and the Wayland surface. On macOS `--gpu-api` chooses libplacebo's Metal backend (the default; `auto` means Metal) or Vulkan over MoltenVK; the choice applies to both devices a frame uses, the engine's headless device that renders YUV to RGBA and reads it back, and the window's device that uploads that RGBA, blends the overlay, and presents. `player-output::Gpu` holds either backend over one `pl_gpu`, so textures, uploads, downloads, and rendering share one path; only device and swapchain creation differ. On Metal the window presents straight to its `CAMetalLayer` and no Vulkan instance or MoltenVK is loaded. A failed Metal device is a startup error, with no retry on Vulkan.
 
 The scheduler uses the audio device position as the master clock when audio is present, falls back to system time when drained or paused, and drops late video frames. The null audio sink paces in real time so headless playback keeps normal timing. Null video still decodes and counts presented frames without creating a GPU surface.
 
@@ -50,7 +50,7 @@ Linux x86-64 musl uses the same engine and application as macOS. The platform sp
 
 | Area | macOS | Linux |
 |---|---|---|
-| Video | libplacebo, Vulkan over MoltenVK or Metal (`--gpu-api`), Cocoa | libplacebo, Vulkan, Wayland |
+| Video | libplacebo, Metal (default) or Vulkan (`--gpu-api`), Cocoa | libplacebo, Vulkan, Wayland |
 | Audio | CoreAudio | ALSA |
 | Window | `player-display/bridge/metal_window.m` | Wayland client |
 | Build | `scripts/build.sh`, `scripts/release.sh` | `scripts/build-linux.sh` |

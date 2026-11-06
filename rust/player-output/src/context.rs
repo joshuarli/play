@@ -10,6 +10,19 @@ pub enum GpuApi {
     Metal,
 }
 
+impl Default for GpuApi {
+    fn default() -> Self {
+        #[cfg(target_os = "macos")]
+        {
+            GpuApi::Metal
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            GpuApi::Vulkan
+        }
+    }
+}
+
 impl GpuApi {
     pub fn from_name(name: &str) -> Option<Self> {
         match name {

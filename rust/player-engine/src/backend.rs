@@ -428,7 +428,7 @@ impl Default for StartState {
             volume: 1.0,
             muted: false,
             paused: false,
-            gpu_api: GpuApi::Vulkan,
+            gpu_api: GpuApi::default(),
         }
     }
 }
