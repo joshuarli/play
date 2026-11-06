@@ -1843,7 +1843,7 @@ def gate_rust_link(results, args):
                   "C playloop symbol present")
 
     proc = subprocess.run(
-        ["cargo", "test", "--manifest-path", str(ROOT / "rust" / "Cargo.toml"),
+        ["cargo", "test", "--manifest-path", str(ROOT / "Cargo.toml"),
          "-p", "player-core", "-p", "player-backend"],
         cwd=str(ROOT), capture_output=True, text=True, timeout=300,
     )
@@ -1872,13 +1872,13 @@ def gate_meta(results, args):
         "scripts/audit.sh",
         "scripts/manual-checklist.sh", "tests/run.sh", "tests/harness.py",
         "tests/fixtures/gen.sh", "tests/fixtures/manifest.json",
-        "rust/Cargo.toml", "rust/Cargo.lock",
-        "rust/player-audio/Cargo.toml",
+        "Cargo.toml", "Cargo.lock",
+        "crates/player-audio/Cargo.toml",
         "vendor/symphonia/LICENSE", "vendor/symphonia/symphonia/Cargo.toml",
     ]
     missing = [name for name in required_paths if not (ROOT / name).exists()]
     results.check("meta: required files", not missing, f"missing: {', '.join(missing)}")
-    dirs = ["rust", "scripts", "tests", "docs"]
+    dirs = ["crates", "scripts", "tests", "docs"]
     missing_dirs = [name for name in dirs if not (ROOT / name).is_dir()]
     results.check("meta: campaign directories", not missing_dirs,
                   f"missing: {', '.join(missing_dirs)}")
@@ -1999,7 +1999,7 @@ def gate_release(results, args):
         f"build={plist.get('CFBundleVersion')!r} expected={version!r}",
     )
 
-    release_binary = ROOT / "rust" / "target" / "dist" / "player"
+    release_binary = ROOT / "target" / "dist" / "player"
     try:
         stamp = json.loads((app / "Contents/Resources/build.json").read_text())
         expected = hashlib.sha256(release_binary.read_bytes()).hexdigest()
@@ -2099,7 +2099,7 @@ def gate_linux_rust_link(results, args):
                                 nm, re.MULTILINE),
                   "C playloop symbol present")
     proc = subprocess.run(
-        ["cargo", "test", "--manifest-path", str(ROOT / "rust" / "Cargo.toml"),
+        ["cargo", "test", "--manifest-path", str(ROOT / "Cargo.toml"),
          "--target", "x86_64-unknown-linux-musl"],
         cwd=str(ROOT), capture_output=True, text=True, timeout=600,
         env={

@@ -15,7 +15,7 @@ if [ "$(uname -s)" = "Linux" ]; then
     export RUSTFLAGS="${RUSTFLAGS:-} -C target-feature=-crt-static"
 fi
 
-cargo build --manifest-path "$ROOT/rust/Cargo.toml" -p player-app
+cargo build -p player-app
 
 if [ "$(uname -s)" = "Linux" ]; then
     OUTPUT="$ROOT/build-linux/mpv"
@@ -23,7 +23,7 @@ else
     OUTPUT="$ROOT/build/mpv"
 fi
 mkdir -p "$(dirname "$OUTPUT")"
-install -m 755 "${CARGO_TARGET_DIR:-$ROOT/rust/target}/debug/player" "$OUTPUT"
+install -m 755 "${CARGO_TARGET_DIR:-$ROOT/target}/debug/player" "$OUTPUT"
 if [ "$(uname -s)" = "Darwin" ]; then
     mkdir -p "$ROOT/build/vulkan/icd.d"
     cp "$ROOT/.work/deps/release/share/vulkan/icd.d/MoltenVK_icd.json" "$ROOT/build/vulkan/icd.d/"

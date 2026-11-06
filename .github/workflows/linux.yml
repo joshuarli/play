@@ -41,7 +41,7 @@ jobs:
             .work/deps/ffmpeg-sdk
             .work/deps/player-linux/target
             .work/home/cargo
-          key: player-linux-deps-${{ hashFiles('scripts/build-deps-linux.sh', 'ffmpeg-sdk.lock.json', 'scripts/fetch-ffmpeg-sdk.sh', 'docker/linux/Dockerfile', 'rust/Cargo.lock', 'rust-toolchain.toml') }}
+          key: player-linux-deps-${{ hashFiles('scripts/build-deps-linux.sh', 'ffmpeg-sdk.lock.json', 'scripts/fetch-ffmpeg-sdk.sh', 'docker/linux/Dockerfile', 'Cargo.lock', 'rust-toolchain.toml') }}
           restore-keys: |
             player-linux-deps-
 

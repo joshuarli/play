@@ -33,7 +33,7 @@ The script downloads the pinned asset into `.work/tmp/ffmpeg-sdk` and verifies i
 
 ## Link
 
-`rust/player-media/build.rs` uses the shared checks in `rust/player-build/src/ffmpeg_sdk.rs`:
+`crates/player-media/build.rs` uses the shared checks in `crates/player-build/src/ffmpeg_sdk.rs`:
 
 - The prefix is `FFMPEG_PREFIX` if set, otherwise `.work/deps/ffmpeg-sdk/$TARGET`. There is no fallback to a system, Homebrew, or older local prefix.
 - The prefix must pass the same manifest check as the fetch script. A missing prefix, a `tools` archive, a different release, or a Homebrew prefix fails the build with a message that names the fetch command.

@@ -48,11 +48,11 @@ if ! nm "$ROOT/build/mpv" | rg 'player_engine' >/dev/null; then
     exit 1
 fi
 
-if [ -e "$ROOT/rust/player-lua" ] || rg -n -i 'mlua|lua-src|luajit' "$ROOT/rust/Cargo.lock" >/dev/null; then
+if [ -e "$ROOT/crates/player-lua" ] || rg -n -i 'mlua|lua-src|luajit' "$ROOT/Cargo.lock" >/dev/null; then
     echo "audit: the Lua crate or its dependencies remain" >&2
     exit 1
 fi
-if rg -n 'lua_State|luaL_newstate' "$ROOT/rust" >/dev/null; then
+if rg -n 'lua_State|luaL_newstate' "$ROOT/crates" >/dev/null; then
     echo "audit: Lua API references remain in the Rust tree" >&2
     exit 1
 fi
@@ -70,7 +70,7 @@ if [ -e "$ROOT/dist/Player.app/Contents/Frameworks/libplayer_release.dylib" ]; t
 fi
 
 if command -v cargo-audit >/dev/null; then
-    (cd "$ROOT/rust" && cargo audit)
+    (cd "$ROOT" && cargo audit)
 else
     echo "audit: cargo-audit not installed; advisory scan skipped" >&2
 fi

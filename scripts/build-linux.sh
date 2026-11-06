@@ -24,7 +24,7 @@ export PKG_CONFIG_PATH="$DEPS/lib/pkgconfig"
 # with Wayland in NEEDED dies in the loader before main.
 export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$ROOT=. -C target-feature=-crt-static -C link-arg=-static-libgcc"
 cargo build --profile dist --target "$RUST_TRIPLE" \
-    --manifest-path "$ROOT/rust/Cargo.toml" -p player-app
+    --manifest-path "$ROOT/Cargo.toml" -p player-app
 
 BINARY="$RUST_TARGET_DIR/$RUST_TRIPLE/dist/player"
 install -m 755 "$BINARY" "$BUILD_DIR/mpv"

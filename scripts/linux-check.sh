@@ -21,6 +21,6 @@ done
 
 ls /usr/share/vulkan/icd.d/lvp_icd*.json >/dev/null 2>&1 || fail "missing Mesa lavapipe ICD (mesa-vulkan-swrast)"
 
-[ -f "$ROOT/rust/Cargo.toml" ] || fail "missing rust/Cargo.toml"
+[ -f "$ROOT/Cargo.toml" ] || fail "missing Cargo.toml"
 
 printf 'linux-check: Alpine x86_64 container has the build tools, Vulkan, Wayland, and ALSA.\n'

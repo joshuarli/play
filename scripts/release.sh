@@ -15,7 +15,7 @@ unset PKG_CONFIG_PATH
 export CFLAGS="-I$PREFIX/include"
 export LDFLAGS="-L$PREFIX/lib -Wl,-dead_strip"
 
-cargo build --profile dist --manifest-path "$ROOT/rust/Cargo.toml" -p player-app
+cargo build --profile dist -p player-app
 
 python3 "$ROOT/scripts/bundle.py" "$ROOT"
 printf 'release app: %s\n' "$ROOT/dist/Player.app"

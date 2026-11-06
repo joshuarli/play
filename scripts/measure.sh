@@ -408,7 +408,7 @@ def closure():
 
 
 def osc_attribution():
-    osc = ROOT / "rust" / "player-app" / "src" / "osc.rs"
+    osc = ROOT / "crates" / "player-app" / "src" / "osc.rs"
     return {"osc_bytes": osc.stat().st_size, "osc_lines": len(osc.read_text().splitlines())}
 
 
@@ -454,7 +454,7 @@ def protocols():
 
 
 def features():
-    manifest = (ROOT / "rust" / "Cargo.toml").read_text()
+    manifest = (ROOT / "Cargo.toml").read_text()
     profiles = [
         line.strip().strip("[]").removeprefix("profile.")
         for line in manifest.splitlines()

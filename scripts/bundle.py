@@ -12,7 +12,7 @@ from pathlib import Path
 
 ROOT = Path(sys.argv[1] if len(sys.argv) > 1 else ".").resolve()
 PREFIX = ROOT / ".work/deps/release"
-RUST_TARGET = ROOT / "rust/target/dist"
+RUST_TARGET = ROOT / "target/dist"
 BINARY = RUST_TARGET / "player"
 APP = ROOT / "dist/Player.app"
 MACOS = APP / "Contents/MacOS"
@@ -24,7 +24,7 @@ MOLTENVK_ICD = PREFIX / "share/vulkan/icd.d/MoltenVK_icd.json"
 
 
 def package_version():
-    for line in (ROOT / "rust/player-app/Cargo.toml").read_text().splitlines():
+    for line in (ROOT / "crates/player-app/Cargo.toml").read_text().splitlines():
         key, separator, value = line.partition("=")
         if separator and key.strip() == "version":
             return value.strip().strip('"')

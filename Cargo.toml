@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
-members = ["player-app", "player-audio", "player-build", "player-core", "player-display", "player-engine", "player-backend", "player-gui", "player-media", "player-overlay", "player-output", "player-tui"]
+members = ["crates/*"]
+exclude = ["vendor"]
 
 [profile.dev]
 opt-level = 2
@@ -24,4 +25,4 @@ codegen-units = 1
 strip = "debuginfo"
 
 [patch.crates-io]
-ruopus = { path = "../vendor/ruopus" }
+ruopus = { path = "vendor/ruopus" }

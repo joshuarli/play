@@ -31,7 +31,7 @@ def gate_command(extra_args):
         "run",
         "--quiet",
         "--manifest-path",
-        str(ROOT / "rust" / "Cargo.toml"),
+        str(ROOT / "Cargo.toml"),
         "-p",
         "player-gui",
         "--",
