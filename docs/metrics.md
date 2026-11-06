@@ -30,6 +30,7 @@ Automated playback is headless (`--vo=null --ao=null`), so GUI and renderer beha
 | 2026-11-04 | da0c70dbde2b | final | 7107568 | 7107568 | 12606880 | 8 | 17.22 | 16.36 | 38.47 | 14.05 | 262.41 | 2.51 | 2.78 | 11.7 | 12.11 | 1 | headless, 3 s clips |
 | 2026-11-04 | 3c2f7e61356d | final | 7881984 | 7881984 | 11796736 | 7 | 15.77 | 14.2 | 34.18 | 14.0 | 262.08 | 3.24 | 3.54 | 12.44 | 11.07 | 1 | headless, 3 s clips |
 | 2026-11-05 | 81adbe76aa1e-dirty | final | 7898752 | 7898752 | 13946992 | 7 | 19.18 | 22.71 | 75.78 | 13.62 | 256.09 | 2.15 | 2.73 | 180.03 | 39.76 | 1 | headless, 3 s clips; perf gate deferred |
+| 2026-11-05 | a6ccaba15479-dirty | final | 7898912 | 7898912 | 13946992 | 7 | 12.16 | 12.28 | 58.67 | 13.58 | 262.27 | 3.06 | 3.44 | 51.51 | 21.76 | 1 | headless, 3 s clips |
 <!-- measure:end -->
 
 The `baseline` row is the original C player. The distributable budget is half of its unique closure, 29,542,136 B.
@@ -75,6 +76,53 @@ Results from 2026-11-03 on the native-OSC build. The host was not quiet for ever
 | Fullscreen, OSC shown | 0-1 drops, 29-33% CPU, 414-437 MB | |
 
 The libass-to-native overlay change (`gui-cpu`, five interleaved runs against `d0e94ad`) measured: paused 0.4-1.0% against 0.4-1.0%, playing 20.2% against 19.2% (h264) and 24.4% against 25.8% (VP9), and seek-bar hover 14.3% against 9.0% (h264) but 12.0% against 11.6% (VP9). The host went busy before the closing check, so the run does not count as a gate; the h264 hover gap is open as PLAY-29.
+
+## Metal backend
+
+Candidate `--gpu-api=metal` measured against baseline `--gpu-api=vulkan` on the same release binary (`dist/Player.app/Contents/MacOS/player`, revision `a6ccaba`). The host was quiet throughout (`perf-gate-ready` passed before and after each mode with load <= 0.38/core; earlier measurements taken on a busy host were deferred). Both backends pay the two-device headless-render CPU readback and window re-upload (PLAY-31).
+
+### GUI CPU and memory
+
+Medians and max-min spread across five interleaved candidate and baseline runs on 1080p fixtures at 1280x720 (`scripts/bench.py gui-cpu --player-arg=--gpu-api=metal --baseline-arg=--gpu-api=vulkan`):
+
+| Fixture | Scenario | Metal CPU | Vulkan CPU | Metal RSS | Vulkan RSS |
+|---|---|---:|---:|---:|---:|
+| h264-gop10 | Paused, OSC hidden | 0.60% ± 0.22% | 0.78% ± 0.20% | 208 MB | 234 MB |
+| h264-gop10 | Paused, OSC shown | 0.79% ± 0.22% | 0.78% ± 0.19% | 293 MB | 334 MB |
+| h264-gop10 | Seek bar hover (60 Hz) | 5.88% ± 0.65% | 5.38% ± 0.43% | 297 MB | 321 MB |
+| h264-gop10 | Playing, OSC hidden | 27.29% ± 0.60% | 22.72% ± 1.11% | 270 MB | 288 MB |
+| vp9-opus | Paused, OSC hidden | 0.78% ± 0.21% | 0.78% ± 0.22% | 184 MB | 210 MB |
+| vp9-opus | Paused, OSC shown | 0.79% ± 0.21% | 0.78% ± 0.20% | 268 MB | 308 MB |
+| vp9-opus | Seek bar hover (60 Hz) | 5.73% ± 1.10% | 4.88% ± 0.70% | 279 MB | 296 MB |
+| vp9-opus | Playing, OSC hidden | 32.13% ± 1.18% | 25.78% ± 0.64% | 247 MB | 262 MB |
+
+Metal holds 15–41 MB less resident memory across all GUI scenarios. Paused CPU and seek-bar hover are at parity within spread. Active playback draws 4.5–6.4% more CPU on Metal under the two-device readback pipeline.
+
+### Fullscreen frame drops
+
+Medians and spread across three interleaved rounds of 8 s fullscreen playback (`scripts/bench.py frames`):
+
+| Fixture | OSC | Metal drops | Vulkan drops | Metal CPU | Vulkan CPU | Metal RSS | Vulkan RSS |
+|---|---|---:|---:|---:|---:|---:|---:|
+| h264-gop10 | hidden | 12 (11–15) | 13 (11–16) | 30.0% ± 0.5% | 26.1% ± 0.8% | 269 MB ± 5 MB | 289 MB ± 8 MB |
+| h264-gop10 | shown | 18 (15–19) | 21 (12–21) | 41.4% ± 1.2% | 37.2% ± 1.2% | 358 MB ± 14 MB | 378 MB ± 14 MB |
+| vp9-opus | hidden | 47 (45–56) | 43 (42–49) | 35.4% ± 6.4% | 30.2% ± 1.2% | 254 MB ± 15 MB | 274 MB ± 13 MB |
+| vp9-opus | shown | 51 (51–62) | 54 (53–55) | 46.8% ± 14.3% | 40.0% ± 1.0% | 341 MB ± 5 MB | 352 MB ± 22 MB |
+
+Frame drop counts are essentially identical between backends (within 1–4 frames over 8 s). Metal maintains a consistent ~20 MB RSS reduction fullscreen.
+
+### Seek latency
+
+Medians and spread across three interleaved rounds of 15 seeks per precision and fixture (`scripts/bench.py seek`):
+
+| Fixture | Precision | Metal median ms | Vulkan median ms | Metal p90 ms | Vulkan p90 ms | Metal max ms | Vulkan max ms |
+|---|---|---:|---:|---:|---:|---:|---:|
+| h264-gop10 | exact | 242.7 ± 23.7 | 243.6 ± 34.3 | 321.5 | 304.0 | 341.5 | 355.3 |
+| h264-gop10 | keyframes | 200.5 ± 5.2 | 193.3 ± 14.1 | 235.1 | 236.6 | 245.3 | 240.7 |
+| vp9-opus | exact | 275.9 ± 20.4 | 263.4 ± 3.6 | 321.7 | 314.9 | 358.0 | 348.7 |
+| vp9-opus | keyframes | 205.3 ± 11.9 | 202.4 ± 13.3 | 227.6 | 237.5 | 235.3 | 241.0 |
+
+Seek-to-playing latency is at parity across backends (h264 exact medians differ by under 1 ms; all other comparisons are within the run-to-run spread).
 
 ## Linux
 
