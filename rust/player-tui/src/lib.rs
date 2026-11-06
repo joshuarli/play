@@ -307,30 +307,14 @@ impl Model {
 
         self.draw_art(&mut canvas, rect, mode);
 
-        if top >= 2 {
-            canvas.put(2, 0, "◆", self.accent, BG, false);
-            canvas.put(4, 0, "PLAYER", FAINT, BG, false);
-            let format = if self.snapshot.track.format.is_empty() {
-                "LOCAL FILE".to_owned()
-            } else {
-                format!("LOCAL · {}", self.snapshot.track.format.to_uppercase())
-            };
-            canvas.put_right(cols.saturating_sub(2), 0, &format, FAINT, BG);
-        }
-
         let title_y = top + art_h + 1;
-        let glyph = if self.snapshot.playing { "▶" } else { "‖" };
         let title = if self.snapshot.track.title.is_empty() {
             "NO TITLE"
         } else {
             &self.snapshot.track.title
         };
-        let room = cols.saturating_sub(6);
-        let title = truncate(title, room);
-        let label_width = 1 + 2 + title.chars().map(char_width).sum::<usize>();
-        let label_x = cols.saturating_sub(label_width) / 2;
-        canvas.put(label_x, title_y, glyph, self.accent, BG, true);
-        canvas.put(label_x + 3, title_y, &title, FG, BG, true);
+        let title = truncate(title, cols.saturating_sub(4));
+        canvas.center(title_y, &title, FG, BG, true);
 
         let meta_y = title_y + 1;
         center_segments(
@@ -369,7 +353,7 @@ impl Model {
         canvas.put(art_x, times_y, &clock(self.snapshot.pos), FAINT, BG, false);
         canvas.put_right(art_x + art_w, times_y, &duration, FAINT, BG);
 
-        let hint_y = times_y + 2;
+        let hint_y = rows - 1;
         let status = self
             .notice
             .as_ref()
@@ -537,9 +521,13 @@ mod tests {
         let mut model = model("Paper Satellites");
         let (canvas, rect) = model.frame(136, 39, ArtMode::Blocks);
         assert_eq!((rect.w, rect.h, rect.x, rect.y), (52, 26, 42, 2));
-        assert!(canvas.render(None).contains("Paper Satellites"));
-        assert!(canvas.render(None).contains("LOCAL · FLAC"));
-        assert!(canvas.render(None).contains("space pause"));
+        let rendered = canvas.render(None);
+        assert!(rendered.contains("Paper Satellites"));
+        assert!(!rendered.contains("PLAYER"));
+        assert!(!rendered.contains("LOCAL"));
+        assert!(!rendered.contains('▶'));
+        let last: String = canvas.cells[38 * 136..39 * 136].iter().map(|cell| cell.ch).collect();
+        assert!(last.contains("space pause"));
     }
 
     #[test]

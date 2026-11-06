@@ -4,29 +4,29 @@ Chosen direction: **Sleeve** (A). It gives the cover the room, keeps one metadat
 
 ## Layout
 
-At 136 × 39 the cover is 52 × 26 cells, centered. The block is vertically centered; the only chrome is a faint top line (`◆ PLAYER` and `LOCAL · FLAC`).
+At 136 × 39 the cover is 52 × 26 cells, centered. The block is vertically centered, with no header; the hint line sits on the last terminal row.
 
 ```text
-  ◆ PLAYER                                              LOCAL · FLAC
+                           ┌──────────────────────┐
+                           │                      │
+                           │      album art       │
+                           │                      │
+                           └──────────────────────┘
 
-                          ┌──────────────────────┐
-                          │                      │
-                          │      album art       │
-                          │                      │
-                          └──────────────────────┘
+                                Paper Satellites
+                          Mira Vale · Low Light · 2026
 
-                              ▶  Paper Satellites
-                         Mira Vale · Low Light · 2026
+                           ━━━━━━━━━━━━━●────────────
+                           1:42                  3:58
 
-                          ━━━━━━━━━━━━━●────────────
-                          1:42                  3:58
 
-                 space pause  ←/→ seek  +/− volume  q quit
+
+        space pause   ←/→ seek   +/− volume   m mute   n/p track   q quit
 ```
 
 The cover width is `min(52, cols - 20, (rows - 13) * 2)`, with a 16-cell floor and a 52-cell cap. The height is half the width because a terminal cell is about twice as tall as it is wide. Below 30 × 16 the UI prints `TERMINAL TOO SMALL` instead of distorting the frame.
 
-The accent is sampled from the cover and used only for the play state, the progress fill, the knob, and the top marker. Metadata uses three levels: title (bold), artist (dim), album and year (faint). Long titles truncate with an ellipsis using display width, not byte or character count.
+The accent is sampled from the cover and used only for the progress fill, the knob, and the transient HUD line. Metadata uses three levels: title (bold), artist (dim), album and year (faint). Long titles truncate with an ellipsis using display width, not byte or character count.
 
 ## Rejected
 
