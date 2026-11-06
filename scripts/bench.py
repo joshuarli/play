@@ -85,6 +85,25 @@ def summary(values):
     }
 
 
+def pick_seek_target(rng, before, duration, min_dist):
+    pos = before if isinstance(before, (int, float)) else 0.0
+    intervals = []
+    if pos - min_dist >= 1.0:
+        intervals.append((1.0, pos - min_dist))
+    if pos + min_dist <= duration - 1.0:
+        intervals.append((pos + min_dist, duration - 1.0))
+    if not intervals:
+        return rng.uniform(1.0, max(1.0, duration - 1.0))
+    total_len = sum(b - a for a, b in intervals)
+    r = rng.uniform(0, total_len)
+    acc = 0.0
+    for a, b in intervals:
+        if acc + (b - a) >= r:
+            return a + (r - acc)
+        acc += (b - a)
+    return intervals[-1][1]
+
+
 def seek_latency(player, path, precision, runs, seed, player_args=()):
     """Time from the seek command until time-pos leaves its pre-seek value and then advances."""
     rng = random.Random(seed)
@@ -96,9 +115,7 @@ def seek_latency(player, path, precision, runs, seed, player_args=()):
         duration = mpv.get_property("duration")
         for _ in range(runs):
             before = mpv.get_property("time-pos")
-            target = rng.uniform(5, duration - 10)
-            while abs(target - before) < SEEK_MIN_DISTANCE:
-                target = rng.uniform(5, duration - 10)
+            target = pick_seek_target(rng, before, duration, SEEK_MIN_DISTANCE)
             started = time.monotonic()
             mpv.command("seek", f"{target:.3f}", f"absolute+{precision}")
             landed = resumed = None
