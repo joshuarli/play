@@ -178,6 +178,22 @@ class Mpv:
             raise Failure(f"command {args} failed: {response.get('error')}")
         return response.get("data")
 
+    def command_batch(self, *commands):
+        with self.write_lock:
+            messages = []
+            for command in commands:
+                request_id = self.next_request_id
+                self.next_request_id += 1
+                messages.append(json.dumps(
+                    {"command": list(command), "request_id": request_id}))
+            payload = ("\n".join(messages) + "\n").encode("utf-8")
+            if not self.sock:
+                raise Failure("IPC socket is closed")
+            try:
+                self.sock.sendall(payload)
+            except OSError as exc:
+                raise Failure(f"IPC write failed: {exc}") from exc
+
     def get_property(self, name):
         return self.command("get_property", name)
 
@@ -1211,8 +1227,47 @@ def video_output_args(args):
     return list(args) if args else ["--vo=null"]
 
 
+SEEK_EXACT_SECONDS = 0.1
+H264_GOP_SECONDS = 1.0
+
+
+def wait_restart_after(mpv, mark, timeout=5):
+    def matches():
+        with mpv.cond:
+            for index in range(mark, len(mpv.events)):
+                if mpv.events[index].get("event") == "playback-restart":
+                    return index
+        return None
+
+    return mpv.wait_until(matches, timeout, "playback-restart after seek")
+
+
+def restarts_since(mpv, mark):
+    with mpv.cond:
+        return sum(1 for event in mpv.events[mark:]
+                   if event.get("event") == "playback-restart")
+
+
 def gate_seek(results, args):
     entry = fixture_entry("h264")
+
+    def seek_once(mpv, label, target, precision, bound):
+        with mpv.cond:
+            mark = len(mpv.events)
+        mpv.command("seek", target, f"absolute+{precision}")
+        try:
+            wait_restart_after(mpv, mark)
+        except Failure as exc:
+            results.check(f"seek {label}", False, str(exc))
+            return
+        position = mpv.try_get_property("time-pos")
+        ok = isinstance(position, (int, float)) and abs(position - target) <= bound
+        results.check(f"seek {label}", ok,
+                      f"position {position} vs {target} bound {bound}")
+        restarts = restarts_since(mpv, mark)
+        results.check(f"seek {label}: one playback-restart", restarts == 1,
+                      f"{restarts} playback-restart events")
+
     with Mpv([*video_output_args(args), "--ao=null", "--pause=yes"]) as mpv:
         mpv.load(fixture_path(entry))
         mpv.wait_event("file-loaded", timeout=10)
@@ -1226,35 +1281,39 @@ def gate_seek(results, args):
             ("end", max(0.0, duration - 0.3)),
         ]
         for label, target in targets:
-            mpv.command("seek", target, "absolute+exact")
-            mpv.wait_property(
-                "time-pos",
-                lambda value, target=target: (
-                    isinstance(value, (int, float)) and abs(value - target) <= 0.25),
-                timeout=5,
-            )
-            results.check(f"seek {label}", True)
+            seek_once(mpv, f"{label} exact", target, "exact", SEEK_EXACT_SECONDS)
+        for label, target in targets:
+            seek_once(mpv, f"{label} keyframe", target, "keyframes", H264_GOP_SECONDS)
 
         for index in range(10):
             target = (index * 0.27) % max(duration - 0.4, 0.1)
-            mpv.command("seek", target, "absolute+exact")
-            mpv.wait_property(
-                "time-pos",
-                lambda value, target=target: (
-                    isinstance(value, (int, float)) and abs(value - target) <= 0.3),
-                timeout=5,
-            )
+            seek_once(mpv, f"repeated {index}", target, "exact", SEEK_EXACT_SECONDS)
         results.check("seek repeated 10", True)
+
+        with mpv.cond:
+            mark = len(mpv.events)
+        mpv.command_batch(
+            ("seek", duration / 4, "absolute+exact"),
+            ("seek", duration * 3 / 4, "absolute+exact"),
+        )
+        try:
+            wait_restart_after(mpv, mark)
+        except Failure as exc:
+            results.check("seek back to back", False, str(exc))
+        else:
+            position = mpv.try_get_property("time-pos")
+            ok = (isinstance(position, (int, float))
+                  and abs(position - duration * 3 / 4) <= SEEK_EXACT_SECONDS)
+            results.check("seek back to back", ok,
+                          f"position {position} vs {duration * 3 / 4}")
+            restarts = restarts_since(mpv, mark)
+            results.check("seek back to back: one playback-restart",
+                          restarts == 1,
+                          f"{restarts} playback-restart events")
 
         mpv.load(fixture_path(fixture_entry("vp9")))
         mpv.wait_event("file-loaded", timeout=10)
-        mpv.command("seek", 0.5, "absolute+exact")
-        mpv.wait_property(
-            "time-pos",
-            lambda value: isinstance(value, (int, float)) and abs(value - 0.5) <= 0.25,
-            timeout=5,
-        )
-        results.check("seek after loading the next file", True)
+        seek_once(mpv, "after loading the next file", 0.5, "exact", SEEK_EXACT_SECONDS)
     results.check("seek exit", mpv.returncode == 0, f"exit {mpv.returncode}")
 
 

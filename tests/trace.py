@@ -96,7 +96,7 @@ def canon_order(events):
     i = 0
     while i < len(events):
         if events[i] == "playback-restart" and i + 1 < len(events) \
-                and events[i + 1] == "seek":
+                and events[i + 1] == "seek" and (not out or out[-1] != "seek"):
             out += ["seek", "playback-restart"]
             i += 2
             continue
@@ -356,6 +356,9 @@ def selftest():
     assert canon_order(["seek", "playback-restart", "playback-restart",
                         "end-file", "idle"]) == [
         "seek", "playback-restart", "end-file"]
+    assert canon_order(["seek", "playback-restart", "seek",
+                        "playback-restart"]) == [
+        "seek", "playback-restart", "seek", "playback-restart"]
     assert canon_order(["start-file", "end-file", "audio-reconfig"]) == [
         "start-file", "end-file"]
     assert canon_order(["idle", "idle", "start-file", "end-file"]) == [

@@ -107,7 +107,7 @@ pub trait VideoOutput {
 #[derive(Clone, Debug)]
 pub enum Command {
     Pause(bool),
-    Seek(f64, SeekPrecision),
+    Seek(f64, SeekPrecision, u64),
     SetSpeed(f64),
     SwitchAudio(usize),
     DisableAudio,
@@ -132,8 +132,16 @@ pub struct Stats {
     pub frames_pending: u64,
     pub audio_chunks: u64,
     pub seeks_completed: u64,
+    pub seek_generation: u64,
+    pub seek_completed_generation: u64,
     pub commands_ignored: u64,
     pub failures: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct InFlightSeek {
+    generation: u64,
+    target: f64,
 }
 
 const PUMP_PACKETS_PER_STEP: usize = 8;
@@ -170,6 +178,7 @@ pub struct Scheduler<D, A, V, AO, VO> {
     subs_visible: bool,
     audio_disabled: bool,
     sub_cursor: f64,
+    in_flight_seek: Option<InFlightSeek>,
 }
 
 impl<D, A, V, AO, VO> Scheduler<D, A, V, AO, VO>
@@ -209,13 +218,17 @@ where
             subs_visible: true,
             audio_disabled: false,
             sub_cursor: 0.0,
+            in_flight_seek: None,
         }
     }
 
     pub fn send(&mut self, command: Command) {
-        if let (Command::Seek(..), Some(pending @ Command::Seek(..))) = (&command, self.commands.last_mut()) {
-            *pending = command;
-            return;
+        if let Command::Seek(_, _, generation) = &command {
+            self.stats.seek_generation = *generation;
+            if matches!(self.commands.last(), Some(Command::Seek(..))) {
+                *self.commands.last_mut().expect("seek already queued") = command;
+                return;
+            }
         }
         self.commands.push(command);
     }
@@ -238,12 +251,34 @@ where
     }
 
     fn present_frame(&mut self, frame: DecodedFrame) -> Result<(), String> {
+        let pts = frame.pts;
         match self.video_out.present(frame.pts, frame.id)? {
             PresentOutcome::Delivered => self.stats.delivered += 1,
             PresentOutcome::Missing => self.stats.missing += 1,
             PresentOutcome::Discarded => self.stats.discarded += 1,
         }
+        if self
+            .in_flight_seek
+            .is_some_and(|seek| pts >= seek.target - SEEK_FRAME_TOLERANCE)
+        {
+            self.complete_seek();
+        }
         Ok(())
+    }
+
+    fn complete_seek(&mut self) {
+        if let Some(seek) = self.in_flight_seek.take() {
+            self.stats.seek_completed_generation = seek.generation;
+        }
+    }
+
+    fn note_audio_resumed(&mut self) {
+        if self.in_flight_seek.is_some()
+            && !self.demux.has_video()
+            && self.audio_out.queued_seconds() > 0.0
+        {
+            self.complete_seek();
+        }
     }
 
     fn drop_late(&mut self, frame: DecodedFrame) {
@@ -393,7 +428,9 @@ where
                         self.stats.commands_ignored += 1;
                     }
                 }
-                Command::Seek(target, precision) => self.command_seek(target, precision, now),
+                Command::Seek(target, precision, generation) => {
+                    self.command_seek(target, precision, generation, now)
+                }
                 Command::SetSpeed(speed) => {
                     if matches!(
                         *self.machine.state(),
@@ -453,11 +490,12 @@ where
         }
     }
 
-    fn command_seek(&mut self, target: f64, precision: SeekPrecision, now: f64) {
+    fn command_seek(&mut self, target: f64, precision: SeekPrecision, generation: u64, now: f64) {
         if self.machine.apply(Event::Seek).is_err() {
             self.stats.commands_ignored += 1;
             return;
         }
+        self.in_flight_seek = None;
         let resume = match *self.machine.state() {
             State::Seeking { resume } => resume,
             _ => SeekResume::Playing,
@@ -523,14 +561,19 @@ where
             }
         }
         self.stats.seeks_completed += 1;
+        self.in_flight_seek = Some(InFlightSeek { generation, target });
         self.clock
             .seek_rebase(target, now + preroll_start.elapsed().as_secs_f64());
         let _ = self.machine.apply(Event::SeekDone);
-        if matches!(self.machine.state(), State::Paused { .. })
-            && let Err(message) = self.present_paused(now)
-        {
-            self.fail(message);
-            return;
+        if matches!(self.machine.state(), State::Paused { .. }) {
+            if let Err(message) = self.present_paused(now) {
+                self.fail(message);
+                return;
+            }
+            self.complete_seek();
+        }
+        if self.eof_seen {
+            self.complete_seek();
         }
         if self.eof_seen && resume == SeekResume::Playing {
             let _ = self.machine.apply(Event::Eof);
@@ -659,6 +702,7 @@ where
                 return true;
             }
         }
+        self.note_audio_resumed();
         false
     }
 

@@ -173,33 +173,46 @@ def seek_targets(seed, duration, count):
     return targets
 
 
-def wait_seek_complete(mpv, target, bound, timeout=SEEK_TIMEOUT, started=None):
+def wait_for_restart(mpv, restarts, timeout):
+    try:
+        mpv.wait_until(
+            lambda: mpv.event_count("playback-restart") > restarts,
+            timeout,
+            "playback-restart after seek",
+        )
+    except harness.Failure:
+        return False
+    return True
+
+
+def wait_seek_complete(mpv, target, bound, timeout=SEEK_TIMEOUT, started=None,
+                       restarts=0):
     began = time.monotonic() if started is None else started
-    last = None
-    while True:
-        position = mpv.try_get_property("time-pos")
-        if isinstance(position, (int, float)):
-            last = position
-            if abs(position - target) <= bound:
-                return {
-                    "ok": True,
-                    "latency_ms": (time.monotonic() - began) * 1000,
-                    "position": position,
-                    "error_s": abs(position - target),
-                }
-        if time.monotonic() - began >= timeout:
-            break
-        time.sleep(0.005)
-    if last is not None and abs(last - target) > bound:
-        return {"ok": False, "reason": "landed out of bound", "position": last,
-                "error_s": abs(last - target)}
-    return {"ok": False, "reason": "timeout", "position": last, "error_s": None}
+    remaining = max(0.0, timeout - (time.monotonic() - began))
+    if not wait_for_restart(mpv, restarts, remaining):
+        return {"ok": False, "reason": "timeout",
+                "position": mpv.try_get_property("time-pos"), "error_s": None}
+    position = mpv.try_get_property("time-pos")
+    if not isinstance(position, (int, float)):
+        return {"ok": False, "reason": "timeout", "position": None, "error_s": None}
+    error = abs(position - target)
+    if error <= bound:
+        return {
+            "ok": True,
+            "latency_ms": (time.monotonic() - began) * 1000,
+            "position": position,
+            "error_s": error,
+        }
+    return {"ok": False, "reason": "landed out of bound", "position": position,
+            "error_s": error}
 
 
 def seek_trial(mpv, target, precision, bound):
     started = time.monotonic()
+    restarts = mpv.event_count("playback-restart")
     mpv.command("seek", f"{target:.3f}", f"absolute+{precision}")
-    outcome = wait_seek_complete(mpv, target, bound, started=started)
+    outcome = wait_seek_complete(mpv, target, bound, started=started,
+                                 restarts=restarts)
     trial = {
         "target": round(target, 3),
         "precision": precision,
@@ -219,7 +232,10 @@ def prepare_seek_player(mpv, path):
     mpv.load(path)
     mpv.wait_event("file-loaded", timeout=30)
     mpv.set_property("pause", True)
+    restarts = mpv.event_count("playback-restart")
     mpv.command("seek", 0, "absolute+exact")
+    if not wait_for_restart(mpv, restarts, 10):
+        raise harness.Failure("no playback-restart after the preparation seek")
     mpv.wait_property(
         "time-pos",
         lambda value: isinstance(value, (int, float)) and abs(value) <= 1.0,

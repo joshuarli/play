@@ -379,6 +379,8 @@ pub struct EngineStatus {
     pub discarded: u64,
     pub flushed: u64,
     pub frames_pending: u64,
+    pub seek_generation: u64,
+    pub seek_completed_generation: u64,
     pub drained: u64,
     pub video_width: u32,
     pub video_height: u32,
@@ -406,6 +408,8 @@ impl Default for EngineStatus {
             discarded: 0,
             flushed: 0,
             frames_pending: 0,
+            seek_generation: 0,
+            seek_completed_generation: 0,
             drained: 0,
             video_width: 0,
             video_height: 0,
@@ -419,7 +423,7 @@ impl Default for EngineStatus {
 #[derive(Debug)]
 enum WorkerCommand {
     SetPaused(bool),
-    Seek(f64, SeekPrecision),
+    Seek(f64, SeekPrecision, u64),
     SetSpeed(f64),
     SetVolume(f32),
     SetMuted(bool),
@@ -436,6 +440,7 @@ pub struct SchedulerEngine {
     state: Arc<Mutex<EngineStatus>>,
     frames: Option<mpsc::Receiver<PresentedFrame>>,
     drained: AtomicU64,
+    seek_generation: AtomicU64,
     worker: Option<thread::JoinHandle<()>>,
 }
 
@@ -517,6 +522,7 @@ impl SchedulerEngine {
                 state,
                 frames: Some(frames_rx),
                 drained: AtomicU64::new(0),
+                seek_generation: AtomicU64::new(0),
                 worker: Some(worker),
             }),
             Ok(Err(message)) => {
@@ -539,7 +545,8 @@ impl SchedulerEngine {
     }
 
     pub fn seek(&self, seconds: f64, precision: SeekPrecision) {
-        self.send(WorkerCommand::Seek(seconds.max(0.0), precision));
+        let generation = self.seek_generation.fetch_add(1, Ordering::Relaxed) + 1;
+        self.send(WorkerCommand::Seek(seconds.max(0.0), precision, generation));
     }
 
     pub fn set_speed(&self, speed: f64) {
@@ -589,6 +596,7 @@ impl SchedulerEngine {
             .unwrap_or_else(|poison| poison.into_inner())
             .clone();
         status.drained = self.drained.load(Ordering::Relaxed);
+        status.seek_generation = self.seek_generation.load(Ordering::Relaxed);
         status
     }
 
@@ -717,7 +725,7 @@ fn run_worker(
         scheduler.open();
         if start.paused {
             scheduler.send(Command::Pause(true));
-            scheduler.send(Command::Seek(0.0, SeekPrecision::Exact));
+            scheduler.send(Command::Seek(0.0, SeekPrecision::Exact, 0));
         }
         Ok((scheduler, duration, video_width, video_height))
     };
@@ -799,8 +807,8 @@ impl Worker {
     fn apply(&mut self, state: &Arc<Mutex<EngineStatus>>, now: f64, command: WorkerCommand) {
         match command {
             WorkerCommand::SetPaused(paused) => self.scheduler.send(Command::Pause(paused)),
-            WorkerCommand::Seek(seconds, precision) => {
-                self.scheduler.send(Command::Seek(seconds, precision))
+            WorkerCommand::Seek(seconds, precision, generation) => {
+                self.scheduler.send(Command::Seek(seconds, precision, generation))
             }
             WorkerCommand::SetSpeed(speed) => self.scheduler.send(Command::SetSpeed(speed)),
             WorkerCommand::SetVolume(volume) => {
@@ -851,6 +859,7 @@ impl Worker {
             status.discarded = stats.discarded;
             status.flushed = stats.flushed;
             status.frames_pending = stats.frames_pending;
+            status.seek_completed_generation = stats.seek_completed_generation;
             status.volume = volume;
             status.muted = muted;
             status.subtitle_text = subtitle_text;

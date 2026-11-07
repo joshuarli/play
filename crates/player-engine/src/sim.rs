@@ -690,7 +690,10 @@ mod tests {
         h.run(
             900,
             DT,
-            &[(30, Command::Seek(3.0, SeekPrecision::Exact)), (120, Command::Seek(0.5, SeekPrecision::Exact))],
+            &[
+                (30, Command::Seek(3.0, SeekPrecision::Exact, 1)),
+                (120, Command::Seek(0.5, SeekPrecision::Exact, 2)),
+            ],
         );
         assert_eq!(h.sim.state(), State::Ended);
         assert_eq!(h.stats().seeks_completed, 2);
@@ -705,7 +708,7 @@ mod tests {
         h.run(25, DT, &[]);
         let presented_before = h.sim.video_output().delivered.len();
         let pushes_before = h.sim.audio_output().log.len();
-        h.sim.send(Command::Seek(9.0, SeekPrecision::Exact));
+        h.sim.send(Command::Seek(9.0, SeekPrecision::Exact, 1));
         h.run(50, DT, &[]);
         let presented: Vec<f64> = h.sim.video_output().delivered[presented_before..]
             .iter()
@@ -736,7 +739,7 @@ mod tests {
         let mut h = Harness::new(FakeDemux::av(14.0, 25.0, 0.04).with_keyframes(5.0), false);
         h.run(25, DT, &[]);
         let presented_before = h.sim.video_output().delivered.len();
-        h.sim.send(Command::Seek(9.0, SeekPrecision::Keyframe));
+        h.sim.send(Command::Seek(9.0, SeekPrecision::Keyframe, 1));
         h.run(30, DT, &[]);
         let presented: Vec<f64> = h.sim.video_output().delivered[presented_before..]
             .iter()
@@ -751,12 +754,12 @@ mod tests {
     #[test]
     fn repeated_rapid_seeks_land_on_last_target() {
         let mut h = Harness::new(FakeDemux::av(4.0, 25.0, 0.04), false);
-        h.run(60, DT, &[(10, Command::Seek(3.5, SeekPrecision::Exact))]);
-        h.sim.send(Command::Seek(0.2, SeekPrecision::Exact));
-        h.sim.send(Command::Seek(2.8, SeekPrecision::Exact));
-        h.sim.send(Command::Seek(1.1, SeekPrecision::Exact));
-        h.sim.send(Command::Seek(3.9, SeekPrecision::Exact));
-        h.sim.send(Command::Seek(0.7, SeekPrecision::Exact));
+        h.run(60, DT, &[(10, Command::Seek(3.5, SeekPrecision::Exact, 1))]);
+        h.sim.send(Command::Seek(0.2, SeekPrecision::Exact, 2));
+        h.sim.send(Command::Seek(2.8, SeekPrecision::Exact, 3));
+        h.sim.send(Command::Seek(1.1, SeekPrecision::Exact, 4));
+        h.sim.send(Command::Seek(3.9, SeekPrecision::Exact, 5));
+        h.sim.send(Command::Seek(0.7, SeekPrecision::Exact, 6));
         h.sim.step(h.now);
         h.now += DT;
         assert_eq!(h.sim.stats().seeks_completed, 2, "queued seeks collapse to the last target");
@@ -775,12 +778,106 @@ mod tests {
     }
 
     #[test]
+    fn back_to_back_seeks_complete_only_the_last_generation() {
+        let mut h = Harness::new(FakeDemux::av(4.0, 25.0, 0.04), false);
+        h.sim.open();
+        for _ in 0..30 {
+            h.step_checked(DT);
+        }
+        h.sim.send(Command::Seek(3.0, SeekPrecision::Exact, 1));
+        h.sim.send(Command::Seek(1.0, SeekPrecision::Exact, 2));
+        let mut completed = vec![0u64];
+        for _ in 0..400 {
+            h.step_checked(DT);
+            completed.push(h.stats().seek_completed_generation);
+            if h.sim.state() == State::Ended {
+                break;
+            }
+        }
+        assert_eq!(h.stats().seeks_completed, 1, "the queued first seek must not execute");
+        assert!(
+            completed.iter().all(|generation| *generation != 1),
+            "a superseded seek completed: {completed:?}"
+        );
+        assert_eq!(h.stats().seek_completed_generation, 2);
+    }
+
+    #[test]
+    fn paused_seek_completes_when_the_frame_is_presented() {
+        let mut h = Harness::new(FakeDemux::av(2.0, 25.0, 0.04), false);
+        h.sim.open();
+        for _ in 0..30 {
+            h.step_checked(DT);
+        }
+        h.sim.send(Command::Pause(true));
+        h.step_checked(DT);
+        let presented = h.sim.video_output().delivered.len();
+        assert_eq!(h.stats().seek_completed_generation, 0);
+        h.sim.send(Command::Seek(1.0, SeekPrecision::Exact, 7));
+        h.step_checked(DT);
+        assert_eq!(
+            h.sim.video_output().delivered.len(),
+            presented + 1,
+            "the paused seek presents exactly one frame"
+        );
+        assert_eq!(h.stats().seek_completed_generation, 7);
+        assert!(matches!(h.sim.state(), State::Paused { .. }));
+    }
+
+    #[test]
+    fn audio_only_seek_completes_when_audio_resumes() {
+        let mut h = Harness::new(FakeDemux::build(1.0, 0.0, 0.04, 1, false, false), false);
+        h.sim.open();
+        for _ in 0..10 {
+            h.step_checked(DT);
+        }
+        h.sim.send(Command::Seek(0.5, SeekPrecision::Exact, 3));
+        let mut completed = false;
+        for _ in 0..100 {
+            h.step_checked(DT);
+            if h.stats().seek_completed_generation == 3 {
+                completed = true;
+                break;
+            }
+        }
+        assert!(completed, "audio-only seek never completed: {:?}", h.stats());
+    }
+
+    #[test]
+    fn seek_at_eof_completes_once() {
+        let mut h = Harness::new(FakeDemux::av(1.0, 25.0, 0.04), false);
+        h.sim.open();
+        for _ in 0..5 {
+            h.step_checked(DT);
+        }
+        h.sim.send(Command::Seek(5.0, SeekPrecision::Exact, 2));
+        let mut completions = 0;
+        let mut previous = h.stats().seek_completed_generation;
+        for _ in 0..300 {
+            h.step_checked(DT);
+            let current = h.stats().seek_completed_generation;
+            if current == 2 && previous != 2 {
+                completions += 1;
+            }
+            previous = current;
+            if h.sim.state() == State::Ended {
+                break;
+            }
+        }
+        assert_eq!(h.stats().seek_completed_generation, 2);
+        assert_eq!(completions, 1, "the eof seek completed more than once");
+    }
+
+    #[test]
     fn seek_while_paused_stays_paused() {
         let mut h = Harness::new(FakeDemux::av(2.0, 25.0, 0.04), false);
         h.run(
             400,
             DT,
-            &[(10, Command::Pause(true)), (20, Command::Seek(1.0, SeekPrecision::Exact))],
+            &[
+                (10, Command::Pause(true)),
+                (20, Command::Seek(1.0, SeekPrecision::Exact, 1)),
+            ],
         );
         assert!(matches!(h.sim.state(), State::Paused { .. }));
         assert_eq!(h.stats().seeks_completed, 1);
@@ -1008,7 +1105,7 @@ mod tests {
         for _ in 0..40 {
             h.step_checked(DT);
         }
-        h.sim.send(Command::Seek(3.0, SeekPrecision::Exact));
+        h.sim.send(Command::Seek(3.0, SeekPrecision::Exact, 1));
         for _ in 0..600 {
             h.step_checked(DT);
             if h.sim.state() == State::Ended {

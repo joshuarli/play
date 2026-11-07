@@ -78,6 +78,7 @@ pub struct App {
     idle_sent: bool,
     pending_failure: Option<String>,
     pending_pause: Option<bool>,
+    seek_restarted: u64,
     deferred_events: Vec<NativeValue>,
     ready_events: Vec<NativeValue>,
 }
@@ -131,6 +132,7 @@ impl App {
             idle_sent: false,
             pending_failure: None,
             pending_pause: None,
+            seek_restarted: 0,
             deferred_events: Vec::new(),
             ready_events: Vec::new(),
         }
@@ -385,6 +387,7 @@ impl App {
         self.end_sent = false;
         self.idle_sent = false;
         self.pending_failure = None;
+        self.seek_restarted = 0;
         self.aid = if self.aid_disabled {
             None
         } else {
@@ -529,14 +532,32 @@ impl App {
     }
 
     fn seek_to(&mut self, seconds: f64, precision: EngineSeek) {
+        if let Some(completed) = self.unreported_seek_completion() {
+            self.seek_restarted = completed;
+            self.send_event(ipc::event("playback-restart", Vec::new()));
+        }
         if let Some(backend) = &self.backend {
             backend.seek_to(seconds.max(0.0), precision);
         }
         self.eof_reached = false;
         self.end_sent = false;
         self.send_event(ipc::event("seek", Vec::new()));
-        self.send_event(ipc::event("playback-restart", Vec::new()));
-        self.send_event(ipc::event("playback-restart", Vec::new()));
+    }
+
+    fn unreported_seek_completion(&self) -> Option<u64> {
+        let completed = self.status().seek_completed_generation;
+        (completed > self.seek_restarted).then_some(completed)
+    }
+
+    fn seek_completion_event(&mut self, status: &EngineStatus) -> Option<NativeValue> {
+        if status.seek_generation > self.seek_restarted
+            && status.seek_completed_generation >= status.seek_generation
+        {
+            self.seek_restarted = status.seek_generation;
+            Some(ipc::event("playback-restart", Vec::new()))
+        } else {
+            None
+        }
     }
 
     fn defer_eof_reconfigs(&mut self) {
@@ -987,6 +1008,9 @@ impl App {
             self.frame_serial += 1;
         }
         let status = backend.status();
+        if let Some(event) = self.seek_completion_event(&status) {
+            self.send_event(event);
+        }
         if self
             .options
             .frames
@@ -2059,6 +2083,33 @@ mod tests {
         assert!(app.end_sent && app.eof_reached);
         app.sync_eof(false, false);
         assert!(!app.end_sent && !app.eof_reached);
+    }
+
+    #[test]
+    fn playback_restart_fires_once_per_completed_seek_generation() {
+        let mut app = App::new(Options::default());
+        let mut status = EngineStatus {
+            seek_generation: 1,
+            seek_completed_generation: 1,
+            ..EngineStatus::default()
+        };
+        assert!(app.seek_completion_event(&status).is_some());
+        assert!(app.seek_completion_event(&status).is_none());
+        status.seek_generation = 2;
+        status.seek_completed_generation = 1;
+        assert!(
+            app.seek_completion_event(&status).is_none(),
+            "a newer seek has not completed yet"
+        );
+        status.seek_completed_generation = 2;
+        assert!(app.seek_completion_event(&status).is_some());
+        status.seek_generation = 4;
+        status.seek_completed_generation = 4;
+        assert!(
+            app.seek_completion_event(&status).is_some(),
+            "a superseded generation emits nothing while the newest completes once"
+        );
+        assert!(app.seek_completion_event(&status).is_none());
     }
 
     #[test]
