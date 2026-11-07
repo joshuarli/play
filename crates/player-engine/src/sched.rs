@@ -614,6 +614,10 @@ where
                 }
                 DemuxEvent::Eof => {
                     self.eof_seen = true;
+                    if self.prerolling_video {
+                        self.prerolling_video = false;
+                        self.audio_backlog.extend(std::mem::take(&mut self.startup_audio));
+                    }
                     match self.audio.finish() {
                         Ok(chunks) => {
                             for chunk in chunks {

@@ -461,6 +461,16 @@ mod tests {
     }
 
     #[test]
+    fn preroll_audio_survives_eof_before_the_first_video_frame() {
+        let mut h = Harness::with_video_delay(FakeDemux::av(0.4, 25.0, 0.04), 10);
+        h.sim.enable_video_preroll();
+        h.run(300, DT, &[]);
+        assert_eq!(h.sim.state(), State::Ended);
+        assert_eq!(h.sim.audio_output().log.len(), 11, "preroll audio was orphaned");
+        assert_eq!(h.stats().presented, 10);
+    }
+
+    #[test]
     fn audio_only_plays_to_ended() {
         let mut h = Harness::new(FakeDemux::build(1.0, 0.0, 0.04, 1, false, false), false);
         h.run(400, DT, &[]);
