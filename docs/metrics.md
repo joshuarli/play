@@ -56,13 +56,20 @@ Removing Lua took the executable from 7,600,640 B to 7,074,160 B; headless timin
 
 ## Interactive benchmarks
 
-`scripts/bench.py MODE` measures what a user feels in the GUI player, against Homebrew mpv where it can. Fixtures are generated into `.work/fixtures/bench`: `h264-gop10.mp4` (1080p24 x264, 250-frame GOP, AAC) and `vp9-opus.webm` (1080p VP9 realtime, 150-frame GOP, Opus). Every mode checks `perf-gate-ready` before and `perf-gate-ready -1` after, writes `.work/tmp/bench-MODE.json` (with the `--player-arg` options appended to the name, as in `bench-frames-gpu-api-metal.json`), and exits 75 with `perf gate deferred: host busy` when either check fails.
+`scripts/bench.py MODE` measures what a user feels in the GUI player, against Homebrew mpv where it can. Fixtures are generated into `.work/fixtures/bench`: `h264-gop10.mp4` (1080p24 x264, 250-frame GOP, AAC) and `vp9-opus.webm` (1080p VP9 realtime, 150-frame GOP, Opus); the workload fixtures are `video-1080p.mp4`, `av-1080p.mp4` and `video-4k.mp4`, each 30 s so a steady playback window fits. Every mode checks `perf-gate-ready` before and `perf-gate-ready -1` after, writes `.work/bench/<timestamp>-<mode>.json` (with the `--player-arg` options appended to the name, as in `bench-frames-gpu-api-metal.json`), and exits 75 with `perf gate deferred: host busy` when either check fails.
+
+CPU is the process's own CPU time from `proc_pid_rusage` on macOS and `/proc/PID/schedstat` on Linux, not the 10 ms `ps` time, so a 3 s window resolves below 0.01%.
 
 - `seek`: random absolute seeks at least 13 s from the current position; latency runs from the command to the first `time-pos` advance past the target. Medians of 15 per fixture and precision (`exact`, `keyframes`); mpv runs exact only.
 - `audio-cpu`: CPU percent over 10 s of `--no-video --ao=null` playback.
 - `frames`: fullscreen playback with the OSC hidden then shown: dropped frames, CPU, and RSS.
 - `gui-cpu --baseline OLD_PLAYER` or `--baseline-arg OPTION`: interleaved candidate and baseline runs of four scenarios (paused with the OSC hidden or shown, the pointer sweeping the seek bar at 60 Hz, playing with the OSC hidden), medians and max-min spread of `--runs`.
+- `workloads`: `paused-open`, `ended-open`, and `playing` on each workload fixture. `playing` warms up until `time-pos` passes 0.5 s, then measures CPU, memory and the engine counters the player exposes (`frame-drop-count`, `estimated-vf-fps`) over `--seconds` of steady playback. It reports CPU-s per media-s and fails a trial when `time-pos` does not advance at least 90% of the wall window. A fixture shorter than warmup + window + 2 s is regenerated, or the run stops if the recipe itself is too short.
 - `--player-arg OPTION` (repeatable) passes an option such as `--gpu-api=metal` to the measured player; `--baseline-arg` does the same for the `gui-cpu` baseline, so one binary can be compared against itself. Every row names the options it ran with.
+
+`--runs` is the pass count for every mode when given, so a paired run over `--baseline` gets exactly that many interleaved pairs. Without it, seek uses 15 samples and the paired modes keep 3 pairs for `audio-cpu`, `frames` and `workloads` and 5 for `gui-cpu`.
+
+Per-metric absolute floors live in `perfstat.METRIC_FLOORS` and enter the D2 tolerance as `max(5% of the baseline median, floor)`: 0.5 percentage points for `cpu_percent`, 0.01 CPU-s per media-s, 8 MB for either RSS figure, 5 ms for `latency_ms`, and 0.01 s for `error_s`. They are provisional until the C5 A/A run sets them from its spread.
 
 Results from 2026-11-03 on the native-OSC build. The host was not quiet for every run, so treat them as indicative:
 

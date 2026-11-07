@@ -83,16 +83,23 @@ FIXTURE_RECIPES = {
         "file": "video-4k.mp4",
         "fps": 24.0,
         "gop_frames": 24,
-        "duration": 10.0,
+        "duration": 30.0,
         "args": [
-            "-f", "lavfi", "-i", "testsrc2=s=3840x2160:r=24:d=10",
+            "-f", "lavfi", "-i", "testsrc2=s=3840x2160:r=24:d=30",
             "-c:v", "libx264", "-preset", "ultrafast", "-crf", "30", "-g", "24",
             "-pix_fmt", "yuv420p", "-an",
         ],
     },
 }
 WORKLOADS = ("video-1080p", "av-1080p", "video-4k")
-WORKLOAD_SCENARIOS = ("paused-open", "ended-open")
+WORKLOAD_SCENARIOS = ("paused-open", "ended-open", "playing")
+WORKLOAD_METRICS = {
+    "paused-open": ("cpu_percent", "rss_peak_mb", "rss_steady_mb"),
+    "ended-open": ("cpu_percent", "rss_peak_mb", "rss_steady_mb"),
+    "playing": ("cpu_percent", "cpu_per_media_second", "rss_peak_mb", "rss_steady_mb"),
+}
+PLAYING_WARMUP = 0.5
+PLAYING_MIN_ADVANCE = 0.9
 
 
 def ffmpeg_binary():
@@ -105,19 +112,65 @@ def ffmpeg_binary():
     return Path(found)
 
 
-def fixture(name):
+def ffprobe_binary():
+    sibling = ffmpeg_binary().with_name("ffprobe")
+    if sibling.exists():
+        return sibling
+    found = shutil.which("ffprobe")
+    return Path(found) if found is not None else None
+
+
+def media_duration(path):
+    probe = ffprobe_binary()
+    if probe is None:
+        return None
+    proc = subprocess.run(
+        [str(probe), "-v", "error", "-show_entries", "format=duration",
+         "-of", "default=nw=1:nk=1", str(path)],
+        capture_output=True, text=True, timeout=120,
+    )
+    if proc.returncode != 0:
+        return None
+    try:
+        return float(proc.stdout.strip())
+    except ValueError:
+        return None
+
+
+def generate_fixture(name, path):
+    recipe = FIXTURE_RECIPES[name]
+    FIXTURES.mkdir(parents=True, exist_ok=True)
+    proc = subprocess.run(
+        [str(ffmpeg_binary()), "-hide_banner", "-loglevel", "error", "-y",
+         *recipe["args"], str(path)],
+        capture_output=True, text=True, timeout=1800,
+    )
+    if proc.returncode != 0:
+        raise SystemExit(f"failed to generate {path}:\n{proc.stderr}")
+
+
+def fixture(name, minimum=None):
     recipe = FIXTURE_RECIPES[name]
     path = FIXTURES / recipe["file"]
-    if not path.exists():
-        FIXTURES.mkdir(parents=True, exist_ok=True)
-        proc = subprocess.run(
-            [str(ffmpeg_binary()), "-hide_banner", "-loglevel", "error", "-y",
-             *recipe["args"], str(path)],
-            capture_output=True, text=True, timeout=1800,
+    declared = recipe.get("duration")
+    if minimum is not None and declared is not None and declared < minimum:
+        raise SystemExit(
+            f"fixture recipe {name} lasts {declared} s, below the {minimum:.1f} s the "
+            "workload window needs; lengthen the recipe"
         )
-        if proc.returncode != 0:
-            raise SystemExit(f"failed to generate {path}:\n{proc.stderr}")
+    if not path.exists():
+        generate_fixture(name, path)
+        return path
+    if minimum is None:
+        return path
+    duration = media_duration(path)
+    if duration is not None and duration < minimum:
+        generate_fixture(name, path)
     return path
+
+
+def workload_fixture(name, seconds):
+    return fixture(name, minimum=PLAYING_WARMUP + seconds + 2.0)
 
 
 def frame_seconds(name):
@@ -320,11 +373,11 @@ def seek_measure(options, candidate, baseline, reference, cand_args, base_args):
                     trials.extend(dict(trial, side=side) for trial in pair[side]["trials"])
                     samples[f"{name}/{precision}/{side}"] = pair[side]["samples"]
                 pair["comparison"] = {
-                    "latency_ms": perfstat.compare_paired(
-                        pair["baseline"]["samples"]["latency_ms"],
+                    "latency_ms": perfstat.compare_metric(
+                        "latency_ms", pair["baseline"]["samples"]["latency_ms"],
                         pair["candidate"]["samples"]["latency_ms"]),
-                    "error_s": perfstat.compare_paired(
-                        pair["baseline"]["samples"]["error_s"],
+                    "error_s": perfstat.compare_metric(
+                        "error_s", pair["baseline"]["samples"]["error_s"],
                         pair["candidate"]["samples"]["error_s"]),
                     "success": perfstat.compare_paired(
                         success_values(pair["baseline"]), success_values(pair["candidate"]),
@@ -392,8 +445,8 @@ def audio_cpu_measure(options, candidate, baseline, reference, cand_args, base_a
             entry[side] = values
             samples[f"{name}/{side}"] = {"cpu_percent": [v["cpu_percent"] for v in values]}
         if baseline is not None:
-            entry["comparison"] = {"cpu_percent": perfstat.compare_paired(
-                [v["cpu_percent"] for v in records["baseline"]],
+            entry["comparison"] = {"cpu_percent": perfstat.compare_metric(
+                "cpu_percent", [v["cpu_percent"] for v in records["baseline"]],
                 [v["cpu_percent"] for v in records["candidate"]])}
         results[name] = entry
     return results, trials, samples
@@ -535,7 +588,8 @@ def frames_measure(options, candidate, baseline, cand_args, base_args, rounds, s
             comparison = {}
             for visibility in ("never", "always"):
                 comparison[visibility] = {
-                    metric: perfstat.compare_paired(
+                    metric: perfstat.compare_metric(
+                        metric,
                         [case[metric] for case in cases["baseline"]
                          if case["visibility"] == visibility],
                         [case[metric] for case in cases["candidate"]
@@ -619,7 +673,8 @@ def gui_cpu_measure(options, candidate, baseline, cand_args, base_args, rounds):
         comparison = {}
         for scenario in SCENARIOS:
             comparison[scenario] = {
-                metric: perfstat.compare_paired(
+                metric: perfstat.compare_metric(
+                    metric,
                     [value[metric] for value in cases["baseline"]
                      if value["scenario"] == scenario],
                     [value[metric] for value in cases["candidate"]
@@ -632,12 +687,21 @@ def gui_cpu_measure(options, candidate, baseline, cand_args, base_args, rounds):
     return results, trials, samples
 
 
+def throughput_counters(mpv):
+    def read(name):
+        value = mpv.try_get_property(name)
+        return value if value is not None else "unavailable"
+    return {"frame_drop_count": read("frame-drop-count"),
+            "estimated_vf_fps": read("estimated-vf-fps")}
+
+
 def workload_sample(player, path, scenario, window=WINDOW_SECONDS, player_args=()):
     arguments = ["--vo=null", "--ao=null", "--hwdec=no", "--mute=yes"]
     if scenario == "ended-open":
         arguments.append("--keep-open=yes")
     elif scenario == "paused-open":
         arguments.append("--pause=yes")
+    record = {"scenario": scenario, "arguments": arguments, "outcome": "ok"}
     with open_player(player, [*arguments, *player_args]) as mpv:
         mpv.load(path)
         mpv.wait_event("file-loaded", timeout=30)
@@ -646,27 +710,72 @@ def workload_sample(player, path, scenario, window=WINDOW_SECONDS, player_args=(
             mpv.set_property("pause", False)
             mpv.wait_until(lambda: mpv.event_count("end-file") > count, timeout=180,
                            description="end-file")
-        time.sleep(1.0)
+        if scenario == "playing":
+            mpv.wait_property(
+                "time-pos",
+                lambda value: isinstance(value, (int, float)) and value >= PLAYING_WARMUP,
+                timeout=30,
+            )
+        else:
+            time.sleep(1.0)
+        counters_before = throughput_counters(mpv)
+        media_before = mpv.try_get_property("time-pos") if scenario == "playing" else None
         cpu_before = process_cpu(mpv.proc.pid)
         began = time.monotonic()
         memory = sample_memory(mpv.proc.pid, window)
         elapsed = time.monotonic() - began
         used = process_cpu(mpv.proc.pid) - cpu_before
+        counters_after = throughput_counters(mpv)
         footprint = phys_footprint(mpv.proc.pid)
+        media_after = mpv.try_get_property("time-pos") if scenario == "playing" else None
         if scenario == "ended-open":
             mpv.set_property("pause", True)
-    return {"scenario": scenario, "arguments": arguments, "outcome": "ok",
-            "cpu_percent": round(used / elapsed * 100, 3), "cpu_s": round(used, 4),
-            "elapsed_s": round(elapsed, 3), "memory": summarize_memory(memory),
-            "phys_footprint_mb": footprint if footprint is not None else "unavailable",
-            "rss_samples": memory}
+    record.update({
+        "cpu_percent": round(used / elapsed * 100, 3), "cpu_s": round(used, 6),
+        "elapsed_s": round(elapsed, 3), "memory": summarize_memory(memory),
+        "phys_footprint_mb": footprint if footprint is not None else "unavailable",
+        "rss_samples": memory,
+    })
+    if scenario != "playing":
+        return record
+    advanced = None
+    if isinstance(media_before, (int, float)) and isinstance(media_after, (int, float)):
+        advanced = media_after - media_before
+    drops = counters_after["frame_drop_count"]
+    if isinstance(drops, int) and isinstance(counters_before["frame_drop_count"], int):
+        drops -= counters_before["frame_drop_count"]
+    record.update({
+        "media_s": None if advanced is None else round(advanced, 3),
+        "cpu_per_media_second": (None if not advanced or advanced <= 0
+                                 else round(used / advanced, 6)),
+        "frame_drop_count": counters_after["frame_drop_count"],
+        "frame_drops": drops,
+        "estimated_vf_fps": counters_after["estimated_vf_fps"],
+    })
+    if advanced is None or advanced < PLAYING_MIN_ADVANCE * elapsed:
+        record["outcome"] = "failed"
+        record["reason"] = (
+            f"time-pos advanced {advanced:.3f} s over {elapsed:.3f} s of wall time, "
+            f"below {PLAYING_MIN_ADVANCE:.0%}"
+        )
+        record["cpu_percent"] = None
+        record["cpu_per_media_second"] = None
+    return record
 
 
-def workloads_measure(options, candidate, baseline, cand_args, base_args, rounds):
+def workload_metric(record, metric):
+    if record["outcome"] != "ok":
+        return None
+    if metric in ("rss_peak_mb", "rss_steady_mb"):
+        return record["memory"][metric]
+    return record.get(metric)
+
+
+def workloads_measure(options, candidate, baseline, cand_args, base_args, rounds, seconds):
     results, trials, samples = {}, [], {}
     names = options.fixture or list(WORKLOADS)
     for name in names:
-        path = fixture(name)
+        path = workload_fixture(name, seconds)
         sides = {"candidate": (candidate, cand_args)}
         if baseline is not None:
             sides["baseline"] = (baseline, base_args)
@@ -679,27 +788,25 @@ def workloads_measure(options, candidate, baseline, cand_args, base_args, rounds
                     order.reverse()
                 for side in order:
                     player, args = sides[side]
-                    record = workload_sample(player, path, scenario, player_args=args)
+                    record = workload_sample(player, path, scenario, window=seconds,
+                                             player_args=args)
                     record["side"] = side
                     records[side].append(record)
                     trials.append(record)
             scenario_entry = {}
             for side, values in records.items():
                 scenario_entry[side] = values
-                samples[f"{name}/{scenario}/{side}/cpu_percent"] = [
-                    value["cpu_percent"] for value in values
-                ]
-                samples[f"{name}/{scenario}/{side}/rss_peak_mb"] = [
-                    value["memory"]["rss_peak_mb"] for value in values
-                ]
+                for metric in WORKLOAD_METRICS[scenario]:
+                    samples[f"{name}/{scenario}/{side}/{metric}"] = [
+                        workload_metric(value, metric) for value in values
+                    ]
             if baseline is not None:
                 scenario_entry["comparison"] = {
-                    "cpu_percent": perfstat.compare_paired(
-                        [value["cpu_percent"] for value in records["baseline"]],
-                        [value["cpu_percent"] for value in records["candidate"]]),
-                    "rss_peak_mb": perfstat.compare_paired(
-                        [value["memory"]["rss_peak_mb"] for value in records["baseline"]],
-                        [value["memory"]["rss_peak_mb"] for value in records["candidate"]]),
+                    metric: perfstat.compare_metric(
+                        metric,
+                        [workload_metric(value, metric) for value in records["baseline"]],
+                        [workload_metric(value, metric) for value in records["candidate"]])
+                    for metric in WORKLOAD_METRICS[scenario]
                 }
             entry[scenario] = scenario_entry
         results[name] = entry
@@ -797,8 +904,8 @@ def lifecycle_measure(options, candidate, baseline, cand_args, base_args):
         trials = [dict(cycle, side="candidate") for cycle in run["cycles"]]
         return {name: {"candidate": run}}, trials, {f"{name}/candidate": run["samples"]}
     pair = lifecycle_ab(candidate, baseline, path, name, cand_args, base_args)
-    pair["comparison"] = {"rss_peak_mb": perfstat.compare_paired(
-        pair["baseline"]["samples"]["rss_peak_mb"],
+    pair["comparison"] = {"rss_peak_mb": perfstat.compare_metric(
+        "rss_peak_mb", pair["baseline"]["samples"]["rss_peak_mb"],
         pair["candidate"]["samples"]["rss_peak_mb"])}
     trials = []
     for side, run in pair.items():
@@ -831,6 +938,25 @@ def mode_fixed(mode):
                     collected.append(argument)
         return collected
     return []
+
+
+def workload_line(record):
+    memory = record["memory"]
+    fields = [f"CPU {record['cpu_percent']:6.3f} %" if record["cpu_percent"] is not None
+              else "CPU n/a"]
+    if "cpu_per_media_second" in record:
+        rate = record["cpu_per_media_second"]
+        fields.append(f"{rate:7.4f} CPU-s/media-s" if rate is not None
+                      else "CPU-s/media-s n/a")
+        fields.append(f"media {record['media_s']} s")
+        fields.append(f"drops {record['frame_drops']}")
+        fields.append(f"vf-fps {record['estimated_vf_fps']}")
+    fields.append(f"RSS steady {memory['rss_steady_mb']} MB")
+    fields.append(f"peak {memory['rss_peak_mb']} MB")
+    fields.append(f"footprint {record['phys_footprint_mb']}")
+    if record["outcome"] != "ok":
+        fields.append(f"FAILED ({record.get('reason')})")
+    return "  ".join(fields)
 
 
 def print_results(results):
@@ -912,12 +1038,8 @@ def print_results(results):
                         if side == "comparison":
                             continue
                         for record in records:
-                            memory = record["memory"]
                             print(f"{name:12s} {scenario:12s} [{side:9s}] "
-                                  f"CPU {record['cpu_percent']:6.3f} %  "
-                                  f"RSS steady {memory['rss_steady_mb']} MB  "
-                                  f"peak {memory['rss_peak_mb']} MB  "
-                                  f"footprint {record['phys_footprint_mb']}", flush=True)
+                                  f"{workload_line(record)}", flush=True)
                     if "comparison" in sides:
                         for metric, outcome in sides["comparison"].items():
                             print(f"{name:12s} {scenario:12s} {metric:11s} "
@@ -951,10 +1073,18 @@ def main():
                         help="option passed to the baseline player; repeatable")
     parser.add_argument("--fixture", choices=sorted(FIXTURE_RECIPES), action="append")
     parser.add_argument("--precision", choices=["exact", "keyframes"], action="append")
-    parser.add_argument("--runs", type=int, default=15)
+    parser.add_argument("--runs", type=int, default=None,
+                        help="passes when --baseline is given, samples per side otherwise; an "
+                             "explicit count is used exactly for every mode, including "
+                             "workloads (default: 15 samples, which keeps the documented 3 "
+                             "pairs for audio-cpu, frames and workloads and 5 for gui-cpu)")
     parser.add_argument("--seed", type=int, default=7)
-    parser.add_argument("--seconds", type=float, default=None)
+    parser.add_argument("--seconds", type=float, default=None,
+                        help="measurement window for frames, GUI and workload modes; workloads "
+                             "default to 5 s of steady playback (default: mode-specific)")
     options = parser.parse_args()
+    runs_given = options.runs is not None
+    options.runs = 15 if not runs_given else options.runs
 
     player = Path(options.player) if options.player else default_player()
     if player is None:
@@ -990,14 +1120,15 @@ def main():
         trials.extend(found[1])
         samples.update(found[2])
     if options.mode in ("audio-cpu", "all"):
-        count = 1 if baseline is None else max(3, options.runs // 5)
+        count = (1 if baseline is None
+                 else options.runs if runs_given else max(3, options.runs // 5))
         found = audio_cpu_measure(options, player, baseline, reference, cand_args,
                                   base_args, count)
         results["audio-cpu"] = found[0]
         trials.extend(found[1])
         samples.update(found[2])
     if options.mode in ("frames", "all"):
-        rounds = max(2, options.runs // 5)
+        rounds = options.runs if runs_given else max(2, options.runs // 5)
         seconds = options.seconds or 8.0
         found = frames_measure(options, player, baseline, cand_args, base_args,
                                rounds, seconds)
@@ -1005,14 +1136,17 @@ def main():
         trials.extend(found[1])
         samples.update(found[2])
     if options.mode == "gui-cpu" or (options.mode == "all" and baseline is not None):
-        rounds = max(3, options.runs // 3)
+        rounds = options.runs if runs_given else max(3, options.runs // 3)
         found = gui_cpu_measure(options, player, baseline, cand_args, base_args, rounds)
         results["gui-cpu"] = found[0]
         trials.extend(found[1])
         samples.update(found[2])
     if options.mode in ("workloads", "all"):
-        rounds = 1 if baseline is None else max(3, options.runs // 5)
-        found = workloads_measure(options, player, baseline, cand_args, base_args, rounds)
+        rounds = 1 if baseline is None else (options.runs if runs_given
+                                            else max(3, options.runs // 5))
+        seconds = options.seconds or WINDOW_SECONDS
+        found = workloads_measure(options, player, baseline, cand_args, base_args,
+                                  rounds, seconds)
         results["workloads"] = found[0]
         trials.extend(found[1])
         samples.update(found[2])

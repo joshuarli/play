@@ -1,12 +1,16 @@
 """Shared measurement helpers for the Play benchmark and measurement scripts."""
 
+import ctypes
 import datetime
 import itertools
 import json
+import os
 import re
 import shutil
 import statistics
+import struct
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -15,6 +19,15 @@ ROOT = Path(__file__).resolve().parents[1]
 HOST_QUIET = "quiet"
 HOST_BUSY = "busy"
 HOST_DEFERRED = "deferred"
+
+METRIC_FLOORS = {
+    "cpu_percent": 0.5,
+    "cpu_per_media_second": 0.01,
+    "rss_peak_mb": 8.0,
+    "rss_steady_mb": 8.0,
+    "latency_ms": 5.0,
+    "error_s": 0.01,
+}
 
 
 def run(command, timeout=120, **kwargs):
@@ -48,9 +61,15 @@ def host_state(once=False, timeout=120):
     tool = shutil.which("perf-gate-ready")
     if tool is None:
         return HOST_DEFERRED
+    # perf-gate-ready calls sysctl on macOS, and sysctl lives in /usr/sbin, off the default PATH.
+    environment = dict(os.environ)
+    environment["PATH"] = os.pathsep.join(
+        [environment.get("PATH", ""), "/usr/sbin", "/sbin"]
+    ).strip(os.pathsep)
     try:
         result = subprocess.run(
-            [tool, "-1"] if once else [tool], capture_output=True, timeout=timeout
+            [tool, "-1"] if once else [tool], capture_output=True, env=environment,
+            timeout=timeout,
         )
     except (OSError, subprocess.TimeoutExpired):
         return HOST_DEFERRED
@@ -77,10 +96,55 @@ def cpu_seconds(ps_time):
 
 
 def process_cpu_seconds(pid):
-    proc = run(["ps", "-o", "time=", "-p", str(pid)], timeout=10)
-    if proc.returncode != 0:
-        raise RuntimeError(f"ps failed for pid {pid}: {proc.stderr.strip()}")
-    return cpu_seconds(proc.stdout)
+    if sys.platform.startswith("darwin"):
+        return darwin_cpu_seconds(pid)
+    return linux_cpu_seconds(pid)
+
+
+_darwin_libproc = None
+_darwin_scale = None
+
+
+def darwin_mach_scale():
+    global _darwin_scale
+    if _darwin_scale is None:
+        libc = ctypes.CDLL("/usr/lib/libSystem.B.dylib")
+        info = ctypes.create_string_buffer(8)
+        if libc.mach_timebase_info(info) != 0:
+            raise RuntimeError("mach_timebase_info failed")
+        numer, denom = struct.unpack("<II", info.raw)
+        _darwin_scale = numer / denom / 1e9
+    return _darwin_scale
+
+
+def darwin_cpu_seconds(pid):
+    """proc_pid_rusage RUSAGE_INFO_V2: ri_user_time + ri_system_time, in Mach absolute time."""
+    global _darwin_libproc
+    if _darwin_libproc is None:
+        libproc = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+        libproc.proc_pid_rusage.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_void_p]
+        libproc.proc_pid_rusage.restype = ctypes.c_int
+        _darwin_libproc = libproc
+    buffer = ctypes.create_string_buffer(256)
+    ctypes.set_errno(0)
+    if _darwin_libproc.proc_pid_rusage(pid, 2, ctypes.cast(buffer, ctypes.c_void_p)) != 0:
+        raise RuntimeError(
+            f"proc_pid_rusage failed for pid {pid}: errno {ctypes.get_errno()}"
+        )
+    user, system = struct.unpack_from("<QQ", buffer.raw, 16)
+    return (user + system) * darwin_mach_scale()
+
+
+def linux_cpu_seconds(pid):
+    try:
+        fields = Path(f"/proc/{pid}/schedstat").read_text().split()
+        return int(fields[0]) / 1e9
+    except (OSError, IndexError, ValueError):
+        pass
+    stat = Path(f"/proc/{pid}/stat").read_text()
+    after_comm = stat[stat.rindex(")") + 2:].split()
+    utime, stime = int(after_comm[11]), int(after_comm[12])
+    return (utime + stime) / os.sysconf("SC_CLK_TCK")
 
 
 def compare_paired(baseline, candidate, rel_tolerance=0.05, floor=0.0, lower_is_better=True):
@@ -142,6 +206,15 @@ def compare_paired(baseline, candidate, rel_tolerance=0.05, floor=0.0, lower_is_
         "baseline_median": baseline_median,
         "candidate_median": candidate_median,
     }
+
+
+def metric_floor(name):
+    return METRIC_FLOORS.get(name, 0.0)
+
+
+def compare_metric(name, baseline, candidate, rel_tolerance=0.05, lower_is_better=True):
+    return compare_paired(baseline, candidate, rel_tolerance=rel_tolerance,
+                          floor=metric_floor(name), lower_is_better=lower_is_better)
 
 
 def describe_verdict(outcome):
