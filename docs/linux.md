@@ -21,6 +21,7 @@ Besides the four FFmpeg runtime libraries (`libavformat`, `libavcodec`, `libswsc
 | Library | Alpine package |
 | --- | --- |
 | musl libc | `musl` |
+| `libz.so.1` (screenshot PNG compression) | `zlib` |
 | `libvulkan.so.1` | `vulkan-loader` |
 | `libwayland-client.so.0` | `wayland-libs-client` |
 | `libasound.so.2` | `alsa-lib` |

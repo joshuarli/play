@@ -8,10 +8,10 @@ TARGET=x86_64-unknown-linux-musl
 RUNTIME=${FFMPEG_PREFIX:-$ROOT/.work/deps/ffmpeg-runtime/$TARGET}
 ALLOWED_NEEDED=(
     libvulkan.so.1 libwayland-client.so.0
-    libasound.so.2 libc.musl-x86_64.so.1
+    libasound.so.2 libc.musl-x86_64.so.1 libz.so.1
     libfontconfig.so.1 libharfbuzz.so.0 libfreetype.so.6
 )
-FFMPEG_NEEDED_PATTERN='^lib(av[a-z]*|sw[a-z]*|postproc|dav1d|z)\.so'
+FFMPEG_NEEDED_PATTERN='^lib(av[a-z]*|sw[a-z]*|postproc|dav1d)\.so'
 FFMPEG_SYMBOLS='^(av|avio|avformat|avcodec|avfilter|avutil|sws|swr|ff|dav1d)_'
 EXPECTED_RUNPATH=${PLAYER_FFMPEG_RPATH-'$ORIGIN/../lib'}
 [ "$EXPECTED_RUNPATH" = none ] && EXPECTED_RUNPATH=
@@ -91,7 +91,7 @@ check "no network imports" "$([ -z "$imports" ] && echo 1 || echo 0)" "$imports"
 tls=$(strings -a "$PLAYER" | rg -i 'libssl\.so|libcrypto\.so|libgnutls|libcurl|ca-certificates\.crt' | head -3 || true)
 check "no TLS or curl libraries" "$([ -z "$tls" ] && echo 1 || echo 0)" "$tls"
 
-imported=$(nm -D --undefined-only "$PLAYER" | awk '{print $NF}' | rg -c '^avformat_open_input$' || true)
+imported=$(nm -D --undefined-only "$PLAYER" | awk '{print $NF}' | rg -c '^avformat_open_input(@|$)' || true)
 check "FFmpeg imported from the shared runtime" "$([ "${imported:-0}" = 1 ] && echo 1 || echo 0)"
 exported=$(nm -D --defined-only "$PLAYER" | awk '{print $NF}' | rg "$FFMPEG_SYMBOLS" | head -3 || true)
 check "no FFmpeg symbols exported" "$([ -z "$exported" ] && echo 1 || echo 0)" "$exported"
