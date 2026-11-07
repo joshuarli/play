@@ -18,7 +18,7 @@ The classifier is called at startup, IPC `loadfile`, `--playlist` and `loadlist`
 
 - Startup parsing rejects a non-UTF-8 argument before the classifier runs. The classifier and the path API take UTF-8, so they are narrower than upstream mpv's byte-transparent paths. macOS paths are Unicode in normal use.
 
-The FFmpeg runtime is configured with `--disable-network` and only the local `file`, `pipe`, and `fd` protocols. Network protocols, TLS, and a CA bundle are not built. Player reads every input through its own IO callbacks over the local file.
+The FFmpeg runtime is configured with `--disable-network` and only the local `file`, `pipe`, and `fd` protocols. Network protocols, TLS, and a CA bundle are not built. Player reads every input through its own IO callbacks over the local file and restricts libavformat to its playback demuxers.
 
 ## Playback pipeline
 

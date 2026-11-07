@@ -11,6 +11,7 @@ use crate::error::MediaError;
 use crate::sys::*;
 
 const AVIO_BUFFER_BYTES: usize = 32 * 1024;
+const PLAYBACK_DEMUXERS: &CStr = c"mov,matroska,avi,mp3,flac,wav,ogg";
 
 struct ReaderState {
     file: LocalFile,
@@ -148,6 +149,16 @@ impl MediaSession {
         let context = unsafe { avformat_alloc_context() };
         if context.is_null() {
             return Err(MediaError::Open("avformat_alloc_context failed".to_owned()));
+        }
+        // SAFETY: context is a live AVFormatContext; its first field is the
+        // AVClass that av_opt_set resolves format_whitelist through.
+        let restricted = unsafe {
+            av_opt_set(context as *mut c_void, c"format_whitelist".as_ptr(), PLAYBACK_DEMUXERS.as_ptr(), 0)
+        };
+        if restricted < 0 {
+            // SAFETY: context is a live allocated context that nothing else owns.
+            unsafe { avformat_free_context(context) };
+            return Err(MediaError::Open(format!("format_whitelist: {restricted}")));
         }
         let reader = Box::into_raw(Box::new(ReaderState { file }));
         // The buffer is a lavf allocation: probing may reallocate it, so the
@@ -626,6 +637,14 @@ mod tests {
 
     fn open(name: &str) -> MediaSession {
         MediaSession::open(&fixture(name)).expect("fixture opens")
+    }
+
+    #[test]
+    fn refuses_containers_outside_the_playback_demuxers() {
+        for name in ["external.srt", "external.vtt"] {
+            let result = MediaSession::open(&fixture(name));
+            assert!(matches!(result, Err(MediaError::Format(_))), "{name} opened");
+        }
     }
 
     #[test]

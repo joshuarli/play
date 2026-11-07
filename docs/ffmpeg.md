@@ -79,7 +79,7 @@ Development and release trees use the installed layout. On Linux `scripts/instal
 
 The runtime also carries encoders, muxers, FFmpeg audio decoders, and filters for `ffmpeg` and `ffprobe`. Player does not use them, and its own code enforces that rather than the component list:
 
-- The session reads through a custom IO context over the local file, so no FFmpeg protocol opens the input.
+- `player-media` sets `format_whitelist` to the playback demuxers above, so a container the runtime can read but Player does not support fails to open. The session reads through a custom IO context over the local file, so no FFmpeg protocol opens the input.
 - `VideoSession` opens only video streams, and only the video codec IDs in `codec_id_for_name`; Symphonia decodes audio from FFmpeg's demuxed packets. `player-media`'s tests cover both.
 
 `scripts/audit-linux.sh` checks that the executable's FFmpeg `NEEDED` entries are exactly the pinned SONAMEs from the manifest, that its RUNPATH is the `PLAYER_FFMPEG_RPATH` value and there is no RPATH, that `ldd` resolves through that layout, that `avformat_open_input` is an import, that the executable exports no FFmpeg symbol, and that the unstripped executable defines no FFmpeg or dav1d symbol. The macOS `release` gate checks that `Player.app` bundles no FFmpeg dylib, links exactly the pinned install names, carries the runtime rpath, and records the runtime release in `Info.plist`.
