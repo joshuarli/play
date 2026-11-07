@@ -156,5 +156,8 @@ Medians of 7 runs with the spread (max − min). `scripts/measure-linux.sh`; col
 | baseline | 2026-11-01 | 2681555-dirty | 6,643,680 | 18 | 62.3 ± 60.95 | 62.5 ± 6.16 | 187.43 ± 45.29 | 39.6 | 156.33 | 0.57 | 1.65 ± 35.14 | 11.42 ± 1.37 | 1 |
 | final (host busy: timings are not a gate) | 2026-11-01 | 646198c | 26,355,208 | 6 | 5.14 ± 1.53 | 4.3 ± 1.53 | 105.41 ± 48.74 | 15.7 | 128.94 | 0.36 | 1.07 ± 30.4 | 2.6 ± 1.67 | 1 |
 | final | 2026-11-04 | 6eb7184 | 23,820,624 | 7 | 13.56 ± 6.48 | 9.03 ± 1.74 | 63.32 ± 3.55 | 9.5 | 214.11 | 3.01 | 36.63 ± 6.88 | 13.77 ± 10.13 | 1 |
+| shared-runtime | 2026-11-07 | cfe42f9-dirty | 9,566,424 | 12 | 1.41 [1.31, 1.98] | 1.34 [1.31, 1.48] | 24.92 [24.33, 26.12] | 8.2 | 67.1 | 0.14 | 30.43 [30.4, 30.45] | 15.36 [15.32, 15.38] | 1 |
+
+The `shared-runtime` row is the first build that links the shared FFmpeg runtime (`ffmpeg-build` `runtime`, local archive at producer commit `319d819`) instead of the static SDK; the tree differed from the revision only in the local pin digest. The stripped executable is 9,566,424 B, against 20,832,216 B for the static-SDK build of 2026-11-04, because FFmpeg, dav1d, and zlib left it. `NEEDED` adds the four runtime SONAMEs and the system `libz.so.1` for screenshot PNG compression, which the SDK's static zlib used to satisfy. The runtime closure Player loads is 14,188,440 B (libavcodec 9,676,512, libswscale 2,222,128, libavformat 1,226,800, libavutil 1,063,000); the whole runtime `lib/` is 14,747,472 B and is shared with `ffmpeg` and `ffprobe`. The closure is reported, not gated.
 
 Container timings are not a gate.
