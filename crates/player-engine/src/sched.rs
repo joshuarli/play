@@ -142,6 +142,7 @@ pub struct Scheduler<D, A, V, AO, VO> {
     failure: Option<String>,
     subs: Vec<EngineSub>,
     selected_sub: Option<usize>,
+    subs_visible: bool,
     sub_cursor: f64,
 }
 
@@ -179,6 +180,7 @@ where
             failure: None,
             subs: Vec::new(),
             selected_sub: None,
+            subs_visible: true,
             sub_cursor: 0.0,
         }
     }
@@ -217,6 +219,9 @@ where
 
     pub fn set_subs(&mut self, subs: Vec<EngineSub>) {
         self.subs = subs;
+        for sub in &mut self.subs {
+            sub.set_visible(self.subs_visible);
+        }
         self.selected_sub = None;
         self.sub_cursor = 0.0;
     }
@@ -238,12 +243,15 @@ where
 
     pub fn add_sub(&mut self, sub: EngineSub) -> usize {
         let position = self.subs.len();
+        let mut sub = sub;
+        sub.set_visible(self.subs_visible);
         self.subs.push(sub);
         self.select_sub(Some(position));
         position
     }
 
     pub fn set_sub_visible(&mut self, visible: bool) {
+        self.subs_visible = visible;
         for sub in &mut self.subs {
             sub.set_visible(visible);
         }

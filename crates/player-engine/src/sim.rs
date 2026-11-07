@@ -5,6 +5,7 @@ mod tests {
         Scheduler, Stats, StreamKind, VideoDecoder, VideoOutput,
     };
     use crate::state::State;
+    use crate::sub::EngineSub;
     use std::collections::VecDeque;
 
     struct FakeDemux {
@@ -458,6 +459,42 @@ mod tests {
         assert_eq!(h.sim.state(), State::Ended);
         assert_eq!(h.stats().presented, 25);
         assert_eq!(h.stats().audio_chunks, 0);
+    }
+
+    fn fed_sub() -> EngineSub {
+        let info = player_media::StreamInfo {
+            index: 7,
+            kind: player_media::StreamKind::Subtitle,
+            codec_name: "subrip".to_owned(),
+            width: 0,
+            height: 0,
+            sample_rate: 0,
+            channels: 0,
+            time_base: (1, 1000),
+            duration_seconds: None,
+            extradata: Vec::new(),
+            channel_mask: 0,
+            attached: false,
+            default: false,
+            forced: false,
+            language: None,
+            title: None,
+        };
+        let mut sub = EngineSub::open_embedded(&info).expect("subrip opens");
+        sub.feed(b"Hello", 0.0, 1.0);
+        sub
+    }
+
+    #[test]
+    fn a_subtitle_added_while_hidden_stays_hidden() {
+        let mut h = Harness::new(FakeDemux::av(1.0, 25.0, 0.04), false);
+        h.sim.open();
+        h.sim.set_sub_visible(false);
+        let position = h.sim.add_sub(fed_sub());
+        assert_eq!(h.sim.subs()[position].text_at(500), "");
+        assert_eq!(h.sim.subtitle_text(0.5), "");
+        h.sim.set_sub_visible(true);
+        assert_eq!(h.sim.subs()[position].text_at(500), "Hello");
     }
 
     #[test]
