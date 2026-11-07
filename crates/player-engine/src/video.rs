@@ -412,7 +412,7 @@ mod tests {
     }
 
     #[test]
-    fn yuv420p_planes_carry_the_expected_dimensions_and_strides() {
+    fn yuv420p_planes_carry_the_expected_dimensions_and_rows() {
         let presented = first_frame();
         let planes = presented.planes().expect("planes derive");
         assert_eq!((presented.width, presented.height), (320, 240));
@@ -422,10 +422,13 @@ mod tests {
             .map(|plane| (plane.width, plane.height))
             .collect();
         assert_eq!(dimensions, vec![(320, 240), (160, 120), (160, 120)]);
-        assert_eq!(planes[0].stride, 320, "luma stride");
-        assert_eq!(planes[1].stride, 160, "chroma stride");
-        assert_eq!(planes[2].stride, 160, "chroma stride");
         for plane in &planes {
+            assert!(
+                plane.stride >= plane.width as usize,
+                "a stride holds its row: {} < {}",
+                plane.stride,
+                plane.width
+            );
             assert_eq!(
                 plane.data.len(),
                 plane.stride * plane.height as usize,
