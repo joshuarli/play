@@ -1,6 +1,6 @@
 # FFmpeg
 
-Player links the shared FFmpeg runtime from `laputa-systems/ffmpeg-build` (profile `runtime`, see that repository's `docs/runtime.md`). It does not build FFmpeg and carries no FFmpeg code in its executable or bundle. `ffmpeg`, `ffprobe`, and Player load the same libav* shared libraries. The producer owns the sources, configure flags, components, and the full audit; Player pins one runtime release and checks it against its own playback contract.
+Player links the shared FFmpeg runtime from `laputa-systems/ffmpeg-build` (profile `runtime`, see that repository's `docs/runtime.md`). It does not build FFmpeg and carries no FFmpeg code in its executable or bundle. `ffmpeg`, `ffprobe`, and Player load the same libav* shared libraries. The producer owns the sources, configure flags, components, and the full audit; Player pins one runtime release and checks it against its own playback contract. The runtime is licensed GPL version 2 or later; its notices are in the runtime's `share/licenses/`.
 
 ## Pin
 
@@ -72,9 +72,10 @@ Development and release trees use the installed layout. On Linux `scripts/instal
 `tests/run.sh ffmpeg-audit` (`scripts/ffmpeg-manifest.sh --check [manifest.json]`) reads the runtime manifest, by default from `.work/deps/ffmpeg-runtime/<target>`. It checks Player's contract, not the producer's component allowlist:
 
 - the profile is `runtime`, the target is the Rust target, FFmpeg is the pinned 9.0.2, and the release tag matches the pin;
-- no devices; every protocol is local (`file`, `pipe`, or `fd`), none is a network scheme from `scripts/network-schemes.txt`, and `--disable-network` is configured;
+- no output devices and no input device but `lavfi` (in `libavdevice`, which Player does not link); every protocol is local (`file`, `pipe`, or `fd`), none is a network scheme from `scripts/network-schemes.txt`, and `--disable-network` is configured;
 - each pinned library carries its SONAME or install name;
 - the required playback demuxers (`mov`, `matroska`, `avi`, `mp3`, `flac`, `wav`, `ogg`) and decoders (`h264`, `hevc`, `libdav1d`, `vp9`, `mpeg4`, `png`, `mjpeg`) are present. macOS also needs the VideoToolbox hwaccels. Linux needs the native `av1` decoder and the VA-API hwaccels;
+- the license is GPL version 2 or later;
 - `dav1d` is the only external library, and `dav1d` and `zlib` are the only bundled dependencies.
 
 The runtime also carries encoders, muxers, FFmpeg audio decoders, and filters for `ffmpeg` and `ffprobe`. Player does not use them, and its own code enforces that rather than the component list:

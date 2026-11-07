@@ -60,7 +60,7 @@ Linux x86-64 musl uses the same engine and application as macOS. The platform sp
 ## Pins
 
 - mpv v0.41.0 is the compatibility reference for the CLI, IPC commands, and property names.
-- FFmpeg n9.0.2 at `ce8f11b9fac4cd7ccfb41ca7c01bc17f5cda8cc3`.
+- FFmpeg n9.0.2 at `ce8f11b9fac4cd7ccfb41ca7c01bc17f5cda8cc3`, as the shared runtime from `laputa-systems/ffmpeg-build`, licensed GPL version 2 or later.
 - Symphonia at `b6336209bb40d57e4ed71079cf7f7fc6c4626aae`, vendored under `vendor/symphonia` with its own license files.
 
 ## Follow-on

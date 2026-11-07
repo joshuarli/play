@@ -82,7 +82,9 @@ def check():
     case(f"release {pin['release']} matches the pin", tag == pin["release"], tag)
 
     enabled = {key: set(value) for key, value in manifest.get("components", {}).items()}
-    case("no devices", not enabled.get("devices"), sorted(enabled.get("devices", ())))
+    case("no devices beyond the lavfi indev",
+         enabled.get("indevs", set()) <= {"lavfi"} and not enabled.get("outdevs") and not enabled.get("devices"),
+         f"indevs {sorted(enabled.get('indevs', ()))}, outdevs {sorted(enabled.get('outdevs', ()))}")
 
     protocols = enabled.get("protocols", set())
     network = {
@@ -106,6 +108,8 @@ def check():
         missing = names - enabled.get(category, set())
         case(f"required playback {category} present", not missing, f"missing: {sorted(missing)}")
 
+    case("license is GPL version 2 or later", manifest.get("license") == "GPL version 2 or later",
+         manifest.get("license"))
     external = set(manifest.get("external_libraries", []))
     case("dav1d is the only external library", external == {"dav1d"}, sorted(external))
     bundled = set(manifest.get("bundled_dependencies", []))
