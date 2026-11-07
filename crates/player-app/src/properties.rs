@@ -12,6 +12,7 @@ pub struct Probe {
     pub chapters: Vec<ChapterInfo>,
     pub streams: Vec<StreamInfo>,
     pub format: String,
+    pub video_frame_rate: Option<f64>,
 }
 
 impl Probe {
@@ -60,6 +61,7 @@ pub fn probe(path: &str) -> Result<Probe, String> {
         .unwrap_or("")
         .to_ascii_lowercase();
     let streams = session.streams();
+    let video_frame_rate = session.video_frame_rate();
     if matches!(format.as_str(), "mp3" | "ogg" | "m4a") {
         for stream in &streams {
             if stream.kind != StreamKind::Audio {
@@ -85,6 +87,7 @@ pub fn probe(path: &str) -> Result<Probe, String> {
         chapters,
         streams,
         format,
+        video_frame_rate,
     })
 }
 
@@ -250,27 +253,16 @@ pub fn get(app: &App, name: &str) -> Result<NativeValue, String> {
         "partially-seekable" => Ok(NativeValue::Bool(false)),
         "cache-buffering-state" => Ok(NativeValue::Int(100)),
         "paused-for-cache" => Ok(NativeValue::Bool(false)),
-        "demuxer-cache-state" => Ok(NativeValue::Map(vec![
-            ("cache-end".to_owned(), NativeValue::Double(
-                app.probe.as_ref().map_or(status.duration, |probe| probe.duration),
-            )),
-            ("reader-pts".to_owned(), NativeValue::Double(status.position)),
-            ("cache-duration".to_owned(), NativeValue::Double(
-                (app.probe.as_ref().map_or(status.duration, |probe| probe.duration) - status.position)
-                    .max(0.0),
-            )),
-        ])),
-        "current-vo" => Ok(NativeValue::String("gpu-next".to_owned())),
-        "current-ao" => Ok(NativeValue::String(if app.options.null_audio {
-            "null".to_owned()
-        } else {
-            "coreaudio".to_owned()
-        })),
+        "demuxer-cache-state" => Ok(demuxer_cache_state(status.position)),
+        "current-vo" => current_vo(&status).map(NativeValue::String),
+        "current-ao" => current_ao(&status).map(NativeValue::String),
         "frame-drop-count" | "vo-drop-frame-count" => {
             Ok(NativeValue::Int(app.dropped_frames() as i64))
         }
-        "decoder-frame-drop-count" => Ok(NativeValue::Int(0)),
-        "estimated-vf-fps" | "container-fps" => Ok(NativeValue::Double(24.0)),
+        "decoder-frame-drop-count" => Ok(NativeValue::Int(status.evicted as i64)),
+        "estimated-vf-fps" => estimated_vf_fps(&status).map(NativeValue::Double),
+        "container-fps" => container_fps(&app.probe).map(NativeValue::Double),
+        "audio-underrun-count" => Ok(NativeValue::Int(status.audio_underruns as i64)),
         "chapter-metadata" => Ok(NativeValue::Map(Vec::new())),
         "osc-visibility" => Ok(NativeValue::String(
             osc(app)?.visibility().name().to_owned(),
@@ -390,6 +382,41 @@ fn osc(app: &App) -> Result<&crate::osc::Osc, String> {
     app.osc
         .as_ref()
         .ok_or_else(|| "property unavailable: the OSC is disabled".to_owned())
+}
+
+fn unavailable(name: &str) -> String {
+    format!("property unavailable: {name}")
+}
+
+fn container_fps(probe: &Option<Probe>) -> Result<f64, String> {
+    probe
+        .as_ref()
+        .and_then(|probe| probe.video_frame_rate)
+        .ok_or_else(|| unavailable("container-fps"))
+}
+
+fn estimated_vf_fps(status: &EngineStatus) -> Result<f64, String> {
+    status
+        .estimated_vf_fps
+        .ok_or_else(|| unavailable("estimated-vf-fps"))
+}
+
+fn current_vo(status: &EngineStatus) -> Result<String, String> {
+    status
+        .video_output
+        .map(str::to_owned)
+        .ok_or_else(|| unavailable("current-vo"))
+}
+
+fn current_ao(status: &EngineStatus) -> Result<String, String> {
+    status
+        .audio_output
+        .map(str::to_owned)
+        .ok_or_else(|| unavailable("current-ao"))
+}
+
+fn demuxer_cache_state(position: f64) -> NativeValue {
+    NativeValue::Map(vec![("reader-pts".to_owned(), NativeValue::Double(position))])
 }
 
 fn rect_value(rect: Rect) -> NativeValue {
@@ -845,6 +872,79 @@ fn osd_dimensions(app: &App) -> NativeValue {
         ("ml".to_owned(), NativeValue::Int(0)),
         ("mr".to_owned(), NativeValue::Int(0)),
     ])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::options::Options;
+
+    fn probe(video_frame_rate: Option<f64>) -> Probe {
+        Probe {
+            duration: 3.0,
+            metadata: Vec::new(),
+            chapters: Vec::new(),
+            streams: Vec::new(),
+            format: "mp4".to_owned(),
+            video_frame_rate,
+        }
+    }
+
+    #[test]
+    fn unavailable_properties_return_the_unavailable_error() {
+        let app = App::new(Options::default());
+        for name in ["container-fps", "estimated-vf-fps", "current-vo", "current-ao"] {
+            let error = get(&app, name).expect_err(name);
+            assert!(
+                error.starts_with("property unavailable:"),
+                "{name}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn container_fps_comes_from_the_probed_video_stream() {
+        let mut app = App::new(Options::default());
+        app.probe = Some(probe(Some(24.0)));
+        assert_eq!(
+            get(&app, "container-fps"),
+            Ok(NativeValue::Double(24.0))
+        );
+        app.probe = Some(probe(None));
+        assert!(
+            get(&app, "container-fps").is_err(),
+            "an unknown video rate is unavailable"
+        );
+    }
+
+    #[test]
+    fn estimated_vf_fps_uses_the_engine_measurement() {
+        let mut status = EngineStatus::default();
+        assert!(estimated_vf_fps(&status).is_err());
+        status.estimated_vf_fps = Some(23.976);
+        assert_eq!(estimated_vf_fps(&status), Ok(23.976));
+    }
+
+    #[test]
+    fn current_outputs_name_the_backends_that_opened() {
+        let mut status = EngineStatus::default();
+        assert!(current_vo(&status).is_err());
+        assert!(current_ao(&status).is_err());
+        status.video_output = Some("null");
+        status.audio_output = Some("coreaudio");
+        assert_eq!(current_vo(&status).as_deref(), Ok("null"));
+        assert_eq!(current_ao(&status).as_deref(), Ok("coreaudio"));
+    }
+
+    #[test]
+    fn demuxer_cache_state_omits_an_unmeasured_cache_duration() {
+        let NativeValue::Map(fields) = demuxer_cache_state(1.5) else {
+            panic!("demuxer-cache-state is a map");
+        };
+        assert!(fields.iter().any(|(key, _)| key == "reader-pts"));
+        assert!(!fields.iter().any(|(key, _)| key == "cache-duration"));
+        assert!(!fields.iter().any(|(key, _)| key == "cache-end"));
+    }
 }
 
 fn input_bindings() -> NativeValue {

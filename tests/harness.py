@@ -362,6 +362,25 @@ def player_subtitles(entry):
     return ["subrip" for name in entry["sub_files"] if name.endswith(".srt")]
 
 
+def probe_frame_rate(path):
+    ffprobe = (["ffprobe"] if shutil.which("ffprobe")
+               else [str(ROOT / "scripts" / "linux-container.sh"), "ffprobe"])
+    target = path if ffprobe[0] == "ffprobe" else path.relative_to(ROOT)
+    proc = subprocess.run(
+        ffprobe + ["-v", "error", "-select_streams", "v:0",
+                   "-show_entries", "stream=avg_frame_rate",
+                   "-of", "default=nw=1:nk=1", str(target)],
+        capture_output=True, text=True, timeout=120,
+    )
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return None
+    numerator, _, denominator = proc.stdout.strip().splitlines()[0].partition("/")
+    try:
+        return float(numerator) / (float(denominator) if denominator else 1.0)
+    except ValueError:
+        return None
+
+
 def wait_symphonia(mpv, codec=None, timeout=10):
     pattern = r"Using Symphonia for " + (re.escape(codec) if codec else "")
     return mpv.wait_log(pattern, timeout=timeout)
@@ -878,6 +897,60 @@ def gate_cli(results, args):
 
     entry = fixture_entry("h264")
     path = fixture_path(entry)
+
+    expected_fps = probe_frame_rate(path)
+    results.check("cli: fixture frame rate readable", expected_fps is not None,
+                  str(expected_fps))
+    with Mpv(["--vo=null", "--ao=null"]) as mpv:
+        mpv.load(path)
+        mpv.wait_event("file-loaded", timeout=10)
+        mpv.wait_property(
+            "time-pos", lambda value: isinstance(value, (int, float)) and value >= 1.0,
+            timeout=15,
+        )
+        container = mpv.get_property("container-fps")
+        results.check(
+            "cli: container-fps matches ffprobe",
+            expected_fps is not None and abs(container - expected_fps) < 0.05,
+            f"{container} vs {expected_fps}",
+        )
+        estimated = mpv.wait_property(
+            "estimated-vf-fps",
+            lambda value: isinstance(value, (int, float)) and value > 0,
+            timeout=10,
+        )
+        results.check(
+            "cli: estimated-vf-fps is within 5% of the stream rate",
+            expected_fps is not None
+            and abs(estimated - expected_fps) <= expected_fps * 0.05,
+            f"{estimated} vs {expected_fps}",
+        )
+        results.check("cli: current-vo names the open output",
+                      mpv.get_property("current-vo") == "null")
+        results.check("cli: current-ao names the open output",
+                      mpv.get_property("current-ao") == "null")
+        underruns = mpv.get_property("audio-underrun-count")
+        results.check("cli: audio-underrun-count is an Int",
+                      isinstance(underruns, int) and not isinstance(underruns, bool),
+                      str(underruns))
+    results.check("cli: measured properties exit", mpv.returncode == 0,
+                  f"exit {mpv.returncode}")
+
+    with Mpv(["--vo=null", "--ao=null"]) as mpv:
+        mpv.load(fixture_path(fixture_entry("audio-mono")))
+        mpv.wait_event("file-loaded", timeout=10)
+        unavailable = None
+        try:
+            mpv.get_property("container-fps")
+        except Failure as exc:
+            unavailable = str(exc)
+        results.check(
+            "cli: an unmeasured property returns the unavailable error",
+            unavailable is not None and "unavailable" in unavailable.lower(),
+            str(unavailable),
+        )
+    results.check("cli: unavailable property exit", mpv.returncode == 0,
+                  f"exit {mpv.returncode}")
 
     with Mpv(["--vo=null", "--ao=null", "--fullscreen"]) as mpv:
         mpv.load(path)

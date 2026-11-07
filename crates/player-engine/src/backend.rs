@@ -300,6 +300,10 @@ impl EngineOutput {
         (seconds(self.written, self.sink.rate()) - self.queued_seconds()).max(0.0)
     }
 
+    pub fn underruns(&self) -> u64 {
+        self.sink.underruns()
+    }
+
     pub fn set_volume(&mut self, volume: f32) {
         self.volume = volume;
     }
@@ -382,6 +386,10 @@ pub struct EngineStatus {
     pub seek_generation: u64,
     pub seek_completed_generation: u64,
     pub drained: u64,
+    pub audio_underruns: u64,
+    pub estimated_vf_fps: Option<f64>,
+    pub video_output: Option<&'static str>,
+    pub audio_output: Option<&'static str>,
     pub video_width: u32,
     pub video_height: u32,
     pub error: Option<String>,
@@ -411,6 +419,10 @@ impl Default for EngineStatus {
             seek_generation: 0,
             seek_completed_generation: 0,
             drained: 0,
+            audio_underruns: 0,
+            estimated_vf_fps: None,
+            video_output: None,
+            audio_output: None,
             video_width: 0,
             video_height: 0,
             error: None,
@@ -642,14 +654,24 @@ fn run_worker(
         state: state.clone(),
         clean: false,
     };
-    let build = || -> Result<(EngineScheduler, f64, u32, u32), String> {
+    let build = || -> Result<
+        (
+            EngineScheduler,
+            f64,
+            u32,
+            u32,
+            Option<&'static str>,
+            Option<&'static str>,
+        ),
+        String,
+    > {
         let demux = if include_video {
             EngineDemux::open(&path)?
         } else {
             EngineDemux::open_audio_only(&path)?
         };
         let duration = demux.duration();
-        let (sink, audio): (Box<dyn AudioSink>, EngineAudio) =
+        let (sink, audio, audio_output): (Box<dyn AudioSink>, EngineAudio, Option<&'static str>) =
             if let Some(selected) = demux.selected_audio_stream() {
                 let info = demux.stream_info(selected).ok_or_else(|| {
                     format!("{path} has no usable audio format")
@@ -667,13 +689,14 @@ fn run_worker(
                         layout.channel_mask(),
                     )?,
                 };
+                let audio_output = Some(sink.backend_name());
                 let rate = sink.rate();
                 let audio = EngineAudio::open(&info, rate)?;
-                (sink, audio)
+                (sink, audio, audio_output)
             } else {
                 let sink: Box<dyn AudioSink> = Box::new(NullSink::new(2, 48_000));
                 let rate = sink.rate();
-                (sink, EngineAudio::silent(rate))
+                (sink, EngineAudio::silent(rate), None)
             };
         let output = EngineOutput {
             sink,
@@ -681,21 +704,32 @@ fn run_worker(
             volume: start.volume,
             muted: start.muted,
         };
-        let (video, video_out) = match demux.selected_video() {
+        let (video, video_out, video_output) = match demux.selected_video() {
             Some(stream) => {
                 let decoder = EngineVideo::open(demux.session(), stream)?;
                 let shared = decoder.shared();
-                let output = if render_video {
-                    EngineVideoOutput::open(shared, frames_tx, start.gpu_api)?
+                if render_video {
+                    (
+                        decoder,
+                        EngineVideoOutput::open(shared, frames_tx, start.gpu_api)?,
+                        Some("gpu-next"),
+                    )
                 } else {
-                    EngineVideoOutput::null(shared, frames_tx)
-                };
-                (decoder, output)
+                    (
+                        decoder,
+                        EngineVideoOutput::null(shared, frames_tx),
+                        Some("null"),
+                    )
+                }
             }
             None => {
                 let decoder = EngineVideo::passive();
                 let shared = decoder.shared();
-                (decoder, EngineVideoOutput::passive(shared, frames_tx))
+                (
+                    decoder,
+                    EngineVideoOutput::passive(shared, frames_tx),
+                    None,
+                )
             }
         };
         let (video_width, video_height) = demux
@@ -727,30 +761,50 @@ fn run_worker(
             scheduler.send(Command::Pause(true));
             scheduler.send(Command::Seek(0.0, SeekPrecision::Exact, 0));
         }
-        Ok((scheduler, duration, video_width, video_height))
-    };
-    let (mut worker, duration, video_width, video_height) = match build() {
-        Ok((scheduler, duration, video_width, video_height)) => (
-            Worker {
-                scheduler,
-                volume: start.volume,
-                muted: start.muted,
-            },
+        Ok((
+            scheduler,
             duration,
             video_width,
             video_height,
-        ),
-        Err(message) => {
-            update(&state, |status| status.error = Some(message.clone()));
-            let _ = ready.send(Err(message));
-            guard.clean = true;
-            return;
-        }
+            audio_output,
+            video_output,
+        ))
     };
+    let (mut worker, duration, video_width, video_height, audio_output, video_output) =
+        match build() {
+            Ok((
+                scheduler,
+                duration,
+                video_width,
+                video_height,
+                audio_output,
+                video_output,
+            )) => (
+                Worker {
+                    scheduler,
+                    volume: start.volume,
+                    muted: start.muted,
+                    fps: FpsMeter::new(),
+                },
+                duration,
+                video_width,
+                video_height,
+                audio_output,
+                video_output,
+            ),
+            Err(message) => {
+                update(&state, |status| status.error = Some(message.clone()));
+                let _ = ready.send(Err(message));
+                guard.clean = true;
+                return;
+            }
+        };
     update(&state, |status| {
         status.duration = duration;
         status.video_width = video_width;
         status.video_height = video_height;
+        status.audio_output = audio_output;
+        status.video_output = video_output;
     });
     if ready.send(Ok(())).is_err() {
         guard.clean = true;
@@ -797,10 +851,69 @@ fn terminal_flags(state: State) -> (bool, bool) {
     )
 }
 
+const FPS_DISCONTINUITY_SECONDS: f64 = 0.5;
+const FPS_MINIMUM_SPAN_SECONDS: f64 = 0.5;
+
+struct FpsMeter {
+    origin: Option<(f64, u64)>,
+    last: Option<(f64, u64)>,
+    position: f64,
+    value: Option<f64>,
+}
+
+impl FpsMeter {
+    fn new() -> Self {
+        FpsMeter {
+            origin: None,
+            last: None,
+            position: 0.0,
+            value: None,
+        }
+    }
+
+    fn observe(&mut self, position: f64, presented: u64) {
+        if position < self.position - 0.001
+            || position - self.position > FPS_DISCONTINUITY_SECONDS
+        {
+            self.origin = None;
+            self.last = None;
+            self.value = None;
+            self.position = position;
+            return;
+        }
+        self.position = position;
+        if presented == 0 {
+            return;
+        }
+        match self.last {
+            None => {
+                self.origin = Some((position, presented));
+                self.last = Some((position, presented));
+                return;
+            }
+            Some((_, count)) if presented <= count => return,
+            Some(_) => {}
+        }
+        self.last = Some((position, presented));
+        let (origin_position, origin_presented) =
+            self.origin.expect("the first presented frame set the origin");
+        let span = position - origin_position;
+        let intervals = presented - origin_presented;
+        if span >= FPS_MINIMUM_SPAN_SECONDS && intervals >= 1 {
+            self.value = Some(intervals as f64 / span);
+        }
+    }
+
+    fn value(&self) -> Option<f64> {
+        self.value
+    }
+}
+
 struct Worker {
     scheduler: EngineScheduler,
     volume: f32,
     muted: bool,
+    fps: FpsMeter,
 }
 
 impl Worker {
@@ -835,12 +948,16 @@ impl Worker {
         }
     }
 
-    fn publish(&self, state: &Arc<Mutex<EngineStatus>>, now: f64) {
+    fn publish(&mut self, state: &Arc<Mutex<EngineStatus>>, now: f64) {
         let position = self.scheduler.clock_position(now);
         let paused = matches!(self.scheduler.state(), State::Paused { .. });
         let (ended, failed) = terminal_flags(self.scheduler.state());
         let error = self.scheduler.failure().map(str::to_string);
         let stats = self.scheduler.stats();
+        self.fps
+            .observe(position, stats.delivered + stats.discarded);
+        let estimated_vf_fps = self.fps.value();
+        let audio_underruns = self.scheduler.audio_output().underruns();
         let (volume, muted) = (self.volume, self.muted);
         let tracks = track_list(&self.scheduler);
         let subtitle_text = self.scheduler.subtitle_text(now);
@@ -860,6 +977,8 @@ impl Worker {
             status.flushed = stats.flushed;
             status.frames_pending = stats.frames_pending;
             status.seek_completed_generation = stats.seek_completed_generation;
+            status.estimated_vf_fps = estimated_vf_fps;
+            status.audio_underruns = audio_underruns;
             status.volume = volume;
             status.muted = muted;
             status.subtitle_text = subtitle_text;
@@ -1346,6 +1465,8 @@ mod tests {
             (320, 240),
             "status carries the selected video dims"
         );
+        assert_eq!(status.video_output, Some("gpu-next"));
+        assert_eq!(status.audio_output, Some("null"));
         assert!(status.delivered > 0, "no frames delivered");
         assert!(
             frames.len() > 24,
@@ -1372,6 +1493,30 @@ mod tests {
             frames.len(),
             "every delivered frame is drained exactly once"
         );
+    }
+
+    #[test]
+    fn a_null_output_is_named_and_the_frame_rate_is_measured() {
+        let engine = SchedulerEngine::load_null_video(
+            &fixture("h264.mp4"),
+            SinkKind::Null,
+            StartState::default(),
+        )
+        .expect("engine loads");
+        let named = poll_until(&engine, StdDuration::from_secs(5), |status| {
+            status.video_output.is_some() && status.audio_output.is_some()
+        });
+        assert_eq!(named.video_output, Some("null"));
+        assert_eq!(named.audio_output, Some("null"));
+        let measured = poll_until(&engine, StdDuration::from_secs(10), |status| {
+            status.position >= 1.0 && status.estimated_vf_fps.is_some()
+        });
+        let fps = measured.estimated_vf_fps.expect("frame rate measured");
+        assert!(
+            (fps - 24.0).abs() <= 1.2,
+            "estimated frame rate {fps} is not within 5% of 24"
+        );
+        assert_eq!(measured.audio_underruns, 0, "the null sink has no underruns");
     }
 
     #[test]

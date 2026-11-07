@@ -1,4 +1,5 @@
 use crate::sink::AudioSink;
+use crate::underrun::Underruns;
 use std::ffi::c_void;
 use std::ptr;
 use std::sync::{Condvar, Mutex};
@@ -91,7 +92,7 @@ struct QueueState {
     free: Vec<AudioQueueBufferRef>,
     in_flight: usize,
     streaming: bool,
-    underruns: u64,
+    underruns: Underruns,
 }
 
 struct Shared {
@@ -112,7 +113,7 @@ unsafe extern "C" fn buffer_done(user: *mut c_void, _queue: AudioQueueRef, buffe
     }
     state.in_flight = state.in_flight.saturating_sub(1);
     if state.in_flight == 0 && state.streaming {
-        state.underruns += 1;
+        state.underruns.starved();
     }
     state.free.push(buffer);
     shared.ready.notify_one();
@@ -154,7 +155,7 @@ impl CoreAudioSink {
                 free: Vec::with_capacity(BUFFER_COUNT),
                 in_flight: 0,
                 streaming: false,
-                underruns: 0,
+                underruns: Underruns::new(),
             }),
             ready: Condvar::new(),
         });
@@ -274,6 +275,7 @@ impl CoreAudioSink {
                 .unwrap_or_else(|poison| poison.into_inner());
             state.in_flight += 1;
             state.streaming = true;
+            state.underruns.data();
         }
         self.current = ptr::null_mut();
         self.staged_frames = 0;
@@ -355,7 +357,27 @@ impl AudioSink for CoreAudioSink {
 
     fn pause(&mut self) -> Result<(), String> {
         // SAFETY: the queue is live.
-        Self::status(unsafe { AudioQueuePause(self.queue) }, "AudioQueuePause")
+        Self::status(unsafe { AudioQueuePause(self.queue) }, "AudioQueuePause")?;
+        self.shared
+            .state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .underruns
+            .pause();
+        Ok(())
+    }
+
+    fn underruns(&self) -> u64 {
+        self.shared
+            .state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .underruns
+            .count()
+    }
+
+    fn backend_name(&self) -> &'static str {
+        "coreaudio"
     }
 
     fn resume(&mut self) -> Result<(), String> {
@@ -379,6 +401,7 @@ impl AudioSink for CoreAudioSink {
                 .unwrap_or_else(|poison| poison.into_inner());
             state.free = state.buffers.clone();
             state.in_flight = 0;
+            state.underruns.flush();
         }
         self.staged_frames = 0;
         self.current = ptr::null_mut();
@@ -389,6 +412,12 @@ impl AudioSink for CoreAudioSink {
     fn finish(&mut self) -> Result<(), String> {
         self.enqueue_current()?;
         self.stop_streaming();
+        self.shared
+            .state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .underruns
+            .finish();
         Ok(())
     }
 }
@@ -404,7 +433,8 @@ impl Drop for CoreAudioSink {
             .state
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
-            .underruns;
+            .underruns
+            .count();
         if underruns > 0 {
             eprintln!("[ao/coreaudio] {underruns} underruns: the output queue ran dry");
         }

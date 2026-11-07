@@ -387,6 +387,46 @@ impl MediaSession {
         }
     }
 
+    /// Frame rate of the first video stream that is not cover art. Uses the
+    /// probe's average rate, falling back to the raw rate when the average is
+    /// unset. None when no video stream exists or neither rate is known.
+    pub fn video_frame_rate(&self) -> Option<f64> {
+        // SAFETY: streams/nb_streams are valid for the open session.
+        let count = unsafe { (*self.context).nb_streams as usize }.min(MAX_STREAMS);
+        for index in 0..count {
+            // SAFETY: index is below nb_streams.
+            let stream = unsafe { *(*self.context).streams.add(index) };
+            if stream.is_null() {
+                continue;
+            }
+            // SAFETY: codecpar and disposition are plain data set by the probe.
+            let (params, disposition) =
+                unsafe { ((*stream).codecpar, (*stream).disposition) };
+            if params.is_null() {
+                continue;
+            }
+            // SAFETY: codecpar fields are plain data set by the probe.
+            if unsafe { (*params).codec_type } != AVMEDIA_TYPE_VIDEO
+                || disposition & AV_DISPOSITION_ATTACHED_PIC != 0
+            {
+                continue;
+            }
+            // SAFETY: the rate fields are plain data set by the probe.
+            let (average, raw) =
+                unsafe { ((*stream).avg_frame_rate, (*stream).r_frame_rate) };
+            let rate = if average.num > 0 && average.den > 0 {
+                average
+            } else {
+                raw
+            };
+            if rate.num <= 0 || rate.den <= 0 {
+                return None;
+            }
+            return Some(rate.num as f64 / rate.den as f64);
+        }
+        None
+    }
+
     pub fn chapters(&self) -> Vec<ChapterInfo> {
         let mut out = Vec::new();
         // SAFETY: chapters/nb_chapters are valid for the open session.
@@ -605,6 +645,21 @@ mod tests {
         assert_eq!(audio.channels, 2);
         let duration = session.duration_seconds().expect("duration");
         assert!((duration - 3.0).abs() < 0.2, "duration {duration}");
+    }
+
+    #[test]
+    fn reports_the_video_frame_rate_and_ignores_cover_art_and_audio() {
+        let video = open("h264.mp4");
+        let rate = video.video_frame_rate().expect("video stream reports a rate");
+        assert!((rate - 24.0).abs() < 0.01, "rate {rate}");
+        let audio = open("audio-wav.wav");
+        assert_eq!(audio.video_frame_rate(), None);
+        let cover = open("audio-cover.flac");
+        assert_eq!(
+            cover.video_frame_rate(),
+            None,
+            "cover art is not a video stream"
+        );
     }
 
     #[test]

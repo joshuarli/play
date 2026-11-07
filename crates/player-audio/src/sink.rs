@@ -15,6 +15,12 @@ pub trait AudioSink {
     fn finish(&mut self) -> Result<(), String> {
         Ok(())
     }
+    fn underruns(&self) -> u64 {
+        0
+    }
+    fn backend_name(&self) -> &'static str {
+        "unknown"
+    }
 }
 
 pub struct NullSink {
@@ -124,6 +130,14 @@ impl AudioSink for NullSink {
         self.anchor = None;
         Ok(())
     }
+
+    fn underruns(&self) -> u64 {
+        0
+    }
+
+    fn backend_name(&self) -> &'static str {
+        "null"
+    }
 }
 
 #[cfg(test)]
@@ -146,12 +160,20 @@ mod tests {
     fn null_sink_plays_queued_frames_in_real_time_and_holds_while_paused() {
         let mut sink = NullSink::new(1, 1000);
         sink.write(&[0.0; 200]).unwrap();
+        let started = std::time::Instant::now();
         std::thread::sleep(std::time::Duration::from_millis(100));
+        let elapsed = started.elapsed().as_secs_f64();
         let queued = sink.queued_frames();
-        assert!((80..=110).contains(&queued), "about 100 of 200 frames left, got {queued}");
+        let played = 200 - queued;
+        let expected = (elapsed * 1000.0).min(200.0);
+        assert!(
+            (played as f64 - expected).abs() <= 30.0,
+            "played {played} of 200 frames in {elapsed:.3}s"
+        );
         sink.pause().unwrap();
+        let frozen = sink.queued_frames();
         std::thread::sleep(std::time::Duration::from_millis(50));
-        assert_eq!(sink.queued_frames(), queued, "a paused sink plays nothing");
+        assert_eq!(sink.queued_frames(), frozen, "a paused sink plays nothing");
         sink.resume().unwrap();
         std::thread::sleep(std::time::Duration::from_millis(150));
         assert_eq!(sink.queued_frames(), 0);

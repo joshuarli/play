@@ -1,4 +1,5 @@
 use crate::sink::AudioSink;
+use crate::underrun::Underruns;
 use std::cell::Cell;
 use std::ffi::{c_int, c_uint, c_void, CStr, CString};
 use std::ptr;
@@ -77,6 +78,7 @@ pub struct AlsaSink {
     rate: u32,
     last_delay: Cell<u64>,
     drain_on_finish: bool,
+    underruns: Underruns,
 }
 
 impl AlsaSink {
@@ -99,6 +101,7 @@ impl AlsaSink {
                 rate: actual_rate,
                 last_delay: Cell::new(0),
                 drain_on_finish: device != "null",
+                underruns: Underruns::new(),
             }),
             Err(message) => {
                 // SAFETY: pcm was opened above.
@@ -196,6 +199,7 @@ impl AudioSink for AlsaSink {
             let written =
                 unsafe { snd_pcm_writei(self.pcm, rest.as_ptr().cast(), count as u64) };
             if written == EPIPE {
+                self.underruns.starved();
                 // SAFETY: pcm is live.
                 let status = unsafe { snd_pcm_prepare(self.pcm) };
                 if status < 0 {
@@ -208,6 +212,9 @@ impl AudioSink for AlsaSink {
             }
             if written < 0 {
                 return Err(alsa_error(written as c_int, "snd_pcm_writei"));
+            }
+            if written > 0 {
+                self.underruns.data();
             }
             rest = &rest[written as usize * self.channels..];
         }
@@ -239,8 +246,17 @@ impl AudioSink for AlsaSink {
         if status < 0 {
             Err(alsa_error(status, "snd_pcm_pause"))
         } else {
+            self.underruns.pause();
             Ok(())
         }
+    }
+
+    fn underruns(&self) -> u64 {
+        self.underruns.count()
+    }
+
+    fn backend_name(&self) -> &'static str {
+        "alsa"
     }
 
     fn resume(&mut self) -> Result<(), String> {
@@ -264,11 +280,13 @@ impl AudioSink for AlsaSink {
         if status < 0 {
             Err(alsa_error(status, "snd_pcm_prepare"))
         } else {
+            self.underruns.flush();
             Ok(())
         }
     }
 
     fn finish(&mut self) -> Result<(), String> {
+        self.underruns.finish();
         if !self.drain_on_finish {
             return Ok(());
         }
