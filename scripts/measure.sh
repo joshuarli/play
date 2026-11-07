@@ -68,6 +68,8 @@ MEASURE_DIR = ROOT / ".work" / "fixtures" / "measure"
 TMP = ROOT / ".work" / "tmp"
 METRICS = ROOT / "docs" / "metrics.md"
 RESULT_PATH = TMP / f"measure-{LABEL}.json"
+HOMEBREW_FFMPEG = Path("/opt/homebrew/bin/ffmpeg")
+FFMPEG = str(HOMEBREW_FFMPEG) if HOMEBREW_FFMPEG.exists() else shutil.which("ffmpeg") or "ffmpeg"
 TMP.mkdir(parents=True, exist_ok=True)
 MEASURE_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -166,7 +168,7 @@ def ensure_measure_fixtures():
         path = MEASURE_DIR / f"{label}.mp4"
         if not path.exists():
             proc = run([
-                "ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-bitexact",
+                FFMPEG, "-hide_banner", "-loglevel", "error", "-y", "-bitexact",
                 "-f", "lavfi", "-i",
                 f"testsrc2=size={width}x{height}:rate=24:duration=3",
                 "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
