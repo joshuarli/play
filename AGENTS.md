@@ -1,6 +1,6 @@
 # Repository guide
 
-Player is a local-only media player built on a Rust playback engine, a minimal pinned FFmpeg n9.0.2, libplacebo, and an mpv-compatible application surface. The macOS release artifact is `dist/Player.app`; the Linux x86-64 musl artifact is `dist/player-x86_64-linux-musl.tar.gz`. The Cargo workspace manifest is at the repository root and the crates are under `crates/`.
+Player is a local-only media player built on a Rust playback engine, the pinned shared FFmpeg n9.0.2 runtime, libplacebo, and an mpv-compatible application surface. The macOS release artifact is `dist/Player.app`; the Linux x86-64 musl artifact is `dist/player-x86_64-linux-musl.tar.gz`. The Cargo workspace manifest is at the repository root and the crates are under `crates/`.
 
 ## Commands
 
@@ -32,7 +32,7 @@ Player is a local-only media player built on a Rust playback engine, a minimal p
 - [docs/linux.md](docs/linux.md): Linux runtime set, container, headless gates, ALSA, fixtures.
 - [docs/architecture.md](docs/architecture.md): ownership boundaries, playback pipeline, OSC, renderer, release closure.
 - [docs/scope.md](docs/scope.md): input boundary, retained and removed modules, CLI.
-- [docs/ffmpeg.md](docs/ffmpeg.md): FFmpeg SDK pin, fetch, link, and manifest gate.
+- [docs/ffmpeg.md](docs/ffmpeg.md): FFmpeg runtime pin, installed layout, fetch, link, and gates.
 - [docs/metrics.md](docs/metrics.md): measurement history and release budgets.
 - [docs/manual-checklist.md](docs/manual-checklist.md): owner-run visual and audio checks.
 - [docs/tui-design.md](docs/tui-design.md): terminal UI layout, art transport, and limits.

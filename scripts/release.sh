@@ -8,7 +8,7 @@ export MACOSX_DEPLOYMENT_TARGET=${MACOSX_DEPLOYMENT_TARGET:-27.0}
 cd "$ROOT"
 rm -rf "$ROOT/dist/Player.app"
 scripts/build-deps.sh
-scripts/fetch-ffmpeg-sdk.sh aarch64-apple-darwin
+scripts/fetch-ffmpeg-runtime.sh aarch64-apple-darwin
 
 export PKG_CONFIG_LIBDIR="$PREFIX/lib/pkgconfig"
 unset PKG_CONFIG_PATH

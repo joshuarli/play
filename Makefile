@@ -1,33 +1,42 @@
-PREFIX ?= $(HOME)/Applications
 BINDIR ?= $(HOME)/.local/bin
 
 APP := dist/Player.app
-INSTALLED_APP := $(DESTDIR)$(PREFIX)/Player.app
-INSTALLED_PLAYER := $(DESTDIR)$(BINDIR)/player
 
 .PHONY: all release linux test install uninstall
 
 ifeq ($(shell uname -s),Darwin)
+PLAYER_HOME ?= $(HOME)/Applications/Player
+INSTALLED_HOME := $(DESTDIR)$(PLAYER_HOME)
+
 all: release
 
 install: release
-	mkdir -p "$(DESTDIR)$(PREFIX)"
-	rm -rf "$(INSTALLED_APP)"
-	ditto "$(APP)" "$(INSTALLED_APP)"
-	printf 'installed %s\n' "$(INSTALLED_APP)"
+	rm -rf "$(INSTALLED_HOME)"
+	mkdir -p "$(INSTALLED_HOME)"
+	ditto "$(APP)" "$(INSTALLED_HOME)/Player.app"
+	cp -RP dist/lib/ "$(INSTALLED_HOME)/lib"
+	printf 'installed %s\n' "$(INSTALLED_HOME)/Player.app"
 
 uninstall:
-	rm -rf "$(INSTALLED_APP)"
+	rm -rf "$(INSTALLED_HOME)"
 else
+PLAYER_HOME ?= $(HOME)/.local/opt/player
+INSTALLED_HOME := $(DESTDIR)$(PLAYER_HOME)
+INSTALLED_PLAYER := $(DESTDIR)$(BINDIR)/player
+
 all: linux
 
 install: linux
-	mkdir -p "$(DESTDIR)$(BINDIR)"
-	install -m 755 dist/player "$(INSTALLED_PLAYER)"
+	rm -rf "$(INSTALLED_HOME)"
+	mkdir -p "$(INSTALLED_HOME)/bin" "$(DESTDIR)$(BINDIR)"
+	install -m 755 dist/bin/player "$(INSTALLED_HOME)/bin/player"
+	cp -RP dist/lib/ "$(INSTALLED_HOME)/lib"
+	ln -sfn "$(PLAYER_HOME)/bin/player" "$(INSTALLED_PLAYER)"
 	printf 'installed %s\n' "$(INSTALLED_PLAYER)"
 
 uninstall:
 	rm -f "$(INSTALLED_PLAYER)"
+	rm -rf "$(INSTALLED_HOME)"
 endif
 
 test:

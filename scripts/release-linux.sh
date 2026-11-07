@@ -18,15 +18,27 @@ runtime_packages=$(apk list -I 2>/dev/null |
     exit 1
 }
 
+runtime=$(python3 -c 'import json, sys; pin = json.load(open(sys.argv[1])); print(pin["ffmpeg"] + "+" + pin["release"])' "$ROOT/ffmpeg-runtime.lock.json")
+
 rm -rf "$STAGE"
 mkdir -p "$STAGE"
 install -m 755 "$DIST/player" "$STAGE/player"
 cat >"$STAGE/README" <<README
 Player for Linux x86-64 on musl
 
-A mostly static executable. It plays local files only, with vo=gpu-next over
-Vulkan and Wayland and ALSA audio. It needs a musl system (such as Alpine)
-with these packages, built against these versions:
+It plays local files only, with vo=gpu-next over Vulkan and Wayland and ALSA
+audio. It links the shared FFmpeg runtime from laputa-systems/ffmpeg-build:
+
+FFmpeg runtime: $runtime
+
+Install it from ffmpeg-$runtime-x86_64-unknown-linux-musl-runtime.tar.gz
+and put player in a bin/ directory whose sibling lib/ holds that runtime's
+lib/ (the runtime's own bin/, or a prefix where lib links to it). player
+finds the libraries through RUNPATH \$ORIGIN/../lib; a symlink to player
+elsewhere on PATH works.
+
+It needs a musl system (such as Alpine) with these packages, built against
+these versions:
 
 $runtime_packages
 
@@ -51,14 +63,15 @@ tar --sort=name --owner=0 --group=0 --numeric-owner --mtime=@0 \
 
 VERIFY="$ROOT/.work/tmp/release-linux-verify"
 rm -rf "$VERIFY"
-mkdir -p "$VERIFY"
+mkdir -p "$VERIFY/bin"
 (cd "$DIST" && sha256sum -c "$NAME.tar.gz.sha256")
-tar -xzf "$TARBALL" -C "$VERIFY"
-[ "$(ls "$VERIFY" | sort | tr '\n' ' ')" = "README player " ] || {
-    printf 'error: unexpected tarball contents: %s\n' "$(ls "$VERIFY")" >&2
+tar -xzf "$TARBALL" -C "$VERIFY/bin"
+[ "$(ls "$VERIFY/bin" | sort | tr '\n' ' ')" = "README player " ] || {
+    printf 'error: unexpected tarball contents: %s\n' "$(ls "$VERIFY/bin")" >&2
     exit 1
 }
-cmp "$VERIFY/player" "$DIST/player"
-"$VERIFY/player" --version | sed -n 1,3p
-PLAYER="$VERIFY/player" "$ROOT/scripts/audit-linux.sh" >/dev/null
+cmp "$VERIFY/bin/player" "$DIST/player"
+ln -s "$(readlink -f "$DIST/lib")" "$VERIFY/lib"
+"$VERIFY/bin/player" --version | sed -n 1,3p
+PLAYER="$VERIFY/bin/player" "$ROOT/scripts/audit-linux.sh" >/dev/null
 printf 'release-linux: %s\n' "$TARBALL"

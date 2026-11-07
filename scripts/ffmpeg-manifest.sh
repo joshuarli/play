@@ -15,8 +15,9 @@ import sys
 ROOT = pathlib.Path(sys.argv[1])
 MODE = sys.argv[2]
 MANIFEST_ARG = sys.argv[3]
-PIN = ROOT / "ffmpeg-sdk.lock.json"
+PIN = ROOT / "ffmpeg-runtime.lock.json"
 NETWORK_SCHEMES = ROOT / "scripts" / "network-schemes.txt"
+LOCAL_PROTOCOLS = {"file", "pipe", "fd"}
 TARGETS = {"Darwin": "aarch64-apple-darwin", "Linux": "x86_64-unknown-linux-musl"}
 
 REQUIRED = {
@@ -30,10 +31,6 @@ REQUIRED_BY_TARGET = {
         "hwaccels": {"h264_vaapi", "hevc_vaapi", "vp9_vaapi", "av1_vaapi"},
     },
 }
-AUDIO_DECODERS = {
-    "aac", "aac_fixed", "aac_latm", "mp3", "mp3float", "mp2", "mp2float", "flac",
-    "alac", "opus", "vorbis", "ac3", "eac3", "wavpack", "ape",
-}
 
 
 def usage():
@@ -45,7 +42,7 @@ def manifest_path(target):
     if MANIFEST_ARG:
         return pathlib.Path(MANIFEST_ARG)
     prefix = os.environ.get("FFMPEG_PREFIX")
-    prefix = pathlib.Path(prefix) if prefix else ROOT / ".work" / "deps" / "ffmpeg-sdk" / target
+    prefix = pathlib.Path(prefix) if prefix else ROOT / ".work" / "deps" / "ffmpeg-runtime" / target
     return prefix / "share" / "ffmpeg-build" / "manifest.json"
 
 
@@ -68,16 +65,16 @@ def check():
         shown = path.relative_to(ROOT)
     except ValueError:
         shown = path
-    print(f"ffmpeg-audit: SDK manifest {shown}")
+    print(f"ffmpeg-audit: runtime manifest {shown}")
     try:
         manifest = json.loads(path.read_text())
     except (OSError, json.JSONDecodeError) as exc:
-        case("manifest readable", False, f"{exc}; run scripts/fetch-ffmpeg-sdk.sh {target}")
+        case("manifest readable", False, f"{exc}; run scripts/fetch-ffmpeg-runtime.sh {target}")
         print(f"TOTAL 0 passed, {len(results)} failed")
         return 1
     case("manifest readable", True)
 
-    case("profile is play-sdk", manifest.get("profile") == "play-sdk", manifest.get("profile"))
+    case("profile is runtime", manifest.get("profile") == "runtime", manifest.get("profile"))
     case(f"target is {target}", manifest.get("target") == target, manifest.get("target"))
     version = manifest.get("sources", {}).get("ffmpeg", {}).get("version")
     case(f"FFmpeg {pin['ffmpeg']}", version == pin["ffmpeg"], version)
@@ -85,8 +82,7 @@ def check():
     case(f"release {pin['release']} matches the pin", tag == pin["release"], tag)
 
     enabled = {key: set(value) for key, value in manifest.get("components", {}).items()}
-    for category in ("encoders", "muxers", "devices"):
-        case(f"no {category}", not enabled.get(category), sorted(enabled.get(category, ())))
+    case("no devices", not enabled.get("devices"), sorted(enabled.get("devices", ())))
 
     protocols = enabled.get("protocols", set())
     network = {
@@ -94,12 +90,14 @@ def check():
         for line in NETWORK_SCHEMES.read_text().splitlines()
         if line.strip() and not line.startswith("#")
     }
-    case("file is the only protocol", protocols == {"file"}, sorted(protocols))
     case("no network protocols", not (protocols & network), sorted(protocols & network))
+    case("protocols are local only", protocols <= LOCAL_PROTOCOLS, sorted(protocols - LOCAL_PROTOCOLS))
     case("--disable-network configured", "--disable-network" in manifest.get("configure", ""))
 
-    audio = enabled.get("decoders", set()) & AUDIO_DECODERS
-    case("no FFmpeg audio decoders", not audio, sorted(audio))
+    libraries = manifest.get("libraries", {})
+    identity = "install_name" if target.endswith("-apple-darwin") else "soname"
+    missing = [name for name in pin["libraries"] if not libraries.get(name, {}).get(identity)]
+    case(f"pinned libraries carry a {identity}", not missing, f"missing: {missing}")
 
     required = {key: set(value) for key, value in REQUIRED.items()}
     for key, value in REQUIRED_BY_TARGET[target].items():
@@ -108,8 +106,8 @@ def check():
         missing = names - enabled.get(category, set())
         case(f"required playback {category} present", not missing, f"missing: {sorted(missing)}")
 
-    libraries = set(manifest.get("external_libraries", []))
-    case("dav1d is the only external library", libraries == {"dav1d"}, sorted(libraries))
+    external = set(manifest.get("external_libraries", []))
+    case("dav1d is the only external library", external == {"dav1d"}, sorted(external))
     bundled = set(manifest.get("bundled_dependencies", []))
     case("dav1d and zlib are the only bundled dependencies", bundled == {"dav1d", "zlib"}, sorted(bundled))
 

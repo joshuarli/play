@@ -8,6 +8,8 @@ A `v*` tag runs `.github/workflows/release.yml`, which builds and publishes:
 
 - `Player-aarch64-apple-darwin.zip`: `Player.app` for Apple Silicon.
 - `player-x86_64-linux-musl.tar.gz`: the Linux x86-64 musl binary and its README.
+
+Both need the FFmpeg runtime release named in `ffmpeg-runtime.lock.json`, installed in the layout described in [FFmpeg](ffmpeg.md#installed-layout).
 - `SHA256SUMS`: the digests for both archives.
 
 Verify the checksum before use. On a machine with the `~/usr` dotfiles, `sh dl player` installs the latest release and verifies it: `~/Applications/Player.app` plus `~/.local/bin/player` on macOS, or `~/.local/bin/player` on Linux. Set `PLAYER_APPLICATIONS_DIR` to change the macOS location. Remove a `make install` copy with `make uninstall` before the first `dl` install.
@@ -22,7 +24,7 @@ The build runs in Docker, in the pinned Alpine edge image (`docker/linux/Dockerf
 make linux
 ```
 
-`make linux` builds the static dependency prefix with `scripts/build-deps-linux.sh`, then `scripts/release-linux.sh` builds, audits, and writes `dist/player-x86_64-linux-musl.tar.gz` with a `.sha256` file. The tarball holds `player` and a `README` listing the musl runtime packages. `make install` builds the same and copies `player` to `~/.local/bin`; set `BINDIR` to change it, and `make uninstall` removes it. Run a file with `player FILE`. The system needs a Vulkan driver, a Wayland compositor, ALSA, and fontconfig with a font; `docs/linux.md` covers the runtime set and the headless gates.
+`make linux` builds the static dependency prefix with `scripts/build-deps-linux.sh`, then `scripts/release-linux.sh` builds, audits, and writes `dist/player-x86_64-linux-musl.tar.gz` with a `.sha256` file. The tarball holds `player` and a `README` naming the FFmpeg runtime release and listing the musl runtime packages. `make install` builds the same, installs `player` and a copy of the runtime's libraries as `~/.local/opt/player/{bin/player,lib}`, and links `~/.local/bin/player` to it; set `PLAYER_HOME` or `BINDIR` to change them, and `make uninstall` removes both. Run a file with `player FILE`. The system needs a Vulkan driver, a Wayland compositor, ALSA, and fontconfig with a font; `docs/linux.md` covers the runtime set and the headless gates.
 
 ## Release app
 
@@ -42,13 +44,12 @@ scripts/build-deps.sh
 scripts/release.sh
 ```
 
-`scripts/release.sh` also downloads and verifies the static FFmpeg SDK pinned in `ffmpeg-sdk.lock.json` (see [FFmpeg](ffmpeg.md)); building it needs network access to GitHub releases once.
+`scripts/release.sh` also downloads and verifies the FFmpeg runtime pinned in `ffmpeg-runtime.lock.json` (see [FFmpeg](ffmpeg.md)); building it needs network access to GitHub releases once.
 
-`make install` builds the same app and copies it to `~/Applications/Player.app`.
-Pass another location with `PREFIX`, such as `make install PREFIX=/Applications`,
-or stage a package root with `DESTDIR`. `make uninstall` removes that copy.
+`make install` builds the same app and installs it with a copy of the runtime's libraries as `~/Applications/Player/{Player.app,lib}`.
+Pass another location with `PLAYER_HOME`, or stage a package root with `DESTDIR`. `make uninstall` removes that directory.
 
-The app is `dist/Player.app`. Open it from Finder, or run a file directly:
+The app is `dist/Player.app`, with `dist/lib` linking the runtime's libraries beside it. Open it from Finder, or run a file directly:
 
 ```sh
 dist/Player.app/Contents/MacOS/player FILE
@@ -62,7 +63,7 @@ dist/Player.app/Contents/MacOS/player --tui FILE
 
 Kitty-capable terminals show the embedded cover at full resolution; others use truecolor half-blocks. See [Terminal UI](tui-design.md).
 
-The bundle carries its own pinned dylibs, Vulkan loader, and MoltenVK, and its libplacebo includes the default Metal backend beside Vulkan (`--gpu-api=vulkan`); FFmpeg, dav1d, and zlib are linked statically into the executable. It does not use Homebrew, a global FFmpeg, or `usr` at runtime. It is ad-hoc signed and not notarized. Do not distribute the build without a signing identity. It declares `MPVBUNDLE` and the supported document types in `Info.plist`.
+The bundle carries its own pinned dylibs, Vulkan loader, and MoltenVK, and its libplacebo includes the default Metal backend beside Vulkan (`--gpu-api=vulkan`). FFmpeg is not in the bundle: the executable loads the pinned shared runtime through `@rpath`, from `lib/` beside `Player.app`. It does not use Homebrew or a global FFmpeg. It is ad-hoc signed and not notarized. Do not distribute the build without a signing identity. It declares `MPVBUNDLE` and the supported document types in `Info.plist`.
 
 ## Local-only contract
 

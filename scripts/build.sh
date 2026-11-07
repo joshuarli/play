@@ -5,8 +5,8 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT"
 
 case "$(uname -s)" in
-    Darwin) "$ROOT/scripts/fetch-ffmpeg-sdk.sh" aarch64-apple-darwin ;;
-    Linux) "$ROOT/scripts/fetch-ffmpeg-sdk.sh" x86_64-unknown-linux-musl ;;
+    Darwin) "$ROOT/scripts/fetch-ffmpeg-runtime.sh" aarch64-apple-darwin ;;
+    Linux) "$ROOT/scripts/fetch-ffmpeg-runtime.sh" x86_64-unknown-linux-musl ;;
 esac
 
 if [ "$(uname -s)" = "Linux" ]; then
@@ -17,13 +17,13 @@ fi
 
 cargo build -p player-app
 
+BINARY="${CARGO_TARGET_DIR:-$ROOT/target}/debug/player"
 if [ "$(uname -s)" = "Linux" ]; then
-    OUTPUT="$ROOT/build-linux/mpv"
+    "$ROOT/scripts/install-layout.sh" "$BINARY" "$ROOT/build-linux" mpv
 else
-    OUTPUT="$ROOT/build/mpv"
+    mkdir -p "$ROOT/build"
+    install -m 755 "$BINARY" "$ROOT/build/mpv"
 fi
-mkdir -p "$(dirname "$OUTPUT")"
-install -m 755 "${CARGO_TARGET_DIR:-$ROOT/target}/debug/player" "$OUTPUT"
 if [ "$(uname -s)" = "Darwin" ]; then
     mkdir -p "$ROOT/build/vulkan/icd.d"
     cp "$ROOT/.work/deps/release/share/vulkan/icd.d/MoltenVK_icd.json" "$ROOT/build/vulkan/icd.d/"

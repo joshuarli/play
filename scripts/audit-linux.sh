@@ -4,11 +4,17 @@ set -uo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 PLAYER=${PLAYER:-$ROOT/dist/player}
 UNSTRIPPED=${UNSTRIPPED:-$ROOT/build-linux/mpv}
+TARGET=x86_64-unknown-linux-musl
+RUNTIME=${FFMPEG_PREFIX:-$ROOT/.work/deps/ffmpeg-runtime/$TARGET}
 ALLOWED_NEEDED=(
     libvulkan.so.1 libwayland-client.so.0
-    libasound.so.2 libc.musl-x86_64.so.1 libva.so.2 libva-drm.so.2
+    libasound.so.2 libc.musl-x86_64.so.1
     libfontconfig.so.1 libharfbuzz.so.0 libfreetype.so.6
 )
+FFMPEG_NEEDED_PATTERN='^lib(av[a-z]*|sw[a-z]*|postproc|dav1d|z)\.so'
+FFMPEG_SYMBOLS='^(av|avio|avformat|avcodec|avfilter|avutil|sws|swr|ff|dav1d)_'
+EXPECTED_RUNPATH=${PLAYER_FFMPEG_RPATH-'$ORIGIN/../lib'}
+[ "$EXPECTED_RUNPATH" = none ] && EXPECTED_RUNPATH=
 RETIRED_TEXT_STACK='libass|fribidi|pango|cairo|pixman'
 RETIRED_TEXT_SYMBOLS='^(ass|fribidi|pango|cairo|pixman)_'
 FORBIDDEN_IMPORTS='^(getaddrinfo|freeaddrinfo|getnameinfo|gethostbyname2?|gethostbyaddr|SSL_.*|TLS_.*|curl_.*)$'
@@ -24,12 +30,24 @@ check() {
     fi
 }
 
-for tool in file readelf nm ldd strings rg; do
+for tool in file readelf nm ldd strings rg python3; do
     command -v "$tool" >/dev/null || { printf 'error: %s is required\n' "$tool" >&2; exit 2; }
 done
 [ -f "$PLAYER" ] || { printf 'error: missing %s\n' "$PLAYER" >&2; exit 2; }
 
-description=$(file "$PLAYER")
+mapfile -t ffmpeg_sonames < <(python3 - "$ROOT/ffmpeg-runtime.lock.json" "$RUNTIME/share/ffmpeg-build/manifest.json" <<'PY'
+import json, sys
+pin = json.load(open(sys.argv[1]))
+libraries = json.load(open(sys.argv[2]))["libraries"]
+for name in sorted(pin["libraries"]):
+    print(libraries[name]["soname"])
+PY
+)
+[ ${#ffmpeg_sonames[@]} -gt 0 ] || { printf 'error: no pinned FFmpeg runtime at %s\n' "$RUNTIME" >&2; exit 2; }
+run_env=()
+[ -n "$EXPECTED_RUNPATH" ] || run_env=(env "LD_LIBRARY_PATH=$RUNTIME/lib")
+
+description=$(file -L "$PLAYER")
 case "$description" in
     *"ELF 64-bit"*"x86-64"*stripped*) check "stripped x86-64 ELF" 1 ;;
     *) check "stripped x86-64 ELF" 0 "$description" ;;
@@ -39,18 +57,26 @@ mapfile -t needed < <(readelf -dW "$PLAYER" | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\
 extra=()
 for lib in "${needed[@]}"; do
     found=0
-    for allowed in "${ALLOWED_NEEDED[@]}"; do [ "$lib" = "$allowed" ] && found=1; done
+    for allowed in "${ALLOWED_NEEDED[@]}" "${ffmpeg_sonames[@]}"; do [ "$lib" = "$allowed" ] && found=1; done
     [ "$found" = 1 ] || extra+=("$lib")
 done
 check "NEEDED inside the allowed set" "$([ ${#extra[@]} -eq 0 ] && echo 1 || echo 0)" "${extra[*]:-}"
 
+linked_ffmpeg=$(printf '%s\n' "${needed[@]}" | rg "$FFMPEG_NEEDED_PATTERN" | sort | tr '\n' ' ')
+want_ffmpeg=$(printf '%s\n' "${ffmpeg_sonames[@]}" | sort | tr '\n' ' ')
+check "FFmpeg NEEDED is exactly the pinned runtime libraries" \
+    "$([ "$linked_ffmpeg" = "$want_ffmpeg" ] && echo 1 || echo 0)" "have: $linked_ffmpeg want: $want_ffmpeg"
+
 retired=$(printf '%s\n' "${needed[@]}" | rg -i "$RETIRED_TEXT_STACK" || true)
 check "no retired text stack in NEEDED" "$([ -z "$retired" ] && echo 1 || echo 0)" "$retired"
 
-rpath=$(readelf -dW "$PLAYER" | rg 'RPATH|RUNPATH' || true)
-check "no RPATH or RUNPATH" "$([ -z "$rpath" ] && echo 1 || echo 0)" "$rpath"
+rpath=$(readelf -dW "$PLAYER" | rg '\(RPATH\)' || true)
+check "no RPATH" "$([ -z "$rpath" ] && echo 1 || echo 0)" "$rpath"
+runpath=$(readelf -dW "$PLAYER" | sed -n 's/.*(RUNPATH).*\[\(.*\)\]/\1/p')
+check "RUNPATH is ${EXPECTED_RUNPATH:-absent}" \
+    "$([ "$runpath" = "$EXPECTED_RUNPATH" ] && echo 1 || echo 0)" "${runpath:-absent}"
 
-unresolved=$(ldd "$PLAYER" 2>&1 | rg 'not found' || true)
+unresolved=$("${run_env[@]}" ldd "$PLAYER" 2>&1 | rg 'not found|Error' || true)
 check "ldd resolves every library" "$([ -z "$unresolved" ] && echo 1 || echo 0)" "$unresolved"
 
 paths=$(strings -a "$PLAYER" | rg -F -e "$ROOT/" -e "/work/" | head -3 || true)
@@ -65,7 +91,12 @@ check "no network imports" "$([ -z "$imports" ] && echo 1 || echo 0)" "$imports"
 tls=$(strings -a "$PLAYER" | rg -i 'libssl\.so|libcrypto\.so|libgnutls|libcurl|ca-certificates\.crt' | head -3 || true)
 check "no TLS or curl libraries" "$([ -z "$tls" ] && echo 1 || echo 0)" "$tls"
 
-protocols=$("$PLAYER" --no-config --list-protocols 2>&1)
+imported=$(nm -D --undefined-only "$PLAYER" | awk '{print $NF}' | rg -c '^avformat_open_input$' || true)
+check "FFmpeg imported from the shared runtime" "$([ "${imported:-0}" = 1 ] && echo 1 || echo 0)"
+exported=$(nm -D --defined-only "$PLAYER" | awk '{print $NF}' | rg "$FFMPEG_SYMBOLS" | head -3 || true)
+check "no FFmpeg symbols exported" "$([ -z "$exported" ] && echo 1 || echo 0)" "$exported"
+
+protocols=$("${run_env[@]}" "$PLAYER" --no-config --list-protocols 2>&1)
 listed=$(printf '%s\n' "$protocols" | rg -o '^\s*[A-Za-z][A-Za-z0-9+.-]*://' | tr -d ' \t' | sort -u)
 check "one file protocol" "$([ "$listed" = "file://" ] && echo 1 || echo 0)" "$(printf '%s' "$listed" | tr '\n' ' ')"
 
@@ -101,6 +132,13 @@ if [ -f "$UNSTRIPPED" ]; then
     check "no Lua interpreter" "$([ "${lua:-0}" = 0 ] && echo 1 || echo 0)" "found ${lua:-0} Lua symbols"
 else
     check "no Lua interpreter" 0 "missing $UNSTRIPPED"
+fi
+
+if [ -f "$UNSTRIPPED" ]; then
+    static_ffmpeg=$(nm --defined-only "$UNSTRIPPED" 2>/dev/null | awk '{print $NF}' | rg "$FFMPEG_SYMBOLS" | head -3 || true)
+    check "no FFmpeg linked statically" "$([ -z "$static_ffmpeg" ] && echo 1 || echo 0)" "$static_ffmpeg"
+else
+    check "no FFmpeg linked statically" 0 "missing $UNSTRIPPED"
 fi
 
 if [ -f "$UNSTRIPPED" ]; then

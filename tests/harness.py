@@ -2121,7 +2121,7 @@ def gate_meta(results, args):
         "docs/metrics.md", "docs/manual-checklist.md",
         "docs/ffmpeg.md", "docs/architecture.md", "docs/scope.md",
         "scripts/build.sh", "scripts/dev-deps.sh",
-        "ffmpeg-sdk.lock.json", "scripts/fetch-ffmpeg-sdk.sh", "scripts/measure.sh",
+        "ffmpeg-runtime.lock.json", "scripts/fetch-ffmpeg-runtime.sh", "scripts/measure.sh",
         "scripts/ffmpeg-manifest.sh",
         "scripts/audit.sh",
         "scripts/manual-checklist.sh", "tests/run.sh", "tests/harness.py",
@@ -2172,7 +2172,7 @@ def gate_meta(results, args):
                   f"found: {', '.join(bad_temp)}")
 
     executable = [name for name in ("scripts/build.sh", "scripts/dev-deps.sh",
-                                    "scripts/fetch-ffmpeg-sdk.sh", "scripts/measure.sh",
+                                    "scripts/fetch-ffmpeg-runtime.sh", "scripts/measure.sh",
                                     "scripts/ffmpeg-manifest.sh",
                                     "scripts/manual-checklist.sh",
                                     "tests/run.sh", "tests/fixtures/gen.sh")
@@ -2280,8 +2280,23 @@ def gate_release(results, args):
     present = {path.name for path in frameworks.glob("*.dylib")}
     results.check("release: bundled closure", expected <= present,
                   ",".join(sorted(expected - present)))
-    shared_sdk = sorted(name for name in present if re.match(r"lib(dav1d|z|av|sw)", name))
-    results.check("release: FFmpeg SDK linked statically", not shared_sdk, ",".join(shared_sdk))
+    bundled_ffmpeg = sorted(name for name in present if re.match(r"lib(dav1d|z|av|sw)", name))
+    results.check("release: FFmpeg not bundled", not bundled_ffmpeg, ",".join(bundled_ffmpeg))
+    pin = json.loads((ROOT / "ffmpeg-runtime.lock.json").read_text())
+    runtime = Path(os.environ.get("FFMPEG_PREFIX")
+                   or ROOT / ".work/deps/ffmpeg-runtime/aarch64-apple-darwin")
+    manifest = json.loads((runtime / "share/ffmpeg-build/manifest.json").read_text())
+    wanted = sorted(manifest["libraries"][name]["install_name"] for name in pin["libraries"])
+    linked_ffmpeg = sorted(
+        line.strip().split(" (compatibility")[0]
+        for line in subprocess.check_output(["otool", "-L", str(binary)], text=True).splitlines()[1:]
+        if re.search(r"/lib(av|sw)", line)
+    )
+    results.check("release: links the pinned FFmpeg runtime", linked_ffmpeg == wanted,
+                  f"links {linked_ffmpeg}, pin wants {wanted}")
+    results.check("release: runtime release recorded",
+                  plist.get("PlayerFFmpegRuntime") == f"{pin['ffmpeg']}+{pin['release']}",
+                  repr(plist.get("PlayerFFmpegRuntime")))
     text_stack = sorted(name for name in present
                         if re.match(r"lib(ass|fribidi|harfbuzz|freetype|fontconfig)\b", name))
     results.check("release: no bundled text stack", not text_stack, ",".join(text_stack))
@@ -2301,6 +2316,8 @@ def gate_release(results, args):
 
     linked = subprocess.check_output(["otool", "-l", str(binary)], text=True)
     results.check("release: rpath", "@executable_path/../Frameworks" in linked)
+    ffmpeg_rpath = os.environ.get("PLAYER_FFMPEG_RPATH", "@executable_path/../../../lib")
+    results.check("release: FFmpeg runtime rpath", f"path {ffmpeg_rpath} " in linked, ffmpeg_rpath)
 
     proc = subprocess.run(
         [str(binary), "--no-config", "--vo=null", "--ao=null", "--frames=1",

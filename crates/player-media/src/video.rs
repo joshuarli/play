@@ -748,6 +748,22 @@ mod tests {
         VideoSession::open(&path, index, HwRequest::None).expect("decoder opens")
     }
 
+    #[test]
+    fn video_sessions_never_decode_audio() {
+        let path = fixture("h264.mp4");
+        let audio = MediaSession::open(&path)
+            .expect("fixture opens")
+            .streams()
+            .into_iter()
+            .find(|stream| stream.kind == StreamKind::Audio)
+            .expect("audio stream")
+            .index;
+        assert!(VideoSession::open(&path, audio, HwRequest::None).is_err());
+        for name in ["aac", "mp3", "mp2", "opus", "vorbis", "flac", "alac", "ac3", "wmav2", "pcm_s16le"] {
+            assert!(codec_id_for_name(name).is_err(), "{name} maps to an FFmpeg decoder");
+        }
+    }
+
     fn pix_name(format: c_int) -> String {
         // SAFETY: the name table is static for the linked libavutil.
         let pointer = unsafe { av_get_pix_fmt_name(format) };

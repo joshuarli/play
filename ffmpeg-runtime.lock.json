@@ -1,0 +1,9 @@
+{
+  "contract": 2,
+  "repository": "laputa-systems/ffmpeg-build",
+  "profile": "runtime",
+  "ffmpeg": "9.0.2",
+  "release": "local",
+  "libraries": ["libavformat", "libavcodec", "libswscale", "libavutil"],
+  "sha256": {}
+}

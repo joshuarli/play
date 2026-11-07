@@ -15,7 +15,7 @@ DIST="$ROOT/dist"
     exit 1
 }
 
-"$ROOT/scripts/fetch-ffmpeg-sdk.sh" "$RUST_TRIPLE"
+"$ROOT/scripts/fetch-ffmpeg-runtime.sh" "$RUST_TRIPLE"
 
 mkdir -p "$RUST_TARGET_DIR" "$ROOT/.work/tmp" "$BUILD_DIR" "$DIST"
 export CARGO_TARGET_DIR="$RUST_TARGET_DIR"
@@ -27,5 +27,5 @@ cargo build --profile dist --target "$RUST_TRIPLE" \
     --manifest-path "$ROOT/Cargo.toml" -p player-app
 
 BINARY="$RUST_TARGET_DIR/$RUST_TRIPLE/dist/player"
-install -m 755 "$BINARY" "$BUILD_DIR/mpv"
-strip -o "$DIST/player" "$BUILD_DIR/mpv"
+"$ROOT/scripts/install-layout.sh" "$BINARY" "$BUILD_DIR" mpv
+"$ROOT/scripts/install-layout.sh" --strip "$BINARY" "$DIST" player

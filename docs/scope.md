@@ -41,8 +41,8 @@ There is no C playback loop or Meson player build.
 - Video outputs other than libplacebo, including image, X11, DRM, SDL, VA-API output, VDPAU, Direct3D, and MediaCodec. VA-API and VideoToolbox decoder support is retained in `player-media`; the scheduler currently opens decoders in software. The `--tui` frontend is not a video output: it renders audio metadata and cover art to the terminal and keeps `vo=null`. Unlike mpv, a file with audio whose only video streams are cover art (attached pictures, or PNG, BMP, TIFF, or WebP streams) plays as audio only and opens no window unless `--gui` is given or the app is bundled. From an interactive terminal, such a file as the first playlist entry starts the `--tui` frontend.
 - Scripting: the Lua 5.2 interpreter, the `mp` script API, the bundled `defaults`, `assdraw`, `options`, `input`, and `osc` Lua modules, script threads and event queues, and the commands and properties that only scripts used (`script-message`, `script-message-to`, `script-binding`, `define-section`, `enable-section`, `disable-section`, `osd-overlay`, `expand-text`, `run`, `subprocess`, `screenshot-raw`, and `user-data/*`). A Rust OSC replaces the Lua one.
 - JavaScript, VapourSynth, C plugins, Touch Bar, and Media Player integration.
-- Encoding, stream recording, the lavfi filter graph, and the encoding option group. The release FFmpeg has no encoders or muxers.
-- FFmpeg audio fallback and SPDIF passthrough. Symphonia handles supported audio decoding.
+- Encoding, stream recording, the lavfi filter graph, and the encoding option group. The shared FFmpeg runtime carries encoders and muxers for `ffmpeg`; Player calls none of them.
+- FFmpeg audio fallback and SPDIF passthrough. Symphonia handles supported audio decoding; `player-media` opens FFmpeg decoders only for video streams.
 - Playlist shuffle and loop commands and options. A-B loop remains.
 - Clipboard support entirely: no clipboard property, command, backend, bridge, or binding. `${clipboard/text}` expansions no longer resolve.
 

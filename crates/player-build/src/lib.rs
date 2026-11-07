@@ -1,4 +1,4 @@
-pub mod ffmpeg_sdk;
+pub mod ffmpeg_runtime;
 
 use std::path::Path;
 

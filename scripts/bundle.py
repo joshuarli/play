@@ -3,6 +3,7 @@
 
 import hashlib
 import json
+import os
 import platform
 import plistlib
 import shutil
@@ -21,6 +22,15 @@ RESOURCES = APP / "Contents/Resources"
 ICD_DIR = RESOURCES / "vulkan/icd.d"
 MOLTENVK_LIB = PREFIX / "lib/libMoltenVK.dylib"
 MOLTENVK_ICD = PREFIX / "share/vulkan/icd.d/MoltenVK_icd.json"
+TARGET = "aarch64-apple-darwin"
+PIN = json.loads((ROOT / "ffmpeg-runtime.lock.json").read_text())
+RUNTIME = Path(os.environ.get("FFMPEG_PREFIX") or ROOT / ".work/deps/ffmpeg-runtime" / TARGET)
+RUNTIME_LINK = ROOT / "dist/lib"
+
+
+def runtime_install_names():
+    manifest = json.loads((RUNTIME / "share/ffmpeg-build/manifest.json").read_text())
+    return {manifest["libraries"][name]["install_name"] for name in PIN["libraries"]}
 
 
 def package_version():
@@ -70,7 +80,7 @@ def resolve(dep):
     return None
 
 
-def collect(binary):
+def collect(binary, external):
     closure = {}
     queue = [binary]
     while queue:
@@ -78,6 +88,8 @@ def collect(binary):
         for dep in dependencies(current):
             if dep.startswith("/opt/homebrew"):
                 raise SystemExit(f"Homebrew dependency in {current}: {dep}")
+            if dep in external:
+                continue
             resolved = resolve(dep)
             if resolved is None:
                 continue
@@ -106,7 +118,11 @@ def main():
     executable = MACOS / "player"
     shutil.copy2(BINARY, executable)
 
-    closure = collect(executable)
+    ffmpeg = runtime_install_names()
+    linked_ffmpeg = {dep for dep in dependencies(executable) if dep in ffmpeg or "/libav" in dep or "/libsw" in dep}
+    if linked_ffmpeg != ffmpeg:
+        raise SystemExit(f"player links FFmpeg {sorted(linked_ffmpeg)}, the pin wants {sorted(ffmpeg)}")
+    closure = collect(executable, ffmpeg)
     for name, source in closure.items():
         shutil.copy2(source, FRAMEWORKS / name)
 
@@ -152,7 +168,7 @@ def main():
                 )
 
     for rpath in rpaths_of(executable):
-        if rpath.startswith(str(ROOT)):
+        if not rpath.startswith("@"):
             subprocess.run(
                 ["install_name_tool", "-delete_rpath", rpath, str(executable)],
                 check=True,
@@ -204,6 +220,7 @@ def main():
         "LSMinimumSystemVersion": "27.0",
         "NSHighResolutionCapable": True,
         "NSPrincipalClass": "NSApplication",
+        "PlayerFFmpegRuntime": f"{PIN['ffmpeg']}+{PIN['release']}",
     }
     with open(APP / "Contents/Info.plist", "wb") as handle:
         plistlib.dump(info, handle, sort_keys=True)
@@ -229,6 +246,12 @@ def main():
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
+
+    if RUNTIME_LINK.is_symlink():
+        RUNTIME_LINK.unlink()
+    elif RUNTIME_LINK.exists():
+        raise SystemExit(f"{RUNTIME_LINK} exists and is not the runtime link")
+    RUNTIME_LINK.symlink_to(os.path.relpath(RUNTIME / "lib", RUNTIME_LINK.parent))
 
     print(f"bundled {APP}")
     print("frameworks: " + ", ".join(sorted(closure)))
