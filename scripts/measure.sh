@@ -39,7 +39,6 @@ import json
 import os
 import re
 import shutil
-import statistics
 import subprocess
 import sys
 import time
@@ -51,8 +50,7 @@ LABEL = sys.argv[3]
 EXTRA = sys.argv[4]
 RUNS = 7
 RELEASE_PLAYER = ROOT / "dist/Player.app/Contents/MacOS/player"
-REGRESSION_FRACTION = 0.10
-SCHEMA = 2
+SCHEMA = 3
 TMP = ROOT / ".work" / "tmp"
 if MODE == "cpu":
     MPV = Path(EXTRA) if EXTRA else RELEASE_PLAYER
@@ -77,63 +75,38 @@ if MODE != "compare" and not MPV.exists():
     raise SystemExit(f"missing player: {MPV}; run scripts/build.sh")
 
 sys.path.insert(0, str(ROOT / "tests"))
+sys.path.insert(0, str(ROOT / "scripts"))
 P0_UNIQUE_CLOSURE = 59_084_272
 
 import harness  # noqa: E402
+import perfstat  # noqa: E402
 harness.MPV = MPV
-from harness import Mpv, Failure  # noqa: E402
+from harness import Mpv  # noqa: E402
 
 
-def run(command, timeout=120, **kwargs):
-    return subprocess.run(command, capture_output=True, text=True,
-                          timeout=timeout, **kwargs)
-
-
-def median(values):
-    return statistics.median(values) if values else None
-
-
-def stat(values, digits=2):
-    return {
-        "median": round(median(values), digits),
-        "spread": round(max(values) - min(values), digits),
-        "samples": [round(value, digits) for value in values],
-    }
-
-
-def host_quiet(once=False):
-    tool = shutil.which("perf-gate-ready")
-    if tool is None:
-        return None
-    return run([tool, "-1"] if once else [tool], timeout=60).returncode == 0
+run = perfstat.run
+stat = perfstat.stat
 
 
 def timed(action, attempts=3, wait_s=20):
     for attempt in range(attempts):
         last = attempt + 1 == attempts
-        before = host_quiet()
-        if before is False and not last:
+        before = perfstat.host_state()
+        if before == perfstat.HOST_BUSY and not last:
             time.sleep(wait_s)
             continue
         value = action()
-        if before and host_quiet(once=True):
+        if before == perfstat.HOST_QUIET and perfstat.host_state(
+                once=True) == perfstat.HOST_QUIET:
             return value, False
-        if before is None:
+        if before == perfstat.HOST_DEFERRED:
             return value, True
+        return value, True
     return value, True
-
-
-def regressed(before, after):
-    allowed = max(before["median"] * REGRESSION_FRACTION, before["spread"], after["spread"])
-    return after["median"] - before["median"] > allowed, allowed
 
 
 def mb(value):
     return round(value / (1024 * 1024), 2)
-
-
-def kb_to_mb(value):
-    return round(value / 1024, 2)
 
 
 def git_revision():
@@ -182,37 +155,6 @@ def ensure_measure_fixtures():
     return fixtures
 
 
-def startup_times():
-    def sample(cold):
-        values = []
-        for _ in range(RUNS):
-            if cold:
-                run(["/bin/sync"], timeout=30)
-            start = time.monotonic()
-            proc = run([str(MPV), "--version"], timeout=30)
-            values.append((time.monotonic() - start) * 1000)
-            if proc.returncode != 0:
-                raise SystemExit("player --version failed")
-        return stat(values)
-    return {
-        "cold_ms": sample(True),
-        "warm_ms": sample(False),
-        "method": f"{RUNS} runs each; cold runs follow sync (macOS page cache is not dropped without root)",
-    }
-
-
-def first_frame_ms(path):
-    values = []
-    for _ in range(RUNS):
-        start = time.monotonic()
-        proc = run([str(MPV), "--no-config", "--vo=null", "--ao=null",
-                    "--frames=1", "--untimed", "--hwdec=no", str(path)], timeout=60)
-        if proc.returncode != 0:
-            raise SystemExit(f"first-frame run failed:\n{proc.stderr}")
-        values.append((time.monotonic() - start) * 1000)
-    return stat(values)
-
-
 def playback_command(player, path):
     return [str(player), "--no-config", "--vo=null", "--ao=null", "--hwdec=no",
             "--msg-level=all=error", str(path)]
@@ -227,49 +169,6 @@ def playback_metrics(path):
         "cpu_s": stat([run["cpu_s"] for run in runs], 3),
         "rss_mb": stat([run["rss_mb"] for run in runs]),
     }
-
-
-def idle_rss():
-    try:
-        with Mpv(["--vo=null", "--ao=null"]) as player:
-            time.sleep(0.5)
-            rss = subprocess.check_output(
-                ["ps", "-o", "rss=", "-p", str(player.proc.pid)], text=True)
-            return kb_to_mb(int(rss.strip()))
-    except Exception as exc:
-        raise SystemExit(f"idle RSS failed: {exc}")
-
-
-def seek_latency(path):
-    values = []
-    with Mpv(["--vo=null", "--ao=null", "--pause=yes"]) as player:
-        player.load(path)
-        player.wait_event("file-loaded", timeout=10)
-        duration = player.wait_property(
-            "duration", lambda value: isinstance(value, (int, float)) and value > 0,
-            timeout=10)
-        for _ in range(RUNS):
-            start = time.monotonic()
-            player.command("seek", duration / 2, "absolute+exact")
-            player.wait_property(
-                "time-pos",
-                lambda value: isinstance(value, (int, float)) and
-                abs(value - duration / 2) <= 0.25,
-                timeout=5)
-            values.append((time.monotonic() - start) * 1000)
-            player.command("seek", 0, "absolute+exact")
-    return stat(values)
-
-
-def exit_latency():
-    values = []
-    for _ in range(RUNS):
-        player = Mpv(["--vo=null", "--ao=null"])
-        time.sleep(0.2)
-        start = time.monotonic()
-        player.close()
-        values.append((time.monotonic() - start) * 1000)
-    return stat(values)
 
 
 def audio_underruns():
@@ -517,20 +416,20 @@ def budget_checks(value):
 
 
 def timing_budget_checks(value):
-    first_frame = value["first_frame_1080p_ms"]["median"]
+    first_frame = value["headless_first_frame_ms"]["median"]
     seek = value["seek_ms"]["median"]
     return [
-        ("first frame <= 1 s", first_frame <= 1000, f"{first_frame} ms"),
+        ("headless-first-frame <= 1 s", first_frame <= 1000, f"{first_frame} ms"),
         ("seek <= 250 ms", seek <= 250, f"{seek} ms"),
     ]
 
 
 TIMED_METRICS = (
-    ("startup cold ms", lambda v: v["startup"]["cold_ms"]),
-    ("startup warm ms", lambda v: v["startup"]["warm_ms"]),
-    ("first frame ms", lambda v: v["first_frame_1080p_ms"]),
+    ("executable-startup (sync) ms", lambda v: v["executable_startup"]["after_sync"]),
+    ("executable-startup (warm) ms", lambda v: v["executable_startup"]["warm"]),
+    ("headless-first-frame ms", lambda v: v["headless_first_frame_ms"]),
     ("seek ms", lambda v: v["seek_ms"]),
-    ("exit ms", lambda v: v["exit_ms"]),
+    ("idle-exit ms", lambda v: v["idle_exit_ms"]),
     ("1080p CPU s", lambda v: v["playback"]["1080p"]["cpu_s"]),
     ("4K CPU s", lambda v: v["playback"]["4k"]["cpu_s"]),
 )
@@ -548,22 +447,19 @@ def load_result(label):
 
 if MODE == "compare":
     before, after = load_result(LABEL), load_result(EXTRA)
-    print(f"regression: later median exceeds earlier by more than the larger of "
-          f"{REGRESSION_FRACTION:.0%} and the observed spread of either side")
-    print(f"{'metric':18} {LABEL:>20} {EXTRA:>20}  verdict")
+    print("comparison: paired samples; tolerance is max(5% of the baseline median, metric floor)")
+    print(f"{'metric':30} {LABEL:>24} {EXTRA:>24}  verdict")
     failed = []
     deferred = before["deferred"] or after["deferred"]
     for name, getter in TIMED_METRICS:
         old, new = getter(before), getter(after)
-        line = (f"{name:18} {old['median']:>10} ±{old['spread']:<8} "
-                f"{new['median']:>10} ±{new['spread']:<8}")
+        line = f"{name:30} {perfstat.format_range(old):>24} {perfstat.format_range(new):>24}"
         if deferred:
             print(line + "  DEFERRED")
             continue
-        bad, allowed = regressed(old, new)
-        print(line + (f"  FAIL (+{new['median'] - old['median']:.3f} > {allowed:.3f})"
-                      if bad else "  ok"))
-        if bad:
+        outcome = perfstat.compare_paired(old["samples"], new["samples"])
+        print(line + "  " + perfstat.describe_verdict(outcome))
+        if outcome["verdict"] in ("regressed", "inconclusive", "invalid"):
             failed.append(name)
     for name, getter in (
         ("idle RSS MB", lambda v: v["idle_rss_mb"]),
@@ -605,18 +501,19 @@ if MODE == "cpu":
 
     samples, deferred = timed(interleaved)
     base, cand = stat(samples["baseline"], 3), stat(samples["candidate"], 3)
-    bad, allowed = regressed(base, cand)
-    delta = cand["median"] - base["median"]
+    outcome = perfstat.compare_paired(samples["baseline"], samples["candidate"])
     print(f"1080p CPU s over {RUNS} interleaved pairs")
-    print(f"baseline  {baseline_player}: median {base['median']} spread {base['spread']} "
+    print(f"baseline  {baseline_player}: {perfstat.format_range(base, ' s')} "
           f"{base['samples']}")
-    print(f"candidate {MPV}: median {cand['median']} spread {cand['spread']} "
-          f"{cand['samples']}")
-    print(f"delta {delta:+.3f} s; a regression must exceed {allowed:.3f} s")
+    print(f"candidate {MPV}: {perfstat.format_range(cand, ' s')} {cand['samples']}")
+    print(perfstat.describe_verdict(outcome))
     (TMP / "measure-cpu.json").write_text(json.dumps(
-        {"baseline": base, "candidate": cand, "deferred": deferred}, indent=2) + "\n")
-    if bad:
+        {"baseline": base, "candidate": cand, "verdict": outcome, "deferred": deferred},
+        indent=2) + "\n")
+    if outcome["verdict"] == "regressed":
         raise SystemExit("cpu: regression")
+    if outcome["verdict"] in ("inconclusive", "invalid"):
+        raise SystemExit("cpu: " + outcome["verdict"])
     if deferred:
         print("perf gate deferred: host busy")
         raise SystemExit(75)
@@ -641,20 +538,20 @@ if MODE == "size":
 
 def timed_measurements():
     return {
-        "startup": startup_times(),
-        "first_frame_1080p_ms": first_frame_ms(fixtures["1080p"]),
+        "executable_startup": perfstat.startup(MPV, runs=RUNS),
+        "headless_first_frame_ms": perfstat.first_frame(MPV, fixtures["1080p"], runs=RUNS),
         "playback": {
             "720p": playback_metrics(fixtures["720p"]),
             "1080p": playback_metrics(fixtures["1080p"]),
             "4k": playback_metrics(fixtures["4k"]),
         },
-        "seek_ms": seek_latency(fixtures["1080p"]),
-        "exit_ms": exit_latency(),
+        "seek_ms": perfstat.seek_latency(Mpv, fixtures["1080p"], runs=RUNS),
+        "idle_exit_ms": perfstat.exit_latency(Mpv, runs=RUNS),
     }
 
 
 timings, deferred = timed(timed_measurements)
-idle = idle_rss()
+idle = perfstat.idle_rss(Mpv)
 underruns = audio_underruns()
 proto = protocols()
 feat = features()
@@ -691,12 +588,13 @@ def metrics_row(value):
         value["date"], value["revision"], value["label"],
         value["sizes"]["unstripped"], value["sizes"]["stripped"],
         closure_value["bytes"], closure_value["files"],
-        value["startup"]["cold_ms"]["median"], value["startup"]["warm_ms"]["median"],
-        value["first_frame_1080p_ms"]["median"], value["idle_rss_mb"],
+        value["executable_startup"]["after_sync"]["median"],
+        value["executable_startup"]["warm"]["median"],
+        value["headless_first_frame_ms"]["median"], value["idle_rss_mb"],
         playback["1080p"]["rss_mb"]["median"],
         round(playback["1080p"]["cpu_s"]["median"], 2),
         round(playback["4k"]["cpu_s"]["median"], 2),
-        value["seek_ms"]["median"], value["exit_ms"]["median"],
+        value["seek_ms"]["median"], value["idle_exit_ms"]["median"],
         value["protocols"]["listed"], notes,
     ]
     return "| " + " | ".join(str(cell) for cell in cells) + " |"
@@ -736,17 +634,18 @@ print(f"architecture: {arch['file']}, minos {arch['minos']}, sdk {arch['sdk']}")
 print(f"closure: {mb(closure_data['bytes'])} MiB in {closure_data['files']} files")
 for component, value in closure_data["by_component"].items():
     print(f"  {component}: {mb(value['bytes'])} MiB / {value['files']} files")
-startup = result["startup"]
-print(f"startup: cold {startup['cold_ms']['median']} ms (spread {startup['cold_ms']['spread']}), "
-      f"warm {startup['warm_ms']['median']} ms (spread {startup['warm_ms']['spread']})")
-first_frame = result["first_frame_1080p_ms"]
-print(f"first frame 1080p: {first_frame['median']} ms (spread {first_frame['spread']})")
+startup = result["executable_startup"]
+print(f"executable-startup: {perfstat.format_range(startup['after_sync'])} ms after sync, "
+      f"{perfstat.format_range(startup['warm'])} ms warm")
+first_frame = result["headless_first_frame_ms"]
+print(f"headless-first-frame 1080p: {perfstat.format_range(first_frame)} ms")
 for label, value in result["playback"].items():
     print(f"playback {label}: RSS {value['rss_mb']['median']} MB, "
-          f"CPU {value['cpu_s']['median']:.3f} s (spread {value['cpu_s']['spread']:.3f}), "
+          f"CPU {value['cpu_s']['median']:.3f} s "
+          f"[{value['cpu_s']['min']:.3f}, {value['cpu_s']['max']:.3f}], "
           f"real {value['real_s']['median']:.2f} s")
-print(f"idle RSS: {idle} MB; seek {result['seek_ms']['median']} ms; "
-      f"exit {result['exit_ms']['median']} ms")
+print(f"idle RSS: {idle} MB; seek {perfstat.format_range(result['seek_ms'])} ms; "
+      f"idle-exit {perfstat.format_range(result['idle_exit_ms'])} ms")
 print(f"audio underruns: {underruns}")
 print(f"protocols: {proto['listed']} listed, {proto['unique']} unique; "
       f"network {len(proto['network'])}")
