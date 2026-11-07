@@ -1,5 +1,5 @@
 {
- "eof-reason": "eof",
+ "eof-reason": "error",
  "event-order": [
   "start-file",
   "audio-reconfig",

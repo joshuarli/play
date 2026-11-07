@@ -1,5 +1,5 @@
 {
- "eof-reason": "no-eof-event",
+ "eof-reason": "error",
  "event-order": [
   "start-file",
   "end-file"

@@ -248,7 +248,7 @@ def trace_failure(name, entry):
     with Mpv(ARGS) as mpv:
         mpv.load(fixture_path(entry))
         try:
-            end = mpv.wait_eof(timeout=15)
+            end = mpv.wait_event("end-file", timeout=15)
             trace["eof-reason"] = end.get("reason")
         except Failure:
             trace["eof-reason"] = "no-eof-event"
