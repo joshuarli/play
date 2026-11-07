@@ -1,5 +1,5 @@
 Prefix: PLAY
-Next: 40
+Next: 41
 
 # Backlog
 
@@ -14,6 +14,8 @@ Next: 40
 - PLAY-32: VideoToolbox zero-copy on Metal: once PLAY-20 decodes through VideoToolbox, hand its `CVPixelBuffer` IOSurfaces to libplacebo with `pl_metal_wrap_iosurface` (in the carried Metal patch) instead of copying planes to the CPU. Depends on PLAY-20.
 
 ## P3
+
+- PLAY-40: `scripts/bench.py gui-cpu` hover sends pointer moves at about 6 Hz, not 60 Hz: each synchronous IPC `mouse` command takes roughly 150 ms to answer while the GUI player sits near 13% CPU, so the time is waiting, not work. Find whether the app answers IPC only after a blocking present or the harness waits on something else; if it is the app, it is pointer-input latency users feel. Then make the hover workload reach its intended rate and report the achieved rate.
 
 - PLAY-26: SubRip `<i>`, `<b>`, `<u>`, and `<font color>` are stripped, not styled. `player-overlay::TextBlock` carries one style; styled spans need per-run attributes in both text backends (Core Text attributed ranges; HarfBuzz runs per span on Linux).
 - PLAY-27: A right-to-left paragraph with `Align::Start` starts at the left edge. Subtitles centre, so only OSD messages and the OSC title see it; base direction should pick the start edge.
