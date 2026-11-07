@@ -39,9 +39,9 @@ The `3c2f7e61356d` row is the first build on the `ffmpeg-build` `play-sdk` relea
 
 ## Budgets
 
-`scripts/measure.sh final` gates the release app on: distributable at most 29,542,136 B, executable at most 10 MB, 1080p RSS at most 300 MB, first frame at most 1 s, seek at most 250 ms, one `file` protocol, no network scheme, no Lua symbol, and no audio underrun. Timings are headless (`--vo=null --ao=null`). The Rust engine advances the clock at wall time there, so a 3 s clip costs about 3 s of CPU; CPU is compared, not gated.
+`scripts/measure.sh final` gates the release app on: distributable at most 29,542,136 B, executable at most 10 MB, 1080p RSS at most 300 MB, first frame at most 1 s, seek at most 250 ms, one `file` protocol, no network scheme, no Lua symbol, and no audio underrun. Timings are headless (`--vo=null --ao=null`). CPU is compared, not gated. A video-only clip costs about one CPU-second per media-second because the scheduler worker spins when no audio is queued, not because of wall-time pacing; see **Campaign**.
 
-`scripts/measure.sh cpu BASELINE_PLAYER` runs seven interleaved baseline and candidate pairs and fails only when the candidate exceeds the baseline by more than 10% and by more than the larger spread. `scripts/measure.sh compare BEFORE AFTER` applies the same rule between two recorded labels. Both print `perf gate deferred: host busy` and exit 75 when `perf-gate-ready` reports load.
+`scripts/measure.sh cpu BASELINE_PLAYER` runs seven interleaved baseline and candidate pairs and reports `improved`, `regressed`, `unchanged`, or `inconclusive` from the paired differences: the second-smallest and second-largest difference must both clear `max(5% of the baseline median, the metric's floor)`, and neither side's spread widens that tolerance. A failed trial makes the comparison `invalid`. `scripts/measure.sh compare BEFORE AFTER` applies the same rule between two recorded labels. Both print `perf gate deferred: host busy` and exit 75 when `perf-gate-ready` reports load.
 
 ## Native OSC
 
@@ -60,7 +60,7 @@ Removing Lua took the executable from 7,600,640 B to 7,074,160 B; headless timin
 
 CPU is the process's own CPU time from `proc_pid_rusage` on macOS and `/proc/PID/schedstat` on Linux, not the 10 ms `ps` time, so a 3 s window resolves below 0.01%.
 
-- `seek`: random absolute seeks at least 13 s from the current position; latency runs from the command to the first `time-pos` advance past the target. Medians of 15 per fixture and precision (`exact`, `keyframes`); mpv runs exact only.
+- `seek`: a target trace precomputed from `--seed`; latency runs from the command to its `playback-restart`, and the landing error is read from `time-pos` then. A seek that times out or lands outside its precision bound (1.5 frames for `exact`, the GOP for `keyframes`) fails the trial instead of becoming a sample. Success count, absolute error, and latency are reported separately, 15 per fixture and precision; mpv runs exact only.
 - `audio-cpu`: CPU percent over 10 s of `--no-video --ao=null` playback.
 - `frames`: fullscreen playback with the OSC hidden then shown: dropped frames, CPU, and RSS.
 - `gui-cpu --baseline OLD_PLAYER` or `--baseline-arg OPTION`: interleaved candidate and baseline runs of four scenarios (paused with the OSC hidden or shown, the pointer sweeping the seek bar at 60 Hz, playing with the OSC hidden), medians and max-min spread of `--runs`.
@@ -69,7 +69,7 @@ CPU is the process's own CPU time from `proc_pid_rusage` on macOS and `/proc/PID
 
 `--runs` is the pass count for every mode when given, so a paired run over `--baseline` gets exactly that many interleaved pairs. Without it, seek uses 15 samples and the paired modes keep 3 pairs for `audio-cpu`, `frames` and `workloads` and 5 for `gui-cpu`.
 
-Per-metric absolute floors live in `perfstat.METRIC_FLOORS` and enter the D2 tolerance as `max(5% of the baseline median, floor)`: 0.5 percentage points for `cpu_percent`, 0.01 CPU-s per media-s, 8 MB for either RSS figure, 5 ms for `latency_ms`, and 0.01 s for `error_s`. They are provisional until the C5 A/A run sets them from its spread.
+Per-metric absolute floors live in `perfstat.METRIC_FLOORS` and enter the paired-comparison tolerance as `max(5% of the baseline median, floor)`: 0.5 percentage points for `cpu_percent`, 0.01 CPU-s per media-s, 8 MB for either RSS figure, 5 ms for `latency_ms`, and 0.01 s for `error_s`. An A/A run of one binary against itself stays inside them on every metric (see **Campaign**).
 
 Results from 2026-11-03 on the native-OSC build. The host was not quiet for every run, so treat them as indicative:
 
@@ -83,6 +83,22 @@ Results from 2026-11-03 on the native-OSC build. The host was not quiet for ever
 | Fullscreen, OSC shown | 0-1 drops, 29-33% CPU, 414-437 MB | |
 
 The libass-to-native overlay change (`gui-cpu`, five interleaved runs against `d0e94ad`) measured: paused 0.4-1.0% against 0.4-1.0%, playing 20.2% against 19.2% (h264) and 24.4% against 25.8% (VP9), and seek-bar hover 14.3% against 9.0% (h264) but 12.0% against 11.6% (VP9). The host went busy before the closing check, so the run does not count as a gate; the h264 hover gap is open as PLAY-29.
+
+## Campaign
+
+Results from `docs/perf-campaign.md`, all on this Apple Silicon host with `perf-gate-ready` quiet before and after, measured on the `dist` build. They are not comparable with the history above, which mixed profiles and hosts.
+
+Baseline `4ef6495`, `bench.py workloads`, 3 s windows of steady playback, headless:
+
+| Workload | CPU | CPU-s per media-s | Drops | Steady RSS |
+|---|---:|---:|---:|---:|
+| video-1080p playing | 102.3% | 0.99 | 0 | 274 MB |
+| av-1080p playing | 27.3% | 0.26 | 0 | 86 MB |
+| video-4k playing | 102.0% | 0.99 | 77 | 987 MB |
+| video-1080p paused-open | 0.0% | | | 70 MB |
+| video-1080p ended-open | 0.2% | | | 274 MB |
+
+The A/A run of that binary against itself (7 pairs) gave `unchanged` on every metric: the playing CPU per media-second differed by -0.009 to +0.003 against a 0.049 tolerance.
 
 ## Metal backend
 
