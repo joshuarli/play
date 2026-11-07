@@ -896,7 +896,7 @@ impl App {
         let now = Instant::now();
         let since = now.duration_since(self.last_osd);
         if let Some(osc) = &mut self.osc {
-            osc.overlay();
+            osc.layers();
         }
         let osc_revision = self.osc.as_ref().map(Osc::revision);
         let message = backend.has_message();
@@ -907,7 +907,7 @@ impl App {
         if !due {
             return false;
         }
-        let osc = self.osc.as_mut().and_then(Osc::overlay);
+        let osc = self.osc.as_mut().and_then(Osc::layers);
         let rendered = match backend.render_overlay(width, height, osc) {
             Ok(rendered) => {
                 self.osd_error = None;
@@ -1501,7 +1501,7 @@ impl App {
                 .backend
                 .as_mut()
                 .ok_or_else(|| "no file is loaded".to_owned())?;
-            let osc = self.osc.as_mut().and_then(Osc::overlay);
+            let osc = self.osc.as_mut().and_then(Osc::layers);
             backend.compose(&mut rgba, width, height, osc)?;
         }
         let png = crate::png::encode_png(&rgba, width, height)?;

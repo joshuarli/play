@@ -137,7 +137,7 @@ impl EngineBackend {
         frame: &mut [u8],
         width: u32,
         height: u32,
-        osc: Option<&DisplayList>,
+        osc: Option<(&DisplayList, &DisplayList)>,
     ) -> Result<(), String> {
         match self.render_overlay(width, height, osc)? {
             Some(image) => image.blend_onto(frame, width, height),
@@ -149,13 +149,16 @@ impl EngineBackend {
         &mut self,
         width: u32,
         height: u32,
-        osc: Option<&DisplayList>,
+        osc: Option<(&DisplayList, &DisplayList)>,
     ) -> Result<Option<OverlayImage>, String> {
         let status = self.engine.snapshot();
         let subtitle = subtitles_selected(&status).then_some(status.subtitle_text);
         let message = self.visible_message(Instant::now()).map(str::to_owned);
         let scene = Scene { subtitle: subtitle.as_deref(), message: message.as_deref(), osc };
         if scene.subtitle.is_none_or(|text| text.trim().is_empty()) && scene.message.is_none() && scene.osc.is_none() {
+            if let Some(renderer) = self.overlay.as_mut() {
+                renderer.release();
+            }
             return Ok(None);
         }
         if self.overlay.is_none() {
@@ -299,15 +302,16 @@ mod tests {
             player_overlay::Shape::Rect(player_overlay::Rect::new(40.0, 30.0, 50.0, 30.0)),
             player_overlay::Color::WHITE,
         );
+        let dynamic = DisplayList::new(320, 240, 1.0);
         let mut frame = black_frame();
         backend
-            .compose(&mut frame, 320, 240, Some(&osc))
+            .compose(&mut frame, 320, 240, Some((&osc, &dynamic)))
             .expect("overlay composes");
         assert!(inked(&frame) > 0, "overlay drew no ink");
         assert_eq!(&frame[..3], &[0, 0, 0], "corner stays untouched");
         assert_eq!(backend.render_overlay(320, 240, None), Ok(None));
         let cropped = backend
-            .render_overlay(320, 240, Some(&osc))
+            .render_overlay(320, 240, Some((&osc, &dynamic)))
             .expect("overlay renders")
             .expect("overlay has ink");
         assert_eq!((cropped.x, cropped.y, cropped.width, cropped.height), (40, 30, 50, 30));

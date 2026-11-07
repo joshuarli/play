@@ -1,4 +1,4 @@
-use player_overlay::{Align, Anchor, Color, DisplayList, Outline, OverlayImage, Point, TextBlock, TextEngine, TextStyle, Weight};
+use player_overlay::{Align, Anchor, Color, Compositor, DisplayList, Outline, OverlayImage, Point, TextBlock, TextEngine, TextStyle, Weight};
 
 const BASE_HEIGHT: f64 = 720.0;
 const SUB_SIZE: f64 = 32.0;
@@ -9,16 +9,18 @@ const OSD_SIZE: f64 = 25.0;
 const OSD_OUTLINE: f64 = 1.65;
 const OSD_MARGIN: f64 = 16.0;
 
-/// What the player draws over video this frame, bottom to top.
+/// What the player draws over video this frame, bottom to top. The OSC is
+/// split into its stable controls and the tooltip/progress that move.
 pub struct Scene<'a> {
     pub subtitle: Option<&'a str>,
     pub message: Option<&'a str>,
-    pub osc: Option<&'a DisplayList>,
+    pub osc: Option<(&'a DisplayList, &'a DisplayList)>,
 }
 
 /// Lays out subtitles and OSD messages and rasterizes them with the OSC.
 pub struct OverlayRenderer {
     text: TextEngine,
+    compositor: Compositor,
 }
 
 fn outlined(text: &str, size: f64, outline: f64, max_width: f64, align: Align) -> TextBlock {
@@ -64,25 +66,33 @@ pub fn message_layer(text: &str, width: u32, height: u32) -> DisplayList {
 
 impl OverlayRenderer {
     pub fn new() -> Result<Self, String> {
-        Ok(OverlayRenderer { text: TextEngine::new()? })
+        Ok(OverlayRenderer { text: TextEngine::new()?, compositor: Compositor::new() })
+    }
+
+    pub fn release(&mut self) {
+        self.compositor.release();
     }
 
     pub fn render(&mut self, scene: &Scene, width: u32, height: u32) -> Result<Option<OverlayImage>, String> {
         let subtitle = scene.subtitle.filter(|text| !text.trim().is_empty()).map(|text| subtitle_layer(text, width, height));
         let message = scene.message.map(|text| message_layer(text, width, height));
-        let mut layers: Vec<&DisplayList> = Vec::with_capacity(3);
-        layers.extend(subtitle.as_ref());
-        layers.extend(message.as_ref());
-        if let Some(osc) = scene.osc {
-            if (osc.width, osc.height) != (width, height) {
-                return Err(format!(
-                    "OSC was laid out for {}x{} but the overlay is {width}x{height}",
-                    osc.width, osc.height
-                ));
+        let mut stable: Vec<&DisplayList> = Vec::with_capacity(3);
+        stable.extend(subtitle.as_ref());
+        stable.extend(message.as_ref());
+        let mut dynamic: Vec<&DisplayList> = Vec::with_capacity(1);
+        if let Some((osc_stable, osc_dynamic)) = scene.osc {
+            for osc in [osc_stable, osc_dynamic] {
+                if (osc.width, osc.height) != (width, height) {
+                    return Err(format!(
+                        "OSC was laid out for {}x{} but the overlay is {width}x{height}",
+                        osc.width, osc.height
+                    ));
+                }
             }
-            layers.push(osc);
+            stable.push(osc_stable);
+            dynamic.push(osc_dynamic);
         }
-        player_overlay::render(&layers, &mut self.text)
+        self.compositor.render(&stable, &dynamic, &mut self.text)
     }
 }
 
@@ -122,7 +132,8 @@ mod tests {
     #[test]
     fn an_osc_laid_out_for_another_size_is_rejected() {
         let osc = DisplayList::new(640, 360, 0.5);
-        let scene = Scene { subtitle: None, message: None, osc: Some(&osc) };
+        let dynamic = DisplayList::new(640, 360, 0.5);
+        let scene = Scene { subtitle: None, message: None, osc: Some((&osc, &dynamic)) };
         assert!(OverlayRenderer::new().unwrap().render(&scene, 1280, 720).is_err());
     }
 }

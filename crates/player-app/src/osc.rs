@@ -496,6 +496,13 @@ impl View {
     }
 }
 
+struct Rendered {
+    view: View,
+    stable: DisplayList,
+    dynamic: DisplayList,
+    full: Option<DisplayList>,
+}
+
 pub struct Osc {
     visibility: OscVisibility,
     phase: Phase,
@@ -507,7 +514,7 @@ pub struct Osc {
     size: (u32, u32),
     layout: Layout,
     now: Instant,
-    rendered: Option<(View, DisplayList)>,
+    rendered: Option<Rendered>,
     revision: u64,
 }
 
@@ -674,18 +681,34 @@ impl Osc {
     }
 
     pub fn overlay(&mut self) -> Option<&DisplayList> {
+        self.refresh();
+        let rendered = self.rendered.as_mut()?;
+        if rendered.full.is_none() {
+            let mut full = rendered.stable.clone();
+            full.items.extend(rendered.dynamic.items.iter().cloned());
+            rendered.full = Some(full);
+        }
+        rendered.full.as_ref()
+    }
+
+    /// The static prefix and the tooltip/progress suffix, in paint order.
+    pub fn layers(&mut self) -> Option<(&DisplayList, &DisplayList)> {
+        self.refresh();
+        self.rendered.as_ref().map(|rendered| (&rendered.stable, &rendered.dynamic))
+    }
+
+    fn refresh(&mut self) {
         let Some(view) = self.view() else {
             if self.rendered.take().is_some() {
                 self.revision += 1;
             }
-            return None;
+            return;
         };
-        if self.rendered.as_ref().is_none_or(|(rendered, _)| *rendered != view) {
-            let list = self.display(&view);
-            self.rendered = Some((view, list));
+        if self.rendered.as_ref().is_none_or(|rendered| rendered.view != view) {
+            let (stable, dynamic) = self.display(&view);
+            self.rendered = Some(Rendered { view, stable, dynamic, full: None });
             self.revision += 1;
         }
-        self.rendered.as_ref().map(|(_, overlay)| overlay)
     }
 
     fn relayout(&mut self) {
@@ -873,7 +896,7 @@ impl Osc {
         title.replace('\n', " ")
     }
 
-    fn display(&self, view: &View) -> DisplayList {
+    fn display(&self, view: &View) -> (DisplayList, DisplayList) {
         let layout = &self.layout;
         let fade = view.animation.map_or(1.0, |animation| 1.0 - animation as f64 / 255.0);
         let white = |opacity: f64| Color::WHITE.with_opacity(opacity * fade);
@@ -954,8 +977,9 @@ impl Osc {
                 seek_color,
             );
         }
+        let mut dynamic = DisplayList::new(self.size.0, self.size.1, scale);
         if let Some(progress) = view.progress {
-            list.fill(
+            dynamic.fill(
                 Shape::Rect(overlay::Rect::new(
                     seek.x + SEEK_GAP,
                     seek.y + SEEK_GAP,
@@ -968,13 +992,13 @@ impl Osc {
         if let Some(tooltip) = &view.tooltip {
             let anchor = Geometry { x: tooltip.x, y: tooltip.y, an: tooltip.an, w: 0.0, h: 0.0 }.anchor();
             let outline = Outline { width: 1.0, color: Color::BLACK.with_opacity(TOOLTIP_OUTLINE_OPACITY * fade) };
-            list.text(
+            dynamic.text(
                 Point { x: tooltip.x, y: tooltip.y },
                 anchor,
                 text(tooltip.text.clone(), TOOLTIP_SIZE, white(1.0), Some(outline)),
             );
         }
-        list
+        (list, dynamic)
     }
 }
 

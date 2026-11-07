@@ -43,7 +43,43 @@ struct Target {
     premultiplied: Vec<f32>,
 }
 
+type PixelBox = (usize, usize, usize, usize);
+type Frame = (usize, usize);
+
 impl Target {
+    fn new((x0, y0, x1, y1): PixelBox) -> Self {
+        Target { x: x0, y: y0, width: x1 - x0, height: y1 - y0, premultiplied: vec![0.0; (x1 - x0) * (y1 - y0) * 4] }
+    }
+
+    fn from_buffer((x0, y0, x1, y1): PixelBox, buffer: Vec<f32>, clear: bool) -> Self {
+        let (width, height) = (x1 - x0, y1 - y0);
+        let needed = width * height * 4;
+        let mut premultiplied = buffer;
+        if premultiplied.capacity() > needed.saturating_mul(2) {
+            premultiplied = Vec::new();
+        }
+        if clear {
+            premultiplied.clear();
+        }
+        premultiplied.resize(needed, 0.0);
+        Target { x: x0, y: y0, width, height, premultiplied }
+    }
+
+    fn to_image(&self) -> OverlayImage {
+        let mut rgba = vec![0u8; self.width * self.height * 4];
+        for (out, pixel) in rgba.chunks_exact_mut(4).zip(self.premultiplied.chunks_exact(4)) {
+            let alpha = pixel[3];
+            if alpha <= 0.0 {
+                continue;
+            }
+            for channel in 0..3 {
+                out[channel] = ((pixel[channel] / alpha).clamp(0.0, 1.0) * 255.0).round() as u8;
+            }
+            out[3] = (alpha.clamp(0.0, 1.0) * 255.0).round() as u8;
+        }
+        OverlayImage { rgba, x: self.x as u32, y: self.y as u32, width: self.width as u32, height: self.height as u32 }
+    }
+
     fn blend(&mut self, x: usize, y: usize, color: [f32; 3], alpha: f32) {
         if alpha <= 0.0 {
             return;
@@ -130,21 +166,29 @@ fn resolve<'a>(item: &'a Item, scale: f64, text: &mut TextEngine) -> Result<(Pai
     Ok((paint, bounds, clip.map(|clip| clip.scaled(scale))))
 }
 
-/// Paints the layers bottom to top, each list's items in order, and returns
-/// the covered region, or `None` when nothing is visible. Every layer must
-/// describe the same output size.
-pub fn render(layers: &[&DisplayList], text: &mut TextEngine) -> Result<Option<OverlayImage>, String> {
-    let Some(first) = layers.first() else {
+fn frame_of<'a>(layers: impl IntoIterator<Item = &'a DisplayList>) -> Result<Option<Frame>, String> {
+    let mut layers = layers.into_iter();
+    let Some(first) = layers.next() else {
         return Ok(None);
     };
     let frame = (first.width as usize, first.height as usize);
-    if let Some(layer) = layers.iter().find(|layer| (layer.width, layer.height) != (first.width, first.height)) {
-        return Err(format!(
-            "overlay layers disagree on size: {}x{} and {}x{}",
-            first.width, first.height, layer.width, layer.height
-        ));
+    for layer in layers {
+        if (layer.width, layer.height) != (first.width, first.height) {
+            return Err(format!(
+                "overlay layers disagree on size: {}x{} and {}x{}",
+                first.width, first.height, layer.width, layer.height
+            ));
+        }
     }
-    let mut union: Option<(usize, usize, usize, usize)> = None;
+    Ok(Some(frame))
+}
+
+fn resolve_layers<'a>(
+    layers: &[&'a DisplayList],
+    text: &mut TextEngine,
+    frame: Frame,
+) -> Result<(Vec<(Paint<'a>, PixelBox)>, Option<PixelBox>), String> {
+    let mut union: Option<PixelBox> = None;
     let mut paints = Vec::new();
     for layer in layers {
         for item in &layer.items {
@@ -156,75 +200,192 @@ pub fn render(layers: &[&DisplayList], text: &mut TextEngine) -> Result<Option<O
             let Some(pixels) = bounds.and_then(|bounds| pixel_box(bounds, frame)) else {
                 continue;
             };
-            let (x0, y0, x1, y1) = pixels;
             union = Some(match union {
                 None => pixels,
-                Some((a, b, c, d)) => (a.min(x0), b.min(y0), c.max(x1), d.max(y1)),
+                Some((a, b, c, d)) => (a.min(pixels.0), b.min(pixels.1), c.max(pixels.2), d.max(pixels.3)),
             });
             paints.push((paint, pixels));
         }
     }
-    let Some((ux0, uy0, ux1, uy1)) = union else {
-        return Ok(None);
-    };
-    let mut target = Target {
-        x: ux0,
-        y: uy0,
-        width: ux1 - ux0,
-        height: uy1 - uy0,
-        premultiplied: vec![0.0; (ux1 - ux0) * (uy1 - uy0) * 4],
-    };
-    for (paint, (x0, y0, x1, y1)) in paints {
-        match paint {
-            Paint::Fill { shape, scale, color } => {
-                let mut raster = Coverage::new(x1 - x0, y1 - y0);
-                raster.fill_path(&shape.to_path(), scale, -(x0 as f64), -(y0 as f64));
-                paint_coverage(&mut target, &raster.finish(), (x0, y0, x1, y1), color);
-            }
-            Paint::Stroke { shape, width, scale, color } => {
-                let mut raster = Coverage::new(x1 - x0, y1 - y0);
-                raster.stroke_path(&shape.to_path(), width, scale, -(x0 as f64), -(y0 as f64));
-                paint_coverage(&mut target, &raster.finish(), (x0, y0, x1, y1), color);
-            }
-            Paint::Bitmap { left, top, image, opacity } => {
-                for y in y0..y1 {
-                    let iy = y as i64 - top;
-                    if iy < 0 || iy >= image.height as i64 {
+    Ok((paints, union))
+}
+
+fn paint_item(target: &mut Target, paint: Paint, (x0, y0, x1, y1): PixelBox) {
+    match paint {
+        Paint::Fill { shape, scale, color } => {
+            let mut raster = Coverage::new(x1 - x0, y1 - y0);
+            raster.fill_path(&shape.to_path(), scale, -(x0 as f64), -(y0 as f64));
+            paint_coverage(target, &raster.finish(), (x0, y0, x1, y1), color);
+        }
+        Paint::Stroke { shape, width, scale, color } => {
+            let mut raster = Coverage::new(x1 - x0, y1 - y0);
+            raster.stroke_path(&shape.to_path(), width, scale, -(x0 as f64), -(y0 as f64));
+            paint_coverage(target, &raster.finish(), (x0, y0, x1, y1), color);
+        }
+        Paint::Bitmap { left, top, image, opacity } => {
+            let (ox, oy) = (target.x, target.y);
+            for y in y0..y1 {
+                let iy = y as i64 - top;
+                if iy < 0 || iy >= image.height as i64 {
+                    continue;
+                }
+                for x in x0..x1 {
+                    let ix = x as i64 - left;
+                    if ix < 0 || ix >= image.width as i64 {
                         continue;
                     }
-                    for x in x0..x1 {
-                        let ix = x as i64 - left;
-                        if ix < 0 || ix >= image.width as i64 {
-                            continue;
-                        }
-                        let offset = (iy as usize * image.width as usize + ix as usize) * 4;
-                        let pixel = &image.rgba[offset..offset + 4];
-                        let alpha = pixel[3] as f32 / 255.0 * opacity as f32;
-                        let color = [pixel[0] as f32 / 255.0, pixel[1] as f32 / 255.0, pixel[2] as f32 / 255.0];
-                        target.blend(x - ux0, y - uy0, color, alpha);
-                    }
+                    let offset = (iy as usize * image.width as usize + ix as usize) * 4;
+                    let pixel = &image.rgba[offset..offset + 4];
+                    let alpha = pixel[3] as f32 / 255.0 * opacity as f32;
+                    let color = [pixel[0] as f32 / 255.0, pixel[1] as f32 / 255.0, pixel[2] as f32 / 255.0];
+                    target.blend(x - ox, y - oy, color, alpha);
                 }
             }
         }
     }
-    let mut rgba = vec![0u8; target.width * target.height * 4];
-    for (out, pixel) in rgba.chunks_exact_mut(4).zip(target.premultiplied.chunks_exact(4)) {
-        let alpha = pixel[3];
-        if alpha <= 0.0 {
-            continue;
-        }
-        for channel in 0..3 {
-            out[channel] = ((pixel[channel] / alpha).clamp(0.0, 1.0) * 255.0).round() as u8;
-        }
-        out[3] = (alpha.clamp(0.0, 1.0) * 255.0).round() as u8;
+}
+
+/// Paints the layers bottom to top, each list's items in order, and returns
+/// the covered region, or `None` when nothing is visible. Every layer must
+/// describe the same output size.
+pub fn render(layers: &[&DisplayList], text: &mut TextEngine) -> Result<Option<OverlayImage>, String> {
+    let Some(frame) = frame_of(layers.iter().copied())? else {
+        return Ok(None);
+    };
+    let (paints, union) = resolve_layers(layers, text, frame)?;
+    let Some(union) = union else {
+        return Ok(None);
+    };
+    let mut target = Target::new(union);
+    for (paint, pixels) in paints {
+        paint_item(&mut target, paint, pixels);
     }
-    Ok(Some(OverlayImage {
-        rgba,
-        x: ux0 as u32,
-        y: uy0 as u32,
-        width: target.width as u32,
-        height: target.height as u32,
-    }))
+    Ok(Some(target.to_image()))
+}
+
+struct StableLayer {
+    layers: Vec<DisplayList>,
+    frame: Frame,
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
+    premultiplied: Vec<f32>,
+}
+
+/// Renders a stable set of layers once and keeps its accumulation, so later
+/// frames only rasterize the layers that moved.
+#[derive(Default)]
+pub struct Compositor {
+    stable: Option<StableLayer>,
+    scratch: Vec<f32>,
+}
+
+impl Compositor {
+    pub fn new() -> Self {
+        Compositor::default()
+    }
+
+    pub fn release(&mut self) {
+        *self = Compositor::default();
+    }
+
+    fn stable_matches(&self, stable: &[&DisplayList], frame: Frame) -> bool {
+        self.stable.as_ref().is_some_and(|cached| {
+            cached.frame == frame
+                && cached.layers.len() == stable.len()
+                && cached.layers.iter().zip(stable.iter()).all(|(cached, current)| cached == *current)
+        })
+    }
+
+    fn render_uncached(
+        &mut self,
+        stable: &[&DisplayList],
+        changing: &[&DisplayList],
+        text: &mut TextEngine,
+        frame: Frame,
+    ) -> Result<Option<OverlayImage>, String> {
+        let layers: Vec<&DisplayList> = stable.iter().chain(changing.iter()).copied().collect();
+        let (paints, union) = resolve_layers(&layers, text, frame)?;
+        let Some(union) = union else {
+            return Ok(None);
+        };
+        let mut target = Target::from_buffer(union, std::mem::take(&mut self.scratch), true);
+        for (paint, pixels) in paints {
+            paint_item(&mut target, paint, pixels);
+        }
+        let image = target.to_image();
+        self.scratch = target.premultiplied;
+        Ok(Some(image))
+    }
+
+    /// Paints `stable` and then `changing`, reusing the accumulated `stable`
+    /// pixels while those layers and the frame size are unchanged. The result
+    /// is pixel-identical to `render` over both sets in order. Layers that span
+    /// distant parts of the frame (a message above the OSC) skip the cache so
+    /// only one large accumulation buffer exists at a time.
+    pub fn render(
+        &mut self,
+        stable: &[&DisplayList],
+        changing: &[&DisplayList],
+        text: &mut TextEngine,
+    ) -> Result<Option<OverlayImage>, String> {
+        let Some(frame) = frame_of(stable.iter().chain(changing.iter()).copied())? else {
+            return Ok(None);
+        };
+        if stable.len() > 1 {
+            return self.render_uncached(stable, changing, text, frame);
+        }
+        if !self.stable_matches(stable, frame) {
+            let (paints, union) = resolve_layers(stable, text, frame)?;
+            let (x, y, width, height, premultiplied) = match union {
+                Some(union) => {
+                    let mut target = Target::new(union);
+                    for (paint, pixels) in paints {
+                        paint_item(&mut target, paint, pixels);
+                    }
+                    (target.x, target.y, target.width, target.height, target.premultiplied)
+                }
+                None => (0, 0, 0, 0, Vec::new()),
+            };
+            self.stable = Some(StableLayer {
+                layers: stable.iter().map(|layer| (*layer).clone()).collect(),
+                frame,
+                x,
+                y,
+                width,
+                height,
+                premultiplied,
+            });
+        }
+        let (changing_paints, changing_union) = resolve_layers(changing, text, frame)?;
+        let cached = self.stable.as_ref().expect("the stable layer was just validated");
+        let stable_union = (cached.width > 0).then_some((cached.x, cached.y, cached.x + cached.width, cached.y + cached.height));
+        let union = match (stable_union, changing_union) {
+            (Some((x0, y0, x1, y1)), Some((a, b, c, d))) => {
+                (x0.min(a), y0.min(b), x1.max(c), y1.max(d))
+            }
+            (Some(union), None) | (None, Some(union)) => union,
+            (None, None) => return Ok(None),
+        };
+        let covered = stable_union == Some(union);
+        let mut target = Target::from_buffer(union, std::mem::take(&mut self.scratch), !covered);
+        if let Some(stable_union) = stable_union {
+            let cached = self.stable.as_ref().expect("the stable layer exists");
+            let (dx, dy) = (stable_union.0 - union.0, stable_union.1 - union.1);
+            for row in 0..cached.height {
+                let source = &cached.premultiplied[row * cached.width * 4..][..cached.width * 4];
+                let start = ((row + dy) * target.width + dx) * 4;
+                target.premultiplied[start..start + cached.width * 4].copy_from_slice(source);
+            }
+        }
+        for (paint, pixels) in changing_paints {
+            paint_item(&mut target, paint, pixels);
+        }
+        let image = target.to_image();
+        self.scratch = target.premultiplied;
+        Ok(Some(image))
+    }
 }
 
 impl OverlayImage {
@@ -391,5 +552,61 @@ mod tests {
         let mut frame = vec![0, 0, 0, 255, 0, 0, 0, 255];
         overlay.blend_onto(&mut frame, 2, 1).unwrap();
         assert_eq!(frame, vec![0, 0, 0, 255, 128, 128, 128, 255]);
+    }
+
+    fn label(text: &str, size: f64, x: f64) -> DisplayList {
+        let mut list = DisplayList::new(200, 100, 1.0);
+        list.text(
+            Point { x, y: 20.0 },
+            Anchor::TOP_LEFT,
+            TextBlock {
+                text: text.to_owned(),
+                style: TextStyle { size, weight: Weight::Regular, color: Color::WHITE, outline: None },
+                max_width: None,
+                align: crate::display::Align::Start,
+            },
+        );
+        list
+    }
+
+    #[test]
+    fn cached_changing_layers_render_identically_to_a_full_render() {
+        let mut stable = DisplayList::new(200, 100, 1.0);
+        stable.fill(Shape::Rect(Rect::new(0.0, 60.0, 200.0, 40.0)), Color::rgba(0, 0, 0, 175));
+        stable.fill(Shape::Rect(Rect::new(10.0, 70.0, 180.0, 4.0)), Color::WHITE);
+        let first = label("00:00:01", 25.0, 40.0);
+        let second = label("00:00:29", 25.0, 120.0);
+        let mut engine = engine();
+        let full_first = render(&[&stable, &first], &mut engine).unwrap();
+        let full_second = render(&[&stable, &second], &mut engine).unwrap();
+        let mut compositor = Compositor::new();
+        assert_eq!(compositor.render(&[&stable], &[&first], &mut engine).unwrap(), full_first);
+        assert_eq!(compositor.render(&[&stable], &[&second], &mut engine).unwrap(), full_second);
+        assert_eq!(compositor.render(&[&stable], &[&first], &mut engine).unwrap(), full_first);
+    }
+
+    #[test]
+    fn multi_layer_stable_renders_identically_without_the_cache() {
+        let mut under = label("Banner", 14.0, 5.0);
+        under.fill(Shape::Rect(Rect::new(0.0, 0.0, 200.0, 18.0)), Color::rgba(0, 0, 0, 140));
+        let mut stable = DisplayList::new(200, 100, 1.0);
+        stable.fill(Shape::Rect(Rect::new(0.0, 60.0, 200.0, 40.0)), Color::BLACK);
+        let dynamic = label("00:00:02", 20.0, 60.0);
+        let mut engine = engine();
+        let full = render(&[&under, &stable, &dynamic], &mut engine).unwrap();
+        let mut compositor = Compositor::new();
+        assert_eq!(compositor.render(&[&under, &stable], &[&dynamic], &mut engine).unwrap(), full);
+    }
+
+    #[test]
+    fn a_stable_hit_does_not_relayout_its_text() {
+        let mut engine = engine();
+        let stable = label("Stable", 18.0, 10.0);
+        let empty = DisplayList::new(200, 100, 1.0);
+        let mut compositor = Compositor::new();
+        compositor.render(&[&stable], &[&empty], &mut engine).unwrap();
+        assert_eq!(engine.rendered(), 1);
+        compositor.render(&[&stable], &[&empty], &mut engine).unwrap();
+        assert_eq!(engine.rendered(), 1);
     }
 }
