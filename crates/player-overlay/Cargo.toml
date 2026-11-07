@@ -8,5 +8,6 @@ description = "Typed overlay display list, shape rasterizer, and native text for
 crate-type = ["rlib"]
 
 [target.'cfg(target_os = "linux")'.dependencies]
+rustc-hash = "2"
 unicode-bidi = "0.3.18"
 unicode-linebreak = "0.1.5"

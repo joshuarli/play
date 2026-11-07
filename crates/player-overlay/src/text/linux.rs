@@ -1,8 +1,9 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::ffi::{CStr, CString, c_char, c_int, c_long, c_uint, c_void};
 use std::ops::Range;
 use std::ptr;
 
+use rustc_hash::FxHashMap;
 use unicode_bidi::BidiInfo;
 use unicode_linebreak::linebreaks;
 
@@ -781,11 +782,13 @@ impl Backend {
 }
 
 fn group_units(glyphs: Vec<Glyph>, range: Range<usize>, level: u8, segment: usize) -> Vec<Unit> {
-    let mut clusters: BTreeMap<usize, Vec<Glyph>> = BTreeMap::new();
+    let mut clusters: FxHashMap<usize, Vec<Glyph>> = FxHashMap::default();
     for glyph in glyphs {
         clusters.entry(glyph.cluster).or_default().push(glyph);
     }
-    let starts: Vec<usize> = clusters.keys().copied().collect();
+    let mut clusters: Vec<(usize, Vec<Glyph>)> = clusters.into_iter().collect();
+    clusters.sort_unstable_by_key(|(start, _)| *start);
+    let starts: Vec<usize> = clusters.iter().map(|(start, _)| *start).collect();
     clusters
         .into_iter()
         .enumerate()
