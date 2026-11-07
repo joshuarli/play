@@ -317,6 +317,12 @@ def first_frame(player, path, runs=7):
 
 
 def rss_mb(pid):
+    status = Path(f"/proc/{pid}/status")
+    if status.exists():
+        for line in status.read_text().splitlines():
+            if line.startswith("VmRSS:"):
+                return int(line.split()[1]) / 1024
+        raise RuntimeError(f"could not read RSS for pid {pid}")
     proc = run(["ps", "-o", "rss=", "-p", str(pid)], timeout=10)
     text = proc.stdout.strip()
     if proc.returncode != 0 or not text:
