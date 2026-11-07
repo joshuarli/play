@@ -43,3 +43,5 @@ The accent is sampled from the cover and used only for the progress fill, the kn
 ## Scope
 
 Audio-first. Video files play audio with the placeholder; the TUI never opens a window and keeps `vo=null`. Embedded pictures only; external `cover.jpg` / `folder.jpg` lookup is not implemented.
+
+When a track ends in the TUI and there is no next playlist entry, playback restarts from zero instead of unloading the file, so the transport stays live and seeking keeps working. A following playlist entry still takes over, `--keep-open` still pauses at the end, and a failed or empty file is not replayed.

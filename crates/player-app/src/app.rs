@@ -980,6 +980,7 @@ impl App {
         self.muted = status.muted;
         self.speed = status.speed;
         self.update_osc(&status);
+        self.sync_eof(status.ended);
         if status.ended && !self.end_sent {
             self.end_sent = true;
             let reason = "eof";
@@ -998,16 +999,33 @@ impl App {
             if let Some(error) = status.error.as_deref() {
                 eprintln!("player: {error}");
             }
-            if self.options.keep_open {
-                self.set_paused(true)?;
-            } else if let Some(next) = self.playlist.next_index() {
-                self.playlist.set_current(Some(next));
-                self.load_current()?;
-            } else {
-                self.unload();
+            let action = end_action(
+                self.options.tui,
+                self.options.keep_open,
+                self.playlist.next_index().is_some(),
+                status.error.is_some(),
+                status.duration,
+            );
+            match action {
+                EndAction::Pause => self.set_paused(true)?,
+                EndAction::Next => {
+                    if let Some(next) = self.playlist.next_index() {
+                        self.playlist.set_current(Some(next));
+                        self.load_current()?;
+                    }
+                }
+                EndAction::Replay => self.seek_absolute(0.0),
+                EndAction::Unload => self.unload(),
             }
         }
         Ok(())
+    }
+
+    fn sync_eof(&mut self, ended: bool) {
+        if !ended {
+            self.end_sent = false;
+            self.eof_reached = false;
+        }
     }
 
     fn update_osc(&mut self, status: &EngineStatus) {
@@ -1864,6 +1882,26 @@ fn parse_time(value: &str) -> Result<f64, String> {
     value.parse().map_err(|_| "invalid time".to_owned())
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EndAction {
+    Pause,
+    Next,
+    Replay,
+    Unload,
+}
+
+fn end_action(tui: bool, keep_open: bool, has_next: bool, failed: bool, duration: f64) -> EndAction {
+    if keep_open {
+        EndAction::Pause
+    } else if has_next {
+        EndAction::Next
+    } else if tui && !failed && duration > 0.0 {
+        EndAction::Replay
+    } else {
+        EndAction::Unload
+    }
+}
+
 fn toggle_value(toggle: Toggle, current: bool) -> bool {
     match toggle {
         Toggle::Toggle => !current,
@@ -1927,4 +1965,57 @@ pub fn entry(path: &str) -> Result<Entry, String> {
 enum ScreenshotContent {
     Video,
     Window,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tui_replays_a_finished_track_with_no_next_entry() {
+        assert_eq!(
+            end_action(true, false, false, false, 180.0),
+            EndAction::Replay
+        );
+    }
+
+    #[test]
+    fn end_of_track_keeps_explicit_and_playlist_behaviour() {
+        assert_eq!(
+            end_action(true, true, false, false, 180.0),
+            EndAction::Pause
+        );
+        assert_eq!(
+            end_action(true, false, true, false, 180.0),
+            EndAction::Next
+        );
+        assert_eq!(
+            end_action(false, false, false, false, 180.0),
+            EndAction::Unload
+        );
+    }
+
+    #[test]
+    fn a_failed_or_empty_track_is_never_replayed() {
+        assert_eq!(
+            end_action(true, false, false, true, 180.0),
+            EndAction::Unload
+        );
+        assert_eq!(end_action(true, false, false, false, 0.0), EndAction::Unload);
+        assert_eq!(
+            end_action(true, false, false, false, f64::NAN),
+            EndAction::Unload
+        );
+    }
+
+    #[test]
+    fn leaving_the_end_rearms_the_next_end_of_track() {
+        let mut app = App::new(Options::default());
+        app.end_sent = true;
+        app.eof_reached = true;
+        app.sync_eof(true);
+        assert!(app.end_sent && app.eof_reached);
+        app.sync_eof(false);
+        assert!(!app.end_sent && !app.eof_reached);
+    }
 }
