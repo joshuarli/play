@@ -1,6 +1,7 @@
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+use rustc_hash::FxHashMap;
 
 pub const PROFILE: &str = "play-sdk";
 pub const PIN_FILE: &str = "ffmpeg-sdk.lock.json";
@@ -25,7 +26,7 @@ pub enum Json {
     Number(String),
     String(String),
     Array(Vec<Json>),
-    Object(BTreeMap<String, Json>),
+    Object(FxHashMap<String, Json>),
 }
 
 impl Json {
@@ -113,7 +114,7 @@ impl Parser<'_> {
 
     fn object(&mut self) -> Result<Json, String> {
         self.expect(b'{')?;
-        let mut map = BTreeMap::new();
+        let mut map = FxHashMap::default();
         self.space();
         if self.bytes.get(self.at) == Some(&b'}') {
             self.at += 1;
@@ -211,7 +212,7 @@ pub struct Pin {
     pub repository: String,
     pub release: String,
     pub ffmpeg: String,
-    pub targets: BTreeMap<String, Asset>,
+    pub targets: FxHashMap<String, Asset>,
 }
 
 impl Pin {
@@ -233,8 +234,13 @@ impl Pin {
         let Some(Json::Object(entries)) = json.get("targets") else {
             return Err(format!("{PIN_FILE} lacks a targets object"));
         };
-        let mut targets = BTreeMap::new();
-        for (target, entry) in entries {
+        // Visit targets in sorted order so a pin with several bad entries still
+        // reports the same one; hash order is deterministic but arbitrary.
+        let mut ordered: Vec<&String> = entries.keys().collect();
+        ordered.sort_unstable();
+        let mut targets = FxHashMap::default();
+        for target in ordered {
+            let entry = &entries[target];
             let asset = entry
                 .get("asset")
                 .and_then(Json::str)
