@@ -362,7 +362,10 @@ pub struct EngineStatus {
     pub volume: f32,
     pub muted: bool,
     pub paused: bool,
+    /// Terminal: the scheduler reached `Ended` or `Error`.
     pub ended: bool,
+    /// Terminal by failure: the scheduler reached `Error`.
+    pub failed: bool,
     pub presented: u64,
     pub dropped_late: u64,
     pub video_width: u32,
@@ -382,6 +385,7 @@ impl Default for EngineStatus {
             muted: false,
             paused: false,
             ended: false,
+            failed: false,
             presented: 0,
             dropped_late: 0,
             video_width: 0,
@@ -747,6 +751,13 @@ fn parked(state: State) -> bool {
     matches!(state, State::Paused { .. } | State::Ended | State::Error)
 }
 
+fn terminal_flags(state: State) -> (bool, bool) {
+    (
+        matches!(state, State::Ended | State::Error),
+        matches!(state, State::Error),
+    )
+}
+
 struct Worker {
     scheduler: EngineScheduler,
     volume: f32,
@@ -787,7 +798,7 @@ impl Worker {
     fn publish(&self, state: &Arc<Mutex<EngineStatus>>, now: f64) {
         let position = self.scheduler.clock_position(now);
         let paused = matches!(self.scheduler.state(), State::Paused { .. });
-        let ended = matches!(self.scheduler.state(), State::Ended | State::Error);
+        let (ended, failed) = terminal_flags(self.scheduler.state());
         let error = self.scheduler.failure().map(str::to_string);
         let presented = self.scheduler.stats().presented;
         let dropped_late = self.scheduler.stats().dropped_late;
@@ -799,6 +810,7 @@ impl Worker {
             status.speed = self.scheduler.speed();
             status.paused = paused;
             status.ended = ended;
+            status.failed = failed;
             status.error = error;
             status.presented = presented;
             status.dropped_late = dropped_late;
@@ -913,6 +925,7 @@ impl Drop for PanicGuard {
             update(&self.state, |status| {
                 status.error = Some("scheduler worker died".to_string());
                 status.ended = true;
+                status.failed = true;
             });
         }
     }
@@ -991,6 +1004,14 @@ mod tests {
             "run tests/fixtures/gen.sh first"
         );
         dir
+    }
+
+    #[test]
+    fn terminal_flags_keep_failure_apart_from_a_clean_end() {
+        assert_eq!(terminal_flags(State::Ended), (true, false));
+        assert_eq!(terminal_flags(State::Error), (true, true));
+        assert_eq!(terminal_flags(State::Playing), (false, false));
+        assert_eq!(terminal_flags(State::Paused { resume: crate::state::PlayResume::Playing }), (false, false));
     }
 
     fn fixture(name: &str) -> String {

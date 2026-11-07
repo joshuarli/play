@@ -983,8 +983,9 @@ impl App {
         self.sync_eof(status.ended);
         if status.ended && !self.end_sent {
             self.end_sent = true;
-            let reason = "eof";
-            self.eof_reached = true;
+            let failed = status.failed || status.error.is_some();
+            let reason = if failed { "error" } else { "eof" };
+            self.eof_reached = !failed;
             if status.error.is_some() {
                 self.defer_event(ipc::event("playback-restart", Vec::new()));
             }
