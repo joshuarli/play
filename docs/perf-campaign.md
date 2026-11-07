@@ -3,9 +3,9 @@
 ## Status
 
 - **Goal:** make Play's performance evidence trustworthy, then cut the CPU and memory spent per correctly delivered frame, starting with scheduler pacing and then PLAY-31.
-- **Accepted:** C0 (`4ac0e09`, `ee5786c`), C1 (`0c8d15c`..`ee0f3cb`), C2 (`77e26fe`).
-- **In progress:** C3 and C4, in parallel; they share only `EngineStatus` fields and `tests/harness.py`.
-- **Next slice:** C5 (native baseline) once C3 and C4 land.
+- **Accepted:** C0, C1 (with the C1b runner fixes), C2, C3, C4, C5, O1 (`28c99a6`).
+- **In progress:** O2 (PLAY-31).
+- **Next slice:** O3 only if a GUI profile on the O2 build shows OSC hover above its threshold; then close.
 - **Parked:** none.
 
 ## Charter
@@ -94,7 +94,9 @@ Requires C5.
 - The worker blocks on `recv_timeout` until the earliest of: the next frame due time, the audio low watermark, or a command. It never spins.
 - `audio_wanted` (`sched.rs:630`) requires an active audio stream.
 
-**Accept:** on the video-only 1080p workload, CPU-s per media-s is below 0.1 (currently about 1.0), with identical C2 `delivered` counts and no increase in `dropped_late`. A/V workloads are `unchanged` or `improved`. `cargo test -p player-engine`, `tests/run.sh traces`, and `tests/run.sh seek` pass.
+**Accept:** on the video-only 1080p workload, CPU-s per media-s falls to the A/V workload's decode-bound cost (0.26 at baseline; the earlier 0.1 target assumed decode was cheaper than it is), with no frame drops added.
+
+**Result:** video-1080p 0.99 to 0.27 CPU-s per media-s and 189 MB less RSS; video-4k 0.54 lower and 760 MB less RSS; both went from about 76 drops per 3 s (every frame evicted) to 0; av-1080p unchanged. A/V workloads are `unchanged` or `improved`. `cargo test -p player-engine`, `tests/run.sh traces`, and `tests/run.sh seek` pass.
 
 ### O2: PLAY-31 single-device presentation (engine, output, display)
 Requires O1. Needs an `architect` pass before any code, because it changes the boundary between `player-engine`, `player-output`, and `player-display`.
