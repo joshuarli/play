@@ -204,8 +204,12 @@ def trace_playable(name, entry):
         duration = trace["duration"] or 0
         if duration > 1:
             target = round(duration / 2, 2)
+            restarts = mpv.event_count("playback-restart")
             mpv.command("seek", str(target), "absolute")
             mpv.wait_event("seek", timeout=10)
+            mpv.wait_until(
+                lambda: mpv.event_count("playback-restart") > restarts,
+                10, "playback-restart after the mid-file seek")
             pos = mpv.try_get_property("time-pos") or 0
             trace["seek-target"] = target
             trace["seek-pos"] = round(float(pos), 2)
