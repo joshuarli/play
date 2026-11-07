@@ -635,6 +635,31 @@ mod tests {
     }
 
     #[test]
+    fn pause_freezes_a_video_only_position_and_resume_continues() {
+        let mut h = Harness::new(FakeDemux::build(1.0, 25.0, 0.0, 0, false, false), false);
+        h.sim.open();
+        for _ in 0..30 {
+            h.sim.audio_output_mut().consume(DT);
+            h.sim.step(h.now);
+            h.now += DT;
+        }
+        h.sim.send(Command::Pause(true));
+        h.sim.step(h.now);
+        let frozen_position = h.sim.clock_position(h.now);
+        for _ in 0..50 {
+            h.sim.audio_output_mut().consume(DT);
+            h.sim.step(h.now);
+            h.now += DT;
+        }
+        assert_eq!(h.sim.clock_position(h.now), frozen_position);
+        assert!(matches!(h.sim.state(), State::Paused { .. }));
+        h.sim.send(Command::Pause(false));
+        h.run(400, DT, &[]);
+        assert_eq!(h.sim.state(), State::Ended);
+        assert_eq!(h.stats().presented, 25);
+    }
+
+    #[test]
     fn speed_change_advances_system_clock_faster() {
         let mut h = Harness::new(FakeDemux::build(1.0, 25.0, 0.0, 0, false, false), false);
         h.sim.open();

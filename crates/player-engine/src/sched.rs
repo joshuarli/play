@@ -326,6 +326,7 @@ where
                 Command::Pause(pause) => {
                     let event = if pause { Event::Pause } else { Event::Resume };
                     if self.machine.apply(event).is_ok() {
+                        self.clock.set_paused(pause, now);
                         self.audio_out.set_paused(pause);
                     } else {
                         self.stats.commands_ignored += 1;
