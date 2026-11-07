@@ -715,7 +715,7 @@ fn run_worker(
                 if render_video {
                     (
                         decoder,
-                        EngineVideoOutput::open(shared, frames_tx, start.gpu_api)?,
+                        EngineVideoOutput::open(shared, frames_tx),
                         Some("gpu-next"),
                     )
                 } else {
@@ -1536,11 +1536,16 @@ mod tests {
         );
         for frame in &frames {
             assert_eq!((frame.width, frame.height), (320, 240));
-            assert_eq!(frame.rgba.len(), 320 * 240 * 4);
+            let planes = frame.planes().expect("planes derive");
+            assert_eq!(planes.len(), 3, "yuv420p frames carry three planes");
+            assert_eq!((planes[0].width, planes[0].height), (320, 240));
+            assert_eq!((planes[1].width, planes[1].height), (160, 120));
+            assert_eq!((planes[2].width, planes[2].height), (160, 120));
         }
         let varied = frames.iter().any(|frame| {
-            let (min, max) = frame
-                .rgba
+            let planes = frame.planes().expect("planes derive");
+            let (min, max) = planes[0]
+                .data
                 .iter()
                 .fold((255u8, 0u8), |(lo, hi), &b| (lo.min(b), hi.max(b)));
             max - min > 16

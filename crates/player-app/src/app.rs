@@ -15,7 +15,7 @@ use player_engine::{
     EngineStatus, SchedulerEngine, SeekPrecision as EngineSeek, StartState, TrackKind,
 };
 use player_backend::engine::{EngineBackend, OverlayImage, DEFAULT_OSD_DURATION};
-use player_output::{Overlay, OverlayRect};
+use player_output::{render_frame, Gpu, GpuApi, Overlay, OverlayRect, Renderer};
 use player_tui::{Control, Cover, Player as TuiPlayer, Snapshot, Track};
 
 use crate::ipc::{self, IpcServer};
@@ -72,6 +72,7 @@ pub struct App {
     gate_ready_at: Option<Instant>,
     last_gate_report: Instant,
     screenshot_index: u32,
+    screenshot_renderer: Option<ScreenshotRenderer>,
     observers: HashMap<u64, Observer>,
     end_sent: bool,
     quit: bool,
@@ -126,6 +127,7 @@ impl App {
             gate_ready_at: None,
             last_gate_report: Instant::now(),
             screenshot_index: 0,
+            screenshot_renderer: None,
             observers: HashMap::new(),
             end_sent: false,
             quit: false,
@@ -1481,12 +1483,19 @@ impl App {
         path: Option<&str>,
         content: ScreenshotContent,
     ) -> Result<NativeValue, String> {
-        let frame = self
-            .last_frame
-            .as_ref()
-            .ok_or_else(|| "no video frame is available for a screenshot".to_owned())?;
+        if self.last_frame.is_none() {
+            return Err("no video frame is available for a screenshot".to_owned());
+        }
+        if self.screenshot_renderer.is_none() {
+            self.screenshot_renderer = Some(ScreenshotRenderer::open(self.options.gpu_api)?);
+        }
+        let renderer = self
+            .screenshot_renderer
+            .as_mut()
+            .expect("the screenshot renderer just opened");
+        let frame = self.last_frame.as_ref().expect("checked above");
         let (width, height) = (frame.width, frame.height);
-        let mut rgba = frame.rgba.clone();
+        let mut rgba = renderer.render(frame)?;
         if content == ScreenshotContent::Window {
             let backend = self
                 .backend
@@ -2018,6 +2027,35 @@ pub fn entry(path: &str) -> Result<Entry, String> {
 enum ScreenshotContent {
     Video,
     Window,
+}
+
+struct ScreenshotRenderer {
+    // Field order is the drop order: the renderer must be destroyed before the
+    // GPU device that owns it.
+    renderer: Renderer,
+    device: Gpu,
+}
+
+impl ScreenshotRenderer {
+    fn open(api: GpuApi) -> Result<Self, String> {
+        let device = Gpu::headless(api)?;
+        let renderer = device.create_renderer()?;
+        Ok(ScreenshotRenderer { renderer, device })
+    }
+
+    fn render(&mut self, frame: &PresentedFrame) -> Result<Vec<u8>, String> {
+        let planes = frame.planes()?;
+        render_frame(
+            &self.device,
+            &self.renderer,
+            frame.layout,
+            frame.color,
+            &planes,
+            frame.width as i32,
+            frame.height as i32,
+            None,
+        )
+    }
 }
 
 #[cfg(test)]

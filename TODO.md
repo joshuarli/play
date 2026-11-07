@@ -11,8 +11,7 @@ Next: 40
 - PLAY-24: AAC layouts outside channel configurations 1-6 and 7.1 wide fail to open: configuration 12 (7.1 rear, what FFmpeg writes) and program-config-element layouts such as quad. `tests/run.sh mpv-diff` lists them in `KNOWN_GAPS`.
 - PLAY-25: With `--gui` or in the bundled app, audio files with embedded cover art show a black window: the attached-picture frame never reaches it. Without `--gui` such files play audio-only and open no window. The TUI shows the cover through its own decode.
 
-- PLAY-31: Each frame uses two libplacebo devices. The engine renders YUV to RGBA on a headless device and reads it back to the CPU (`player-engine::video` `render_frame`); the window uploads that RGBA and composites overlays on its own device (`player-display::mac` `present_planes`). Both `--gpu-api` backends pay the readback. Render decoded planes straight into the window's swapchain on one device, with no CPU readback, and keep `--vo=null` and screenshots working.
-- PLAY-32: VideoToolbox zero-copy on Metal: once PLAY-20 decodes through VideoToolbox, hand its `CVPixelBuffer` IOSurfaces to libplacebo with `pl_metal_wrap_iosurface` (in the carried Metal patch) instead of copying planes to the CPU. Depends on PLAY-20 and PLAY-31.
+- PLAY-32: VideoToolbox zero-copy on Metal: once PLAY-20 decodes through VideoToolbox, hand its `CVPixelBuffer` IOSurfaces to libplacebo with `pl_metal_wrap_iosurface` (in the carried Metal patch) instead of copying planes to the CPU. Depends on PLAY-20.
 
 ## P3
 

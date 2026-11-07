@@ -18,6 +18,7 @@ import threading
 import time
 import traceback
 import uuid
+import zlib
 from pathlib import Path
 
 from local_only import URL_MATRIX
@@ -360,6 +361,116 @@ def player_subtitles(entry):
     if not entry.get("sub_files"):
         return entry.get("subtitle", [])
     return ["subrip" for name in entry["sub_files"] if name.endswith(".srt")]
+
+
+def read_png_rgba(path):
+    data = Path(path).read_bytes()
+    if data[:8] != b"\x89PNG\r\n\x1a\n":
+        raise Failure(f"{path} is not a PNG")
+    pos = 8
+    idat = bytearray()
+    width = height = depth = color_type = None
+    while pos < len(data):
+        (length,) = struct.unpack(">I", data[pos:pos + 4])
+        kind = data[pos + 4:pos + 8]
+        body = data[pos + 8:pos + 8 + length]
+        pos += 12 + length
+        if kind == b"IHDR":
+            width, height, depth, color_type = struct.unpack(">IIBB", body[:10])
+        elif kind == b"IDAT":
+            idat += body
+        elif kind == b"IEND":
+            break
+    channels = {0: 1, 2: 3, 4: 2, 6: 4}.get(color_type)
+    if channels is None or depth != 8:
+        raise Failure(f"{path}: unsupported PNG depth {depth} type {color_type}")
+    raw = zlib.decompress(bytes(idat))
+    stride = width * channels
+    pixels = bytearray(stride * height)
+    previous = bytearray(stride)
+    pos = 0
+    for row in range(height):
+        filter_type = raw[pos]
+        pos += 1
+        line = bytearray(raw[pos:pos + stride])
+        pos += stride
+        if filter_type == 1:
+            for index in range(channels, stride):
+                line[index] = (line[index] + line[index - channels]) & 0xFF
+        elif filter_type == 2:
+            for index in range(stride):
+                line[index] = (line[index] + previous[index]) & 0xFF
+        elif filter_type == 3:
+            for index in range(stride):
+                left = line[index - channels] if index >= channels else 0
+                line[index] = (line[index] + ((left + previous[index]) >> 1)) & 0xFF
+        elif filter_type == 4:
+            for index in range(stride):
+                left = line[index - channels] if index >= channels else 0
+                up = previous[index]
+                corner = previous[index - channels] if index >= channels else 0
+                estimate = left + up - corner
+                distance = (abs(estimate - left), abs(estimate - up), abs(estimate - corner))
+                nearest = (left, up, corner)[distance.index(min(distance))]
+                line[index] = (line[index] + nearest) & 0xFF
+        elif filter_type != 0:
+            raise Failure(f"{path}: unknown PNG filter {filter_type}")
+        pixels[row * stride:(row + 1) * stride] = line
+        previous = line
+    return width, height, channels, bytes(pixels)
+
+
+def region_mean_rgb(image, x, y, size):
+    width, height, channels, pixels = image
+    total = [0, 0, 0]
+    count = 0
+    for row in range(y, y + size):
+        for column in range(x, x + size):
+            base = (row * width + column) * channels
+            for channel in range(3):
+                total[channel] += pixels[base + channel]
+            count += 1
+    return [value / count for value in total]
+
+
+def screenshot_case(results, label, env=None):
+    entry = fixture_entry("h264")
+    target = TMP / f"screenshot-{os.getpid()}.png"
+    target.unlink(missing_ok=True)
+    with Mpv(["--gui", "--ao=null", "--pause=yes", "--keep-open=yes", "--geometry=640x480"],
+             env=env, cwd=ROOT) as mpv:
+        mpv.load(fixture_path(entry))
+        mpv.wait_event("file-loaded", timeout=10)
+        mpv.wait_property("time-pos", lambda value: isinstance(value, (int, float)), timeout=15)
+        mpv.command("screenshot-to-file", str(target), "video")
+        mpv.wait_until(target.is_file, timeout=10, description="the screenshot file")
+        image = read_png_rgba(target)
+        width, height, channels, pixels = image
+        results.check(
+            f"{label}: screenshot-to-file writes a PNG at the video size",
+            (width, height) == (320, 240) and channels == 4,
+            f"{width}x{height} channels {channels}",
+        )
+        center = region_mean_rgb(image, width // 2 - 8, height // 2 - 8, 16)
+        results.check(
+            f"{label}: centre matches the decoded picture",
+            all(abs(value - 127.5) <= 10 for value in center),
+            f"centre {[round(value, 1) for value in center]}",
+        )
+        yellow = region_mean_rgb(image, 132, 12, 16)
+        results.check(
+            f"{label}: colours survive the picture path",
+            yellow[0] > 220 and yellow[1] > 220 and yellow[2] < 60,
+            f"yellow patch {[round(value, 1) for value in yellow]}",
+        )
+        opaque = sum(1 for index in range(3, len(pixels), channels) if pixels[index] == 255)
+        results.check(
+            f"{label}: every pixel is opaque",
+            opaque == width * height,
+            f"{opaque} of {width * height}",
+        )
+    target.unlink(missing_ok=True)
+    results.check(f"{label}: exit", mpv.returncode == 0, f"exit {mpv.returncode}")
 
 
 def probe_frame_rate(path):
@@ -1668,6 +1779,17 @@ def gate_gui(results, args):
     run_gui(results)
     if sys.platform == "darwin":
         run_gui(results, extra_args=["--gpu-api=vulkan"], name="gui (vulkan)")
+    compositor = None
+    env = None
+    if sys.platform.startswith("linux"):
+        from wayland import Compositor
+        compositor = Compositor()
+        env = compositor.env
+    try:
+        screenshot_case(results, "gui: screenshot", env=env)
+    finally:
+        if compositor is not None:
+            compositor.close()
 
 
 def gate_gpu_api(results, args):
@@ -1676,8 +1798,8 @@ def gate_gpu_api(results, args):
     if metal is not None:
         devices = [line for line in metal if "libplacebo: GPU 0:" in line]
         results.check(
-            "gpu-api: metal opens two Metal devices and no Vulkan",
-            len(devices) == 2
+            "gpu-api: metal opens one Metal device and no Vulkan",
+            len(devices) == 1
             and all("Metal device" in line for line in devices)
             and not any("mvk-info" in line or "Vulkan device" in line for line in metal),
             tail(devices + [line for line in metal if "mvk-" in line], 8),
@@ -1686,8 +1808,8 @@ def gate_gpu_api(results, args):
     if vulkan is not None:
         devices = [line for line in vulkan if "libplacebo: GPU 0:" in line]
         results.check(
-            "gpu-api: vulkan opens two Vulkan devices and no Metal",
-            len(devices) == 2
+            "gpu-api: vulkan opens one Vulkan device and no Metal",
+            len(devices) == 1
             and all("Vulkan device" in line for line in devices)
             and not any("Metal device" in line for line in vulkan),
             tail(devices, 8),

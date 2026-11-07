@@ -147,6 +147,15 @@ pub struct VideoFrame {
     frame: *mut AvFrame,
 }
 
+// SAFETY: a VideoFrame owns its AvFrame exclusively and holds no reference to
+// thread-affine state. Only one of `engine::video::SharedVideo`'s `take`,
+// `release`, and `flush` moves or drops a frame at a time under its mutex, and
+// no other alias survives those calls, so a frame that crosses a channel has a
+// single owner. libavutil allocates AVFrame buffers with atomic refcounts, so
+// unref and free on the receiving thread are safe. `VideoFrame` is not `Sync`:
+// plane slices are handed out by shared reference and must stay on one thread.
+unsafe impl Send for VideoFrame {}
+
 impl VideoFrame {
     pub fn width(&self) -> i32 {
         // SAFETY: the frame is live.

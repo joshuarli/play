@@ -1,5 +1,5 @@
 use player_engine::video::PresentedFrame;
-use player_output::{ColorSpec, GpuApi, Overlay, PixelLayout, Plane};
+use player_output::{GpuApi, Overlay};
 
 #[cfg(target_os = "linux")]
 use player_display::{InputEvent, Window};
@@ -138,17 +138,10 @@ impl HostWindow {
         if frame.width == 0 || frame.height == 0 {
             return Ok(());
         }
-        let width = frame.width as i32;
-        let height = frame.height as i32;
-        let planes = [Plane {
-            data: &frame.rgba,
-            stride: frame.width as usize * 4,
-            width,
-            height,
-        }];
+        let planes = frame.planes()?;
         self.window.present_planes(
-            PixelLayout::Rgba8,
-            ColorSpec::bt709_full(),
+            frame.layout,
+            frame.color,
             &planes,
             overlay,
         )?;

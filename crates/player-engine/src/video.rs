@@ -6,7 +6,7 @@ use player_media::{
     AV_PIX_FMT_YUV420P, AV_PIX_FMT_YUV422P, AV_PIX_FMT_YUV444P,
 };
 use player_output::{
-    render_frame, ColorSpec, PixelLayout, Plane, Renderer, Gpu, GpuApi, PL_COLOR_LEVELS_FULL,
+    ColorSpec, PixelLayout, Plane, PL_COLOR_LEVELS_FULL,
     PL_COLOR_LEVELS_LIMITED, PL_COLOR_SYSTEM_BT_2020_NC, PL_COLOR_SYSTEM_BT_601,
     PL_COLOR_SYSTEM_BT_709,
 };
@@ -16,13 +16,35 @@ use std::sync::{mpsc, Arc, Mutex};
 const NO_TIMESTAMP: i64 = i64::MIN;
 const MAX_QUEUED_FRAMES: usize = 64;
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PresentedFrame {
+    frame: VideoFrame,
     pub pts: f64,
     pub id: u64,
+    pub layout: PixelLayout,
+    pub color: ColorSpec,
     pub width: u32,
     pub height: u32,
-    pub rgba: Vec<u8>,
+}
+
+impl PresentedFrame {
+    pub fn planes(&self) -> Result<Vec<Plane<'_>>, String> {
+        let dimensions = plane_dimensions(self.layout, self.frame.width(), self.frame.height());
+        let mut planes = Vec::with_capacity(dimensions.len());
+        for (index, (width, height)) in dimensions.iter().enumerate() {
+            let (data, stride) = self
+                .frame
+                .plane(index)
+                .ok_or_else(|| format!("video plane {index} missing"))?;
+            planes.push(Plane {
+                data,
+                stride,
+                width: *width,
+                height: *height,
+            });
+        }
+        Ok(planes)
+    }
 }
 
 pub(crate) struct SharedVideo {
@@ -226,38 +248,22 @@ impl VideoDecoder for EngineVideo {
 
 pub struct EngineVideoOutput {
     shared: SharedHandle,
-    gpu: Option<GpuRenderer>,
     discard: bool,
     sink: mpsc::SyncSender<PresentedFrame>,
 }
 
-struct GpuRenderer {
-    // Field order is the drop order: the renderer must be destroyed before
-    // the GPU device that owns it.
-    renderer: Renderer,
-    device: Gpu,
-}
-
 impl EngineVideoOutput {
-    pub fn open(
-        shared: SharedHandle,
-        sink: mpsc::SyncSender<PresentedFrame>,
-        api: GpuApi,
-    ) -> Result<Self, String> {
-        let device = Gpu::headless(api)?;
-        let renderer = device.create_renderer()?;
-        Ok(EngineVideoOutput {
+    pub fn open(shared: SharedHandle, sink: mpsc::SyncSender<PresentedFrame>) -> Self {
+        EngineVideoOutput {
             shared,
-            gpu: Some(GpuRenderer { renderer, device }),
             discard: false,
             sink,
-        })
+        }
     }
 
     pub fn passive(shared: SharedHandle, sink: mpsc::SyncSender<PresentedFrame>) -> Self {
         EngineVideoOutput {
             shared,
-            gpu: None,
             discard: false,
             sink,
         }
@@ -266,7 +272,6 @@ impl EngineVideoOutput {
     pub fn null(shared: SharedHandle, sink: mpsc::SyncSender<PresentedFrame>) -> Self {
         EngineVideoOutput {
             shared,
-            gpu: None,
             discard: true,
             sink,
         }
@@ -336,42 +341,25 @@ impl VideoOutput for EngineVideoOutput {
             drop(frame);
             return Ok(PresentOutcome::Discarded);
         }
-        let gpu = self
-            .gpu
-            .as_ref()
-            .ok_or_else(|| "present with no renderer".to_string())?;
-        let mut frame = frame;
-        if frame.is_hardware() {
-            frame = frame.transfer_to_software()?;
-        }
+        let frame = if frame.is_hardware() {
+            frame.transfer_to_software()?
+        } else {
+            frame
+        };
         let layout = layout_of(frame.format())?;
-        let width = frame.width();
-        let height = frame.height();
-        let color = color_of(frame.color_space(), frame.color_range(), height);
-        let dimensions = plane_dimensions(layout, width, height);
-        let mut planes = Vec::with_capacity(dimensions.len());
-        for (index, (w, h)) in dimensions.iter().enumerate() {
-            let (data, stride) = frame
-                .plane(index)
-                .ok_or_else(|| format!("video plane {index} missing"))?;
-            planes.push(Plane {
-                data,
-                stride,
-                width: *w,
-                height: *h,
-            });
-        }
-        let rgba = render_frame(
-            &gpu.device, &gpu.renderer, layout, color, &planes, width, height, None,
-        )?;
+        let width = frame.width().max(0) as u32;
+        let height = frame.height().max(0) as u32;
+        let color = color_of(frame.color_space(), frame.color_range(), height as i32);
         let sent = self
             .sink
             .send(PresentedFrame {
+                frame,
                 pts,
                 id,
-                width: width.max(0) as u32,
-                height: height.max(0) as u32,
-                rgba,
+                layout,
+                color,
+                width,
+                height,
             })
             .is_ok();
         Ok(if sent {
@@ -379,5 +367,71 @@ impl VideoOutput for EngineVideoOutput {
         } else {
             PresentOutcome::Discarded
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use player_media::{MediaSession, StreamKind};
+
+    fn first_frame() -> PresentedFrame {
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .canonicalize()
+            .expect("workspace root");
+        let path = root.join(".work/fixtures/h264.mp4");
+        assert!(path.is_file(), "run tests/fixtures/gen.sh first");
+        let path = path.to_string_lossy().into_owned();
+        let session = MediaSession::open(&path).expect("fixture opens");
+        let stream = session
+            .streams()
+            .into_iter()
+            .find(|stream| stream.kind == StreamKind::Video)
+            .expect("video stream");
+        let mut decoder =
+            VideoSession::open(&path, stream.index, HwRequest::None).expect("decoder opens");
+        loop {
+            match decoder.pump().expect("the fixture decodes") {
+                player_media::PumpResult::Frame(frame) => {
+                    assert_eq!(frame.format(), AV_PIX_FMT_YUV420P);
+                    return PresentedFrame {
+                        layout: layout_of(frame.format()).expect("layout"),
+                        color: color_of(frame.color_space(), frame.color_range(), frame.height()),
+                        width: frame.width() as u32,
+                        height: frame.height() as u32,
+                        frame,
+                        pts: 0.0,
+                        id: 0,
+                    };
+                }
+                player_media::PumpResult::NeedMore => {}
+                player_media::PumpResult::Ended => panic!("the fixture decoded no frame"),
+            }
+        }
+    }
+
+    #[test]
+    fn yuv420p_planes_carry_the_expected_dimensions_and_strides() {
+        let presented = first_frame();
+        let planes = presented.planes().expect("planes derive");
+        assert_eq!((presented.width, presented.height), (320, 240));
+        assert_eq!(presented.layout, PixelLayout::Yuv420);
+        let dimensions: Vec<_> = planes
+            .iter()
+            .map(|plane| (plane.width, plane.height))
+            .collect();
+        assert_eq!(dimensions, vec![(320, 240), (160, 120), (160, 120)]);
+        assert_eq!(planes[0].stride, 320, "luma stride");
+        assert_eq!(planes[1].stride, 160, "chroma stride");
+        assert_eq!(planes[2].stride, 160, "chroma stride");
+        for plane in &planes {
+            assert_eq!(
+                plane.data.len(),
+                plane.stride * plane.height as usize,
+                "a plane covers its stride times its height"
+            );
+        }
+        assert!(planes[0].data.iter().any(|byte| *byte != 0), "luma has picture");
     }
 }
