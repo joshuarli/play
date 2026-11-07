@@ -36,4 +36,5 @@ Player is a local-only media player built on a Rust playback engine, a minimal p
 - [docs/metrics.md](docs/metrics.md): measurement history and release budgets.
 - [docs/manual-checklist.md](docs/manual-checklist.md): owner-run visual and audio checks.
 - [docs/tui-design.md](docs/tui-design.md): terminal UI layout, art transport, and limits.
+- [docs/perf-campaign.md](docs/perf-campaign.md): performance measurement and optimization campaign plan.
 - [TODO.md](TODO.md): open work.
