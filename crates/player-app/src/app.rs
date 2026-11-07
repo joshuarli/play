@@ -517,6 +517,8 @@ impl App {
         if let Some(backend) = &self.backend {
             backend.seek_to(seconds.max(0.0), precision);
         }
+        self.eof_reached = false;
+        self.end_sent = false;
         self.send_event(ipc::event("seek", Vec::new()));
         self.send_event(ipc::event("playback-restart", Vec::new()));
         self.send_event(ipc::event("playback-restart", Vec::new()));
@@ -989,7 +991,7 @@ impl App {
         self.muted = status.muted;
         self.speed = status.speed;
         self.update_osc(&status);
-        self.sync_eof(status.ended);
+        self.sync_eof(status.ended, status.paused);
         if status.ended && !self.end_sent {
             self.end_sent = true;
             let failed = status.failed || status.error.is_some();
@@ -1031,10 +1033,12 @@ impl App {
         Ok(())
     }
 
-    fn sync_eof(&mut self, ended: bool) {
+    fn sync_eof(&mut self, ended: bool, paused: bool) {
         if !ended {
             self.end_sent = false;
-            self.eof_reached = false;
+            if !paused {
+                self.eof_reached = false;
+            }
         }
     }
 
@@ -2023,9 +2027,21 @@ mod tests {
         let mut app = App::new(Options::default());
         app.end_sent = true;
         app.eof_reached = true;
-        app.sync_eof(true);
+        app.sync_eof(true, false);
         assert!(app.end_sent && app.eof_reached);
-        app.sync_eof(false);
+        app.sync_eof(false, false);
         assert!(!app.end_sent && !app.eof_reached);
+    }
+
+    #[test]
+    fn eof_reached_survives_the_keep_open_pause() {
+        let mut app = App::new(Options::default());
+        app.end_sent = true;
+        app.eof_reached = true;
+        app.sync_eof(false, true);
+        assert!(app.eof_reached, "a keep-open pause does not leave the end");
+        assert!(!app.end_sent);
+        app.seek_absolute(0.0);
+        assert!(!app.eof_reached, "a seek leaves the end");
     }
 }
