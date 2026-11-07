@@ -16,6 +16,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 const PRESENTED_CHANNEL_DEPTH: usize = 4;
+const STATUS_PUBLISH_INTERVAL: f64 = 0.010;
+const MAX_WAIT_SECONDS: f64 = 0.05;
 
 pub struct EngineDemux {
     session: MediaSession,
@@ -383,6 +385,7 @@ pub struct EngineStatus {
     pub discarded: u64,
     pub flushed: u64,
     pub frames_pending: u64,
+    pub steps: u64,
     pub seek_generation: u64,
     pub seek_completed_generation: u64,
     pub drained: u64,
@@ -416,6 +419,7 @@ impl Default for EngineStatus {
             discarded: 0,
             flushed: 0,
             frames_pending: 0,
+            steps: 0,
             seek_generation: 0,
             seek_completed_generation: 0,
             drained: 0,
@@ -812,6 +816,7 @@ fn run_worker(
     }
     let start = Instant::now();
     let mut stopped = false;
+    let mut published_at = f64::NEG_INFINITY;
     while !stopped {
         let now = start.elapsed().as_secs_f64();
         while let Ok(command) = commands.try_recv() {
@@ -820,21 +825,41 @@ fn run_worker(
                 break;
             }
             worker.apply(&state, now, command);
+            published_at = f64::NEG_INFINITY;
         }
         if stopped {
             break;
         }
         worker.scheduler.step(now);
-        worker.publish(&state, now);
+        let now = start.elapsed().as_secs_f64();
+        if now - published_at >= STATUS_PUBLISH_INTERVAL || parked(worker.scheduler.state()) {
+            worker.publish(&state, now);
+            published_at = now;
+        }
         if parked(worker.scheduler.state()) {
             match commands.recv() {
                 Ok(WorkerCommand::Stop) => stopped = true,
                 Ok(command) => worker.apply(&state, start.elapsed().as_secs_f64(), command),
                 Err(_) => stopped = true,
             }
-            worker.publish(&state, start.elapsed().as_secs_f64());
-        } else if worker.scheduler.audio_output().queued_seconds() > 0.005 {
-            thread::sleep(Duration::from_millis(2));
+            continue;
+        }
+        let deadline = worker
+            .scheduler
+            .next_wakeup(now)
+            .unwrap_or(MAX_WAIT_SECONDS);
+        let publish_due = (published_at + STATUS_PUBLISH_INTERVAL - now).max(0.0);
+        let wait = deadline
+            .min(publish_due)
+            .clamp(0.0, MAX_WAIT_SECONDS);
+        match commands.recv_timeout(Duration::from_secs_f64(wait)) {
+            Ok(WorkerCommand::Stop) => stopped = true,
+            Ok(command) => {
+                worker.apply(&state, start.elapsed().as_secs_f64(), command);
+                published_at = f64::NEG_INFINITY;
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => stopped = true,
         }
     }
     guard.clean = true;
@@ -871,33 +896,33 @@ impl FpsMeter {
         }
     }
 
-    fn observe(&mut self, position: f64, presented: u64) {
-        if position < self.position - 0.001
-            || position - self.position > FPS_DISCONTINUITY_SECONDS
+    fn observe(&mut self, sample: f64, presented: u64) {
+        if sample < self.position - 0.001
+            || sample - self.position > FPS_DISCONTINUITY_SECONDS
         {
             self.origin = None;
             self.last = None;
             self.value = None;
-            self.position = position;
+            self.position = sample;
             return;
         }
-        self.position = position;
+        self.position = sample;
         if presented == 0 {
             return;
         }
         match self.last {
             None => {
-                self.origin = Some((position, presented));
-                self.last = Some((position, presented));
+                self.origin = Some((sample, presented));
+                self.last = Some((sample, presented));
                 return;
             }
             Some((_, count)) if presented <= count => return,
             Some(_) => {}
         }
-        self.last = Some((position, presented));
+        self.last = Some((sample, presented));
         let (origin_position, origin_presented) =
             self.origin.expect("the first presented frame set the origin");
-        let span = position - origin_position;
+        let span = sample - origin_position;
         let intervals = presented - origin_presented;
         if span >= FPS_MINIMUM_SPAN_SECONDS && intervals >= 1 {
             self.value = Some(intervals as f64 / span);
@@ -954,8 +979,12 @@ impl Worker {
         let (ended, failed) = terminal_flags(self.scheduler.state());
         let error = self.scheduler.failure().map(str::to_string);
         let stats = self.scheduler.stats();
+        let fps_sample = stats
+            .last_presented_pts_ns
+            .map(|nanos| nanos as f64 / 1e9)
+            .unwrap_or(position);
         self.fps
-            .observe(position, stats.delivered + stats.discarded);
+            .observe(fps_sample, stats.delivered + stats.discarded);
         let estimated_vf_fps = self.fps.value();
         let audio_underruns = self.scheduler.audio_output().underruns();
         let (volume, muted) = (self.volume, self.muted);
@@ -976,6 +1005,7 @@ impl Worker {
             status.discarded = stats.discarded;
             status.flushed = stats.flushed;
             status.frames_pending = stats.frames_pending;
+            status.steps = stats.steps;
             status.seek_completed_generation = stats.seek_completed_generation;
             status.estimated_vf_fps = estimated_vf_fps;
             status.audio_underruns = audio_underruns;
@@ -1169,6 +1199,34 @@ mod tests {
             "run tests/fixtures/gen.sh first"
         );
         dir
+    }
+
+    #[test]
+    fn a_command_during_a_wait_is_applied_without_waiting_it_out() {
+        let engine = SchedulerEngine::load_null_video(
+            &fixture("vfr.mkv"),
+            SinkKind::Null,
+            StartState::default(),
+        )
+        .expect("engine loads a video-only clip");
+        let playing = poll_until(&engine, StdDuration::from_secs(10), |status| {
+            status.steps > 4 && !status.paused && !status.ended
+        });
+        let steps_before = playing.steps;
+        let issued = Instant::now();
+        engine.set_paused(true);
+        let paused = poll_until(&engine, StdDuration::from_secs(10), |status| status.paused);
+        let observed = issued.elapsed();
+        let bound = StdDuration::from_secs_f64(MAX_WAIT_SECONDS * 6.0);
+        assert!(
+            observed < bound,
+            "the pause waited {observed:?} past the command"
+        );
+        assert!(
+            paused.steps > steps_before,
+            "the worker did not step after the command: {steps_before} -> {}",
+            paused.steps
+        );
     }
 
     #[test]

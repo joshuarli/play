@@ -549,6 +549,48 @@ mod tests {
             self.assert_accounting();
         }
 
+        fn paced(&mut self, deadline: f64, max_wait: f64) -> Paced {
+            self.sim.open();
+            let mut run = Paced {
+                steps: 0,
+                starved: false,
+                audio_started: false,
+                progressed: false,
+            };
+            while self.now < deadline {
+                self.sim.step(self.now);
+                run.steps += 1;
+                if matches!(
+                    self.sim.state(),
+                    State::Ended | State::Error | State::Idle
+                ) {
+                    break;
+                }
+                if self.sim.audio_output().log.is_empty() {
+                    run.audio_started = false;
+                } else {
+                    run.audio_started = true;
+                }
+                if run.audio_started
+                    && matches!(self.sim.state(), State::Playing)
+                    && self.sim.audio_output().queued_seconds() <= 0.0
+                {
+                    run.starved = true;
+                }
+                let Some(wait) = self.sim.next_wakeup(self.now) else {
+                    break;
+                };
+                assert!(
+                    wait.is_finite() && (0.0..=max_wait).contains(&wait),
+                    "next wakeup {wait} is outside 0..={max_wait}"
+                );
+                run.progressed = true;
+                self.sim.audio_output_mut().consume(wait);
+                self.now += wait;
+            }
+            run
+        }
+
         fn assert_accounting(&self) {
             let stats = self.stats();
             assert_eq!(
@@ -570,6 +612,108 @@ mod tests {
     }
 
     const DT: f64 = 0.01;
+
+    struct Paced {
+        steps: usize,
+        starved: bool,
+        audio_started: bool,
+        progressed: bool,
+    }
+
+    #[test]
+    fn video_only_paced_steps_track_frames_not_the_clock() {
+        let mut h = Harness::new(FakeDemux::build(5.0, 24.0, 0.0, 0, false, false), false);
+        let run = h.paced(5.0, 0.05);
+        assert_eq!(h.sim.state(), State::Ended);
+        let stats = h.stats();
+        assert_eq!(stats.delivered, 120, "every frame is delivered: {stats:?}");
+        assert_eq!(stats.dropped_late, 0, "pacing dropped frames: {stats:?}");
+        assert!(
+            run.steps <= 120 + 40,
+            "video-only spun: {} steps for 120 frames",
+            run.steps
+        );
+        assert_eq!(stats.steps as usize, run.steps, "step counter tracks iterations");
+    }
+
+    #[test]
+    fn pacing_never_spins_while_a_frame_is_pending() {
+        let mut h = Harness::with_video_delay(FakeDemux::build(4.0, 25.0, 0.0, 0, false, false), 10);
+        h.sim.open();
+        let mut now = 0.0;
+        let mut steps = 0;
+        while now < 4.0 {
+            h.sim.step(now);
+            steps += 1;
+            if matches!(h.sim.state(), State::Ended | State::Error) {
+                break;
+            }
+            let wait = h.sim.next_wakeup(now).expect("a playing scheduler has a wakeup");
+            assert!((0.0..=0.05).contains(&wait), "wakeup {wait} out of bounds");
+            assert!(
+                wait >= DT / 2.0 || wait == 0.0,
+                "the scheduler asked to be woken after {wait}s without due work"
+            );
+            h.sim.audio_output_mut().consume(wait);
+            now += wait;
+        }
+        assert_eq!(h.sim.state(), State::Ended);
+        assert!(steps < 200, "{steps} steps for a 4 s video-only clip");
+        assert!(h.stats().delivered >= 95, "{:?}", h.stats());
+        assert!(h.stats().dropped_late <= 2, "{:?}", h.stats());
+    }
+
+    #[test]
+    fn paced_av_playback_keeps_the_audio_queue_fed() {
+        let mut h = Harness::new(FakeDemux::av(4.0, 25.0, 0.04), false);
+        let run = h.paced(8.0, 0.05);
+        assert_eq!(h.sim.state(), State::Ended);
+        assert!(run.progressed, "the scheduler never asked for a wakeup");
+        assert!(!run.starved, "the audio output underran mid-playback");
+        assert_eq!(h.stats().delivered, 100, "{:?}", h.stats());
+        assert_eq!(h.stats().dropped_late, 0, "{:?}", h.stats());
+    }
+
+    #[test]
+    fn a_command_is_applied_without_waiting_out_the_deadline() {
+        let mut h = Harness::new(FakeDemux::build(5.0, 24.0, 0.0, 0, false, false), false);
+        h.sim.open();
+        let mut waited = false;
+        for _ in 0..400 {
+            h.sim.step(h.now);
+            let Some(wait) = h.sim.next_wakeup(h.now) else {
+                break;
+            };
+            if wait > 0.0 {
+                waited = true;
+                break;
+            }
+            h.sim.audio_output_mut().consume(wait);
+            h.now += wait;
+        }
+        assert!(waited, "the video-only scheduler never reached a future deadline");
+        let steps = h.sim.stats().steps;
+        h.sim.send(Command::Seek(2.0, SeekPrecision::Exact, 5));
+        h.sim.step(h.now);
+        assert_eq!(
+            h.sim.stats().steps,
+            steps + 1,
+            "the queued command needed an extra step"
+        );
+        assert_eq!(
+            h.sim.stats().seek_completed_generation,
+            5,
+            "the command was not applied at the head of the step"
+        );
+        let wait = h
+            .sim
+            .next_wakeup(h.now)
+            .expect("the seek left the scheduler playing");
+        assert!(
+            (0.0..=0.05).contains(&wait),
+            "the deadline after a seek is not bounded: {wait}"
+        );
+    }
 
     #[test]
     fn normal_av_plays_to_ended_with_no_drops() {

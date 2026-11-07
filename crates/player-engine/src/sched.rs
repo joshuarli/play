@@ -136,6 +136,8 @@ pub struct Stats {
     pub seek_completed_generation: u64,
     pub commands_ignored: u64,
     pub failures: u64,
+    pub steps: u64,
+    pub last_presented_pts_ns: Option<i64>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -152,6 +154,7 @@ const SEEK_PREROLL_CHUNKS: u64 = 8;
 const SUBTITLE_PRIME_WINDOW: f64 = 30.0;
 const SUBTITLE_PRIME_PACKETS: usize = 8192;
 const AUDIO_HIGH_WATER: f64 = 0.12;
+const AUDIO_LOW_WATER: f64 = AUDIO_HIGH_WATER * 0.5;
 const PREROLL_AUDIO_LIMIT: f64 = 3.0;
 const AUDIO_BACKLOG_LIMIT: f64 = 1.0;
 
@@ -257,6 +260,7 @@ where
             PresentOutcome::Missing => self.stats.missing += 1,
             PresentOutcome::Discarded => self.stats.discarded += 1,
         }
+        self.stats.last_presented_pts_ns = Some((pts * 1e9).round() as i64);
         if self
             .in_flight_seek
             .is_some_and(|seek| pts >= seek.target - SEEK_FRAME_TOLERANCE)
@@ -400,7 +404,9 @@ where
     }
 
     pub fn step(&mut self, now: f64) {
+        self.stats.steps += 1;
         self.run_commands(now);
+        self.observe(now);
         match *self.machine.state() {
             State::Playing => self.pump_playing(now),
             State::Draining => self.pump_draining(now),
@@ -718,12 +724,56 @@ where
         !self.pending_frames.iter().any(|frame| frame.pts > position)
     }
 
+    fn has_active_audio(&self) -> bool {
+        !self.audio_disabled
+            && self.demux.has_audio()
+            && self.demux.selected_audio() != usize::MAX
+    }
+
+    fn audio_wanted(&self) -> bool {
+        self.has_active_audio()
+            && self.audio_backlog.is_empty()
+            && self.audio_out.queued_seconds() < AUDIO_HIGH_WATER
+    }
+
+    pub fn next_wakeup(&self, now: f64) -> Option<f64> {
+        let state = *self.machine.state();
+        if !matches!(state, State::Playing | State::Draining) {
+            return None;
+        }
+        let position = self.clock.position(now);
+        let speed = self.clock.speed();
+        let mut wait = f64::INFINITY;
+        if let Some(frame) = self.pending_frames.front() {
+            if frame.pts <= position {
+                return Some(0.0);
+            }
+            if speed > 0.0 {
+                wait = (frame.pts - position) / speed;
+            }
+        }
+        if self.prerolling_video {
+            return Some(0.0);
+        }
+        if state == State::Playing && (self.audio_wanted() || self.video_wanted(now)) {
+            return Some(0.0);
+        }
+        if self.has_active_audio() {
+            let queued = self.audio_out.queued_seconds();
+            wait = wait.min(if queued > AUDIO_LOW_WATER {
+                queued - AUDIO_LOW_WATER
+            } else {
+                queued
+            });
+        }
+        wait.is_finite().then_some(wait.max(0.0))
+    }
+
     fn pump_playing(&mut self, now: f64) {
         if self.feed_output() {
             return;
         }
-        let audio_wanted =
-            self.audio_backlog.is_empty() && self.audio_out.queued_seconds() < AUDIO_HIGH_WATER;
+        let audio_wanted = self.audio_wanted();
         let backlog_full = self.backlog_seconds() >= AUDIO_BACKLOG_LIMIT;
         if !self.prerolling_video && (backlog_full || !(audio_wanted || self.video_wanted(now))) {
             self.present_due(now);
