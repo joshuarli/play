@@ -2,11 +2,15 @@
 mod tests {
     use crate::sched::{SeekPrecision, 
         AudioChunk, AudioDecoder, AudioOutput, Command, DecodedFrame, DemuxEvent, Demuxer, Packet,
-        Scheduler, Stats, StreamKind, VideoDecoder, VideoOutput,
+        PresentOutcome, Scheduler, Stats, StreamKind, VideoDecoder, VideoOutput,
     };
     use crate::state::State;
     use crate::sub::EngineSub;
+    use std::cell::RefCell;
     use std::collections::VecDeque;
+    use std::rc::Rc;
+
+    const MAX_QUEUED_FRAMES: usize = 64;
 
     struct FakeDemux {
         script: Vec<Packet>,
@@ -222,9 +226,72 @@ mod tests {
         }
     }
 
-    struct FakeVideoDecoder {
-        buffer: Vec<DecodedFrame>,
+    #[derive(Default)]
+    struct FakeStorage {
+        frames: VecDeque<(u64, f64)>,
         next_id: u64,
+        drained: u64,
+        decoded: u64,
+        evicted: u64,
+    }
+
+    impl FakeStorage {
+        fn push(&mut self, pts: f64) {
+            let id = self.next_id;
+            self.next_id += 1;
+            self.decoded += 1;
+            self.frames.push_back((id, pts));
+            while self.frames.len() > MAX_QUEUED_FRAMES {
+                let (id, _) = self.frames.pop_front().expect("over capacity");
+                if id >= self.drained {
+                    self.evicted += 1;
+                }
+            }
+        }
+
+        fn collect(&mut self) -> Vec<DecodedFrame> {
+            let frames = self
+                .frames
+                .iter()
+                .filter(|(id, _)| *id >= self.drained)
+                .map(|(id, pts)| DecodedFrame { pts: *pts, id: *id })
+                .collect();
+            self.drained = self.next_id;
+            frames
+        }
+
+        fn undrained(&self) -> u64 {
+            self.frames
+                .iter()
+                .filter(|(id, _)| *id >= self.drained)
+                .count() as u64
+        }
+
+        fn take(&mut self, id: u64) -> bool {
+            match self.frames.iter().position(|(queued, _)| *queued == id) {
+                Some(position) => {
+                    self.frames.remove(position);
+                    true
+                }
+                None => false,
+            }
+        }
+
+        fn release(&mut self, id: u64) {
+            if let Some(position) = self.frames.iter().position(|(queued, _)| *queued == id) {
+                self.frames.remove(position);
+            }
+        }
+
+        fn flush(&mut self) {
+            self.frames.clear();
+            self.drained = self.next_id;
+        }
+    }
+
+    struct FakeVideoDecoder {
+        storage: Rc<RefCell<FakeStorage>>,
+        buffer: Vec<f64>,
         reorder: bool,
         max_seen: f64,
         sends: usize,
@@ -235,10 +302,10 @@ mod tests {
     const REORDER_WINDOW: f64 = 0.1;
 
     impl FakeVideoDecoder {
-        fn new(reorder: bool) -> Self {
+        fn new(reorder: bool, storage: Rc<RefCell<FakeStorage>>) -> Self {
             FakeVideoDecoder {
+                storage,
                 buffer: Vec::new(),
-                next_id: 0,
                 reorder,
                 max_seen: f64::NEG_INFINITY,
                 sends: 0,
@@ -247,18 +314,26 @@ mod tests {
             }
         }
 
-        fn release_ready(&mut self) -> Vec<DecodedFrame> {
+        fn release_ready(&mut self) -> Vec<f64> {
             if !self.reorder {
                 let ready = self.buffer.len().saturating_sub(self.delay);
                 return self.buffer.drain(..ready).collect();
             }
-            self.buffer.sort_by(|a, b| a.pts.total_cmp(&b.pts));
+            self.buffer.sort_by(|a, b| a.total_cmp(b));
             let split = self
                 .buffer
                 .iter()
-                .position(|frame| frame.pts >= self.max_seen - REORDER_WINDOW)
+                .position(|pts| *pts >= self.max_seen - REORDER_WINDOW)
                 .unwrap_or(self.buffer.len());
             self.buffer.drain(..split).collect()
+        }
+
+        fn release_into_storage(&mut self) {
+            let ready = self.release_ready();
+            let mut storage = self.storage.borrow_mut();
+            for pts in ready {
+                storage.push(pts);
+            }
         }
     }
 
@@ -268,26 +343,49 @@ mod tests {
             if self.fail_at_send == Some(self.sends) {
                 return Err("video decode failed".to_string());
             }
-            let id = self.next_id;
-            self.next_id += 1;
             let pts = packet.pts.expect("scheduler stamps timestamps");
             self.max_seen = self.max_seen.max(pts);
-            self.buffer.push(DecodedFrame { pts, id });
+            self.buffer.push(pts);
             Ok(())
         }
 
         fn drain(&mut self) -> Result<Vec<DecodedFrame>, String> {
-            Ok(self.release_ready())
+            self.release_into_storage();
+            Ok(self.storage.borrow_mut().collect())
         }
 
         fn finish(&mut self) -> Result<Vec<DecodedFrame>, String> {
-            self.buffer.sort_by(|a, b| a.pts.total_cmp(&b.pts));
-            Ok(self.buffer.drain(..).collect())
+            self.buffer.sort_by(|a, b| a.total_cmp(b));
+            let all: Vec<f64> = self.buffer.drain(..).collect();
+            {
+                let mut storage = self.storage.borrow_mut();
+                for pts in all {
+                    storage.push(pts);
+                }
+            }
+            Ok(self.storage.borrow_mut().collect())
         }
 
         fn flush(&mut self) {
             self.buffer.clear();
             self.max_seen = f64::NEG_INFINITY;
+            self.storage.borrow_mut().flush();
+        }
+
+        fn release(&mut self, id: u64) {
+            self.storage.borrow_mut().release(id);
+        }
+
+        fn decoded(&self) -> u64 {
+            self.storage.borrow().decoded
+        }
+
+        fn evicted(&self) -> u64 {
+            self.storage.borrow().evicted
+        }
+
+        fn undrained(&self) -> u64 {
+            self.storage.borrow().undrained()
         }
     }
 
@@ -356,15 +454,19 @@ mod tests {
     }
 
     struct FakeVideoOutput {
-        presented: Vec<(f64, u64)>,
+        storage: Rc<RefCell<FakeStorage>>,
+        discard: bool,
+        delivered: Vec<(f64, u64)>,
         presents: usize,
         fail_at_present: Option<usize>,
     }
 
     impl FakeVideoOutput {
-        fn new() -> Self {
+        fn new(storage: Rc<RefCell<FakeStorage>>) -> Self {
             FakeVideoOutput {
-                presented: Vec::new(),
+                storage,
+                discard: false,
+                delivered: Vec::new(),
                 presents: 0,
                 fail_at_present: None,
             }
@@ -372,13 +474,19 @@ mod tests {
     }
 
     impl VideoOutput for FakeVideoOutput {
-        fn present(&mut self, pts: f64, id: u64) -> Result<(), String> {
+        fn present(&mut self, pts: f64, id: u64) -> Result<PresentOutcome, String> {
             self.presents += 1;
             if self.fail_at_present == Some(self.presents) {
                 return Err("presentation failed".to_string());
             }
-            self.presented.push((pts, id));
-            Ok(())
+            if !self.storage.borrow_mut().take(id) {
+                return Ok(PresentOutcome::Missing);
+            }
+            if self.discard {
+                return Ok(PresentOutcome::Discarded);
+            }
+            self.delivered.push((pts, id));
+            Ok(PresentOutcome::Delivered)
         }
     }
 
@@ -387,31 +495,31 @@ mod tests {
     struct Harness {
         sim: Sim,
         now: f64,
+        storage: Rc<RefCell<FakeStorage>>,
     }
 
     impl Harness {
         fn new(demux: FakeDemux, reorder_video: bool) -> Self {
-            let sim = Sim::new(
-                demux,
-                FakeAudioDecoder::new(0.04),
-                FakeVideoDecoder::new(reorder_video),
-                FakeAudioOutput::new(),
-                FakeVideoOutput::new(),
-            );
-            Harness { sim, now: 0.0 }
+            Self::build(demux, FakeVideoDecoder::new(reorder_video, Rc::new(RefCell::new(FakeStorage::default()))))
         }
 
         fn with_video_delay(demux: FakeDemux, delay: usize) -> Self {
-            let mut video = FakeVideoDecoder::new(false);
+            let storage = Rc::new(RefCell::new(FakeStorage::default()));
+            let mut video = FakeVideoDecoder::new(false, storage.clone());
             video.delay = delay;
+            Self::build(demux, video)
+        }
+
+        fn build(demux: FakeDemux, video: FakeVideoDecoder) -> Self {
+            let storage = video.storage.clone();
             let sim = Sim::new(
                 demux,
                 FakeAudioDecoder::new(0.04),
                 video,
                 FakeAudioOutput::new(),
-                FakeVideoOutput::new(),
+                FakeVideoOutput::new(storage.clone()),
             );
-            Harness { sim, now: 0.0 }
+            Harness { sim, now: 0.0, storage }
         }
 
         fn run(&mut self, steps: usize, dt: f64, at: &[(usize, Command)]) {
@@ -434,6 +542,28 @@ mod tests {
             }
         }
 
+        fn step_checked(&mut self, dt: f64) {
+            self.sim.audio_output_mut().consume(dt);
+            self.sim.step(self.now);
+            self.now += dt;
+            self.assert_accounting();
+        }
+
+        fn assert_accounting(&self) {
+            let stats = self.stats();
+            assert_eq!(
+                stats.decoded,
+                stats.dropped_late
+                    + stats.evicted
+                    + stats.missing
+                    + stats.discarded
+                    + stats.delivered
+                    + stats.flushed
+                    + stats.frames_pending,
+                "frame accounting broke: {stats:?}"
+            );
+        }
+
         fn stats(&self) -> Stats {
             self.sim.stats()
         }
@@ -447,10 +577,10 @@ mod tests {
         h.run(600, DT, &[]);
         assert_eq!(h.sim.state(), State::Ended);
         let stats = h.stats();
-        assert_eq!(stats.presented, 50);
+        assert_eq!(stats.delivered, 50);
         assert_eq!(stats.dropped_late, 0);
         assert_eq!(stats.audio_chunks, 50);
-        let presented: Vec<f64> = h.sim.video_output().presented.iter().map(|(pts, _)| *pts).collect();
+        let presented: Vec<f64> = h.sim.video_output().delivered.iter().map(|(pts, _)| *pts).collect();
         let mut sorted = presented.clone();
         sorted.sort_by(|a, b| a.total_cmp(b));
         assert_eq!(presented, sorted);
@@ -461,7 +591,7 @@ mod tests {
         let mut h = Harness::new(FakeDemux::build(1.0, 25.0, 0.0, 0, false, false), false);
         h.run(400, DT, &[]);
         assert_eq!(h.sim.state(), State::Ended);
-        assert_eq!(h.stats().presented, 25);
+        assert_eq!(h.stats().delivered, 25);
         assert_eq!(h.stats().audio_chunks, 0);
     }
 
@@ -508,7 +638,7 @@ mod tests {
         h.run(300, DT, &[]);
         assert_eq!(h.sim.state(), State::Ended);
         assert_eq!(h.sim.audio_output().log.len(), 11, "preroll audio was orphaned");
-        assert_eq!(h.stats().presented, 10);
+        assert_eq!(h.stats().delivered, 10);
     }
 
     #[test]
@@ -517,7 +647,7 @@ mod tests {
         h.run(400, DT, &[]);
         assert_eq!(h.sim.state(), State::Ended);
         assert_eq!(h.stats().audio_chunks, 25);
-        assert_eq!(h.stats().presented, 0);
+        assert_eq!(h.stats().delivered, 0);
     }
 
     #[test]
@@ -536,7 +666,7 @@ mod tests {
         let mut h = Harness::new(demux, false);
         h.run(400, DT, &[]);
         assert_eq!(h.sim.state(), State::Ended);
-        let presented: Vec<f64> = h.sim.video_output().presented.iter().map(|(pts, _)| *pts).collect();
+        let presented: Vec<f64> = h.sim.video_output().delivered.iter().map(|(pts, _)| *pts).collect();
         let mut sorted = presented.clone();
         sorted.sort_by(|a, b| a.total_cmp(b));
         assert_eq!(presented, sorted);
@@ -547,8 +677,8 @@ mod tests {
         let mut h = Harness::new(FakeDemux::build(1.0, 25.0, 0.04, 1, true, false), true);
         h.run(400, DT, &[]);
         assert_eq!(h.sim.state(), State::Ended);
-        assert_eq!(h.stats().presented, 25);
-        let presented: Vec<f64> = h.sim.video_output().presented.iter().map(|(pts, _)| *pts).collect();
+        assert_eq!(h.stats().delivered, 25);
+        let presented: Vec<f64> = h.sim.video_output().delivered.iter().map(|(pts, _)| *pts).collect();
         let mut sorted = presented.clone();
         sorted.sort_by(|a, b| a.total_cmp(b));
         assert_eq!(presented, sorted);
@@ -564,7 +694,7 @@ mod tests {
         );
         assert_eq!(h.sim.state(), State::Ended);
         assert_eq!(h.stats().seeks_completed, 2);
-        let after_first: Vec<f64> = h.sim.video_output().presented.iter().map(|(pts, _)| *pts).collect();
+        let after_first: Vec<f64> = h.sim.video_output().delivered.iter().map(|(pts, _)| *pts).collect();
         assert!(after_first.iter().any(|pts| *pts >= 3.0));
         assert!(after_first.iter().any(|pts| *pts < 1.0 && *pts >= 0.5));
     }
@@ -573,11 +703,11 @@ mod tests {
     fn seek_between_keyframes_resumes_at_the_target() {
         let mut h = Harness::new(FakeDemux::av(14.0, 25.0, 0.04).with_keyframes(5.0), false);
         h.run(25, DT, &[]);
-        let presented_before = h.sim.video_output().presented.len();
+        let presented_before = h.sim.video_output().delivered.len();
         let pushes_before = h.sim.audio_output().log.len();
         h.sim.send(Command::Seek(9.0, SeekPrecision::Exact));
         h.run(50, DT, &[]);
-        let presented: Vec<f64> = h.sim.video_output().presented[presented_before..]
+        let presented: Vec<f64> = h.sim.video_output().delivered[presented_before..]
             .iter()
             .map(|(pts, _)| *pts)
             .collect();
@@ -598,17 +728,17 @@ mod tests {
         let stats = h.sim.stats();
         assert_eq!(h.sim.state(), State::Ended);
         assert!(stats.dropped_late <= 2, "late frames with a delayed decoder: {stats:?}");
-        assert!(stats.presented >= 95, "presented {}", stats.presented);
+        assert!(stats.delivered >= 95, "presented {}", stats.delivered);
     }
 
     #[test]
     fn keyframe_seek_resumes_at_the_keyframe_without_decoding_through() {
         let mut h = Harness::new(FakeDemux::av(14.0, 25.0, 0.04).with_keyframes(5.0), false);
         h.run(25, DT, &[]);
-        let presented_before = h.sim.video_output().presented.len();
+        let presented_before = h.sim.video_output().delivered.len();
         h.sim.send(Command::Seek(9.0, SeekPrecision::Keyframe));
         h.run(30, DT, &[]);
-        let presented: Vec<f64> = h.sim.video_output().presented[presented_before..]
+        let presented: Vec<f64> = h.sim.video_output().delivered[presented_before..]
             .iter()
             .map(|(pts, _)| *pts)
             .collect();
@@ -640,7 +770,7 @@ mod tests {
         }
         assert_eq!(h.sim.state(), State::Ended);
         let presented: Vec<f64> =
-            h.sim.video_output().presented.iter().map(|(pts, _)| *pts).collect();
+            h.sim.video_output().delivered.iter().map(|(pts, _)| *pts).collect();
         assert!(presented.iter().any(|pts| *pts >= 0.7));
     }
 
@@ -668,7 +798,7 @@ mod tests {
         h.sim.send(Command::Pause(true));
         h.sim.step(h.now);
         let frozen_audio = h.sim.audio_output().log.len();
-        let frozen_video = h.sim.video_output().presented.len();
+        let frozen_video = h.sim.video_output().delivered.len();
         let frozen_position = h.sim.clock_position(h.now);
         for _ in 0..50 {
             h.sim.audio_output_mut().consume(DT);
@@ -676,13 +806,13 @@ mod tests {
             h.now += DT;
         }
         assert_eq!(h.sim.audio_output().log.len(), frozen_audio);
-        assert_eq!(h.sim.video_output().presented.len(), frozen_video);
+        assert_eq!(h.sim.video_output().delivered.len(), frozen_video);
         assert_eq!(h.sim.clock_position(h.now), frozen_position);
         assert!(matches!(h.sim.state(), State::Paused { .. }));
         h.sim.send(Command::Pause(false));
         h.run(400, DT, &[]);
         assert_eq!(h.sim.state(), State::Ended);
-        assert_eq!(h.stats().presented, 50);
+        assert_eq!(h.stats().delivered, 50);
     }
 
     #[test]
@@ -707,7 +837,7 @@ mod tests {
         h.sim.send(Command::Pause(false));
         h.run(400, DT, &[]);
         assert_eq!(h.sim.state(), State::Ended);
-        assert_eq!(h.stats().presented, 25);
+        assert_eq!(h.stats().delivered, 25);
     }
 
     #[test]
@@ -720,7 +850,7 @@ mod tests {
             h.now += DT;
         }
         let pushed = h.sim.audio_output().log.len();
-        let presented = h.sim.video_output().presented.len();
+        let presented = h.sim.video_output().delivered.len();
         assert!(pushed > 0 && presented > 0);
         h.sim.send(Command::DisableAudio);
         h.sim.step(h.now);
@@ -731,7 +861,7 @@ mod tests {
             h.now += DT;
         }
         assert_eq!(h.sim.audio_output().log.len(), pushed, "disabled audio kept playing");
-        assert!(h.sim.video_output().presented.len() > presented);
+        assert!(h.sim.video_output().delivered.len() > presented);
         h.sim.send(Command::SwitchAudio(0));
         for _ in 0..20 {
             h.sim.audio_output_mut().consume(DT);
@@ -776,7 +906,7 @@ mod tests {
         let mut sorted = audio.clone();
         sorted.sort_by(|a, b| a.total_cmp(b));
         assert_eq!(audio, sorted);
-        let presented: Vec<f64> = h.sim.video_output().presented.iter().map(|(pts, _)| *pts).collect();
+        let presented: Vec<f64> = h.sim.video_output().delivered.iter().map(|(pts, _)| *pts).collect();
         let mut sorted = presented.clone();
         sorted.sort_by(|a, b| a.total_cmp(b));
         assert_eq!(presented, sorted);
@@ -787,7 +917,7 @@ mod tests {
         let mut h = Harness::new(FakeDemux::av(0.4, 25.0, 0.04), false);
         h.run(300, DT, &[]);
         assert_eq!(h.sim.state(), State::Ended);
-        assert_eq!(h.stats().presented, 10);
+        assert_eq!(h.stats().delivered, 10);
     }
 
     #[test]
@@ -837,5 +967,79 @@ mod tests {
         }
         assert_eq!(h.sim.state(), State::Ended);
         assert_eq!(h.stats().commands_ignored, 2);
+    }
+
+    #[test]
+    fn frame_accounting_holds_through_overflow_and_late_frames() {
+        let mut h = Harness::with_video_delay(
+            FakeDemux::build(4.0, 25.0, 0.0, 0, false, false),
+            70,
+        );
+        h.sim.open();
+        let mut overflow = false;
+        let mut late = false;
+        let mut missing = false;
+        for step in 0..600 {
+            if step == 120 {
+                h.now += 2.0;
+            }
+            h.step_checked(DT);
+            overflow |= h.stats().evicted > 0;
+            late |= h.stats().dropped_late > 0;
+            missing |= h.stats().missing > 0;
+            if h.sim.state() == State::Ended {
+                break;
+            }
+        }
+        assert_eq!(h.sim.state(), State::Ended);
+        assert!(overflow, "the 64-frame cap never evicted a frame: {:?}", h.stats());
+        assert!(late, "no frame was dropped late: {:?}", h.stats());
+        assert!(missing, "a native frame evicted after draining was never counted: {:?}", h.stats());
+        assert_eq!(
+            h.stats().delivered,
+            h.sim.video_output().delivered.len() as u64
+        );
+    }
+
+    #[test]
+    fn frame_accounting_holds_across_a_seek() {
+        let mut h = Harness::new(FakeDemux::av(4.0, 25.0, 0.04), false);
+        h.sim.open();
+        for _ in 0..40 {
+            h.step_checked(DT);
+        }
+        h.sim.send(Command::Seek(3.0, SeekPrecision::Exact));
+        for _ in 0..600 {
+            h.step_checked(DT);
+            if h.sim.state() == State::Ended {
+                break;
+            }
+        }
+        assert_eq!(h.sim.state(), State::Ended);
+        assert_eq!(h.stats().seeks_completed, 1);
+        assert!(
+            h.stats().flushed > 0,
+            "the seek discarded nothing: {:?}",
+            h.stats()
+        );
+        assert_eq!(
+            h.stats().delivered,
+            h.sim.video_output().delivered.len() as u64
+        );
+    }
+
+    #[test]
+    fn a_late_frame_releases_its_native_frame() {
+        let mut h = Harness::new(FakeDemux::build(0.04, 25.0, 0.0, 0, false, false), false);
+        h.sim.open();
+        h.now = 10.0;
+        h.sim.step(h.now);
+        assert_eq!(h.stats().dropped_late, 1);
+        assert_eq!(
+            h.storage.borrow().frames.len(),
+            0,
+            "the late frame stayed in native storage"
+        );
+        h.assert_accounting();
     }
 }

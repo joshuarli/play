@@ -10,6 +10,7 @@ use player_audio::sink::{AudioSink, NullSink, SinkKind};
 use player_output::GpuApi;
 use player_media::{MediaError, MediaSession, Packet as MediaPacket, StreamInfo, StreamKind as MediaKind};
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -370,8 +371,15 @@ pub struct EngineStatus {
     pub ended: bool,
     /// Terminal by failure: the scheduler reached `Error`.
     pub failed: bool,
-    pub presented: u64,
+    pub decoded: u64,
+    pub delivered: u64,
     pub dropped_late: u64,
+    pub evicted: u64,
+    pub missing: u64,
+    pub discarded: u64,
+    pub flushed: u64,
+    pub frames_pending: u64,
+    pub drained: u64,
     pub video_width: u32,
     pub video_height: u32,
     pub error: Option<String>,
@@ -390,8 +398,15 @@ impl Default for EngineStatus {
             paused: false,
             ended: false,
             failed: false,
-            presented: 0,
+            decoded: 0,
+            delivered: 0,
             dropped_late: 0,
+            evicted: 0,
+            missing: 0,
+            discarded: 0,
+            flushed: 0,
+            frames_pending: 0,
+            drained: 0,
             video_width: 0,
             video_height: 0,
             error: None,
@@ -420,6 +435,7 @@ pub struct SchedulerEngine {
     commands: mpsc::Sender<WorkerCommand>,
     state: Arc<Mutex<EngineStatus>>,
     frames: Option<mpsc::Receiver<PresentedFrame>>,
+    drained: AtomicU64,
     worker: Option<thread::JoinHandle<()>>,
 }
 
@@ -500,6 +516,7 @@ impl SchedulerEngine {
                 commands: command_tx,
                 state,
                 frames: Some(frames_rx),
+                drained: AtomicU64::new(0),
                 worker: Some(worker),
             }),
             Ok(Err(message)) => {
@@ -566,10 +583,13 @@ impl SchedulerEngine {
     }
 
     pub fn snapshot(&self) -> EngineStatus {
-        self.state
+        let mut status = self
+            .state
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
-            .clone()
+            .clone();
+        status.drained = self.drained.load(Ordering::Relaxed);
+        status
     }
 
     pub fn drain_frames(&self) -> Vec<PresentedFrame> {
@@ -579,6 +599,8 @@ impl SchedulerEngine {
                 frames.push(frame);
             }
         }
+        self.drained
+            .fetch_add(frames.len() as u64, Ordering::Relaxed);
         frames
     }
 }
@@ -810,8 +832,7 @@ impl Worker {
         let paused = matches!(self.scheduler.state(), State::Paused { .. });
         let (ended, failed) = terminal_flags(self.scheduler.state());
         let error = self.scheduler.failure().map(str::to_string);
-        let presented = self.scheduler.stats().presented;
-        let dropped_late = self.scheduler.stats().dropped_late;
+        let stats = self.scheduler.stats();
         let (volume, muted) = (self.volume, self.muted);
         let tracks = track_list(&self.scheduler);
         let subtitle_text = self.scheduler.subtitle_text(now);
@@ -822,8 +843,14 @@ impl Worker {
             status.ended = ended;
             status.failed = failed;
             status.error = error;
-            status.presented = presented;
-            status.dropped_late = dropped_late;
+            status.decoded = stats.decoded;
+            status.delivered = stats.delivered;
+            status.dropped_late = stats.dropped_late;
+            status.evicted = stats.evicted;
+            status.missing = stats.missing;
+            status.discarded = stats.discarded;
+            status.flushed = stats.flushed;
+            status.frames_pending = stats.frames_pending;
             status.volume = volume;
             status.muted = muted;
             status.subtitle_text = subtitle_text;
@@ -1073,7 +1100,7 @@ mod tests {
 
         let video = SchedulerEngine::load(&fixture("h264.mp4"), SinkKind::Null, start)
             .expect("video engine loads");
-        let shown = poll_until(&video, StdDuration::from_secs(5), |status| status.presented > 0);
+        let shown = poll_until(&video, StdDuration::from_secs(5), |status| status.delivered > 0);
         assert!(shown.paused && shown.position < 0.05, "paused start shows the first frame: {shown:?}");
     }
 
@@ -1084,7 +1111,7 @@ mod tests {
         let status = poll_until(&engine, StdDuration::from_secs(15), |status| status.ended);
         assert!(status.error.is_none(), "unexpected error: {:?}", status.error);
         assert!(status.duration > 0.0);
-        assert_eq!(status.presented, 0, "audio-only load presented video");
+        assert_eq!(status.delivered, 0, "audio-only load delivered video");
         assert!(status.position > 2.0, "position {}", status.position);
     }
 
@@ -1310,12 +1337,12 @@ mod tests {
             (320, 240),
             "status carries the selected video dims"
         );
-        assert!(status.presented > 0, "no frames presented");
+        assert!(status.delivered > 0, "no frames delivered");
         assert!(
             frames.len() > 24,
-            "only {} frames delivered; presented {} dropped {} at pos {}",
+            "only {} frames delivered; delivered {} dropped {} at pos {}",
             frames.len(),
-            status.presented,
+            status.delivered,
             status.dropped_late,
             status.position
         );
@@ -1332,9 +1359,9 @@ mod tests {
         });
         assert!(varied, "frames carry no picture");
         assert_eq!(
-            status.presented as usize,
+            status.delivered as usize,
             frames.len(),
-            "every presented frame is delivered exactly once"
+            "every delivered frame is drained exactly once"
         );
     }
 

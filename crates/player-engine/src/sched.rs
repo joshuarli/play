@@ -69,6 +69,16 @@ pub trait VideoDecoder {
     fn drain(&mut self) -> Result<Vec<DecodedFrame>, String>;
     fn finish(&mut self) -> Result<Vec<DecodedFrame>, String>;
     fn flush(&mut self);
+    fn release(&mut self, _id: u64) {}
+    fn decoded(&self) -> u64 {
+        0
+    }
+    fn evicted(&self) -> u64 {
+        0
+    }
+    fn undrained(&self) -> u64 {
+        0
+    }
 }
 
 pub trait AudioOutput {
@@ -83,8 +93,15 @@ pub trait AudioOutput {
     fn drained(&self) -> bool;
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PresentOutcome {
+    Delivered,
+    Missing,
+    Discarded,
+}
+
 pub trait VideoOutput {
-    fn present(&mut self, pts: f64, id: u64) -> Result<(), String>;
+    fn present(&mut self, pts: f64, id: u64) -> Result<PresentOutcome, String>;
 }
 
 #[derive(Clone, Debug)]
@@ -105,8 +122,14 @@ pub enum SeekPrecision {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Stats {
-    pub presented: u64,
+    pub decoded: u64,
+    pub delivered: u64,
     pub dropped_late: u64,
+    pub evicted: u64,
+    pub missing: u64,
+    pub discarded: u64,
+    pub flushed: u64,
+    pub frames_pending: u64,
     pub audio_chunks: u64,
     pub seeks_completed: u64,
     pub commands_ignored: u64,
@@ -206,7 +229,33 @@ where
     }
 
     pub fn stats(&self) -> Stats {
-        self.stats
+        Stats {
+            decoded: self.video.decoded(),
+            evicted: self.video.evicted(),
+            frames_pending: self.pending_frames.len() as u64 + self.video.undrained(),
+            ..self.stats
+        }
+    }
+
+    fn present_frame(&mut self, frame: DecodedFrame) -> Result<(), String> {
+        match self.video_out.present(frame.pts, frame.id)? {
+            PresentOutcome::Delivered => self.stats.delivered += 1,
+            PresentOutcome::Missing => self.stats.missing += 1,
+            PresentOutcome::Discarded => self.stats.discarded += 1,
+        }
+        Ok(())
+    }
+
+    fn drop_late(&mut self, frame: DecodedFrame) {
+        self.video.release(frame.id);
+        self.stats.dropped_late += 1;
+    }
+
+    fn flush_video(&mut self) {
+        let outstanding = self.pending_frames.len() as u64 + self.video.undrained();
+        self.stats.flushed += outstanding;
+        self.video.flush();
+        self.pending_frames.clear();
     }
 
     pub fn speed(&self) -> f64 {
@@ -396,6 +445,7 @@ where
                     }
                 }
                 Command::Close => {
+                    self.flush_video();
                     let _ = self.machine.apply(Event::Close);
                     let _ = self.machine.apply(Event::Closed);
                 }
@@ -413,7 +463,7 @@ where
             _ => SeekResume::Playing,
         };
         self.audio.flush();
-        self.video.flush();
+        self.flush_video();
         if let Some(stream) = self.selected_sub_stream() {
             if let Err(message) = self.prime_subtitles(stream, target) {
                 self.fail(message);
@@ -422,7 +472,6 @@ where
         }
         self.demux.seek(target);
         self.audio_out.flush();
-        self.pending_frames.clear();
         self.audio_backlog.clear();
         self.startup_audio.clear();
         self.prerolling_video = false;
@@ -499,11 +548,12 @@ where
         if self.pending_frames.is_empty() {
             return Ok(());
         }
-        self.pending_frames.drain(..chosen);
+        let stale: Vec<DecodedFrame> = self.pending_frames.drain(..chosen).collect();
+        for frame in stale {
+            self.drop_late(frame);
+        }
         let frame = self.pending_frames.pop_front().expect("chosen frame");
-        self.video_out.present(frame.pts, frame.id)?;
-        self.stats.presented += 1;
-        Ok(())
+        self.present_frame(frame)
     }
 
     fn startup_audio_seconds(&self) -> f64 {
@@ -520,9 +570,9 @@ where
             return Ok(());
         }
         if let Some(frame) = self.pending_frames.pop_front() {
-            self.video_out.present(frame.pts, frame.id)?;
-            self.stats.presented += 1;
-            self.clock.seek_rebase(frame.pts, now);
+            let pts = frame.pts;
+            self.present_frame(frame)?;
+            self.clock.seek_rebase(pts, now);
         }
         Ok(())
     }
@@ -587,6 +637,7 @@ where
                 for frame in self.video.drain()? {
                     self.video_cursor = self.video_cursor.max(frame.pts);
                     if frame.pts < target - SEEK_FRAME_TOLERANCE {
+                        self.drop_late(frame);
                         continue;
                     }
                     *have_video = true;
@@ -771,15 +822,14 @@ where
                 FrameVerdict::Wait => break,
                 FrameVerdict::Present => {
                     let frame = self.pending_frames.pop_front().expect("peeked");
-                    if let Err(message) = self.video_out.present(frame.pts, frame.id) {
+                    if let Err(message) = self.present_frame(frame) {
                         self.fail(message);
                         return;
                     }
-                    self.stats.presented += 1;
                 }
                 FrameVerdict::DropLate => {
-                    self.pending_frames.pop_front();
-                    self.stats.dropped_late += 1;
+                    let frame = self.pending_frames.pop_front().expect("peeked");
+                    self.drop_late(frame);
                 }
             }
         }

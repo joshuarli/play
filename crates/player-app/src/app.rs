@@ -59,7 +59,7 @@ pub struct App {
     last_frame: Option<PresentedFrame>,
     frame_serial: u64,
     presented_serial: u64,
-    frames_shown: u64,
+    shown: u64,
     osd: Option<OverlayImage>,
     osd_size: (i32, i32),
     last_osd: Instant,
@@ -110,7 +110,7 @@ impl App {
             last_frame: None,
             frame_serial: 0,
             presented_serial: 0,
-            frames_shown: 0,
+            shown: 0,
             osd: None,
             osd_size: (0, 0),
             last_osd: Instant::now()
@@ -274,18 +274,33 @@ impl App {
         self.quit
     }
 
-    pub fn dropped_frames(&self) -> u64 {
-        let status = self.status();
-        let unshown = if self.gui {
-            status.presented.saturating_sub(self.frames_shown)
+    fn unshown_frame(&self) -> u64 {
+        if self.last_frame.is_some() && self.frame_serial != self.presented_serial {
+            1
         } else {
             0
-        };
-        status.dropped_late + unshown
+        }
+    }
+
+    fn superseded(drained: u64, shown_in_window: Option<u64>, unshown: u64) -> u64 {
+        shown_in_window.map_or(0, |shown| drained.saturating_sub(shown + unshown))
+    }
+
+    pub fn dropped_frames(&self) -> u64 {
+        let status = self.status();
+        status.dropped_late
+            + status.evicted
+            + status.missing
+            + Self::superseded(
+                status.drained,
+                self.gui.then_some(self.shown),
+                self.unshown_frame(),
+            )
     }
 
     fn unload(&mut self) {
-        self.frames_shown = 0;
+        self.shown = 0;
+        self.presented_serial = self.frame_serial;
         self.backend = None;
         self.probe = None;
         self.end_sent = false;
@@ -838,7 +853,7 @@ impl App {
             if let Some(window) = self.window.as_mut() {
                 window.present(frame, overlay.as_ref())?;
                 if new_frames {
-                    self.frames_shown += 1;
+                    self.shown += 1;
                 }
                 self.presented_serial = self.frame_serial;
                 self.presented_size = size;
@@ -910,7 +925,7 @@ impl App {
             eprintln!(
                 "player-gui gate: frames={frames} drained={} pos={:.2} ended={} error={:?} \
                  dims={}x{} tracks={} osd={}",
-                status.presented,
+                status.delivered,
                 status.position,
                 status.ended,
                 status.error,
@@ -975,7 +990,7 @@ impl App {
         if self
             .options
             .frames
-            .is_some_and(|limit| status.presented >= limit)
+            .is_some_and(|limit| status.delivered + status.discarded >= limit)
         {
             self.quit = true;
         }
@@ -2020,6 +2035,19 @@ mod tests {
             end_action(true, false, false, false, f64::NAN),
             EndAction::Unload
         );
+    }
+
+    #[test]
+    fn in_flight_frames_are_not_counted_as_dropped() {
+        assert_eq!(App::superseded(10, Some(8), 1), 1);
+        assert_eq!(App::superseded(10, Some(10), 0), 0);
+        assert_eq!(App::superseded(10, Some(8), 0), 2);
+        assert_eq!(App::superseded(3, Some(5), 1), 0);
+    }
+
+    #[test]
+    fn frames_drained_without_a_window_are_not_dropped() {
+        assert_eq!(App::superseded(240, None, 0), 0);
     }
 
     #[test]

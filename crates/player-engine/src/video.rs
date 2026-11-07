@@ -1,4 +1,4 @@
-use crate::sched::{DecodedFrame, Packet, VideoDecoder, VideoOutput};
+use crate::sched::{DecodedFrame, Packet, PresentOutcome, VideoDecoder, VideoOutput};
 use player_media::{
     HwRequest, MediaSession, VideoFrame, VideoSession, AVCOL_RANGE_JPEG,
     AVCOL_SPC_BT2020_NCL, AVCOL_SPC_BT470BG, AVCOL_SPC_BT709, AVCOL_SPC_SMPTE170M,
@@ -30,6 +30,8 @@ pub(crate) struct SharedVideo {
     queue: VecDeque<(u64, f64, VideoFrame)>,
     next_id: u64,
     drained: u64,
+    decoded: u64,
+    evicted: u64,
 }
 
 pub(crate) type SharedHandle = Arc<Mutex<Option<SharedVideo>>>;
@@ -47,6 +49,8 @@ impl EngineVideo {
                 queue: VecDeque::new(),
                 next_id: 0,
                 drained: 0,
+                decoded: 0,
+                evicted: 0,
             }))),
         })
     }
@@ -83,9 +87,30 @@ fn frame_seconds(frame: &VideoFrame, time_base: (i32, i32), fallback: f64) -> f6
 fn push_frame(shared: &mut SharedVideo, frame: VideoFrame, pts: f64) {
     let id = shared.next_id;
     shared.next_id += 1;
+    shared.decoded += 1;
     shared.queue.push_back((id, pts, frame));
     while shared.queue.len() > MAX_QUEUED_FRAMES {
-        shared.queue.pop_front();
+        let (id, _, _) = shared.queue.pop_front().expect("over capacity");
+        if id >= shared.drained {
+            shared.evicted += 1;
+        }
+    }
+}
+
+impl SharedVideo {
+    fn undrained(&self) -> u64 {
+        self.queue.iter().filter(|(id, _, _)| *id >= self.drained).count() as u64
+    }
+
+    fn release(&mut self, id: u64) {
+        if let Some(position) = self.queue.iter().position(|(queued, _, _)| *queued == id) {
+            self.queue.remove(position);
+        }
+    }
+
+    fn take(&mut self, id: u64) -> Option<VideoFrame> {
+        let position = self.queue.iter().position(|(queued, _, _)| *queued == id)?;
+        Some(self.queue.remove(position).expect("found").2)
     }
 }
 
@@ -161,8 +186,41 @@ impl VideoDecoder for EngineVideo {
             if let Some(shared) = guard.as_mut() {
                 shared.session.reset();
                 shared.queue.clear();
+                shared.drained = shared.next_id;
             }
         }
+    }
+
+    fn release(&mut self, id: u64) {
+        if let Ok(mut guard) = self.shared.lock() {
+            if let Some(shared) = guard.as_mut() {
+                shared.release(id);
+            }
+        }
+    }
+
+    fn decoded(&self) -> u64 {
+        self.shared
+            .lock()
+            .ok()
+            .and_then(|guard| guard.as_ref().map(|shared| shared.decoded))
+            .unwrap_or(0)
+    }
+
+    fn evicted(&self) -> u64 {
+        self.shared
+            .lock()
+            .ok()
+            .and_then(|guard| guard.as_ref().map(|shared| shared.evicted))
+            .unwrap_or(0)
+    }
+
+    fn undrained(&self) -> u64 {
+        self.shared
+            .lock()
+            .ok()
+            .and_then(|guard| guard.as_ref().map(SharedVideo::undrained))
+            .unwrap_or(0)
     }
 }
 
@@ -217,11 +275,7 @@ impl EngineVideoOutput {
     fn take_frame(&self, id: u64) -> Option<VideoFrame> {
         let mut guard = self.shared.lock().ok()?;
         let shared = guard.as_mut()?;
-        let position = shared
-            .queue
-            .iter()
-            .position(|(queued, _, _)| *queued == id)?;
-        Some(shared.queue.remove(position).expect("found").2)
+        shared.take(id)
     }
 }
 
@@ -273,14 +327,14 @@ fn color_of(space: i32, range: i32, height: i32) -> ColorSpec {
 }
 
 impl VideoOutput for EngineVideoOutput {
-    fn present(&mut self, pts: f64, id: u64) -> Result<(), String> {
+    fn present(&mut self, pts: f64, id: u64) -> Result<PresentOutcome, String> {
         let frame = match self.take_frame(id) {
             Some(frame) => frame,
-            None => return Ok(()),
+            None => return Ok(PresentOutcome::Missing),
         };
         if self.discard {
             drop(frame);
-            return Ok(());
+            return Ok(PresentOutcome::Discarded);
         }
         let gpu = self
             .gpu
@@ -310,13 +364,20 @@ impl VideoOutput for EngineVideoOutput {
         let rgba = render_frame(
             &gpu.device, &gpu.renderer, layout, color, &planes, width, height, None,
         )?;
-        let _ = self.sink.send(PresentedFrame {
-            pts,
-            id,
-            width: width.max(0) as u32,
-            height: height.max(0) as u32,
-            rgba,
-        });
-        Ok(())
+        let sent = self
+            .sink
+            .send(PresentedFrame {
+                pts,
+                id,
+                width: width.max(0) as u32,
+                height: height.max(0) as u32,
+                rgba,
+            })
+            .is_ok();
+        Ok(if sent {
+            PresentOutcome::Delivered
+        } else {
+            PresentOutcome::Discarded
+        })
     }
 }
