@@ -79,6 +79,13 @@ impl MasterClock {
         self.anchor_ref = now;
     }
 
+    pub fn use_audio_time(&mut self, now: f64) {
+        let position = self.position(now);
+        self.mode = ClockMode::AudioDriven;
+        self.anchor_content = position;
+        self.anchor_ref = self.device_time;
+    }
+
     pub fn is_audio_driven(&self) -> bool {
         self.mode == ClockMode::AudioDriven
     }
@@ -195,6 +202,19 @@ mod tests {
         clock.use_system_time(100.0);
         assert!(close(clock.position(100.5), 3.5));
         assert!(!clock.is_audio_driven());
+    }
+
+    #[test]
+    fn audio_time_resumes_from_the_system_position() {
+        let mut clock = MasterClock::new(ClockMode::AudioDriven);
+        clock.observe_device(3.0, 0.0, 100.0);
+        clock.use_system_time(100.0);
+        clock.observe_device(3.0, 0.0, 101.0);
+        clock.use_audio_time(101.0);
+        assert!(clock.is_audio_driven());
+        assert!(close(clock.position(101.0), 4.0));
+        clock.observe_device(3.25, 0.0, 102.0);
+        assert!(close(clock.position(102.0), 4.25));
     }
 
     #[test]

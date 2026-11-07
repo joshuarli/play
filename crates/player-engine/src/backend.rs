@@ -165,6 +165,10 @@ impl Demuxer for EngineDemux {
         }
     }
 
+    fn deselect_audio(&mut self) {
+        self.selected = None;
+    }
+
     fn selected_audio(&self) -> usize {
         self.selected.unwrap_or(usize::MAX)
     }
@@ -405,6 +409,7 @@ enum WorkerCommand {
     SetVolume(f32),
     SetMuted(bool),
     SelectAudio(usize),
+    DisableAudio,
     Stop,
     SelectSub(Option<usize>),
     AddSub(String, mpsc::Sender<Result<(), String>>),
@@ -554,6 +559,10 @@ impl SchedulerEngine {
 
     pub fn select_audio(&self, stream: usize) {
         self.send(WorkerCommand::SelectAudio(stream));
+    }
+
+    pub fn disable_audio(&self) {
+        self.send(WorkerCommand::DisableAudio);
     }
 
     pub fn snapshot(&self) -> EngineStatus {
@@ -781,6 +790,7 @@ impl Worker {
                 self.scheduler.audio_output_mut().set_muted(muted);
             }
             WorkerCommand::SelectAudio(stream) => self.scheduler.send(Command::SwitchAudio(stream)),
+            WorkerCommand::DisableAudio => self.scheduler.send(Command::DisableAudio),
             WorkerCommand::Stop => {}
             WorkerCommand::SelectSub(selected) => self.scheduler.select_sub(selected),
             WorkerCommand::AddSub(path, reply) => {

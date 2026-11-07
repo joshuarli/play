@@ -47,6 +47,7 @@ pub trait Demuxer {
     fn read(&mut self) -> DemuxEvent;
     fn seek(&mut self, seconds: f64);
     fn select_audio(&mut self, stream: usize);
+    fn deselect_audio(&mut self) {}
     fn selected_audio(&self) -> usize;
     fn audio_info(&self, _stream: usize) -> Option<player_media::StreamInfo> {
         None
@@ -92,6 +93,7 @@ pub enum Command {
     Seek(f64, SeekPrecision),
     SetSpeed(f64),
     SwitchAudio(usize),
+    DisableAudio,
     Close,
 }
 
@@ -143,6 +145,7 @@ pub struct Scheduler<D, A, V, AO, VO> {
     subs: Vec<EngineSub>,
     selected_sub: Option<usize>,
     subs_visible: bool,
+    audio_disabled: bool,
     sub_cursor: f64,
 }
 
@@ -181,6 +184,7 @@ where
             subs: Vec::new(),
             selected_sub: None,
             subs_visible: true,
+            audio_disabled: false,
             sub_cursor: 0.0,
         }
     }
@@ -360,6 +364,10 @@ where
                         match info {
                             Some(info) if self.audio.reconfigure(&info).is_ok() => {
                                 self.demux.select_audio(stream);
+                                if self.audio_disabled {
+                                    self.audio_disabled = false;
+                                    self.clock.use_audio_time(now);
+                                }
                                 self.audio.flush();
                                 self.audio_out.flush();
                                 self.audio_backlog.clear();
@@ -367,6 +375,22 @@ where
                             }
                             _ => self.stats.commands_ignored += 1,
                         }
+                    } else {
+                        self.stats.commands_ignored += 1;
+                    }
+                }
+                Command::DisableAudio => {
+                    if matches!(
+                        *self.machine.state(),
+                        State::Playing | State::Paused { .. }
+                    ) {
+                        self.audio_disabled = true;
+                        self.demux.deselect_audio();
+                        self.audio.flush();
+                        self.audio_out.flush();
+                        self.audio_backlog.clear();
+                        self.startup_audio.clear();
+                        self.clock.use_system_time(now);
                     } else {
                         self.stats.commands_ignored += 1;
                     }
@@ -534,7 +558,7 @@ where
         have_video: &mut bool,
     ) -> Result<(), String> {
         match packet.kind {
-            StreamKind::Audio if packet.stream == self.demux.selected_audio() => {
+            StreamKind::Audio if !self.audio_disabled && packet.stream == self.demux.selected_audio() => {
                 let pts = stamp(packet.pts, &mut self.audio_cursor);
                 if pts + packet.duration.unwrap_or(0.0) < target - SEEK_AUDIO_PRIMING {
                     return Ok(());
@@ -685,7 +709,7 @@ where
 
     fn feed(&mut self, packet: Packet) -> bool {
         match packet.kind {
-            StreamKind::Audio if packet.stream == self.demux.selected_audio() => {
+            StreamKind::Audio if !self.audio_disabled && packet.stream == self.demux.selected_audio() => {
                 let pts = stamp(packet.pts, &mut self.audio_cursor);
                 let mut packet = packet;
                 packet.pts = Some(pts);

@@ -143,6 +143,10 @@ mod tests {
             self.selected = stream;
         }
 
+        fn deselect_audio(&mut self) {
+            self.selected = usize::MAX;
+        }
+
         fn selected_audio(&self) -> usize {
             self.selected
         }
@@ -704,6 +708,40 @@ mod tests {
         h.run(400, DT, &[]);
         assert_eq!(h.sim.state(), State::Ended);
         assert_eq!(h.stats().presented, 25);
+    }
+
+    #[test]
+    fn disabling_audio_stops_it_while_video_continues() {
+        let mut h = Harness::new(FakeDemux::av(2.0, 25.0, 0.04), false);
+        h.sim.open();
+        for _ in 0..30 {
+            h.sim.audio_output_mut().consume(DT);
+            h.sim.step(h.now);
+            h.now += DT;
+        }
+        let pushed = h.sim.audio_output().log.len();
+        let presented = h.sim.video_output().presented.len();
+        assert!(pushed > 0 && presented > 0);
+        h.sim.send(Command::DisableAudio);
+        h.sim.step(h.now);
+        h.now += DT;
+        for _ in 0..10 {
+            h.sim.audio_output_mut().consume(DT);
+            h.sim.step(h.now);
+            h.now += DT;
+        }
+        assert_eq!(h.sim.audio_output().log.len(), pushed, "disabled audio kept playing");
+        assert!(h.sim.video_output().presented.len() > presented);
+        h.sim.send(Command::SwitchAudio(0));
+        for _ in 0..20 {
+            h.sim.audio_output_mut().consume(DT);
+            h.sim.step(h.now);
+            h.now += DT;
+            if h.sim.audio_output().log.len() > pushed {
+                break;
+            }
+        }
+        assert!(h.sim.audio_output().log.len() > pushed, "re-selected audio never resumed");
     }
 
     #[test]

@@ -199,6 +199,9 @@ impl App {
     pub fn disable_audio(&mut self) {
         self.aid = None;
         self.aid_disabled = true;
+        if let Some(backend) = &self.backend {
+            backend.disable_audio();
+        }
     }
 
     pub fn auto_audio(&mut self) {
@@ -367,18 +370,24 @@ impl App {
         self.end_sent = false;
         self.idle_sent = false;
         self.pending_failure = None;
-        self.aid = self
-            .probe
-            .as_ref()
-            .and_then(|probe| {
-                probe
-                    .streams
-                    .iter()
-                    .filter(|stream| stream.kind == player_media::StreamKind::Audio)
-                    .position(|_| true)
-            })
-            .map(|_| 1);
+        self.aid = if self.aid_disabled {
+            None
+        } else {
+            self.probe
+                .as_ref()
+                .and_then(|probe| {
+                    probe
+                        .streams
+                        .iter()
+                        .filter(|stream| stream.kind == player_media::StreamKind::Audio)
+                        .position(|_| true)
+                })
+                .map(|_| 1)
+        };
         if let Some(backend) = &self.backend {
+            if self.aid_disabled {
+                backend.disable_audio();
+            }
             match self.options.sid.as_deref() {
                 Some("no") => {}
                 Some(value) if value != "auto" => {

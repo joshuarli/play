@@ -96,6 +96,10 @@ impl EngineBackend {
         Ok(())
     }
 
+    pub fn disable_audio(&self) {
+        self.engine.disable_audio();
+    }
+
     pub fn select_audio_id(&self, id: i64) -> Result<(), String> {
         let tracks = self.engine.snapshot().tracks;
         let track = tracks
