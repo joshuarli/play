@@ -3,8 +3,9 @@
 ## Status
 
 - **Goal:** make Play's performance evidence trustworthy, then cut the CPU and memory spent per correctly delivered frame, starting with scheduler pacing and then PLAY-31.
-- **Base revision:** `b3c659b`. No slices accepted yet.
-- **Next slice:** C0 (Linux baseline). C1 can run in parallel with it.
+- **Accepted:** C0 (`4ac0e09`, `ee5786c`), C1 (`0c8d15c`..`ee0f3cb`), C2 (`77e26fe`).
+- **In progress:** C3 and C4, in parallel; they share only `EngineStatus` fields and `tests/harness.py`.
+- **Next slice:** C5 (native baseline) once C3 and C4 land.
 - **Parked:** none.
 
 ## Charter
@@ -28,7 +29,7 @@
 
 ## Baseline
 
-- **Known red:** Linux CI run `42328973974` at `b3c659b` has 373 passed and 5 failed: four audio EOF timeouts and one truncated-file trace mismatch. That count comes from the brief; the logs need repository admin rights, so it is not confirmed here. macOS CI only builds and packages, and runs no suite.
+- **Known red:** none. At `b3c659b` the Linux container suite had 373 passed and 5 failed: four `linux-audio` `eof-reached` timeouts and the `truncated` trace. C0 fixed both causes, and the container suite now has 386 passed, 0 failed. macOS CI only builds and packages, and runs no suite.
 - **Measured inefficiency:** `build/mpv --vo=null --ao=null` on a 5 s 720p clip used 5.17 CPU-s video-only and 0.14 CPU-s with an audio track (two runs each, identical results; the host was busy, so this is not gate-qualified). The cause is `crates/player-engine/src/backend.rs:731-754`: the worker sleeps only when more than 5 ms of audio is queued, so a video-only stream spins. The explanation at `docs/metrics.md:42` is wrong.
 - **Loop timings (warm):**
 
