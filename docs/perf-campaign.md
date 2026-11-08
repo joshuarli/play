@@ -3,9 +3,8 @@
 ## Status
 
 - **Goal:** make Play's performance evidence trustworthy, then cut the CPU and memory spent per correctly delivered frame, starting with scheduler pacing and then PLAY-31.
-- **Accepted:** C0, C1 (with the C1b runner fixes), C2, C3, C4, C5, O1 (`28c99a6`).
-- **In progress:** O2 (PLAY-31).
-- **Next slice:** O3 only if a GUI profile on the O2 build shows OSC hover above its threshold; then close.
+- **Closed.** Accepted: C0, C1 (with the C1b runner fixes), C2, C3, C4, C5, O1 (`28c99a6`), O2 (`d9bf2e0`, PLAY-31), O3 (`fc608e9`, PLAY-29).
+- **Follow-up:** PLAY-40 (the hover workload reaches only about 6 Hz because each IPC pointer command takes about 150 ms to answer).
 - **Parked:** none.
 
 ## Charter
@@ -103,10 +102,14 @@ Requires O1. Needs an `architect` pass before any code, because it changes the b
 
 **Accept:** PLAY-31's own criteria (`--vo=null` and screenshots still work). On 1080p and 4K GUI playback, C5 comparison verdicts are `improved` for CPU and steady RSS, `submitted` frame counts are equal, and drops do not increase.
 
+**Result:** against the O1 build, GUI playback with the OSC hidden fell from about 52.5% to 41.8% CPU on h264 (VP9 8.9 points lower) with 38-40 MB less RSS; hover 1.6-2.4 points lower; paused unchanged. A headless device is created only for screenshots.
+
 ### O3: Overlay recomposition (overlay)
 Only if the C5 profile shows OSC hover or tooltip cost above 2 CPU percentage points over hidden-OSC playback. This absorbs PLAY-29.
 
 **Accept:** the hover workload is `improved`; `tests/run.sh osc` passes.
+
+**Result:** hover 2.7 (h264) and 3.4 (VP9) CPU points lower, other scenarios unchanged or inconclusive. Steady RSS sits 7-8 MB higher in every scenario, within tolerance and unexplained; releasing the compositor cache when nothing is drawn did not change it.
 
 ## Acceptance
 

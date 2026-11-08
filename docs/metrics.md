@@ -100,6 +100,20 @@ Baseline `4ef6495`, `bench.py workloads`, 3 s windows of steady playback, headle
 
 The A/A run of that binary against itself (7 pairs) gave `unchanged` on every metric: the playing CPU per media-second differed by -0.009 to +0.003 against a 0.049 tolerance.
 
+After the optimization slices (`bench.py`, 7 interleaved pairs, quiet host):
+
+| Slice | Workload | Before | After |
+|---|---|---:|---:|
+| O1 | video-1080p playing, CPU-s per media-s | 0.99 | 0.27 |
+| O1 | video-1080p playing, steady RSS | 274 MB | 85 MB |
+| O1 | video-4k playing, steady RSS | 987 MB | 227 MB |
+| O1 | video-only drops per 3 s | about 76 | 0 |
+| O2 | GUI h264 1080p playing, OSC hidden, CPU | 52.5% | 41.8% |
+| O2 | GUI playing, OSC hidden, RSS | | 38-40 MB less |
+| O3 | GUI seek-bar hover, CPU (dev build) | 16.7% | 14.0% |
+
+av-1080p headless playback was unchanged by O1 (0.26 CPU-s per media-s). The hover workload drives the pointer at about 6 Hz, not 60 Hz (PLAY-40).
+
 ## Metal backend
 
 Candidate `--gpu-api=metal` measured against baseline `--gpu-api=vulkan` on the same release binary (`dist/Player.app/Contents/MacOS/player`, revision `a6ccaba`). The host was quiet throughout (`perf-gate-ready` passed before and after each mode with load <= 0.38/core; earlier measurements taken on a busy host were deferred). Both backends pay the two-device headless-render CPU readback and window re-upload (PLAY-31).
