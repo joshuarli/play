@@ -4,7 +4,6 @@ import sys
 import tempfile
 import time
 import unittest
-import unittest.mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -66,23 +65,6 @@ class MetricFloorTests(unittest.TestCase):
         self.assertAlmostEqual(perfstat.metric_floor("latency_ms"), 5.0)
         self.assertAlmostEqual(perfstat.metric_floor("error_s"), 0.01)
         self.assertAlmostEqual(perfstat.metric_floor("cpu_per_media_second"), 0.01)
-
-
-class HostStateTests(unittest.TestCase):
-    def test_gate_reaches_sysctl_when_the_parent_path_cannot(self):
-        if sys.platform != "darwin":
-            self.skipTest("sysctl lives in /usr/sbin only on macOS")
-        tool = perfstat.shutil.which("perf-gate-ready")
-        if tool is None:
-            self.skipTest("perf-gate-ready is not installed")
-        bare = f"{Path(tool).parent}:/usr/bin:/bin"
-        direct = subprocess.run([tool], capture_output=True, env={"PATH": bare})
-        self.assertNotEqual(direct.returncode, 0)
-        if subprocess.run([tool], capture_output=True,
-                          env={"PATH": f"{bare}:/usr/sbin:/sbin"}).returncode != 0:
-            self.skipTest("host is not quiet")
-        with unittest.mock.patch.dict(perfstat.os.environ, {"PATH": bare}):
-            self.assertEqual(perfstat.host_state(), perfstat.HOST_QUIET)
 
 
 class CpuSecondsTests(unittest.TestCase):

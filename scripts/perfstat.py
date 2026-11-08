@@ -61,14 +61,9 @@ def host_state(once=False, timeout=120):
     tool = shutil.which("perf-gate-ready")
     if tool is None:
         return HOST_DEFERRED
-    # perf-gate-ready calls sysctl on macOS, and sysctl lives in /usr/sbin, off the default PATH.
-    environment = dict(os.environ)
-    environment["PATH"] = os.pathsep.join(
-        [environment.get("PATH", ""), "/usr/sbin", "/sbin"]
-    ).strip(os.pathsep)
     try:
         result = subprocess.run(
-            [tool, "-1"] if once else [tool], capture_output=True, env=environment,
+            [tool, "-1"] if once else [tool], capture_output=True,
             timeout=timeout,
         )
     except (OSError, subprocess.TimeoutExpired):
