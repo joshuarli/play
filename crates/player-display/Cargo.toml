@@ -24,4 +24,4 @@ player-output = { path = "../player-output" }
 
 [build-dependencies]
 player-build = { path = "../player-build" }
-cc = { version = "=1.11.0" }
+cc = { version = "=1.11.1" }
