@@ -2039,7 +2039,7 @@ def gate_build(results, args):
         [str(MPV), "--version"], capture_output=True, text=True, timeout=30,
     ).stdout.splitlines()
     results.check("build: version",
-                  bool(version) and "0.43.0" in version[0],
+                  bool(version) and "0.43.1" in version[0],
                   version[0] if version else "no output")
     protocols = subprocess.run(
         [str(MPV), "--no-config", "--list-protocols"],
