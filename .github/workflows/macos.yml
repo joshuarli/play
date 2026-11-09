@@ -67,7 +67,7 @@ jobs:
           test -x "$app/Contents/MacOS/player"
           test "$(lipo -archs "$app/Contents/MacOS/player")" = arm64
           "$app/Contents/MacOS/player" --version > version.txt
-          grep -q '0.43.1' version.txt
+          grep -q '0.43.2' version.txt
           codesign --verify --deep --strict "$app"
           {
             otool -L "$app/Contents/MacOS/player"
