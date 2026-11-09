@@ -1,8 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 
-# Builds the release closure from pinned sources. Runtime libraries come only
-# from this prefix; Homebrew is used for build tools, never for linked dylibs.
+# Builds the release closure from pinned sources and checksum-pinned prebuilt
+# artifacts (Homebrew bottles, rewritten into this prefix). Runtime libraries
+# come only from this prefix.
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 PREFIX="$ROOT/.work/deps/release"
 SRC="$ROOT/.work/tmp/release"
@@ -77,7 +78,6 @@ require_version() {
     fi
 }
 
-require_version cmake 3.22.1
 require_tool "$MESON"
 require_tool "$NINJA"
 require_version pkg-config 0.29
@@ -88,6 +88,18 @@ fetch() {
     if [ ! -f "$out" ] || [ "$(shasum -a 256 "$out" | awk '{print $1}')" != "$sha" ]; then
         printf 'download %s\n' "$url"
         curl -fsSL "$url" -o "$out"
+    fi
+    if [ "$(shasum -a 256 "$out" | awk '{print $1}')" != "$sha" ]; then
+        printf 'error: checksum mismatch for %s\n' "$out" >&2
+        exit 1
+    fi
+}
+
+fetch_blob() {
+    local url=$1 sha=$2 out=$3
+    if [ ! -f "$out" ] || [ "$(shasum -a 256 "$out" | awk '{print $1}')" != "$sha" ]; then
+        printf 'download %s\n' "$url"
+        curl -fsSL -H 'Authorization: Bearer QQ==' -L "$url" -o "$out"
     fi
     if [ "$(shasum -a 256 "$out" | awk '{print $1}')" != "$sha" ]; then
         printf 'error: checksum mismatch for %s\n' "$out" >&2
@@ -138,57 +150,63 @@ if ! have vulkan-headers; then
     fetch "https://github.com/KhronosGroup/Vulkan-Headers/archive/refs/tags/vulkan-sdk-$VULKAN_VERSION.tar.gz" \
         4a078be12bef21cfebc09d878b77a63cff9d68f899254a0b00d0e37ef73e7f7e "$SRC/$VH"
     extract "$SRC/$VH" "$SRC/Vulkan-Headers-vulkan-sdk-$VULKAN_VERSION"
-    run_log vulkan-headers cmake -S "$SRC/Vulkan-Headers-vulkan-sdk-$VULKAN_VERSION" \
-        -B "$SRC/build-vulkan-headers" -DCMAKE_INSTALL_PREFIX="$PREFIX" \
-        -DCMAKE_BUILD_TYPE=Release
-    run_log vulkan-headers-install cmake --build "$SRC/build-vulkan-headers" --target install
+    vh="$SRC/Vulkan-Headers-vulkan-sdk-$VULKAN_VERSION"
+    mkdir -p "$PREFIX/include" "$PREFIX/share/vulkan"
+    cp -R "$vh/include/vulkan" "$PREFIX/include/"
+    cp -R "$vh/include/vk_video" "$PREFIX/include/"
+    cp -R "$vh/registry" "$PREFIX/share/vulkan/"
     stamp vulkan-headers
 fi
 
 if ! have vulkan-loader; then
-    VL="Vulkan-Loader-$VULKAN_VERSION.tar.gz"
-    fetch "https://github.com/KhronosGroup/Vulkan-Loader/archive/refs/tags/vulkan-sdk-$VULKAN_VERSION.tar.gz" \
-        941eff558fc74f248745fb7df367640cf89a8457f216dae498a74ae14b6ba6f7 "$SRC/$VL"
-    extract "$SRC/$VL" "$SRC/Vulkan-Loader-vulkan-sdk-$VULKAN_VERSION"
-    run_log vulkan-loader cmake -S "$SRC/Vulkan-Loader-vulkan-sdk-$VULKAN_VERSION" \
-        -B "$SRC/build-vulkan-loader" -DCMAKE_INSTALL_PREFIX="$PREFIX" \
-        -DCMAKE_BUILD_TYPE=Release -DVULKAN_HEADERS_INSTALL_DIR="$PREFIX" \
-        -DBUILD_TESTS=OFF -DUPDATE_DEPS=OFF
-    run_log vulkan-loader-build cmake --build "$SRC/build-vulkan-loader" -j"$JOBS"
-    run_log vulkan-loader-install cmake --install "$SRC/build-vulkan-loader"
+    BOTTLE_TAG=${HOMEBREW_BOTTLE_TAG:-arm64_tahoe}
+    VL_BOTTLE="vulkan-loader-$VULKAN_VERSION.$BOTTLE_TAG.bottle.tar.gz"
+    case "$BOTTLE_TAG" in
+        arm64_tahoe) vl_sha=6d5ee00d4104774f3ae56e5e9441a59a6a6f5d800f937f4e926a8f9e01ed046f ;;
+        *) printf 'error: no pinned vulkan-loader bottle for %s; set HOMEBREW_BOTTLE_TAG or build the loader manually\n' "$BOTTLE_TAG" >&2; exit 1 ;;
+    esac
+    fetch_blob "https://ghcr.io/v2/homebrew/core/vulkan-loader/blobs/sha256:$vl_sha" "$vl_sha" "$SRC/$VL_BOTTLE"
+    rm -rf "$SRC/vulkan-loader-bottle"
+    mkdir -p "$SRC/vulkan-loader-bottle"
+    tar -xzf "$SRC/$VL_BOTTLE" -C "$SRC/vulkan-loader-bottle"
+    vl=$(printf '%s\n' "$SRC"/vulkan-loader-bottle/vulkan-loader/* | head -1)
+    cp "$vl"/lib/libvulkan*.dylib "$PREFIX/lib/"
+    mkdir -p "$PREFIX/lib/pkgconfig"
+    sed -e "s|@@HOMEBREW_CELLAR@@/vulkan-loader/$VULKAN_VERSION|$PREFIX|g" \
+        -e "s|@@HOMEBREW_PREFIX@@|$PREFIX|g" \
+        -e "s|\${prefix}/../../../opt/vulkan-headers/include|\${prefix}/include|g" \
+        "$vl/lib/pkgconfig/vulkan.pc" >"$PREFIX/lib/pkgconfig/vulkan.pc"
+    for f in "$PREFIX"/lib/libvulkan*.dylib; do
+        install_name_tool -id @rpath/libvulkan.1.dylib "$f"
+        codesign -s - -f "$f" >/dev/null 2>&1 || true
+    done
     stamp vulkan-loader
 fi
 
 if ! have shaderc; then
-    SH="shaderc-$SHADERC_VERSION.tar.gz"
-    fetch "https://github.com/google/shaderc/archive/refs/tags/v$SHADERC_VERSION.tar.gz" \
-        f06ce5bcca94e5df7f34e115743597d0ad2e13c5fe9213c67dc8c76031241947 "$SRC/$SH"
-    extract "$SRC/$SH" "$SRC/shaderc-$SHADERC_VERSION"
-    for dep in glslang spirv-headers spirv-tools; do
-        case "$dep" in
-            glslang) rev=$GLSLANG_REV ;;
-            spirv-headers) rev=$SPIRV_HEADERS_REV ;;
-            spirv-tools) rev=$SPIRV_TOOLS_REV ;;
-        esac
-        archive="$SRC/$dep-$rev.tar.gz"
-        case "$dep" in
-            glslang) dep_sha=907174a24713c6202c146f164bf81783f1fbc79c8cb821a30f18f159eb980312 ;;
-            spirv-headers) dep_sha=392f4801409aad9c4f1b77745f179952fd6264e4c8bd0fc1bc45dfa6807bf6d0 ;;
-            spirv-tools) dep_sha=82c62146083fd558735a3171cf97cfc47903ca7d368482e87f94bd44883c0f00 ;;
-        esac
-        fetch "https://github.com/KhronosGroup/$dep/archive/$rev.tar.gz" "$dep_sha" "$archive"
-        extract "$archive" "$SRC/$dep-$rev"
-        rm -rf "$SRC/shaderc-$SHADERC_VERSION/third_party/$dep"
-        cp -R "$SRC/$dep-$rev" "$SRC/shaderc-$SHADERC_VERSION/third_party/$dep"
+    BOTTLE_TAG=${HOMEBREW_BOTTLE_TAG:-arm64_tahoe}
+    SH_BOTTLE="shaderc-$SHADERC_VERSION.$BOTTLE_TAG.bottle.tar.gz"
+    case "$BOTTLE_TAG" in
+        arm64_tahoe) sh_sha=12ba0c59a98fb8f671f9473573002b2a812f26d2e60ea4f577f0c8c750c9838a ;;
+        *) printf 'error: no pinned shaderc bottle for %s; set HOMEBREW_BOTTLE_TAG or provide a pinned prebuilt\n' "$BOTTLE_TAG" >&2; exit 1 ;;
+    esac
+    fetch_blob "https://ghcr.io/v2/homebrew/core/shaderc/blobs/sha256:$sh_sha" "$sh_sha" "$SRC/$SH_BOTTLE"
+    rm -rf "$SRC/shaderc-bottle"
+    mkdir -p "$SRC/shaderc-bottle"
+    tar -xzf "$SRC/$SH_BOTTLE" -C "$SRC/shaderc-bottle"
+    sh=$(printf '%s\n' "$SRC"/shaderc-bottle/shaderc/* | head -1)
+    mkdir -p "$PREFIX/include" "$PREFIX/lib/pkgconfig"
+    cp -R "$sh/include/shaderc" "$PREFIX/include/"
+    cp "$sh"/lib/libshaderc* "$PREFIX/lib/"
+    for pc in "$sh"/lib/pkgconfig/shaderc*.pc; do
+        sed -e "s|@@HOMEBREW_CELLAR@@/shaderc/$SHADERC_VERSION|$PREFIX|g" \
+            -e "s|@@HOMEBREW_PREFIX@@|$PREFIX|g" \
+            "$pc" >"$PREFIX/lib/pkgconfig/$(basename "$pc")"
     done
-    run_log shaderc cmake -S "$SRC/shaderc-$SHADERC_VERSION" \
-        -B "$SRC/build-shaderc" -DCMAKE_INSTALL_PREFIX="$PREFIX" \
-        -DCMAKE_BUILD_TYPE=MinSizeRel -DSHADERC_SKIP_TESTS=ON \
-        -DSKIP_GLSLANG_INSTALL=ON -DSKIP_SPIRV_TOOLS_INSTALL=ON \
-        -DSKIP_GOOGLETEST_INSTALL=ON -DBUILD_SHARED_LIBS=ON \
-        -DCMAKE_MACOSX_RPATH=ON
-    run_log shaderc-build cmake --build "$SRC/build-shaderc" -j"$JOBS"
-    run_log shaderc-install cmake --install "$SRC/build-shaderc"
+    for f in "$PREFIX"/lib/libshaderc_shared*.dylib; do
+        install_name_tool -id @rpath/libshaderc_shared.1.dylib "$f"
+        codesign -s - -f "$f" >/dev/null 2>&1 || true
+    done
     stamp shaderc
 fi
 
@@ -197,16 +215,12 @@ if ! have spirv-cross; then
     fetch "https://github.com/KhronosGroup/SPIRV-Cross/archive/refs/tags/vulkan-sdk-$VULKAN_VERSION.tar.gz" \
         f708982e88b763ef5b0394ed468fc2c3628f68cdab89f2e7a946cd628c04e721 "$SRC/$SC"
     extract "$SRC/$SC" "$SRC/SPIRV-Cross-vulkan-sdk-$VULKAN_VERSION"
-    rm -rf "$SRC/build-spirv-cross"
-    run_log spirv-cross cmake -S "$SRC/SPIRV-Cross-vulkan-sdk-$VULKAN_VERSION" \
-        -B "$SRC/build-spirv-cross" -DCMAKE_INSTALL_PREFIX="$PREFIX" \
-        -DCMAKE_BUILD_TYPE=MinSizeRel -DSPIRV_CROSS_SHARED=OFF \
-        -DSPIRV_CROSS_STATIC=ON -DSPIRV_CROSS_CLI=OFF \
-        -DSPIRV_CROSS_ENABLE_TESTS=OFF -DSPIRV_CROSS_ENABLE_HLSL=OFF \
-        -DSPIRV_CROSS_ENABLE_CPP=OFF -DSPIRV_CROSS_ENABLE_REFLECT=OFF \
-        -DSPIRV_CROSS_ENABLE_UTIL=OFF -DSPIRV_CROSS_FORCE_PIC=ON
-    run_log spirv-cross-build cmake --build "$SRC/build-spirv-cross" -j"$JOBS"
-    run_log spirv-cross-install cmake --install "$SRC/build-spirv-cross"
+    sc="$SRC/SPIRV-Cross-vulkan-sdk-$VULKAN_VERSION"
+    cp "$ROOT/native/spirv-cross/meson.build" "$ROOT/native/spirv-cross/gitversion.h.in" "$sc/"
+    rm -f "$sc/.clang-format"
+    run_log spirv-cross "${MESON_SETUP_LIBPLACEBO[@]}" "$sc/build" "$sc" \
+        --prefix="$PREFIX" --libdir=lib --buildtype=release --default-library=static
+    run_log spirv-cross-build "$NINJA" -C "$sc/build" install
     stamp spirv-cross
 fi
 
