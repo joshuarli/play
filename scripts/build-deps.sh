@@ -22,6 +22,25 @@ export GIT_CEILING_DIRECTORIES="$SRC"
 INPUT_HASH=$(cat "$ROOT/scripts/build-deps.sh" "$ROOT/scripts/patches/libplacebo-metal.patch" |
     shasum -a 256 | awk '{print $1}')
 
+MESON=${MESON:-$(command -v muon 2>/dev/null || command -v meson 2>/dev/null || printf meson)}
+NINJA=${NINJA:-$(command -v samu 2>/dev/null || command -v samurai 2>/dev/null || command -v ninja 2>/dev/null || printf ninja)}
+case "$(basename "$MESON")" in
+    muon*) MESON_SETUP=("$MESON" meson setup) ;;
+    *) MESON_SETUP=("$MESON" setup) ;;
+esac
+MESON_SETUP_LIBPLACEBO=("${MESON_SETUP[@]}")
+case "$(basename "$MESON")" in
+    muon*)
+        # muon 0.7.0 can mis-handle macOS shared-library install naming for
+        # libplacebo (v7.387.0 + this repo's Metal patch); use meson for the
+        # libplacebo frontend and keep samu/ninja as the backend.
+        if command -v meson >/dev/null 2>&1; then
+            printf 'note: using meson for libplacebo (muon frontend incompatible here); using %s backend\n' "$NINJA" >&2
+            MESON_SETUP_LIBPLACEBO=(meson setup)
+        fi
+        ;;
+esac
+
 for tool in curl tar shasum xcrun; do
     command -v "$tool" >/dev/null || {
         printf 'error: %s is required (development tool)\n' "$tool" >&2
@@ -29,13 +48,27 @@ for tool in curl tar shasum xcrun; do
     }
 done
 
-require_version() {
-    local tool=$1 minimum=$2 found
+tool_version() {
+    local tool=$1
+    case "$(basename "$tool")" in
+        muon) "$tool" version 2>&1 | head -1 | rg -o '[0-9]+(\.[0-9]+)+' | head -1 ;;
+        samu|samurai|ninja) "$tool" --version 2>&1 | head -1 | rg -o '[0-9]+(\.[0-9]+)+' | head -1 ;;
+        *) "$tool" --version 2>&1 | head -1 | rg -o '[0-9]+(\.[0-9]+)+' | head -1 ;;
+    esac
+}
+
+require_tool() {
+    local tool=$1
     command -v "$tool" >/dev/null || {
         printf 'error: %s is required (development tool)\n' "$tool" >&2
         exit 1
     }
-    found=$("$tool" --version 2>&1 | head -1 | rg -o '[0-9]+(\.[0-9]+)+' | head -1)
+}
+
+require_version() {
+    local tool=$1 minimum=$2 found
+    require_tool "$tool"
+    found=$(tool_version "$tool")
     if [ -z "$found" ] ||
         [ "$(printf '%s\n%s\n' "$minimum" "$found" | sort -V | head -1)" != "$minimum" ]; then
         printf 'error: %s %s or newer is required, found %s\n' \
@@ -45,8 +78,8 @@ require_version() {
 }
 
 require_version cmake 3.22.1
-require_version meson 1.3.0
-require_version ninja 1.10
+require_tool "$MESON"
+require_tool "$NINJA"
 require_version pkg-config 0.29
 require_version python3 3.9
 
@@ -204,15 +237,22 @@ if ! have libplacebo; then
     # (head ea7599ef9e71f66930b567f25e2c2de73913b38c), which upstream never merged.
     run_log libplacebo-patch patch -d "$SRC/libplacebo-v$LIBPLACEBO_VERSION" -p1 --forward \
         -i "$ROOT/scripts/patches/libplacebo-metal.patch"
-    run_log libplacebo meson setup "$SRC/libplacebo-v$LIBPLACEBO_VERSION/build" \
+    run_log libplacebo "${MESON_SETUP_LIBPLACEBO[@]}" "$SRC/libplacebo-v$LIBPLACEBO_VERSION/build" \
         "$SRC/libplacebo-v$LIBPLACEBO_VERSION" --prefix="$PREFIX" --buildtype=release \
         --default-library=shared -Dvulkan=enabled -Dmetal=enabled \
         -Dvulkan-registry="$PREFIX/share/vulkan/registry/vk.xml" \
         -Dshaderc=enabled -Dglslang=disabled -Dlcms=disabled -Dopengl=disabled \
         -Dd3d11=disabled -Dlibdovi=disabled -Ddemos=false -Dtests=false -Dbench=false
-    run_log libplacebo-build ninja -C "$SRC/libplacebo-v$LIBPLACEBO_VERSION/build" install
+    run_log libplacebo-build "$NINJA" -C "$SRC/libplacebo-v$LIBPLACEBO_VERSION/build" install
     placebo_api=${LIBPLACEBO_VERSION#*.}
     placebo_dylib="libplacebo.${placebo_api%.*}.dylib"
+    if [ ! -f "$PREFIX/lib/$placebo_dylib" ]; then
+        placebo_dylib=$(basename "$(ls "$PREFIX"/lib/libplacebo*.dylib 2>/dev/null | head -1)" 2>/dev/null || true)
+    fi
+    [ -n "$placebo_dylib" ] && [ -f "$PREFIX/lib/$placebo_dylib" ] || {
+        printf 'error: libplacebo dylib missing from %s/lib\n' "$PREFIX" >&2
+        exit 1
+    }
     run_log libplacebo-id install_name_tool -id "@rpath/$placebo_dylib" "$PREFIX/lib/$placebo_dylib"
     stamp libplacebo
 fi

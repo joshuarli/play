@@ -30,6 +30,6 @@ command -v brew >/dev/null || {
 }
 
 pin ffmpeg 9.0.2_1
-pin meson 1.12.1
-pin ninja 1.13.2
+pin muon 0.7.0
+pin samurai 1.3
 pin pkgconf 3.0.10

@@ -19,6 +19,22 @@ export GIT_CEILING_DIRECTORIES="$SRC"
 
 INPUT_HASH=$(sha256sum "$ROOT/scripts/build-deps-linux.sh" | awk '{print $1}')
 
+MESON=${MESON:-$(command -v muon 2>/dev/null || command -v meson 2>/dev/null || printf meson)}
+NINJA=${NINJA:-$(command -v samu 2>/dev/null || command -v samurai 2>/dev/null || command -v ninja 2>/dev/null || printf ninja)}
+case "$(basename "$MESON")" in
+    muon*) MESON_SETUP=("$MESON" meson setup) ;;
+    *) MESON_SETUP=("$MESON" setup) ;;
+esac
+MESON_SETUP_LIBPLACEBO=("${MESON_SETUP[@]}")
+case "$(basename "$MESON")" in
+    muon*)
+        if command -v meson >/dev/null 2>&1; then
+            printf 'note: using meson for libplacebo (muon frontend compatibility fallback); using %s backend\n' "$NINJA" >&2
+            MESON_SETUP_LIBPLACEBO=(meson setup)
+        fi
+        ;;
+esac
+
 case "$(uname -sm)/$(ldd --version 2>&1)" in
     "Linux x86_64/"*musl*) ;;
     *)
@@ -27,7 +43,7 @@ case "$(uname -sm)/$(ldd --version 2>&1)" in
         ;;
 esac
 
-for tool in curl tar sha256sum cmake meson ninja pkg-config python3 make; do
+for tool in curl tar sha256sum cmake "$MESON" "$NINJA" pkg-config python3 make; do
     command -v "$tool" >/dev/null || {
         printf 'error: %s is required (development tool)\n' "$tool" >&2
         exit 1
@@ -76,9 +92,9 @@ fi
 meson_static() {
     local name=$1 dir=$2
     shift 2
-    run_log "$name" meson setup "$dir/build" "$dir" --prefix="$PREFIX" --libdir=lib \
+    run_log "$name" "${MESON_SETUP[@]}" "$dir/build" "$dir" --prefix="$PREFIX" --libdir=lib \
         --buildtype=release --default-library=static "$@"
-    run_log "$name-build" ninja -C "$dir/build" install
+    run_log "$name-build" "$NINJA" -C "$dir/build" install
 }
 
 VULKAN_VERSION=1.4.363.0
@@ -164,10 +180,13 @@ if ! have libplacebo; then
     cp -R "$SRC/glad2-$GLAD_VERSION/glad" "$third/glad/"
     cp -R "$SRC/jinja2-$JINJA_VERSION/src/jinja2" "$third/jinja/src/"
     cp -R "$SRC/markupsafe-$MARKUPSAFE_VERSION/src/markupsafe" "$third/markupsafe/src/"
-    meson_static libplacebo "$SRC/libplacebo-v$LIBPLACEBO_VERSION" -Dvulkan=enabled \
+    run_log libplacebo "${MESON_SETUP_LIBPLACEBO[@]}" "$SRC/libplacebo-v$LIBPLACEBO_VERSION/build" \
+        "$SRC/libplacebo-v$LIBPLACEBO_VERSION" --prefix="$PREFIX" --libdir=lib \
+        --buildtype=release --default-library=static -Dvulkan=enabled \
         -Dvulkan-registry="$PREFIX/share/vulkan/registry/vk.xml" \
         -Dshaderc=enabled -Dglslang=disabled -Dlcms=disabled -Dopengl=disabled \
         -Dd3d11=disabled -Dlibdovi=disabled -Ddemos=false -Dtests=false -Dbench=false
+    run_log libplacebo-build "$NINJA" -C "$SRC/libplacebo-v$LIBPLACEBO_VERSION/build" install
     stamp libplacebo
 fi
 
