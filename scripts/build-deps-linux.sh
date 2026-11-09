@@ -17,7 +17,10 @@ mkdir -p "$PREFIX" "$SRC" "$LOGS"
 # Player's own version into the dependency. Stop git's search at $SRC.
 export GIT_CEILING_DIRECTORIES="$SRC"
 
-INPUT_HASH=$(sha256sum "$ROOT/scripts/build-deps-linux.sh" | awk '{print $1}')
+SHADERC_PREBUILT_TAR="$ROOT/native/prebuilt/shaderc-combined-x86_64-linux-musl-2026.4.tar.gz"
+SHADERC_PREBUILT_SHA=cbd1172afd26321bac14ee9389b4981308717d06fdc27f742513b92091d4d1dd
+
+INPUT_HASH=$(cat "$ROOT/scripts/build-deps-linux.sh" "$SHADERC_PREBUILT_TAR" | sha256sum | awk '{print $1}')
 
 MESON=${MESON:-$(command -v muon 2>/dev/null || command -v meson 2>/dev/null || printf meson)}
 NINJA=${NINJA:-$(command -v samu 2>/dev/null || command -v samurai 2>/dev/null || command -v ninja 2>/dev/null || printf ninja)}
@@ -43,7 +46,7 @@ case "$(uname -sm)/$(ldd --version 2>&1)" in
         ;;
 esac
 
-for tool in curl tar sha256sum cmake "$MESON" "$NINJA" pkg-config python3 make; do
+for tool in curl tar sha256sum "$MESON" "$NINJA" pkg-config python3 make; do
     command -v "$tool" >/dev/null || {
         printf 'error: %s is required (development tool)\n' "$tool" >&2
         exit 1
@@ -122,56 +125,17 @@ if ! have vulkan-headers; then
 fi
 
 if ! have shaderc; then
-    if [ -n "${SHADERC_PREBUILT:-}" ] && [ -f "$SHADERC_PREBUILT/lib/libshaderc_combined.a" ]; then
-        mkdir -p "$PREFIX/include" "$PREFIX/lib/pkgconfig"
-        [ -d "$SHADERC_PREBUILT/include/shaderc" ] && cp -R "$SHADERC_PREBUILT/include/shaderc" "$PREFIX/include/"
-        for f in "$SHADERC_PREBUILT"/lib/libshaderc*.a "$SHADERC_PREBUILT"/lib/libshaderc*.so*; do
-            [ -e "$f" ] && cp -a "$f" "$PREFIX/lib/" || true
-        done
-        for pc in "$SHADERC_PREBUILT"/lib/pkgconfig/shaderc*.pc /usr/share/pkgconfig/shaderc*.pc; do
-            [ -f "$pc" ] || continue
-            sed -e "s|^prefix=.*|prefix=$PREFIX|" \
-                -e "s|^exec_prefix=.*|exec_prefix=\${prefix}|" \
-                -e "s|^libdir=.*|libdir=\${prefix}/lib|" \
-                -e "s|^includedir=.*|includedir=\${prefix}/include|" \
-                "$pc" >"$PREFIX/lib/pkgconfig/$(basename "$pc")"
-        done
-    else
-        SH="shaderc-$SHADERC_VERSION.tar.gz"
-        fetch "https://github.com/google/shaderc/archive/refs/tags/v$SHADERC_VERSION.tar.gz" \
-            f06ce5bcca94e5df7f34e115743597d0ad2e13c5fe9213c67dc8c76031241947 "$SRC/$SH"
-        extract "$SRC/$SH" "$SRC/shaderc-$SHADERC_VERSION"
-        for dep in glslang spirv-headers spirv-tools; do
-            case "$dep" in
-                glslang)
-                    rev=$GLSLANG_REV
-                    dep_sha=907174a24713c6202c146f164bf81783f1fbc79c8cb821a30f18f159eb980312 ;;
-                spirv-headers)
-                    rev=$SPIRV_HEADERS_REV
-                    dep_sha=392f4801409aad9c4f1b77745f179952fd6264e4c8bd0fc1bc45dfa6807bf6d0 ;;
-                spirv-tools)
-                    rev=$SPIRV_TOOLS_REV
-                    dep_sha=82c62146083fd558735a3171cf97cfc47903ca7d368482e87f94bd44883c0f00 ;;
-            esac
-            archive="$SRC/$dep-$rev.tar.gz"
-            fetch "https://github.com/KhronosGroup/$dep/archive/$rev.tar.gz" "$dep_sha" "$archive"
-            rm -rf "$SRC/shaderc-$SHADERC_VERSION/third_party/$dep"
-            mkdir -p "$SRC/shaderc-$SHADERC_VERSION/third_party/$dep"
-            tar -xf "$archive" -C "$SRC/shaderc-$SHADERC_VERSION/third_party/$dep" --strip-components=1
-        done
-        run_log shaderc cmake -S "$SRC/shaderc-$SHADERC_VERSION" \
-            -B "$SRC/build-shaderc" -DCMAKE_INSTALL_PREFIX="$PREFIX" \
-            -DCMAKE_INSTALL_LIBDIR=lib -DCMAKE_BUILD_TYPE=MinSizeRel \
-            -DSHADERC_SKIP_TESTS=ON -DSHADERC_SKIP_EXAMPLES=ON \
-            -DSHADERC_SKIP_COPYRIGHT_CHECK=ON -DSKIP_GLSLANG_INSTALL=ON \
-            -DSKIP_SPIRV_TOOLS_INSTALL=ON -DSKIP_GOOGLETEST_INSTALL=ON \
-            -DBUILD_SHARED_LIBS=OFF -DCMAKE_POSITION_INDEPENDENT_CODE=ON
-        run_log shaderc-build cmake --build "$SRC/build-shaderc" -j"$JOBS"
-        run_log shaderc-install cmake --install "$SRC/build-shaderc"
-    fi
-    rm -f "$PREFIX"/lib/libshaderc_shared.so* "$PREFIX"/lib/libSPIRV-Tools-shared.so \
-        "$PREFIX/lib/pkgconfig/shaderc.pc"
-    [ -f "$PREFIX/lib/pkgconfig/shaderc_combined.pc" ] || cat >"$PREFIX/lib/pkgconfig/shaderc_combined.pc" <<PC
+    [ -f "$SHADERC_PREBUILT_TAR" ] || {
+        printf 'error: missing %s\n' "$SHADERC_PREBUILT_TAR" >&2
+        exit 1
+    }
+    [ "$(sha256sum "$SHADERC_PREBUILT_TAR" | awk '{print $1}')" = "$SHADERC_PREBUILT_SHA" ] || {
+        printf 'error: checksum mismatch for %s\n' "$SHADERC_PREBUILT_TAR" >&2
+        exit 1
+    }
+    mkdir -p "$PREFIX/include" "$PREFIX/lib/pkgconfig"
+    tar -xzf "$SHADERC_PREBUILT_TAR" -C "$PREFIX"
+    cat >"$PREFIX/lib/pkgconfig/shaderc_combined.pc" <<PC
 prefix=$PREFIX
 exec_prefix=\${prefix}
 libdir=\${prefix}/lib
@@ -180,7 +144,7 @@ includedir=\${prefix}/include
 Name: shaderc
 Description: Tools and libraries for Vulkan shader compilation
 Version: $SHADERC_VERSION
-Libs: -L\${libdir} -lshaderc_combined
+Libs: -L\${libdir} -l:libshaderc_combined.a -l:libstdc++.a
 Cflags: -I\${includedir}
 PC
     cp "$PREFIX/lib/pkgconfig/shaderc_combined.pc" "$PREFIX/lib/pkgconfig/shaderc.pc"
@@ -223,7 +187,5 @@ if ! have libplacebo; then
     }
     stamp libplacebo
 fi
-
-sed -i 's/^Libs: .*/& -l:libstdc++.a/' "$PREFIX/lib/pkgconfig/shaderc_combined.pc"
 
 printf 'linux dependencies ready in %s\n' "$PREFIX"
