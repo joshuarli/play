@@ -42,6 +42,23 @@ struct App {
     height: i32,
 }
 
+impl App {
+    fn new(width: i32, height: i32) -> Self {
+        App {
+            wm_base: None,
+            seat: None,
+            keyboard: None,
+            pointer: None,
+            pending: VecDeque::new(),
+            configured: false,
+            closed: false,
+            fullscreen: false,
+            width,
+            height,
+        }
+    }
+}
+
 impl Dispatch<wl_registry::WlRegistry, wayland_client::globals::GlobalListContents> for App {
     fn event(
         _state: &mut Self,
@@ -116,13 +133,60 @@ impl Dispatch<xdg_toplevel::XdgToplevel, ()> for App {
 
 impl Dispatch<wl_seat::WlSeat, ()> for App {
     fn event(
-        _state: &mut Self,
-        _proxy: &wl_seat::WlSeat,
-        _event: wl_seat::Event,
+        state: &mut Self,
+        proxy: &wl_seat::WlSeat,
+        event: wl_seat::Event,
         _data: &(),
         _conn: &Connection,
-        _qh: &QueueHandle<Self>,
+        qh: &QueueHandle<Self>,
     ) {
+        let wl_seat::Event::Capabilities { capabilities } = event else {
+            return;
+        };
+        let capabilities = match capabilities {
+            wayland_client::WEnum::Value(capabilities) => capabilities,
+            wayland_client::WEnum::Unknown(bits) => wl_seat::Capability::from_bits_truncate(bits),
+        };
+        state.keyboard = follow_capability(
+            state.keyboard.take(),
+            capabilities.contains(wl_seat::Capability::Keyboard),
+            || proxy.get_keyboard(qh, ()),
+            |keyboard| {
+                if keyboard.version() >= 3 {
+                    keyboard.release();
+                }
+            },
+        );
+        let had_pointer = state.pointer.is_some();
+        state.pointer = follow_capability(
+            state.pointer.take(),
+            capabilities.contains(wl_seat::Capability::Pointer),
+            || proxy.get_pointer(qh, ()),
+            |pointer| {
+                if pointer.version() >= 3 {
+                    pointer.release();
+                }
+            },
+        );
+        if had_pointer && state.pointer.is_none() {
+            state.pending.push_back(InputEvent::PointerLeave);
+        }
+    }
+}
+
+fn follow_capability<T>(
+    device: Option<T>,
+    advertised: bool,
+    get: impl FnOnce() -> T,
+    release: impl FnOnce(T),
+) -> Option<T> {
+    match (device, advertised) {
+        (None, true) => Some(get()),
+        (Some(device), false) => {
+            release(device);
+            None
+        }
+        (device, _) => device,
     }
 }
 
@@ -302,18 +366,7 @@ impl Window {
             wayland_client::globals::registry_queue_init::<App>(&conn)
                 .map_err(|err| format!("wayland registry: {err}"))?;
         let qh = queue.handle();
-        let mut app = App {
-            wm_base: None,
-            seat: None,
-            keyboard: None,
-            pointer: None,
-            pending: VecDeque::new(),
-            configured: false,
-            closed: false,
-            fullscreen: false,
-            width,
-            height,
-        };
+        let mut app = App::new(width, height);
         let compositor: wl_compositor::WlCompositor = globals
             .bind(&qh, 1..=1, ())
             .map_err(|err| format!("bind compositor: {err}"))?;
@@ -509,8 +562,6 @@ fn bind_seat(
     let seat: wl_seat::WlSeat = globals
         .bind(qh, version..=version, ())
         .map_err(|err| format!("bind seat: {err}"))?;
-    app.keyboard = Some(seat.get_keyboard(qh, ()));
-    app.pointer = Some(seat.get_pointer(qh, ()));
     app.seat = Some(seat);
     Ok(())
 }
@@ -521,4 +572,152 @@ fn app_width(app: &App, fallback: i32) -> i32 {
 
 fn app_height(app: &App, fallback: i32) -> i32 {
     if app.height > 0 { app.height } else { fallback }
+}
+
+#[cfg(test)]
+mod seat_tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::os::unix::net::UnixStream;
+    use std::thread::JoinHandle;
+
+    const KEYBOARD: u32 = 2;
+    const POINTER: u32 = 1;
+
+    #[derive(Debug, PartialEq)]
+    struct Request {
+        object: u32,
+        opcode: u16,
+        args: Vec<u32>,
+    }
+
+    fn words(bytes: &[u8]) -> Vec<u32> {
+        bytes
+            .chunks_exact(4)
+            .map(|word| u32::from_ne_bytes(word.try_into().unwrap()))
+            .collect()
+    }
+
+    fn message(object: u32, opcode: u16, args: &[u32]) -> Vec<u8> {
+        let size = (8 + args.len() * 4) as u32;
+        let mut bytes = Vec::new();
+        bytes.extend(object.to_ne_bytes());
+        bytes.extend((size << 16 | opcode as u32).to_ne_bytes());
+        for arg in args {
+            bytes.extend(arg.to_ne_bytes());
+        }
+        bytes
+    }
+
+    fn string_words(text: &str) -> Vec<u32> {
+        let mut bytes = text.as_bytes().to_vec();
+        bytes.push(0);
+        let length = bytes.len() as u32;
+        bytes.resize(bytes.len().div_ceil(4) * 4, 0);
+        let mut out = vec![length];
+        out.extend(words(&bytes));
+        out
+    }
+
+    fn compositor_sending_capabilities_after_each_sync(mut stream: UnixStream, capabilities: Vec<u32>) -> JoinHandle<Vec<Request>> {
+        std::thread::spawn(move || {
+            let mut requests = Vec::new();
+            let mut buffer = Vec::new();
+            let mut registry = 0;
+            let mut seat = 0;
+            let mut pending = capabilities.into_iter();
+            let mut chunk = [0u8; 4096];
+            loop {
+                let read = stream.read(&mut chunk).unwrap_or(0);
+                if read == 0 {
+                    return requests;
+                }
+                buffer.extend_from_slice(&chunk[..read]);
+                while buffer.len() >= 8 {
+                    let header = words(&buffer[..8]);
+                    let size = (header[1] >> 16) as usize;
+                    if buffer.len() < size {
+                        break;
+                    }
+                    let request = Request {
+                        object: header[0],
+                        opcode: (header[1] & 0xffff) as u16,
+                        args: words(&buffer[8..size]),
+                    };
+                    buffer.drain(..size);
+                    let mut reply = Vec::new();
+                    match (request.object, request.opcode) {
+                        (1, 1) => {
+                            registry = request.args[0];
+                            let mut global = vec![1];
+                            global.extend(string_words("wl_seat"));
+                            global.push(7);
+                            reply.extend(message(registry, 0, &global));
+                        }
+                        (1, 0) => {
+                            let callback = request.args[0];
+                            if seat != 0 {
+                                if let Some(value) = pending.next() {
+                                    reply.extend(message(seat, 0, &[value]));
+                                }
+                            }
+                            reply.extend(message(callback, 0, &[0]));
+                            reply.extend(message(1, 1, &[callback]));
+                        }
+                        (object, 0) if object == registry => {
+                            seat = *request.args.last().unwrap();
+                        }
+                        _ => {}
+                    }
+                    stream.write_all(&reply).unwrap();
+                    requests.push(request);
+                }
+            }
+        })
+    }
+
+    fn run_seat(capabilities: Vec<u32>) -> (Vec<Request>, u32) {
+        let (client, server) = UnixStream::pair().unwrap();
+        let fake = compositor_sending_capabilities_after_each_sync(server, capabilities.clone());
+        let conn = Connection::from_socket(client).unwrap();
+        let (globals, mut queue) =
+            wayland_client::globals::registry_queue_init::<App>(&conn).unwrap();
+        let qh = queue.handle();
+        let mut app = App::new(1, 1);
+        bind_seat(&globals, &qh, &mut app).unwrap();
+        for _ in 0..=capabilities.len() {
+            queue.roundtrip(&mut app).unwrap();
+        }
+        let seat = app.seat.as_ref().unwrap().id().protocol_id();
+        drop(app);
+        drop(queue);
+        drop(conn);
+        (fake.join().unwrap(), seat)
+    }
+
+    #[test]
+    fn keyboard_only_seat_gets_no_pointer() {
+        let (requests, seat) = run_seat(vec![KEYBOARD]);
+        let on_seat: Vec<u16> = requests
+            .iter()
+            .filter(|request| request.object == seat)
+            .map(|request| request.opcode)
+            .collect();
+        assert!(on_seat.contains(&1), "keyboard requested: {requests:?}");
+        assert!(!on_seat.contains(&0), "pointer requested from a keyboard-only seat: {requests:?}");
+    }
+
+    #[test]
+    fn lost_pointer_capability_releases_the_pointer() {
+        let (requests, seat) = run_seat(vec![KEYBOARD | POINTER, KEYBOARD]);
+        let pointer = requests
+            .iter()
+            .find(|request| request.object == seat && request.opcode == 0)
+            .map(|request| request.args[0])
+            .expect("pointer requested once advertised");
+        assert!(
+            requests.iter().any(|request| request.object == pointer && request.opcode == 1),
+            "pointer released after the capability went away: {requests:?}"
+        );
+    }
 }
