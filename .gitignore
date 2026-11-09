@@ -4,3 +4,4 @@ dist/
 target/
 __pycache__/
 *.pyc
+build-linux/
