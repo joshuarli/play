@@ -16,54 +16,177 @@ struct FcPattern {
     _private: [u8; 0],
 }
 #[repr(C)]
-struct FcConfig {
+struct FcFontCache {
     _private: [u8; 0],
 }
 #[repr(C)]
-struct FcCharSet {
+struct FcFontChain {
     _private: [u8; 0],
 }
+
 #[repr(C)]
-struct FcFontSet {
-    nfont: c_int,
-    sfont: c_int,
-    fonts: *mut *mut FcPattern,
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct FcFontId {
+    high: u64,
+    low: u64,
 }
 
-const FC_MATCH_PATTERN: c_int = 0;
-const FC_RESULT_MATCH: c_int = 0;
-const FC_WEIGHT_REGULAR: c_int = 80;
-const FC_WEIGHT_BOLD: c_int = 200;
+#[repr(C)]
+struct FcUnicodeRange {
+    start: u32,
+    end: u32,
+}
 
-#[link(name = "fontconfig")]
+#[repr(C)]
+struct FcFontMatch {
+    id: FcFontId,
+    unicode_ranges: *mut FcUnicodeRange,
+    unicode_ranges_count: usize,
+    fallbacks: *mut c_void,
+    fallbacks_count: usize,
+}
+
+#[repr(C)]
+struct FcResolvedFontRun {
+    text: *mut c_char,
+    start_byte: usize,
+    end_byte: usize,
+    font_id: FcFontId,
+    has_font: bool,
+    css_source: *mut c_char,
+}
+
+#[repr(C)]
+struct FcFontPath {
+    path: *mut c_char,
+    font_index: usize,
+}
+
+#[repr(C)]
+struct FcFontInfo {
+    id: FcFontId,
+    name: *mut c_char,
+    family: *mut c_char,
+}
+
+#[repr(C)]
+struct FcFontMetadata {
+    copyright: *mut c_char,
+    designer: *mut c_char,
+    designer_url: *mut c_char,
+    font_family: *mut c_char,
+    font_subfamily: *mut c_char,
+    full_name: *mut c_char,
+    id_description: *mut c_char,
+    license: *mut c_char,
+    license_url: *mut c_char,
+    manufacturer: *mut c_char,
+    manufacturer_url: *mut c_char,
+    postscript_name: *mut c_char,
+    preferred_family: *mut c_char,
+    preferred_subfamily: *mut c_char,
+    trademark: *mut c_char,
+    unique_id: *mut c_char,
+    version: *mut c_char,
+}
+
+#[repr(C)]
+struct FcTraceMsg {
+    level: c_int,
+    path: *mut c_char,
+    reason: *mut c_void,
+}
+
+const FC_MATCH_FALSE: c_int = 1;
+const EMOJI_PRESENTATION: char = '\u{FE0F}';
+const FT_FACE_FLAG_COLOR: c_long = 1 << 14;
+const FC_WEIGHT_NORMAL: c_int = 400;
+const FC_WEIGHT_BOLD: c_int = 700;
+
+const SCRIPT_BLOCKS: &[FcUnicodeRange] = &[
+    FcUnicodeRange { start: 0x0100, end: 0x024F },
+    FcUnicodeRange { start: 0x0300, end: 0x036F },
+    FcUnicodeRange { start: 0x0370, end: 0x03FF },
+    FcUnicodeRange { start: 0x0400, end: 0x052F },
+    FcUnicodeRange { start: 0x0530, end: 0x058F },
+    FcUnicodeRange { start: 0x0590, end: 0x05FF },
+    FcUnicodeRange { start: 0x0600, end: 0x06FF },
+    FcUnicodeRange { start: 0x0700, end: 0x077F },
+    FcUnicodeRange { start: 0x0900, end: 0x097F },
+    FcUnicodeRange { start: 0x0980, end: 0x09FF },
+    FcUnicodeRange { start: 0x0A00, end: 0x0A7F },
+    FcUnicodeRange { start: 0x0A80, end: 0x0AFF },
+    FcUnicodeRange { start: 0x0B00, end: 0x0B7F },
+    FcUnicodeRange { start: 0x0B80, end: 0x0BFF },
+    FcUnicodeRange { start: 0x0C00, end: 0x0C7F },
+    FcUnicodeRange { start: 0x0C80, end: 0x0CFF },
+    FcUnicodeRange { start: 0x0D00, end: 0x0D7F },
+    FcUnicodeRange { start: 0x0D80, end: 0x0DFF },
+    FcUnicodeRange { start: 0x0E00, end: 0x0E7F },
+    FcUnicodeRange { start: 0x0E80, end: 0x0EFF },
+    FcUnicodeRange { start: 0x0F00, end: 0x0FFF },
+    FcUnicodeRange { start: 0x1000, end: 0x109F },
+    FcUnicodeRange { start: 0x10A0, end: 0x10FF },
+    FcUnicodeRange { start: 0x1200, end: 0x139F },
+    FcUnicodeRange { start: 0x1780, end: 0x17FF },
+    FcUnicodeRange { start: 0x1E00, end: 0x1FFF },
+    FcUnicodeRange { start: 0x2000, end: 0x206F },
+    FcUnicodeRange { start: 0x2190, end: 0x2BFF },
+    FcUnicodeRange { start: 0x3000, end: 0x303F },
+    FcUnicodeRange { start: 0x3040, end: 0x30FF },
+    FcUnicodeRange { start: 0x3400, end: 0x4DBF },
+    FcUnicodeRange { start: 0x4E00, end: 0x9FFF },
+    FcUnicodeRange { start: 0xAC00, end: 0xD7AF },
+    FcUnicodeRange { start: 0xFB50, end: 0xFDFF },
+    FcUnicodeRange { start: 0xFE70, end: 0xFEFF },
+    FcUnicodeRange { start: 0xFF00, end: 0xFFEF },
+    FcUnicodeRange { start: 0x1F000, end: 0x1F2FF },
+    FcUnicodeRange { start: 0x1F300, end: 0x1FAFF },
+    FcUnicodeRange { start: 0x20000, end: 0x2FA1F },
+    FcUnicodeRange { start: 0x1100, end: 0x11FF },
+];
+
+#[link(name = "rust_fontconfig")]
 unsafe extern "C" {
-    fn FcInitLoadConfigAndFonts() -> *mut FcConfig;
-    fn FcConfigDestroy(config: *mut FcConfig);
-    fn FcPatternCreate() -> *mut FcPattern;
-    fn FcPatternDestroy(pattern: *mut FcPattern);
-    fn FcPatternAddString(pattern: *mut FcPattern, object: *const c_char, value: *const u8) -> c_int;
-    fn FcPatternAddInteger(pattern: *mut FcPattern, object: *const c_char, value: c_int) -> c_int;
-    fn FcConfigSubstitute(config: *mut FcConfig, pattern: *mut FcPattern, kind: c_int) -> c_int;
-    fn FcDefaultSubstitute(pattern: *mut FcPattern);
-    fn FcFontSort(
-        config: *mut FcConfig,
-        pattern: *mut FcPattern,
-        trim: c_int,
-        charset: *mut *mut FcCharSet,
-        result: *mut c_int,
-    ) -> *mut FcFontSet;
-    fn FcFontSetDestroy(set: *mut FcFontSet);
-    fn FcCharSetDestroy(charset: *mut FcCharSet);
-    fn FcPatternGetString(pattern: *mut FcPattern, object: *const c_char, id: c_int, value: *mut *const c_char) -> c_int;
-    fn FcPatternGetInteger(pattern: *mut FcPattern, object: *const c_char, id: c_int, value: *mut c_int) -> c_int;
-    fn FcPatternGetCharSet(
-        pattern: *mut FcPattern,
-        object: *const c_char,
-        id: c_int,
-        value: *mut *mut FcCharSet,
-    ) -> c_int;
-    fn FcPatternGetBool(pattern: *mut FcPattern, object: *const c_char, id: c_int, value: *mut c_int) -> c_int;
-    fn FcCharSetHasChar(charset: *const FcCharSet, ucs4: u32) -> c_int;
+    fn fc_cache_build() -> *mut FcFontCache;
+    fn fc_cache_free(cache: *mut FcFontCache);
+    fn fc_cache_get_font_path(cache: *const FcFontCache, id: *const FcFontId) -> *mut FcFontPath;
+    fn fc_font_path_free(path: *mut FcFontPath);
+    fn fc_cache_list_fonts(cache: *const FcFontCache, count: *mut usize) -> *mut FcFontInfo;
+    fn fc_font_info_free(info: *mut FcFontInfo, count: usize);
+    fn fc_cache_get_font_metadata(cache: *const FcFontCache, id: *const FcFontId) -> *mut FcFontMetadata;
+    fn fc_font_metadata_free(metadata: *mut FcFontMetadata);
+    fn fc_pattern_new() -> *mut FcPattern;
+    fn fc_pattern_free(pattern: *mut FcPattern);
+    fn fc_pattern_add_unicode_range(pattern: *mut FcPattern, start: u32, end: u32);
+    fn fc_cache_query(
+        cache: *const FcFontCache,
+        pattern: *const FcPattern,
+        trace: *mut *mut FcTraceMsg,
+        trace_count: *mut usize,
+    ) -> *mut FcFontMatch;
+    fn fc_font_match_free(found: *mut FcFontMatch);
+    fn fc_resolve_font_chain_with_scripts(
+        cache: *const FcFontCache,
+        families: *const *const c_char,
+        families_count: usize,
+        weight: c_int,
+        italic: c_int,
+        oblique: c_int,
+        scripts: *const FcUnicodeRange,
+        scripts_count: usize,
+        trace: *mut *mut FcTraceMsg,
+        trace_count: *mut usize,
+    ) -> *mut FcFontChain;
+    fn fc_font_chain_free(chain: *mut FcFontChain);
+    fn fc_chain_query_for_text(
+        chain: *const FcFontChain,
+        cache: *const FcFontCache,
+        text: *const c_char,
+        runs_count: *mut usize,
+    ) -> *mut FcResolvedFontRun;
+    fn fc_resolved_runs_free(runs: *mut FcResolvedFontRun, count: usize);
+    fn fc_trace_free(trace: *mut FcTraceMsg, count: usize);
 }
 
 type FtLibrary = *mut c_void;
@@ -216,7 +339,10 @@ const HB_SCRIPT_COMMON: u32 = u32::from_be_bytes(*b"Zyyy");
 const HB_SCRIPT_INHERITED: u32 = u32::from_be_bytes(*b"Zinh");
 const HB_SCRIPT_UNKNOWN: u32 = u32::from_be_bytes(*b"Zzzz");
 const HB_SCALE: f64 = 64.0;
-const PICTOGRAPH_START: u32 = 0x1F000;
+const HB_CATEGORY_SPACING_MARK: c_uint = 10;
+const HB_CATEGORY_ENCLOSING_MARK: c_uint = 11;
+const HB_CATEGORY_NON_SPACING_MARK: c_uint = 12;
+const HB_COMBINING_CLASS_VIRAMA: c_uint = 9;
 
 #[link(name = "harfbuzz")]
 unsafe extern "C" {
@@ -229,6 +355,7 @@ unsafe extern "C" {
     fn hb_font_destroy(font: *mut HbFont);
     fn hb_font_set_scale(font: *mut HbFont, x: c_int, y: c_int);
     fn hb_font_get_h_extents(font: *mut HbFont, extents: *mut HbFontExtents) -> c_int;
+    fn hb_font_get_nominal_glyph(font: *mut HbFont, unicode: u32, glyph: *mut u32) -> c_int;
     fn hb_buffer_create() -> *mut HbBuffer;
     fn hb_buffer_destroy(buffer: *mut HbBuffer);
     fn hb_buffer_clear_contents(buffer: *mut HbBuffer);
@@ -242,6 +369,8 @@ unsafe extern "C" {
     fn hb_shape(font: *mut HbFont, buffer: *mut HbBuffer, features: *const c_void, count: c_uint);
     fn hb_unicode_funcs_get_default() -> *mut HbUnicodeFuncs;
     fn hb_unicode_script(funcs: *mut HbUnicodeFuncs, codepoint: u32) -> u32;
+    fn hb_unicode_general_category(funcs: *mut HbUnicodeFuncs, codepoint: u32) -> c_uint;
+    fn hb_unicode_combining_class(funcs: *mut HbUnicodeFuncs, codepoint: u32) -> c_uint;
     fn hb_ot_tags_from_script_and_language(
         script: u32,
         language: *const c_void,
@@ -259,17 +388,9 @@ unsafe extern "C" {
         chosen_script: *mut u32,
     ) -> c_int;
 }
-
-struct Candidate {
+struct Font {
     path: CString,
-    index: c_int,
-    charset: *mut FcCharSet,
-    color: bool,
-}
-
-struct Ranked {
-    set: *mut FcFontSet,
-    candidates: Vec<Candidate>,
+    index: usize,
 }
 
 struct Face {
@@ -299,16 +420,22 @@ impl Drop for Face {
 }
 
 pub(crate) struct Backend {
-    config: *mut FcConfig,
+    cache: *mut FcFontCache,
     library: FtLibrary,
     buffer: *mut HbBuffer,
-    ranked: [Option<Ranked>; 2],
+    chains: [*mut FcFontChain; 2],
+    scan_order: [Option<Vec<usize>>; 2],
+    fonts: Vec<Font>,
+    font_ids: HashMap<FcFontId, usize>,
+    character_fonts: HashMap<(usize, char), Option<usize>>,
+    cluster_fonts: HashMap<(usize, u32, String, Option<usize>), Option<usize>>,
+    coverage: HashMap<(usize, char), bool>,
     faces: Vec<Face>,
-    face_ids: HashMap<(usize, usize, u64), usize>,
-    script_support: HashMap<(usize, usize, u32), bool>,
+    face_ids: HashMap<(usize, u64), usize>,
+    script_support: HashMap<(usize, u32), bool>,
 }
 
-// SAFETY: the backend exclusively owns every Fontconfig, FreeType, and
+// SAFETY: the backend exclusively owns every rust-fontconfig, FreeType, and
 // HarfBuzz handle it holds and never shares them; each library is only used
 // through `&mut self`, so moving the whole backend to another thread is sound.
 unsafe impl Send for Backend {}
@@ -316,17 +443,17 @@ unsafe impl Send for Backend {}
 impl Drop for Backend {
     fn drop(&mut self) {
         self.faces.clear();
-        for ranked in self.ranked.iter_mut().filter_map(Option::take) {
-            // SAFETY: the set came from FcFontSort and owns the patterns and
-            // charsets the candidates borrow; none outlive this loop body.
-            unsafe { FcFontSetDestroy(ranked.set) }
-        }
-        // SAFETY: each handle is owned by the backend, valid, and released
-        // once after every face that depends on the library is gone.
+        // SAFETY: each handle is owned by the backend, valid or null, and
+        // released once after every face that depends on the library is gone.
         unsafe {
+            for chain in self.chains {
+                if !chain.is_null() {
+                    fc_font_chain_free(chain);
+                }
+            }
             hb_buffer_destroy(self.buffer);
             FT_Done_FreeType(self.library);
-            FcConfigDestroy(self.config);
+            fc_cache_free(self.cache);
         }
     }
 }
@@ -403,114 +530,231 @@ fn resolve_scripts(text: &str) -> Vec<(usize, u32)> {
     scripts
 }
 
+fn default_ignorable(c: char) -> bool {
+    c.is_control()
+        || matches!(
+            c as u32,
+            0x00AD | 0x034F | 0x061C | 0x115F..=0x1160 | 0x17B4..=0x17B5 | 0x180B..=0x180F | 0x200B..=0x200F
+                | 0x202A..=0x202E | 0x2060..=0x206F | 0x3164 | 0xFE00..=0xFE0F | 0xFEFF | 0xFFA0 | 0xE0000..=0xE0FFF
+        )
+}
+
+fn hangul_joins(previous: u32, next: u32) -> bool {
+    let leading = |c: u32| matches!(c, 0x1100..=0x115F | 0xA960..=0xA97C);
+    let vowel = |c: u32| matches!(c, 0x1160..=0x11A7 | 0xD7B0..=0xD7C6);
+    let trailing = |c: u32| matches!(c, 0x11A8..=0x11FF | 0xD7CB..=0xD7FB);
+    (leading(previous) && (leading(next) || vowel(next))) || (vowel(previous) && (vowel(next) || trailing(next))) || (trailing(previous) && trailing(next))
+}
+
+fn regional_indicator(c: u32) -> bool {
+    matches!(c, 0x1F1E6..=0x1F1FF)
+}
+
+fn cluster_end(characters: &[(usize, char)], start: usize, limit: usize) -> usize {
+    // SAFETY: returns HarfBuzz's static default Unicode functions.
+    let funcs = unsafe { hb_unicode_funcs_get_default() };
+    let mut regional = usize::from(regional_indicator(characters[start].1 as u32));
+    let mut end = start + 1;
+    while end < limit {
+        let previous = characters[end - 1].1 as u32;
+        let next = characters[end].1 as u32;
+        // SAFETY: `funcs` is the live default table; any code point is accepted.
+        let (category, class) = unsafe { (hb_unicode_general_category(funcs, next), hb_unicode_combining_class(funcs, previous)) };
+        let joins = matches!(category, HB_CATEGORY_SPACING_MARK | HB_CATEGORY_ENCLOSING_MARK | HB_CATEGORY_NON_SPACING_MARK)
+            || matches!(next, 0x200C | 0x200D | 0xFE00..=0xFE0F | 0xE0020..=0xE007F | 0xE0100..=0xE01EF | 0x1F3FB..=0x1F3FF)
+            || previous == 0x200D
+            || class == HB_COMBINING_CLASS_VIRAMA
+            || hangul_joins(previous, next)
+            || (regional_indicator(next) && regional % 2 == 1);
+        if !joins {
+            break;
+        }
+        if regional_indicator(next) {
+            regional += 1;
+        }
+        end += 1;
+    }
+    end
+}
+
 impl Backend {
     pub fn new() -> Result<Self, String> {
-        // SAFETY: no preconditions; returns an owned config or null.
-        let config = unsafe { FcInitLoadConfigAndFonts() };
-        if config.is_null() {
-            return Err("Fontconfig could not load its configuration".to_owned());
+        // SAFETY: no preconditions; returns an owned cache or null.
+        let cache = unsafe { fc_cache_build() };
+        if cache.is_null() {
+            return Err("rust-fontconfig could not build its font cache".to_owned());
         }
         let mut library: FtLibrary = ptr::null_mut();
         // SAFETY: `library` is a valid out-pointer.
         if unsafe { FT_Init_FreeType(&mut library) } != 0 {
-            // SAFETY: `config` is the owned config created above.
-            unsafe { FcConfigDestroy(config) };
+            // SAFETY: `cache` is the owned cache created above.
+            unsafe { fc_cache_free(cache) };
             return Err("FreeType could not initialize".to_owned());
         }
         // SAFETY: no preconditions; returns an owned buffer or the inert empty buffer.
         let buffer = unsafe { hb_buffer_create() };
         Ok(Backend {
-            config,
+            cache,
             library,
             buffer,
-            ranked: [None, None],
+            chains: [ptr::null_mut(); 2],
+            scan_order: [None, None],
+            fonts: Vec::new(),
+            font_ids: HashMap::new(),
+            character_fonts: HashMap::new(),
+            cluster_fonts: HashMap::new(),
+            coverage: HashMap::new(),
             faces: Vec::new(),
             face_ids: HashMap::new(),
             script_support: HashMap::new(),
         })
     }
 
-    fn ranked(&mut self, weight: Weight) -> Result<&Ranked, String> {
+    fn chain(&mut self, weight: Weight) -> Result<*mut FcFontChain, String> {
         let slot = weight_slot(weight);
-        if self.ranked[slot].is_none() {
+        if self.chains[slot].is_null() {
             let value = match weight {
-                Weight::Regular => FC_WEIGHT_REGULAR,
+                Weight::Regular => FC_WEIGHT_NORMAL,
                 Weight::Bold => FC_WEIGHT_BOLD,
             };
-            // SAFETY: the pattern is created and destroyed here; the
-            // C-string literals are NUL-terminated and outlive each call;
-            // `config` is live; FcFontSort returns an owned set whose
-            // patterns and charsets stay valid until it is destroyed, which
-            // only `Drop` does. Out-pointers are valid locals.
-            let ranked = unsafe {
-                let pattern = FcPatternCreate();
-                if pattern.is_null() {
-                    return Err("Fontconfig could not create a pattern".to_owned());
-                }
-                FcPatternAddString(pattern, c"family".as_ptr(), c"sans-serif".as_ptr().cast());
-                FcPatternAddInteger(pattern, c"weight".as_ptr(), value);
-                FcConfigSubstitute(self.config, pattern, FC_MATCH_PATTERN);
-                FcDefaultSubstitute(pattern);
-                let mut coverage: *mut FcCharSet = ptr::null_mut();
-                let mut result = 0;
-                let set = FcFontSort(self.config, pattern, 1, &mut coverage, &mut result);
-                FcPatternDestroy(pattern);
-                if !coverage.is_null() {
-                    FcCharSetDestroy(coverage);
-                }
-                if set.is_null() || (*set).nfont <= 0 {
-                    return Err("Fontconfig found no fonts".to_owned());
-                }
-                let mut candidates = Vec::new();
-                for at in 0..(*set).nfont as usize {
-                    let font = *(*set).fonts.add(at);
-                    let mut file: *const c_char = ptr::null();
-                    let mut index = 0;
-                    let mut charset: *mut FcCharSet = ptr::null_mut();
-                    if FcPatternGetString(font, c"file".as_ptr(), 0, &mut file) != FC_RESULT_MATCH
-                        || FcPatternGetInteger(font, c"index".as_ptr(), 0, &mut index) != FC_RESULT_MATCH
-                        || FcPatternGetCharSet(font, c"charset".as_ptr(), 0, &mut charset) != FC_RESULT_MATCH
-                    {
-                        continue;
-                    }
-                    let mut color = 0;
-                    if FcPatternGetBool(font, c"color".as_ptr(), 0, &mut color) != FC_RESULT_MATCH {
-                        color = 0;
-                    }
-                    candidates.push(Candidate {
-                        path: CStr::from_ptr(file).to_owned(),
-                        index,
-                        charset,
-                        color: color != 0,
-                    });
-                }
-                Ranked { set, candidates }
+            let families = [c"sans-serif".as_ptr()];
+            let mut trace: *mut FcTraceMsg = ptr::null_mut();
+            let mut trace_count = 0;
+            // SAFETY: `cache` is live; `families` holds one NUL-terminated
+            // string, and `SCRIPT_BLOCKS` is a valid array of the reported
+            // length. The trace out-pointers are valid locals; the returned
+            // trace is released here and the chain is owned by the backend.
+            let chain = unsafe {
+                let chain = fc_resolve_font_chain_with_scripts(
+                    self.cache,
+                    families.as_ptr(),
+                    families.len(),
+                    value,
+                    FC_MATCH_FALSE,
+                    FC_MATCH_FALSE,
+                    SCRIPT_BLOCKS.as_ptr(),
+                    SCRIPT_BLOCKS.len(),
+                    &mut trace,
+                    &mut trace_count,
+                );
+                fc_trace_free(trace, trace_count);
+                chain
             };
-            if ranked.candidates.is_empty() {
-                // SAFETY: the set was just returned by FcFontSort and nothing borrows it.
-                unsafe { FcFontSetDestroy(ranked.set) };
-                return Err("Fontconfig fonts have no file, index, or coverage".to_owned());
+            if chain.is_null() {
+                return Err("rust-fontconfig found no fonts".to_owned());
             }
-            self.ranked[slot] = Some(ranked);
+            self.chains[slot] = chain;
         }
-        Ok(self.ranked[slot].as_ref().expect("ranked fonts were just built"))
+        Ok(self.chains[slot])
     }
 
-    fn covers(&self, weight: Weight, candidate: usize, c: char) -> bool {
-        let ranked = self.ranked[weight_slot(weight)].as_ref().expect("ranked fonts are built before use");
-        // SAFETY: the charset is owned by the live font set and `c` is a valid code point.
-        unsafe { FcCharSetHasChar(ranked.candidates[candidate].charset, c as u32) != 0 }
+    fn font(&mut self, id: FcFontId) -> Result<usize, String> {
+        if let Some(font) = self.font_ids.get(&id) {
+            return Ok(*font);
+        }
+        // SAFETY: `cache` is live and `id` is a valid font id; the returned
+        // path is copied and released before the block ends.
+        let (path, index) = unsafe {
+            let found = fc_cache_get_font_path(self.cache, &id);
+            if found.is_null() {
+                return Err("rust-fontconfig returned a font without a file".to_owned());
+            }
+            let copied = (CStr::from_ptr((*found).path).to_owned(), (*found).font_index);
+            fc_font_path_free(found);
+            copied
+        };
+        let font = self.fonts.len();
+        self.fonts.push(Font { path, index });
+        self.font_ids.insert(id, font);
+        Ok(font)
     }
 
-    fn supports(&mut self, weight: Weight, candidate: usize, script: u32, size: f64) -> Result<bool, String> {
+    fn character_font(&mut self, weight: Weight, c: char) -> Result<Option<usize>, String> {
+        if c == '\0' {
+            return Ok(None);
+        }
+        let key = (weight_slot(weight), c);
+        if let Some(known) = self.character_fonts.get(&key) {
+            return Ok(*known);
+        }
+        let chain = self.chain(weight)?;
+        let mut buffer = [0u8; 5];
+        let text = CString::new(c.encode_utf8(&mut buffer).as_bytes()).expect("a character other than NUL has no NUL byte");
+        let mut count = 0;
+        // SAFETY: `chain` and `cache` are live and `text` is NUL-terminated.
+        // The runs array is read inside this block and released before it ends.
+        let id = unsafe {
+            let runs = fc_chain_query_for_text(chain, self.cache, text.as_ptr(), &mut count);
+            let id = if runs.is_null() || count == 0 || !(*runs).has_font { None } else { Some((*runs).font_id) };
+            fc_resolved_runs_free(runs, count);
+            id
+        };
+        let font = id.map(|id| self.font(id)).transpose()?;
+        self.character_fonts.insert(key, font);
+        Ok(font)
+    }
+
+    fn query_font(&mut self, chars: &[char]) -> Result<Option<usize>, String> {
+        let mut trace: *mut FcTraceMsg = ptr::null_mut();
+        let mut trace_count = 0;
+        // SAFETY: the pattern is created and freed here; `cache` is live; the
+        // trace out-pointers are valid locals and the trace and match are
+        // released before the block ends.
+        let id = unsafe {
+            let pattern = fc_pattern_new();
+            if pattern.is_null() {
+                return Err("rust-fontconfig could not create a pattern".to_owned());
+            }
+            for c in chars {
+                fc_pattern_add_unicode_range(pattern, *c as u32, *c as u32);
+            }
+            let found = fc_cache_query(self.cache, pattern, &mut trace, &mut trace_count);
+            fc_pattern_free(pattern);
+            fc_trace_free(trace, trace_count);
+            if found.is_null() {
+                None
+            } else {
+                let id = (*found).id;
+                fc_font_match_free(found);
+                Some(id)
+            }
+        };
+        id.map(|id| self.font(id)).transpose()
+    }
+
+    fn covers(&mut self, font: usize, c: char, size: f64) -> Result<bool, String> {
+        if default_ignorable(c) {
+            return Ok(true);
+        }
+        if let Some(known) = self.coverage.get(&(font, c)) {
+            return Ok(*known);
+        }
+        let id = self.face(font, size)?;
+        let mut glyph = 0;
+        // SAFETY: the HarfBuzz font is live and `glyph` is a valid out-pointer.
+        let covered = unsafe { hb_font_get_nominal_glyph(self.faces[id].hb_font, c as u32, &mut glyph) != 0 };
+        self.coverage.insert((font, c), covered);
+        Ok(covered)
+    }
+
+    fn covers_all(&mut self, font: usize, chars: &[char], size: f64) -> Result<bool, String> {
+        for c in chars {
+            if !self.covers(font, *c, size)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    fn supports(&mut self, font: usize, script: u32, size: f64) -> Result<bool, String> {
         if matches!(script, HB_SCRIPT_COMMON | HB_SCRIPT_INHERITED | HB_SCRIPT_UNKNOWN) {
             return Ok(true);
         }
-        let key = (weight_slot(weight), candidate, script);
+        let key = (font, script);
         if let Some(known) = self.script_support.get(&key) {
             return Ok(*known);
         }
-        let id = self.face(weight, candidate, size)?;
+        let id = self.face(font, size)?;
         let face = self.faces[id].hb_face;
         let mut tags = [0u32; 4];
         let mut count = tags.len() as c_uint;
@@ -527,40 +771,137 @@ impl Backend {
         Ok(supported)
     }
 
+    fn color_font_covering(&mut self, weight: Weight, chars: &[char], size: f64) -> Result<Option<usize>, String> {
+        for font in self.scan_order(weight)? {
+            let Ok(id) = self.face(font, size) else { continue };
+            // SAFETY: the FreeType face is live for as long as the backend holds it.
+            let color = unsafe { (*self.faces[id].ft).face_flags & FT_FACE_FLAG_COLOR != 0 };
+            if color && self.covers_all(font, chars, size).unwrap_or(false) {
+                return Ok(Some(font));
+            }
+        }
+        Ok(None)
+    }
+
+    fn scan_order(&mut self, weight: Weight) -> Result<Vec<usize>, String> {
+        let slot = weight_slot(weight);
+        if let Some(order) = &self.scan_order[slot] {
+            return Ok(order.clone());
+        }
+        let wanted: &[u8] = match weight {
+            Weight::Regular => b"Regular",
+            Weight::Bold => b"Bold",
+        };
+        let mut count = 0;
+        // SAFETY: `cache` is live; the font list and each metadata record are
+        // read and released inside this block, and the subfamily string is
+        // copied before its record is freed.
+        let listed: Vec<(FcFontId, String, bool)> = unsafe {
+            let list = fc_cache_list_fonts(self.cache, &mut count);
+            let mut listed = Vec::with_capacity(count);
+            for at in 0..count {
+                let info = &*list.add(at);
+                let name = if info.name.is_null() { String::new() } else { CStr::from_ptr(info.name).to_string_lossy().into_owned() };
+                let metadata = fc_cache_get_font_metadata(self.cache, &info.id);
+                let preferred = !metadata.is_null()
+                    && !(*metadata).font_subfamily.is_null()
+                    && CStr::from_ptr((*metadata).font_subfamily).to_bytes() == wanted;
+                if !metadata.is_null() {
+                    fc_font_metadata_free(metadata);
+                }
+                listed.push((info.id, name, preferred));
+            }
+            if !list.is_null() {
+                fc_font_info_free(list, count);
+            }
+            listed
+        };
+        let mut listed = listed;
+        listed.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| a.1.cmp(&b.1)));
+        let mut order = Vec::with_capacity(listed.len());
+        for (id, _, _) in listed {
+            order.push(self.font(id)?);
+        }
+        self.scan_order[slot] = Some(order.clone());
+        Ok(order)
+    }
+
     fn pick(
         &mut self,
         weight: Weight,
-        chars: &[char],
+        cluster: &str,
         script: u32,
         size: f64,
         exclude: Option<usize>,
     ) -> Result<Option<usize>, String> {
-        let ranked = self.ranked(weight)?;
-        let mut order: Vec<usize> = (0..ranked.candidates.len()).filter(|candidate| Some(*candidate) != exclude).collect();
-        if chars.iter().any(|c| *c as u32 >= PICTOGRAPH_START) {
-            let colored = |candidate: &usize| !ranked.candidates[*candidate].color;
-            order.sort_by_key(colored);
+        let key = (weight_slot(weight), script, cluster.to_owned(), exclude);
+        if let Some(known) = self.cluster_fonts.get(&key) {
+            return Ok(*known);
         }
+        let chars: Vec<char> = cluster.chars().collect();
+        let shaped: Vec<char> = chars.iter().copied().filter(|c| !default_ignorable(*c)).collect();
+        let mut candidates: Vec<usize> = Vec::new();
+        let mut add = |candidates: &mut Vec<usize>, font: Option<usize>| {
+            if let Some(font) = font.filter(|font| Some(*font) != exclude) {
+                if !candidates.contains(&font) {
+                    candidates.push(font);
+                }
+            }
+        };
+        if chars.contains(&EMOJI_PRESENTATION) {
+            let emoji = self.color_font_covering(weight, &chars, size)?;
+            add(&mut candidates, emoji);
+        }
+        for c in &shaped {
+            let font = self.character_font(weight, *c)?;
+            add(&mut candidates, font);
+        }
+        let whole = self.query_font(&shaped)?;
+        add(&mut candidates, whole);
+        let chain_candidates = candidates.len();
+
+        let mut chosen = None;
         let mut covering = None;
-        for candidate in order {
-            if chars.is_empty() || !chars.iter().all(|c| self.covers(weight, candidate, *c)) {
-                continue;
+        for font in candidates.clone() {
+            if self.covers_all(font, &chars, size)? {
+                covering.get_or_insert(font);
+                if self.supports(font, script, size)? {
+                    chosen = Some(font);
+                    break;
+                }
             }
-            if self.supports(weight, candidate, script, size)? {
-                return Ok(Some(candidate));
-            }
-            covering.get_or_insert(candidate);
         }
-        Ok(covering)
+        if chosen.is_none() {
+            for font in self.scan_order(weight)? {
+                if Some(font) == exclude || candidates[..chain_candidates].contains(&font) {
+                    continue;
+                }
+                if self.covers_all(font, &chars, size).unwrap_or(false) {
+                    covering.get_or_insert(font);
+                    if self.supports(font, script, size).unwrap_or(false) {
+                        chosen = Some(font);
+                        break;
+                    }
+                }
+            }
+        }
+        let chosen = chosen.or(covering).or_else(|| candidates.first().copied());
+        self.cluster_fonts.insert(key, chosen);
+        Ok(chosen)
     }
 
-    fn face(&mut self, weight: Weight, candidate: usize, size: f64) -> Result<usize, String> {
-        let key = (weight_slot(weight), candidate, size.to_bits());
+    fn primary(&mut self, weight: Weight, size: f64) -> Result<usize, String> {
+        let font = self.pick(weight, "A", HB_SCRIPT_COMMON, size, None)?;
+        font.ok_or_else(|| "rust-fontconfig found no font for basic Latin text".to_owned())
+    }
+
+    fn face(&mut self, font: usize, size: f64) -> Result<usize, String> {
+        let key = (font, size.to_bits());
         if let Some(id) = self.face_ids.get(&key) {
             return Ok(*id);
         }
         let (path, index) = {
-            let entry = &self.ranked(weight)?.candidates[candidate];
+            let entry = &self.fonts[font];
             (entry.path.clone(), entry.index)
         };
         let shown = path.to_string_lossy().into_owned();
@@ -690,9 +1031,9 @@ impl Backend {
         script: u32,
         weight: Weight,
         size: f64,
-        candidate: usize,
+        font: usize,
     ) -> Result<Vec<Glyph>, String> {
-        let face_id = self.face(weight, candidate, size)?;
+        let face_id = self.face(font, size)?;
         let mut glyphs = self.shape(text, range.clone(), level, script, face_id);
         let mut at = 0;
         while at < glyphs.len() {
@@ -712,12 +1053,11 @@ impl Backend {
                 .filter(|cluster| *cluster > last)
                 .min()
                 .unwrap_or(range.end);
-            let chars: Vec<char> = text[first..end].chars().filter(|c| !c.is_control()).collect();
-            let alternative = self.pick(weight, &chars, script, size, Some(candidate))?;
+            let alternative = self.pick(weight, &text[first..end], script, size, Some(font))?;
             let run_start = at;
             at = stop;
             if let Some(other) = alternative {
-                let other_face = self.face(weight, other, size)?;
+                let other_face = self.face(other, size)?;
                 let reshaped = self.shape(text, first..end, level, script, other_face);
                 if !reshaped.is_empty() && reshaped.iter().all(|glyph| glyph.id != 0) {
                     let count = reshaped.len();
@@ -732,16 +1072,24 @@ impl Backend {
     fn paragraph_units(&mut self, text: &str, weight: Weight, size: f64) -> Result<Vec<Unit>, String> {
         let info = BidiInfo::new(text, None);
         let scripts = resolve_scripts(text);
-        self.ranked(weight)?;
+        let primary = self.primary(weight, size)?;
         let mut units = Vec::new();
         let mut segment = 0;
         let characters: Vec<(usize, char)> = text.char_indices().collect();
+        let mut cluster_starts = vec![false; characters.len()];
+        let mut cluster = 0;
+        while cluster < characters.len() {
+            cluster_starts[cluster] = true;
+            cluster = cluster_end(&characters, cluster, characters.len());
+        }
         let mut item_start = 0;
         while item_start < characters.len() {
             let level = info.levels[characters[item_start].0];
             let script = scripts[item_start].1;
             let mut at = item_start + 1;
-            while at < characters.len() && info.levels[characters[at].0] == level && scripts[at].1 == script {
+            while at < characters.len()
+                && (!cluster_starts[at] || (info.levels[characters[at].0] == level && scripts[at].1 == script))
+            {
                 at += 1;
             }
             let level = level.number();
@@ -750,14 +1098,21 @@ impl Backend {
             let mut current: Option<usize> = None;
             let mut sub_start = item_begin;
             let mut subs: Vec<(Range<usize>, usize)> = Vec::new();
-            for &(byte, c) in &characters[item_start..at] {
-                let keep = current.is_some_and(|candidate| self.covers(weight, candidate, c));
-                if keep {
-                    continue;
+            let mut cursor = item_start;
+            while cursor < at {
+                let stop = cluster_end(&characters, cursor, at);
+                let byte = characters[cursor].0;
+                let cluster = &text[byte..characters.get(stop).map_or(text.len(), |(next, _)| *next)];
+                cursor = stop;
+                if let Some(held) = current.filter(|_| !cluster.contains(EMOJI_PRESENTATION)) {
+                    let chars: Vec<char> = cluster.chars().collect();
+                    if self.covers_all(held, &chars, size)? {
+                        continue;
+                    }
                 }
-                let Some(next) = self.pick(weight, &[c], script, size, None)? else {
+                let Some(next) = self.pick(weight, cluster, script, size, None)? else {
                     if current.is_none() {
-                        current = Some(0);
+                        current = Some(primary);
                     }
                     continue;
                 };
@@ -769,7 +1124,7 @@ impl Backend {
                 }
                 current = Some(next);
             }
-            subs.push((sub_start..item_end, current.unwrap_or(0)));
+            subs.push((sub_start..item_end, current.unwrap_or(primary)));
             for (range, candidate) in subs {
                 let glyphs = self.shape_with_fallback(text, range.clone(), level, script, weight, size, candidate)?;
                 units.extend(group_units(glyphs, range, level, segment));
@@ -885,8 +1240,8 @@ impl Backend {
     pub fn render(&mut self, block: &TextBlock, margin: u32) -> Result<Rendered, String> {
         let size = block.style.size;
         let weight = block.style.weight;
-        self.ranked(weight)?;
-        let primary = self.face(weight, 0, size)?;
+        let primary_font = self.primary(weight, size)?;
+        let primary = self.face(primary_font, size)?;
         let (primary_ascent, primary_descent, primary_leading) = {
             let face = &self.faces[primary];
             (face.ascent, face.descent, face.line_gap)

@@ -20,7 +20,7 @@ The local-only gate creates a hostile temporary `HOME` with `mpv.conf`, `input.c
 - `player-media`: FFmpeg demuxing for the allowlisted local containers, video decode through FFmpeg, and the embedded album-art decode path.
 - `player-audio`: Symphonia audio decode, channel mixing, resampling, the audio clock, and the CoreAudio and ALSA sinks.
 - `player-engine`: the session scheduler, packet and frame queues, seek and pause state machine, frame pacing, subtitle tracks, and the engine worker.
-- `player-overlay`: the overlay display list, rasterizer, and native text shaping (Core Text; Fontconfig, HarfBuzz, and FreeType).
+- `player-overlay`: the overlay display list, rasterizer, and native text shaping (Core Text; rust-fontconfig, HarfBuzz, and FreeType).
 - `player-backend`: the engine-facing backend and the subtitle, OSD, and OSC overlay layers.
 - `player-output`: libplacebo renderer over Vulkan or Metal (macOS), swapchain, overlays, and frame download.
 - `player-display`: Cocoa/Metal window bridge on macOS and Wayland window/input on Linux.

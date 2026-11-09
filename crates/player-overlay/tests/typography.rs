@@ -124,3 +124,64 @@ fn unassigned_code_points_count_as_missing() {
     let layout = layout("\u{10FFFD}", None);
     assert!(layout.missing_glyphs > 0);
 }
+
+fn colored_pixels(layout: &TextLayout) -> usize {
+    layout
+        .canvas
+        .rgba
+        .chunks_exact(4)
+        .filter(|pixel| pixel[3] > 200 && (pixel[0] != pixel[1] || pixel[1] != pixel[2]))
+        .count()
+}
+
+fn glyph_count(layout: &TextLayout) -> usize {
+    layout.lines.iter().flat_map(|line| &line.runs).map(|run| run.glyphs.len()).sum()
+}
+
+fn font_names(layout: &TextLayout) -> Vec<String> {
+    layout.lines.iter().flat_map(|line| line.runs.iter().map(|run| run.font.clone())).collect()
+}
+
+#[test]
+fn zwj_emoji_sequence_stays_one_cluster_in_one_font() {
+    let family = layout("👨\u{200D}👩\u{200D}👧", None);
+    assert_eq!(family.missing_glyphs, 0, "{:?}", family.lines);
+    assert_eq!(font_names(&family).len(), 1, "{:?}", font_names(&family));
+    assert_eq!(glyph_count(&family), 1, "the sequence ligates into one glyph");
+    assert!(inked(&family) > 50);
+}
+
+#[test]
+fn keycap_sequence_is_not_split_across_fonts() {
+    let keycap = layout("1\u{FE0F}\u{20E3}", None);
+    assert_eq!(keycap.missing_glyphs, 0, "{:?}", keycap.lines);
+    assert_eq!(font_names(&keycap).len(), 1, "{:?}", font_names(&keycap));
+    assert_eq!(glyph_count(&keycap), 1, "the keycap sequence ligates into one glyph in {:?}", font_names(&keycap));
+    assert!(colored_pixels(&keycap) > 50);
+}
+
+#[test]
+fn skin_tone_modifier_joins_its_base() {
+    let waving = layout("👋🏽", None);
+    assert_eq!(waving.missing_glyphs, 0, "{:?}", waving.lines);
+    assert_eq!(glyph_count(&waving), 1);
+    assert_eq!(font_names(&waving).len(), 1);
+}
+
+#[test]
+fn flag_pair_stays_one_cluster() {
+    let flag = layout("🇯🇵", None);
+    assert_eq!(flag.missing_glyphs, 0, "{:?}", flag.lines);
+    assert_eq!(glyph_count(&flag), 1);
+}
+
+#[test]
+fn combining_marks_on_a_fallback_base_stay_with_it() {
+    let thai = layout("ก\u{0E49}\u{0E34}", None);
+    assert_eq!(thai.missing_glyphs, 0, "{:?}", thai.lines);
+    assert_eq!(font_names(&thai).len(), 1, "{:?}", font_names(&thai));
+
+    let latin = layout("a\u{20DD}", None);
+    assert_eq!(latin.missing_glyphs, 0, "{:?}", latin.lines);
+    assert_eq!(font_names(&latin).len(), 1, "{:?}", font_names(&latin));
+}

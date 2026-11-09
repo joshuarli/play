@@ -33,8 +33,10 @@ FFmpeg runtime: $runtime
 
 Install it from ffmpeg-$runtime-x86_64-unknown-linux-musl-runtime.tar.gz
 and put player in a bin/ directory whose sibling lib/ holds that runtime's
-lib/ (the runtime's own bin/, or a prefix where lib links to it). player
-finds the libraries through RUNPATH \$ORIGIN/../lib; a symlink to player
+lib/ (the runtime's own bin/, or a prefix where lib links to it) that also
+holds librust_fontconfig.so.5.0.2, built from laputa-systems/rust-fontconfig
+tag v5.0.2-laputa.1 (on Laputa it is the system rust-fontconfig package).
+player finds the libraries through RUNPATH \$ORIGIN/../lib; a symlink to player
 elsewhere on PATH works.
 
 It needs a musl system (such as Alpine) with these packages, built against
@@ -44,7 +46,7 @@ $runtime_packages
 
 It also needs a Vulkan driver for your GPU (for example mesa-vulkan-intel,
 mesa-vulkan-ati, or mesa-vulkan-swrast), a Wayland compositor, and a
-fontconfig configuration with a font such as font-dejavu for subtitles and
+fontconfig configuration (/etc/fonts/fonts.conf) with a font such as font-dejavu for subtitles and
 the on-screen controller.
 The scheduler decodes video in software. --hwdec is accepted for compatibility
 and hwdec-current reports no. VA-API decode paths are compiled in but are not

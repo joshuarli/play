@@ -2,14 +2,14 @@
 set -uo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-PLAYER=${PLAYER:-$ROOT/dist/player}
+PLAYER=$(readlink -f "${PLAYER:-$ROOT/dist/player}")
 UNSTRIPPED=${UNSTRIPPED:-$ROOT/build-linux/mpv}
 TARGET=x86_64-unknown-linux-musl
 RUNTIME=${FFMPEG_PREFIX:-$ROOT/.work/deps/ffmpeg-runtime/$TARGET}
 ALLOWED_NEEDED=(
     libvulkan.so.1 libwayland-client.so.0
     libasound.so.2 libc.musl-x86_64.so.1 libz.so.1
-    libfontconfig.so.1 libharfbuzz.so.0 libfreetype.so.6
+    librust_fontconfig.so.5.0.2 libharfbuzz.so.0 libfreetype.so.6
 )
 FFMPEG_NEEDED_PATTERN='^lib(av[a-z]*|sw[a-z]*|postproc|dav1d)\.so'
 FFMPEG_SYMBOLS='^(av|avio|avformat|avcodec|avfilter|avutil|sws|swr|ff|dav1d)_'
@@ -45,7 +45,7 @@ PY
 )
 [ ${#ffmpeg_sonames[@]} -gt 0 ] || { printf 'error: no pinned FFmpeg runtime at %s\n' "$RUNTIME" >&2; exit 2; }
 run_env=()
-[ -n "$EXPECTED_RUNPATH" ] || run_env=(env "LD_LIBRARY_PATH=$RUNTIME/lib")
+[ -n "$EXPECTED_RUNPATH" ] || run_env=(env "LD_LIBRARY_PATH=$RUNTIME/lib:${RUST_FONTCONFIG_PREFIX:-$ROOT/.work/deps/rust-fontconfig/$TARGET}/lib")
 
 description=$(file -L "$PLAYER")
 case "$description" in
@@ -68,6 +68,8 @@ check "FFmpeg NEEDED is exactly the pinned runtime libraries" \
     "$([ "$linked_ffmpeg" = "$want_ffmpeg" ] && echo 1 || echo 0)" "have: $linked_ffmpeg want: $want_ffmpeg"
 
 retired=$(printf '%s\n' "${needed[@]}" | rg -i "$RETIRED_TEXT_STACK" || true)
+c_fontconfig=$(printf '%s\n' "${needed[@]}" | rg '^libfontconfig\.' || true)
+check "no C Fontconfig in NEEDED" "$([ -z "$c_fontconfig" ] && echo 1 || echo 0)" "$c_fontconfig"
 check "no retired text stack in NEEDED" "$([ -z "$retired" ] && echo 1 || echo 0)" "$retired"
 
 rpath=$(readelf -dW "$PLAYER" | rg '\(RPATH\)' || true)

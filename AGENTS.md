@@ -18,7 +18,7 @@ Player is a local-only media player built on a Rust playback engine, the pinned 
 ## Invariants
 
 - Linux is x86-64 musl only. glibc is explicitly out of scope; do not add a glibc build or fallback.
-- Subtitles are SubRip only, external `.srt` or embedded `subrip`. There is no ASS renderer, libass, FriBidi, or bundled font; text goes through Core Text on macOS and the system Fontconfig, HarfBuzz, and FreeType on Linux.
+- Subtitles are SubRip only, external `.srt` or embedded `subrip`. There is no ASS renderer, libass, FriBidi, or bundled font; text goes through Core Text on macOS and, on Linux, Laputa's shared rust-fontconfig library for font discovery and fallback with the system HarfBuzz and FreeType.
 - Local input only. Network schemes, TLS, and network protocols are not built. The classifier is `crates/player-core/src/input.rs`.
 - The player does not auto-load user config. There is no scripting: no interpreter, script host, or script API. The on-screen controller is native Rust in `crates/player-app/src/osc.rs`.
 - Rust owns the playback pipeline (demux, decode, scheduling, audio, video rendering, subtitles, OSD), startup configuration, playlist, command validation, playback state, local file I/O, the application surface, and the OSC. The only C in-tree code is the macOS window bridge; everything else is a pinned native dependency.

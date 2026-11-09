@@ -16,6 +16,7 @@ DIST="$ROOT/dist"
 }
 
 "$ROOT/scripts/fetch-ffmpeg-runtime.sh" "$RUST_TRIPLE"
+"$ROOT/scripts/build-rust-fontconfig-linux.sh"
 
 mkdir -p "$RUST_TARGET_DIR" "$ROOT/.work/tmp" "$BUILD_DIR" "$DIST"
 export CARGO_TARGET_DIR="$RUST_TARGET_DIR"

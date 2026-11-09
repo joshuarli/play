@@ -24,7 +24,7 @@ The build runs in Docker, in the pinned Alpine edge image (`docker/linux/Dockerf
 make linux
 ```
 
-`make linux` builds the static dependency prefix with `scripts/build-deps-linux.sh`, then `scripts/release-linux.sh` builds, audits, and writes `dist/player-x86_64-linux-musl.tar.gz` with a `.sha256` file. The tarball holds `player` and a `README` naming the FFmpeg runtime release and listing the musl runtime packages. `make install` builds the same, installs `player` and a copy of the runtime's libraries as `~/.local/opt/player/{bin/player,lib}`, and links `~/.local/bin/player` to it; set `PLAYER_HOME` or `BINDIR` to change them, and `make uninstall` removes both. Run a file with `player FILE`. The system needs a Vulkan driver, a Wayland compositor, ALSA, and fontconfig with a font; `docs/linux.md` covers the runtime set and the headless gates.
+`make linux` builds the static dependency prefix with `scripts/build-deps-linux.sh`, then `scripts/release-linux.sh` builds, audits, and writes `dist/player-x86_64-linux-musl.tar.gz` with a `.sha256` file. The tarball holds `player` and a `README` naming the FFmpeg runtime release and listing the musl runtime packages. `make install` builds the same, installs `player` and a copy of the runtime's libraries as `~/.local/opt/player/{bin/player,lib}`, and links `~/.local/bin/player` to it; set `PLAYER_HOME` or `BINDIR` to change them, and `make uninstall` removes both. Run a file with `player FILE`. The system needs a Vulkan driver, a Wayland compositor, ALSA, a fontconfig configuration with a font, and the `librust_fontconfig` library; `docs/linux.md` covers the runtime set and the headless gates.
 
 ## Release app
 

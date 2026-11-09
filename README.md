@@ -41,7 +41,7 @@ The window opens fullscreen; pass `--fs=no` or `--geometry=WxH` for a window. Th
 
 ## Requirements
 
-macOS 27 on Apple Silicon, or Linux x86-64 on musl (Alpine or similar) with a Vulkan driver, a Wayland compositor, ALSA, and fontconfig with a font.
+macOS 27 on Apple Silicon, or Linux x86-64 on musl (Alpine or similar) with a Vulkan driver, a Wayland compositor, ALSA, and a fontconfig configuration with a font, plus the `librust_fontconfig` library from `laputa-systems/rust-fontconfig`.
 
 ## Help
 

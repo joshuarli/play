@@ -65,7 +65,7 @@ scripts/fetch-ffmpeg-runtime.sh x86_64-unknown-linux-musl ../ffmpeg-build/dist/f
 - The search path is a symlink to the runtime's `lib/` inside `OUT_DIR`, because Cargo puts build-script search paths on the library path of `cargo test` and `cargo run` only inside the target directory. On macOS each crate that links `player-media` also adds an rpath to the runtime's `lib/` for development and test binaries; `scripts/bundle.py` deletes every absolute rpath from the app.
 - The build reruns when the pin, `FFMPEG_PREFIX`, `PLAYER_FFMPEG_RPATH`, or the runtime's manifest, `include/`, or `lib/` changes.
 
-Development and release trees use the installed layout. On Linux `scripts/install-layout.sh` writes `build-linux/bin/mpv` and `dist/bin/player`, a `build-linux/mpv` or `dist/player` link to them, and a `lib` link to the runtime's `lib/`. On macOS `scripts/bundle.py` writes `dist/lib` beside `dist/Player.app`.
+Development and release trees use the installed layout. On Linux `scripts/install-layout.sh` writes `build-linux/bin/mpv` and `dist/bin/player`, a `build-linux/mpv` or `dist/player` link to them, and a `lib/` directory of links to the runtime's libraries and `librust_fontconfig`. On macOS `scripts/bundle.py` writes `dist/lib` beside `dist/Player.app`.
 
 ## Gates
 

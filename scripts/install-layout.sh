@@ -34,9 +34,16 @@ else
 fi
 ln -sfn "bin/$name" "$prefix/$name"
 
-if [ -e "$prefix/lib" ] && [ ! -L "$prefix/lib" ]; then
-    printf 'error: %s/lib exists and is not the runtime link\n' "$prefix" >&2
+fontconfig_lib="${RUST_FONTCONFIG_PREFIX:-$ROOT/.work/deps/rust-fontconfig/$target}/lib"
+[ -f "$fontconfig_lib/librust_fontconfig.so" ] || {
+    printf 'error: no rust-fontconfig library at %s; run scripts/build-rust-fontconfig-linux.sh\n' "$fontconfig_lib" >&2
     exit 1
-fi
-relative=$(python3 -c 'import os, sys; print(os.path.relpath(sys.argv[1], sys.argv[2]))' "$runtime_lib" "$prefix")
-ln -sfn "$relative" "$prefix/lib"
+}
+
+rm -rf "$prefix/lib"
+mkdir -p "$prefix/lib"
+for source in "$runtime_lib"/* "$fontconfig_lib"/librust_fontconfig.so*; do
+    [ -e "$source" ] || continue
+    relative=$(python3 -c 'import os, sys; print(os.path.relpath(sys.argv[1], sys.argv[2]))' "$source" "$prefix/lib")
+    ln -sfn "$relative" "$prefix/lib/$(basename "$source")"
+done

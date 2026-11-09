@@ -30,7 +30,7 @@ install: linux
 	rm -rf "$(INSTALLED_HOME)"
 	mkdir -p "$(INSTALLED_HOME)/bin" "$(DESTDIR)$(BINDIR)"
 	install -m 755 dist/bin/player "$(INSTALLED_HOME)/bin/player"
-	cp -RP dist/lib/ "$(INSTALLED_HOME)/lib"
+	cp -RL dist/lib/ "$(INSTALLED_HOME)/lib"
 	ln -sfn "$(PLAYER_HOME)/bin/player" "$(INSTALLED_PLAYER)"
 	printf 'installed %s\n' "$(INSTALLED_PLAYER)"
 
@@ -67,4 +67,5 @@ release:
 
 linux:
 	scripts/linux-container.sh scripts/build-deps-linux.sh
+	scripts/linux-container.sh scripts/build-rust-fontconfig-linux.sh
 	scripts/linux-container.sh scripts/release-linux.sh
