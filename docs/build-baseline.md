@@ -28,12 +28,12 @@ A subsequent `kache stats` command unexpectedly started a daemon inside its disp
 
 | Workload | macOS arm64 | Linux x86-64 musl |
 | --- | --- | --- |
-| Clean dependency build | 50.49 s, one run with warm archives and the clean-prefix fix | Native target measurement unavailable |
-| Unchanged dependency build | 0.19 s median, five runs with the clean-prefix fix | Native target measurement unavailable |
-| Dependency recipe or patch edit | Reference failed on read-only bottle files; 52.99 s after the reinstall fix | Native target measurement unavailable |
-| Rust source edit | 5.58 s on accepted code, one run | Native target measurement unavailable |
-| Release build | 97.66 s on accepted code, one run with warm archives | Native target measurement unavailable |
-| CI cache restore | Logs denied with HTTP 403 | Logs denied with HTTP 403 |
+| Clean dependency build | 50.49 s, one run with warm archives and the clean-prefix fix | 49.11 s inside the emulated container, one run |
+| Unchanged dependency build | 0.19 s median, five runs with the clean-prefix fix | 0.14 s median inside the emulated container, five runs |
+| Dependency recipe or patch edit | Reference failed on read-only bottle files; 52.99 s after the reinstall fix | 48.58 s inside the emulated container, one run |
+| Rust source edit | 5.58 s on accepted code, one run | Unmeasured |
+| Release build | 97.66 s on accepted code, one run with warm archives | Emulated local release passed; timing unmeasured |
+| CI cache restore | Logs denied with HTTP 403 | Logs denied with HTTP 403; local restore simulation recorded |
 
 Each measurement needs wall time, child CPU time, exit status, steps executed, output validation, cache state, effective tools and host load. Preserve the isolated checkout and use the same `JOBS`, frontend, backend, cache state and host limits for both revisions. Use one controlled source edit and restore it after measurement. Capture provisioning separately from the build. Do not claim a speedup from a single cold run. The original revision's clean macOS dependency build failed; the runnable reference includes the clean-prefix repair, and the patch-edit retry also includes the bottle-reinstall repair. The accepted-code Rust and release observations are not original-revision baselines. Details and limitations are in [the benchmark report](build-benchmarks.md).
 
