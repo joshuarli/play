@@ -2,7 +2,7 @@
 
 ## Status
 
-Goal: make native dependency reuse correct and make everyday builds measurably faster without changing artifact contracts. Baseline revision: `1a31a38b04674cc022117138563a6f50eb1d664b`. Accepted slices: none. Red or parked: none assessed. Next: B0. Resume: execute B0 from this document; first run `git status --short --branch`.
+Goal: make native dependency reuse correct and make everyday builds measurably faster without changing artifact contracts. Baseline revision: `1a31a38b04674cc022117138563a6f50eb1d664b`. Accepted: B0 at `d96a1e1`; timing baselines deferred because the host was busy. C1 is in progress on `campaign/build-cache` at `.work/wt/build-cache`; its isolated prototype is not integrated and does not yet protect direct Cargo readers. Next: resolve and test reader pinning and real recipe integration. Resume: inspect both worktrees and the host gate before continuing C1.
 
 ## Charter
 
