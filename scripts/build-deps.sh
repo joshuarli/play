@@ -20,7 +20,8 @@ mkdir -p "$PREFIX" "$SRC" "$LOGS"
 # Player's own version into the dependency. Stop git's search at $SRC.
 export GIT_CEILING_DIRECTORIES="$SRC"
 
-INPUT_HASH=$(cat "$ROOT/scripts/build-deps.sh" "$ROOT/scripts/patches/libplacebo-metal.patch" |
+INPUT_HASH=$(cat "$ROOT/scripts/build-deps.sh" "$ROOT/scripts/patches/libplacebo-metal.patch" \
+    "$ROOT/native/spirv-cross/meson.build" "$ROOT/native/spirv-cross/gitversion.h.in" |
     shasum -a 256 | awk '{print $1}')
 
 MESON=${MESON:-$(command -v muon 2>/dev/null || command -v meson 2>/dev/null || printf meson)}

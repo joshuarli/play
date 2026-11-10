@@ -18,7 +18,12 @@ class MacosBuildDepsTest(unittest.TestCase):
     def test_reinstall_replaces_read_only_bottle_libraries(self):
         self.check_bottle_install(reinstall=True)
 
-    def check_bottle_install(self, reinstall):
+    def test_spirv_cross_recipe_changes_invalidate_dependencies(self):
+        for name in ("meson.build", "gitversion.h.in"):
+            with self.subTest(name=name):
+                self.check_bottle_install(reinstall=False, changed_recipe=name)
+
+    def check_bottle_install(self, reinstall, changed_recipe=None):
         scratch = ROOT / ".work/tmp"
         scratch.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=scratch, prefix="build-deps-test-") as directory:
@@ -28,6 +33,7 @@ class MacosBuildDepsTest(unittest.TestCase):
             (scripts / "patches").mkdir()
             shutil.copy2(ROOT / "scripts/build-deps.sh", scripts / "build-deps.sh")
             shutil.copy2(ROOT / "scripts/patches/libplacebo-metal.patch", scripts / "patches/libplacebo-metal.patch")
+            shutil.copytree(ROOT / "native/spirv-cross", root / "native/spirv-cross")
             archives = root / "archives"
             archives.mkdir()
             self.archive(archives / "headers.tar.gz", {
@@ -63,7 +69,7 @@ else:
 shutil.copyfile(os.path.join(os.environ['FIXTURE_ARCHIVES'], archive), out)
 """)
             self.executable(tools / "shasum", """#!/bin/sh
-if [ "$#" -eq 2 ]; then cat >/dev/null; fi
+if [ "$#" -eq 2 ]; then exec /usr/bin/python3 -c 'import hashlib, sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest(), " -")'; fi
 case "$3" in
   *Vulkan-Headers*) digest=4a078be12bef21cfebc09d878b77a63cff9d68f899254a0b00d0e37ef73e7f7e ;;
   *vulkan-loader*) digest=6d5ee00d4104774f3ae56e5e9441a59a6a6f5d800f937f4e926a8f9e01ed046f ;;
@@ -93,6 +99,18 @@ printf '%s  %s\\n' "$digest" "${3:--}"
             self.assertTrue((prefix / ".stamp-vulkan-loader").is_file())
             self.assertEqual((prefix / "lib/libshaderc_shared.1.dylib").read_bytes(), b"shaderc")
             self.assertTrue((prefix / ".stamp-shaderc").is_file())
+            if changed_recipe:
+                cross_stamp = prefix / ".stamp-spirv-cross"
+                cross_stamp.write_bytes((prefix / ".stamp-vulkan-loader").read_bytes())
+                recipe = root / "native/spirv-cross" / changed_recipe
+                recipe.write_bytes(recipe.read_bytes() + b"\n")
+                loader = prefix / "lib/libvulkan.1.dylib"
+                loader.write_bytes(b"old")
+                result = subprocess.run([str(scripts / "build-deps.sh")], env=environment,
+                                        capture_output=True, text=True)
+                self.assertIn("spirv-cross requested", result.stderr, result.stdout + result.stderr)
+                self.assertEqual(loader.read_bytes(), b"loader")
+                self.assertNotEqual(cross_stamp.read_bytes(), (prefix / ".stamp-vulkan-loader").read_bytes())
 
     @staticmethod
     def archive(path, entries):
