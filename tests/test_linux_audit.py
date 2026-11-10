@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 @unittest.skipUnless(sys.platform.startswith("linux"), "requires Linux shell tools")
 class LinuxAuditTest(unittest.TestCase):
-    def test_mold_got_slots_do_not_hide_statically_linked_ffmpeg(self):
+    def test_static_ffmpeg_audit_handles_got_slots_and_readelf_errors(self):
         scratch = ROOT / ".work/tmp"
         scratch.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=scratch, prefix="linux-audit-test-") as directory:
@@ -37,8 +37,8 @@ class LinuxAuditTest(unittest.TestCase):
             self.executable(tools / "file", "#!/bin/sh\nprintf 'ELF 64-bit x86-64 stripped\\n'\n")
             self.executable(tools / "readelf", '''#!/bin/sh
 case "$1" in
-  -SW) printf '%s\\n' '  [35] .got PROGBITS' ;;
-  -sW) printf '%b' "$AUDIT_FIXTURE_ELF_SYMBOLS" ;;
+  -SW) [ "${AUDIT_FIXTURE_FAIL:-}" = sections ] && exit 1; printf '%s\\n' '  [35] .got PROGBITS' ;;
+  -sW) [ "${AUDIT_FIXTURE_FAIL:-}" = symbols ] && exit 1; printf '%b' "$AUDIT_FIXTURE_ELF_SYMBOLS" ;;
   *) printf '%s\\n' ' 0x (NEEDED) Shared library: [libavcodec.so.61]' ' 0x (RUNPATH) Library runpath: [$ORIGIN/../lib]' ;;
 esac
 ''')
@@ -69,6 +69,13 @@ exit 0
             ):
                 environment["AUDIT_FIXTURE_SYMBOLS"] = got + symbol
                 environment["AUDIT_FIXTURE_ELF_SYMBOLS"] = got_elf + elf_symbol
+                rejected = subprocess.run([str(scripts / "audit-linux.sh")], env=environment,
+                                          capture_output=True, text=True)
+                self.assertNotEqual(rejected.returncode, 0, rejected.stdout + rejected.stderr)
+                self.assertIn("FAIL audit-linux: no FFmpeg linked statically", rejected.stdout)
+            environment["AUDIT_FIXTURE_ELF_SYMBOLS"] = got_elf
+            for failure in ("sections", "symbols"):
+                environment["AUDIT_FIXTURE_FAIL"] = failure
                 rejected = subprocess.run([str(scripts / "audit-linux.sh")], env=environment,
                                           capture_output=True, text=True)
                 self.assertNotEqual(rejected.returncode, 0, rejected.stdout + rejected.stderr)
