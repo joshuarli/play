@@ -7,6 +7,7 @@ import os
 import platform
 import plistlib
 import shutil
+import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -126,6 +127,12 @@ def main():
     for name, source in closure.items():
         shutil.copy2(source, FRAMEWORKS / name)
 
+    copied = [executable] + [FRAMEWORKS / name for name in closure]
+    modes = {path: stat.S_IMODE(path.stat().st_mode) for path in copied}
+    for path, mode in modes.items():
+        if not mode & stat.S_IWUSR:
+            path.chmod(mode | stat.S_IWUSR)
+
     subprocess.run(["strip", "-x", str(executable)], check=True)
     for name in closure:
         subprocess.run(["strip", "-x", str(FRAMEWORKS / name)], check=True)
@@ -138,6 +145,7 @@ def main():
         check=True,
     )
     thin.replace(moltenvk)
+    modes.pop(moltenvk, None)
     subprocess.run(["strip", "-x", str(moltenvk)], check=True)
     icd = json.loads(MOLTENVK_ICD.read_text())
     icd["ICD"]["library_path"] = "../../../Frameworks/libMoltenVK.dylib"
@@ -240,6 +248,8 @@ def main():
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
+    for path, mode in modes.items():
+        path.chmod(mode)
     subprocess.run(
         ["codesign", "--force", "--deep", "--sign", "-", str(APP)],
         check=True,
