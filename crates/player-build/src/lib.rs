@@ -39,5 +39,6 @@ pub fn emit_macos_prefix_rpath(owner: &str, manifest_dir: &Path) {
     let prefix = release_prefix(owner, manifest_dir);
     let lib = prefix.join("lib");
     println!("cargo:rerun-if-changed={}", prefix.join(".stamp-libplacebo").display());
+    println!("cargo:rerun-if-changed={}", manifest_dir.join("../../.work/deps/release/.stamp-libplacebo").display());
     println!("cargo:rustc-link-arg=-Wl,-rpath,{}", lib.display());
 }
