@@ -6,7 +6,7 @@ Reference revision: `1a31a38b04674cc022117138563a6f50eb1d664b`. The isolated che
 
 On 2026-11-10 the host was macOS arm64, Xcode 27.0, Apple clang 21.0.0, SDK `/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk`, Rust nightly 2026-09-15, Cargo 1.100.0-nightly and kache 1.0.0. The host has 10 logical CPUs. Cargo's user configuration sets `rustc-wrapper = "kache"`. The development profile disables Cargo incremental compilation. The dist profile uses fat LTO and one codegen unit.
 
-`perf-gate-ready` exited 75: another process was using roughly eight CPUs and load was above the gate. No time-based build measurements were run. The default native job count would be 10. Docker reports a Linux arm64 engine; x86-64 musl execution and its resource limits have not been qualified. Do not compare an emulated container to a native Linux runner.
+Initially `perf-gate-ready` exited 75: another process was using roughly eight CPUs and load was above the gate. The owner subsequently waived performance gates, and the macOS observations below were collected under contention. The default native job count would be 10; these measurements used a two-job backend. Docker reports a Linux arm64 engine, so x86-64 runs are emulated. Do not compare an emulated container to a native Linux runner.
 
 An untimed x86-64 musl container check on the arm64 host passed all eight `player-build` library tests with kache 1.0.0 and mold 2.39.1. The unmodified container image supplies neither tool: the kache release archive was checked against GitHub's published SHA-256 and mold and its libraries were fetched as Alpine packages into `.work/tmp/linux-host-tools`. The test executable's ELF `.comment` identifies mold. The added linker flag and libraries were confined to this test and are not a production build configuration. Reproduce after provisioning those tools with:
 
@@ -28,14 +28,14 @@ A subsequent `kache stats` command unexpectedly started a daemon inside its disp
 
 | Workload | macOS arm64 | Linux x86-64 musl |
 | --- | --- | --- |
-| Clean dependency build | Deferred: host busy | Deferred: host busy; target execution unverified |
-| Unchanged dependency build | Deferred: host busy | Deferred: host busy; target execution unverified |
-| Dependency recipe or patch edit | Deferred: host busy | Deferred: host busy; target execution unverified |
-| Rust source edit | Deferred: host busy | Deferred: host busy; target execution unverified |
-| Release build | Deferred: host busy | Deferred: host busy; target execution unverified |
+| Clean dependency build | 50.49 s, one run with warm archives and the clean-prefix fix | Native target measurement unavailable |
+| Unchanged dependency build | 0.19 s median, five runs with the clean-prefix fix | Native target measurement unavailable |
+| Dependency recipe or patch edit | Reference failed on read-only bottle files; 52.99 s after the reinstall fix | Native target measurement unavailable |
+| Rust source edit | 5.58 s on accepted code, one run | Native target measurement unavailable |
+| Release build | 97.66 s on accepted code, one run with warm archives | Native target measurement unavailable |
 | CI cache restore | Logs denied with HTTP 403 | Logs denied with HTTP 403 |
 
-Each deferred measurement needs wall time, child CPU time, exit status, steps executed, output validation, cache state and effective tools. Run `perf-gate-ready` immediately before the command and `perf-gate-ready -1` immediately after it. Discard a measurement if either fails. Preserve the isolated checkout and use the same `JOBS`, frontend, backend, cache state and host limits for both revisions. Use one controlled source edit and restore it after measurement. Capture provisioning separately from the build. Do not claim a speedup from a single cold run.
+Each measurement needs wall time, child CPU time, exit status, steps executed, output validation, cache state, effective tools and host load. Preserve the isolated checkout and use the same `JOBS`, frontend, backend, cache state and host limits for both revisions. Use one controlled source edit and restore it after measurement. Capture provisioning separately from the build. Do not claim a speedup from a single cold run. The original revision's clean macOS dependency build failed; the runnable reference includes the clean-prefix repair, and the patch-edit retry also includes the bottle-reinstall repair. The accepted-code Rust and release observations are not original-revision baselines. Details and limitations are in [the benchmark report](build-benchmarks.md).
 
 The reference entrypoints are `scripts/build-deps.sh`, `scripts/build.sh`, and `scripts/release.sh` on macOS; Linux uses `make linux` and `scripts/linux-container.sh` for individual steps. A clean dependency measurement starts with an empty prefix and source cache in the isolated checkout. A warm measurement repeats the identical entrypoint without clearing either. A native edit modifies the libplacebo patch on macOS or the libplacebo recipe on Linux; log every component rebuilt. A Rust edit changes one application source file and uses `scripts/build.sh` or `scripts/linux-container.sh scripts/build-linux.sh`. A full release uses `scripts/release.sh` or `make linux`. Record the initial cache contents, exact edit, compiler-cache statistics and command output alongside each result.
 
