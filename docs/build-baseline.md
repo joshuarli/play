@@ -1,6 +1,6 @@
 # Build baseline
 
-Reference revision: `1a31a38b04674cc022117138563a6f50eb1d664b`. The isolated checkout is `.work/wt/build-baseline`; it had no `.work/deps` directory when created. No existing prefix was cleared. This is an inventory, not a measured performance comparison.
+Reference revision: `1a31a38b04674cc022117138563a6f50eb1d664b`. The isolated checkout is `.work/wt/build-baseline`; it had no `.work/deps` directory when created. No existing prefix was cleared. This is an inventory, not a measured performance comparison. An untimed clean macOS reference run failed while copying the Vulkan loader because the prefix had no `lib` directory. The focused fixture `python3 -m unittest discover -s tests -p test_build_deps.py` reproduces the failure; `ead8703` fixes it. The original revision remains the performance reference, with this failure reported rather than omitted.
 
 ## Measurement availability
 
