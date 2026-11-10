@@ -137,7 +137,8 @@ else
 fi
 
 if [ -f "$UNSTRIPPED" ]; then
-    static_ffmpeg=$(nm --defined-only "$UNSTRIPPED" 2>/dev/null | awk '{print $NF}' | rg "$FFMPEG_SYMBOLS" | head -3 || true)
+    got_section=$(readelf -SW "$UNSTRIPPED" 2>/dev/null | sed -n 's/^[[:space:]]*\[[[:space:]]*\([0-9][0-9]*\)\][[:space:]]*\.got[[:space:]].*/\1/p')
+    static_ffmpeg=$(readelf -sW "$UNSTRIPPED" 2>/dev/null | awk -v got="$got_section" '$1 ~ /^[0-9]+:$/ && $7 != "UND" && !($4 == "OBJECT" && $5 == "LOCAL" && $7 == got && $8 ~ /\$got$/) {print $8}' | rg "$FFMPEG_SYMBOLS" | head -3 || true)
     check "no FFmpeg linked statically" "$([ -z "$static_ffmpeg" ] && echo 1 || echo 0)" "$static_ffmpeg"
 else
     check "no FFmpeg linked statically" 0 "missing $UNSTRIPPED"
