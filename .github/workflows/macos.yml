@@ -52,9 +52,8 @@ jobs:
         with:
           path: |
             .work/deps/release
-            .work/deps/ffmpeg-sdk
             target
-          key: player-macos-deps-${{ github.workspace }}-${{ hashFiles('scripts/build-deps.sh', 'ffmpeg-sdk.lock.json', 'scripts/fetch-ffmpeg-sdk.sh', 'Cargo.lock', 'rust-toolchain.toml') }}
+          key: player-macos-deps-${{ github.workspace }}-${{ hashFiles('scripts/build-deps.sh', 'scripts/patches/libplacebo-metal.patch', 'native/spirv-cross/**', 'ffmpeg-runtime.lock.json', 'scripts/fetch-ffmpeg-runtime.sh', 'Cargo.lock', 'rust-toolchain.toml') }}
           restore-keys: |
             player-macos-deps-${{ github.workspace }}-
 
