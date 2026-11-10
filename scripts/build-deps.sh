@@ -171,7 +171,7 @@ if ! have vulkan-loader; then
     tar -xzf "$SRC/$VL_BOTTLE" -C "$SRC/vulkan-loader-bottle"
     vl=$(printf '%s\n' "$SRC"/vulkan-loader-bottle/vulkan-loader/* | head -1)
     mkdir -p "$PREFIX/lib/pkgconfig"
-    cp "$vl"/lib/libvulkan*.dylib "$PREFIX/lib/"
+    cp -f "$vl"/lib/libvulkan*.dylib "$PREFIX/lib/"
     sed -e "s|@@HOMEBREW_CELLAR@@/vulkan-loader/$VULKAN_VERSION|$PREFIX|g" \
         -e "s|@@HOMEBREW_PREFIX@@|$PREFIX|g" \
         -e "s|\${prefix}/../../../opt/vulkan-headers/include|\${prefix}/include|g" \
@@ -197,7 +197,7 @@ if ! have shaderc; then
     sh=$(printf '%s\n' "$SRC"/shaderc-bottle/shaderc/* | head -1)
     mkdir -p "$PREFIX/include" "$PREFIX/lib/pkgconfig"
     cp -R "$sh/include/shaderc" "$PREFIX/include/"
-    cp "$sh"/lib/libshaderc* "$PREFIX/lib/"
+    cp -f "$sh"/lib/libshaderc* "$PREFIX/lib/"
     for pc in "$sh"/lib/pkgconfig/shaderc*.pc; do
         sed -e "s|@@HOMEBREW_CELLAR@@/shaderc/$SHADERC_VERSION|$PREFIX|g" \
             -e "s|@@HOMEBREW_PREFIX@@|$PREFIX|g" \
