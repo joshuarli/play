@@ -533,6 +533,7 @@ pub fn emit_macos_dev_rpath(owner: &str, manifest_dir: &Path) {
     println!("cargo:rerun-if-env-changed={PREFIX_ENV}");
     let target = std::env::var("TARGET").unwrap_or_else(|_| panic!("{owner}: cargo did not set TARGET"));
     let prefix = prefix(&manifest_dir.join("../.."), &target);
+    println!("cargo:rerun-if-changed={}", prefix.join(MANIFEST).display());
     let lib = prefix.join("lib").canonicalize().unwrap_or_else(|error| {
         panic!(
             "{owner}: no FFmpeg runtime at {} ({error}); run scripts/fetch-ffmpeg-runtime.sh {target}",

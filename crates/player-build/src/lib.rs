@@ -36,6 +36,8 @@ pub fn release_prefix(owner: &str, manifest_dir: &Path) -> std::path::PathBuf {
 }
 
 pub fn emit_macos_prefix_rpath(owner: &str, manifest_dir: &Path) {
-    let lib = release_prefix(owner, manifest_dir).join("lib");
+    let prefix = release_prefix(owner, manifest_dir);
+    let lib = prefix.join("lib");
+    println!("cargo:rerun-if-changed={}", prefix.join(".stamp-libplacebo").display());
     println!("cargo:rustc-link-arg=-Wl,-rpath,{}", lib.display());
 }
