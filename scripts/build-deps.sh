@@ -170,8 +170,8 @@ if ! have vulkan-loader; then
     mkdir -p "$SRC/vulkan-loader-bottle"
     tar -xzf "$SRC/$VL_BOTTLE" -C "$SRC/vulkan-loader-bottle"
     vl=$(printf '%s\n' "$SRC"/vulkan-loader-bottle/vulkan-loader/* | head -1)
-    cp "$vl"/lib/libvulkan*.dylib "$PREFIX/lib/"
     mkdir -p "$PREFIX/lib/pkgconfig"
+    cp "$vl"/lib/libvulkan*.dylib "$PREFIX/lib/"
     sed -e "s|@@HOMEBREW_CELLAR@@/vulkan-loader/$VULKAN_VERSION|$PREFIX|g" \
         -e "s|@@HOMEBREW_PREFIX@@|$PREFIX|g" \
         -e "s|\${prefix}/../../../opt/vulkan-headers/include|\${prefix}/include|g" \
