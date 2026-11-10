@@ -73,6 +73,8 @@ Clipboard support is removed. Encoding, recording, and the lavfi filter graph ar
 
 ## Development
 
+`nix develop` optionally provides pinned Muon, Meson, Samurai, Ninja, pkgconf, Python, and ripgrep on macOS arm64 and Linux x86-64. The macOS shell selects Apple Clang through the active Xcode tools. Install Rust and the fixture FFmpeg separately. macOS still needs Xcode and its SDK. Linux still needs Docker: Nix supplies host tools, and `make linux` builds in the pinned Alpine container. Nix is not required by the existing commands or the player.
+
 ```sh
 scripts/build.sh
 tests/run.sh suite
