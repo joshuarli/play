@@ -29,6 +29,28 @@ RUNTIME = Path(os.environ.get("FFMPEG_PREFIX") or ROOT / ".work/deps/ffmpeg-runt
 RUNTIME_LINK = ROOT / "dist/lib"
 
 
+def remove_generated_linux_runtime_links():
+    linux_target = "x86_64-unknown-linux-musl"
+    runtime = ROOT / ".work/deps/ffmpeg-runtime" / linux_target / "lib"
+    fontconfig = ROOT / ".work/deps/rust-fontconfig" / linux_target / "lib"
+    if not runtime.is_dir() or not fontconfig.is_dir():
+        return False
+    runtime_sources = [path for path in runtime.iterdir() if path.exists()]
+    fontconfig_sources = [path for path in fontconfig.glob("librust_fontconfig.so*") if path.exists()]
+    if not runtime_sources or not fontconfig_sources:
+        return False
+    expected = {path.name: os.path.relpath(path, RUNTIME_LINK) for path in runtime_sources + fontconfig_sources}
+    entries = list(RUNTIME_LINK.iterdir())
+    if {path.name for path in entries} != set(expected):
+        return False
+    if any(not path.is_symlink() or os.readlink(path) != expected[path.name] for path in entries):
+        return False
+    for path in entries:
+        path.unlink()
+    RUNTIME_LINK.rmdir()
+    return True
+
+
 def runtime_install_names():
     manifest = json.loads((RUNTIME / "share/ffmpeg-build/manifest.json").read_text())
     return {manifest["libraries"][name]["install_name"] for name in PIN["libraries"]}
@@ -259,7 +281,7 @@ def main():
 
     if RUNTIME_LINK.is_symlink():
         RUNTIME_LINK.unlink()
-    elif RUNTIME_LINK.exists():
+    elif RUNTIME_LINK.exists() and not (RUNTIME_LINK.is_dir() and remove_generated_linux_runtime_links()):
         raise SystemExit(f"{RUNTIME_LINK} exists and is not the runtime link")
     RUNTIME_LINK.symlink_to(os.path.relpath(RUNTIME / "lib", RUNTIME_LINK.parent))
 

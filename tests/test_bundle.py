@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class BundleTest(unittest.TestCase):
-    def test_read_only_dependency_is_writable_in_bundle(self):
+    def test_bundle_preserves_dependencies_and_replaces_generated_linux_layout(self):
         scratch = ROOT / ".work/tmp"
         scratch.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=scratch, prefix="bundle-test-") as directory:
@@ -60,6 +60,16 @@ shutil.copyfile(sys.argv[3], sys.argv[5])
             manifest = root / ".work/deps/ffmpeg-runtime/aarch64-apple-darwin/share/ffmpeg-build/manifest.json"
             manifest.parent.mkdir(parents=True)
             manifest.write_text(json.dumps({"libraries": {}}))
+            linux_runtime = root / ".work/deps/ffmpeg-runtime/x86_64-unknown-linux-musl/lib"
+            linux_runtime.mkdir(parents=True)
+            (linux_runtime / "libavcodec.so.63").write_bytes(b"linux ffmpeg")
+            linux_fontconfig = root / ".work/deps/rust-fontconfig/x86_64-unknown-linux-musl/lib"
+            linux_fontconfig.mkdir(parents=True)
+            (linux_fontconfig / "librust_fontconfig.so.5.0.2").write_bytes(b"linux fontconfig")
+            linux_lib = root / "dist/lib"
+            linux_lib.mkdir(parents=True)
+            for source in (linux_runtime / "libavcodec.so.63", linux_fontconfig / "librust_fontconfig.so.5.0.2"):
+                (linux_lib / source.name).symlink_to(os.path.relpath(source, linux_lib))
             environment = dict(os.environ, PATH=str(tools) + os.pathsep + os.environ["PATH"])
             environment.pop("FFMPEG_PREFIX", None)
             result = subprocess.run(["python3", str(ROOT / "scripts/bundle.py"), str(root)],
@@ -70,6 +80,28 @@ shutil.copyfile(sys.argv[3], sys.argv[5])
             self.assertEqual(bundled.stat().st_mode & 0o777, 0o444)
             self.assertEqual(library.read_bytes(), b"vulkan")
             self.assertEqual(library.stat().st_mode & 0o777, 0o444)
+            self.assertTrue(linux_lib.is_symlink())
+            self.assertEqual((linux_runtime / "libavcodec.so.63").read_bytes(), b"linux ffmpeg")
+            self.assertEqual((linux_fontconfig / "librust_fontconfig.so.5.0.2").read_bytes(), b"linux fontconfig")
+            linux_lib.unlink()
+            linux_lib.mkdir()
+            unrelated = linux_lib / "unrelated"
+            unrelated.write_text("keep")
+            result = subprocess.run(["python3", str(ROOT / "scripts/bundle.py"), str(root)],
+                                    env=environment, capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(unrelated.read_text(), "keep")
+            unrelated.unlink()
+            for source in (linux_runtime / "libavcodec.so.63", linux_fontconfig / "librust_fontconfig.so.5.0.2"):
+                (linux_lib / source.name).symlink_to(os.path.relpath(source, linux_lib))
+            extra = linux_lib / "unrelated-link"
+            extra.symlink_to(library)
+            result = subprocess.run(["python3", str(ROOT / "scripts/bundle.py"), str(root)],
+                                    env=environment, capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertTrue(extra.is_symlink())
+            self.assertTrue((linux_lib / "libavcodec.so.63").is_symlink())
+            self.assertEqual(library.read_bytes(), b"vulkan")
 
     @staticmethod
     def executable(path, contents):
