@@ -42,7 +42,7 @@ For parity, compare the reference and candidate entrypoints on the same corpus: 
 
 ## Needs environment
 
-Run the actual macOS arm64 chain `scripts/build-deps.sh`, `scripts/build.sh`, `scripts/release.sh`, `scripts/audit.sh`, and `tests/run.sh suite` on a qualified Xcode host. Run `make linux`, `scripts/linux-container.sh scripts/audit-linux.sh`, and `scripts/linux-container.sh tests/run.sh suite` on a functioning x86-64 musl container host. Run visual/audio owner checks from `docs/manual-checklist.md` where required. Capture GitHub Actions restore timing only when an authorized run and its logs are accessible; do not trigger a push or production release. Record missing host, tool, credentials, or busy perf gate with the exact unrun command. Environment-dependent proof does not prevent closing local slices, but must not be represented as full platform validation or a passing performance gate.
+Run the actual macOS arm64 chain `scripts/build-deps.sh`, `scripts/build.sh`, `scripts/release.sh`, `scripts/audit.sh`, and `tests/run.sh suite` on a qualified Xcode host. Run `make linux`, `scripts/linux-container.sh scripts/audit-linux.sh`, and `scripts/linux-container.sh tests/run.sh suite` on a functioning x86-64 musl container host. Run visual/audio owner checks from `docs/manual-checklist.md` where required. Capture GitHub Actions restore timing only when an authorized run and its logs are accessible; do not trigger a push or production release. Record missing hosts, tools or credentials and material measurement limitations. Environment-dependent proof does not prevent closing local slices, but must not be represented as full platform validation or a passing performance gate.
 
 ## Reference and boundaries
 
