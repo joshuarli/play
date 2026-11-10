@@ -8,6 +8,24 @@ On 2026-11-10 the host was macOS arm64, Xcode 27.0, Apple clang 21.0.0, SDK `/Li
 
 `perf-gate-ready` exited 75: another process was using roughly eight CPUs and load was above the gate. No time-based build measurements were run. The default native job count would be 10. Docker reports a Linux arm64 engine; x86-64 musl execution and its resource limits have not been qualified. Do not compare an emulated container to a native Linux runner.
 
+An untimed x86-64 musl container check on the arm64 host passed all eight `player-build` library tests with kache 1.0.0 and mold 2.39.1. The unmodified container image supplies neither tool: the kache release archive was checked against GitHub's published SHA-256 and mold and its libraries were fetched as Alpine packages into `.work/tmp/linux-host-tools`. The test executable's ELF `.comment` identifies mold. The added linker flag and libraries were confined to this test and are not a production build configuration. Reproduce after provisioning those tools with:
+
+```sh
+scripts/linux-container.sh env \
+  PATH=/work/.work/tmp/linux-host-tools/bin:/opt/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+  LD_LIBRARY_PATH=/work/.work/tmp/linux-host-tools/root/usr/lib \
+  RUSTC_WRAPPER=/work/.work/tmp/linux-host-tools/kache \
+  KACHE_CACHE_DIR=/work/.work/tmp/linux-host-tools/cache \
+  KACHE_RUNTIME_DIR=/work/.work/tmp/linux-host-tools/runtime \
+  KACHE_LOCAL_ONLY=1 KACHE_SCHEDULER=0 KACHE_AUTO_GC=0 \
+  KACHE_DEFERRED_DURABILITY=0 KACHE_DAEMON_PUBLISH=0 \
+  CARGO_BUILD_JOBS=2 CARGO_TARGET_DIR=/work/.work/tmp/linux-host-tools/target \
+  TMPDIR=/work/.work/tmp RUSTFLAGS='-C link-arg=-B/work/.work/tmp/linux-host-tools/bin' \
+  cargo test --locked -p player-build --lib --target x86_64-unknown-linux-musl
+```
+
+A subsequent `kache stats` command unexpectedly started a daemon inside its disposable container; the container exited and the daemon stopped. Do not use that command for this campaign. This unit test does not validate the Linux player, its native dependency closure, or release acceptance.
+
 | Workload | macOS arm64 | Linux x86-64 musl |
 | --- | --- | --- |
 | Clean dependency build | Deferred: host busy | Deferred: host busy; target execution unverified |
