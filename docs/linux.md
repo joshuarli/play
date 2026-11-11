@@ -22,6 +22,8 @@ The helper rejects symlinks at `.work`, `.work/tmp`, `.work/tmp/rust-fontconfig`
 
 The helper validates its installed library, header, pkg-config file and symlink before reuse. Its current reuse identity does not yet cover the full compiler and toolchain. Conflicting unowned rust-fontconfig files cause it to stop without modifying them; relocate those files before rebuilding. A legacy cache with the previous helper's stamp at the default prefix is rebuilt automatically. Existing unmarked products or `.input` at a custom prefix must be moved before the helper can manage that prefix.
 
+On an installed-cache miss, the helper cleans the workspace's release artifacts for the musl target before rebuilding. This prevents an altered Cargo output from being republished as a valid library; an unchanged installed-cache hit does not run Cargo.
+
 The generated pkg-config metadata requires a prefix without whitespace, backslashes, colons, quotes, `#` or `${`. The helper rejects those paths before writing. Cargo builds also reject non-UTF-8 link flags instead of changing their path bytes.
 
 When `CARGO_ENCODED_RUSTFLAGS` is set, the Linux build scripts preserve those flags and append the required musl and linker flags to the encoded list. The rust-fontconfig cache identity includes that effective list.

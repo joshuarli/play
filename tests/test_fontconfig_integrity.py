@@ -39,6 +39,7 @@ class FontconfigIntegrityTest(unittest.TestCase):
         cargo = tools / "cargo"
         cargo.write_text('''#!/bin/sh
 set -eu
+[ "$1" != clean ] || exit 0
 printf 'build\\n' >> "$TEST_RECORD"
 printf '%s' "${CARGO_ENCODED_RUSTFLAGS-}" > "$TEST_FLAGS"
 [ "${TEST_FAIL:-}" != 1 ] || exit 37
@@ -189,6 +190,50 @@ exec "$TEST_FLOCK" "$@"
         result = self.build(TEST_FAIL="1")
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse((self.prefix / ".input").exists())
+
+    def test_rebuild_does_not_republish_a_corrupted_cargo_product(self):
+        cargo = self.root / "tools/cargo"
+        cargo.write_text('''#!/bin/sh
+set -eu
+product="$CARGO_TARGET_DIR/x86_64-unknown-linux-musl/release/librust_fontconfig.so"
+if [ "$1" = clean ]; then
+    rm -f "$product"
+    exit 0
+fi
+printf 'build\\n' >> "$TEST_RECORD"
+mkdir -p "$(dirname "$product")"
+if [ ! -e "$product" ]; then printf library > "$product"; fi
+''')
+        self.assertEqual(self.build().returncode, 0)
+        target = self.root / ".work/tmp/rust-fontconfig/target/x86_64-unknown-linux-musl/release/librust_fontconfig.so"
+        target.write_text("corrupt cargo output")
+        installed = self.prefix / "lib/librust_fontconfig.so.5.0.2"
+        installed.write_text("corrupt installed output")
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(installed.read_text(), "library")
+
+    def test_real_cargo_repairs_a_corrupted_product_on_a_rebuild(self):
+        kache = shutil.which("kache")
+        if not kache:
+            self.skipTest("requires kache")
+        (self.source / "src").mkdir()
+        (self.source / "Cargo.toml").write_text('[package]\nname="rust-fontconfig"\nversion="5.0.2"\nedition="2024"\n[features]\nffi=[]\n')
+        (self.source / "src/lib.rs").write_text('#[unsafe(no_mangle)]\npub extern "C" fn fontconfig_probe() -> u32 { 42 }\n')
+        (self.root / "docker/linux/rust-fontconfig.Cargo.lock").write_text('version = 4\n\n[[package]]\nname = "rust-fontconfig"\nversion = "5.0.2"\n')
+        environment = dict(self.env, PATH=os.environ["PATH"], RUSTC_WRAPPER=kache,
+                           KACHE_CACHE_DIR=str(self.root / "kache-cache"), KACHE_DAEMON_AUTOSTART="0")
+        command = [str(self.root / "scripts/build-rust-fontconfig-linux.sh")]
+        first = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=120)
+        self.assertEqual(first.returncode, 0, first.stderr)
+        target = self.root / ".work/tmp/rust-fontconfig/target/x86_64-unknown-linux-musl/release/librust_fontconfig.so"
+        installed = self.prefix / "lib/librust_fontconfig.so.5.0.2"
+        self.assertEqual(installed.read_bytes()[:4], b"\x7fELF")
+        target.write_bytes(b"corrupt cargo output")
+        installed.write_bytes(b"corrupt installed output")
+        repaired = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=120)
+        self.assertEqual(repaired.returncode, 0, repaired.stderr)
+        self.assertEqual(installed.read_bytes()[:4], b"\x7fELF")
 
     def test_encoded_flags_keep_required_policy_and_invalidate_reuse(self):
         first = "-C\x1fdebuginfo=1"

@@ -71,6 +71,7 @@ class FontconfigWritersTest(unittest.TestCase):
             cargo = tools / "cargo"
             cargo.write_text('''#!/bin/sh
 set -eu
+[ "$1" != clean ] || exit 0
 printf ready > "$TEST_READY"
 read answer < "$TEST_RELEASE"
 mkdir -p "$CARGO_TARGET_DIR/x86_64-unknown-linux-musl/release"

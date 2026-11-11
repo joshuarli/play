@@ -109,6 +109,10 @@ printf '\n[workspace]\n' >>"$tree/Cargo.toml"
 export CARGO_TARGET_DIR="$SRC/target"
 (
     cd "$tree"
+    cargo clean --locked --workspace --release --target x86_64-unknown-linux-musl \
+        --config 'profile.release.lto="fat"' \
+        --config 'profile.release.opt-level="s"' \
+        --config 'profile.release.codegen-units=1'
     cargo rustc --locked --release --lib --crate-type cdylib \
         --target x86_64-unknown-linux-musl \
         --no-default-features --features ffi \
