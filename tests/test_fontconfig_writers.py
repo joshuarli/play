@@ -50,6 +50,7 @@ class FontconfigWritersTest(unittest.TestCase):
                 (checkout / "scripts").mkdir(parents=True)
                 (checkout / "docker/linux").mkdir(parents=True)
                 shutil.copy2(ROOT / "scripts/build-rust-fontconfig-linux.sh", checkout / "scripts/build-rust-fontconfig-linux.sh")
+                shutil.copy2(ROOT / "scripts/rust_fontconfig_install.py", checkout / "scripts/rust_fontconfig_install.py")
                 shutil.copy2(ROOT / "docker/linux/rust-fontconfig.Cargo.lock", checkout / "docker/linux/rust-fontconfig.Cargo.lock")
             sources = {name: root / (name + "-source") if separate_checkouts else root / "source"
                        for name in ("first", "second")}

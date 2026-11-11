@@ -7,9 +7,13 @@ TAG=v5.0.2-laputa.2
 SHA256=f8ae910d451336d2241821af5748abcbf547559fd083b73eefd097eb7558f593
 URL="https://github.com/laputa-systems/rust-fontconfig/archive/refs/tags/$TAG.tar.gz"
 LOCK="$ROOT/docker/linux/rust-fontconfig.Cargo.lock"
-PREFIX="${RUST_FONTCONFIG_PREFIX:-$ROOT/.work/deps/rust-fontconfig/x86_64-unknown-linux-musl}"
+DEFAULT_PREFIX="$ROOT/.work/deps/rust-fontconfig/x86_64-unknown-linux-musl"
+PREFIX="${RUST_FONTCONFIG_PREFIX:-$DEFAULT_PREFIX}"
+ALLOW_LEGACY_DEFAULT=0
+if [ -z "${RUST_FONTCONFIG_PREFIX:-}" ]; then ALLOW_LEGACY_DEFAULT=1; fi
 SRC="$ROOT/.work/tmp/rust-fontconfig"
 SONAME="librust_fontconfig.so.$VERSION"
+INSTALL="$ROOT/scripts/rust_fontconfig_install.py"
 export TMPDIR="$ROOT/.work/tmp"
 
 case "$(uname -sm)/$(ldd --version 2>&1)" in
@@ -20,7 +24,8 @@ case "$(uname -sm)/$(ldd --version 2>&1)" in
         ;;
 esac
 
-mkdir -p "$SRC" "$PREFIX"
+python3 "$INSTALL" check-prefix "$PREFIX" "$ALLOW_LEGACY_DEFAULT"
+mkdir -p -- "$SRC" "$PREFIX"
 exec {prefix_lock}<"$PREFIX"
 exec {source_lock}<"$SRC"
 prefix_id=$(stat -Lc '%d:%i' "/proc/$$/fd/$prefix_lock")
@@ -37,19 +42,24 @@ else
     flock -x "$prefix_lock"
 fi
 
+if ! python3 "$INSTALL" "$prefix_lock" prepare "$SONAME" "$DEFAULT_PREFIX" "$ALLOW_LEGACY_DEFAULT"; then
+    python3 "$INSTALL" "$prefix_lock" invalidate
+    exit 1
+fi
+
 LOCAL="${RUST_FONTCONFIG_SOURCE:-}"
 if [ -n "$LOCAL" ]; then
     source_digest=$(tar -c -C "$LOCAL" --sort=name --exclude=./target --exclude=./.git --exclude=./.work . | sha256sum | awk '{print $1}')
 else
     source_digest=$SHA256
 fi
-input=$(cat "$0" "$LOCK" | cat - <(printf '%s' "$source_digest") | sha256sum | awk '{print $1}')
-if [ -f "$PREFIX/lib/$SONAME" ] && [ "$(cat "$PREFIX/.input" 2>/dev/null)" = "$input" ]; then
+input=$(cat "$0" "$INSTALL" "$LOCK" | cat - <(printf '%s\0%s\0' "$source_digest" "$PREFIX") | sha256sum | awk '{print $1}')
+if python3 "$INSTALL" "$prefix_lock" validate "$input" "$SONAME"; then
     printf 'rust-fontconfig %s already in %s\n' "$TAG" "$PREFIX"
     exit 0
 fi
 
-mkdir -p "$SRC" "$PREFIX/lib/pkgconfig" "$PREFIX/include/rust-fontconfig"
+python3 "$INSTALL" "$prefix_lock" invalidate
 archive="$SRC/$TAG.tar.gz"
 if [ -n "$LOCAL" ]; then
     :
@@ -84,19 +94,7 @@ export RUSTFLAGS="-C target-feature=-crt-static -C link-arg=-static-libgcc -C li
         --config 'profile.release.codegen-units=1'
 )
 
-install -m 755 "$CARGO_TARGET_DIR/x86_64-unknown-linux-musl/release/librust_fontconfig.so" "$PREFIX/lib/$SONAME"
-ln -sfn "$SONAME" "$PREFIX/lib/librust_fontconfig.so"
-install -m 644 "$tree/ffi/rust_fontconfig.h" "$PREFIX/include/rust-fontconfig/rust_fontconfig.h"
-cat >"$PREFIX/lib/pkgconfig/rust-fontconfig.pc" <<PC
-prefix=$PREFIX
-libdir=\${prefix}/lib
-includedir=\${prefix}/include/rust-fontconfig
-
-Name: rust-fontconfig
-Description: Pure-Rust font discovery, matching, and fallback with a C API
-Version: $VERSION
-Libs: -L\${libdir} -lrust_fontconfig
-Cflags: -I\${includedir}
-PC
-printf '%s\n' "$input" >"$PREFIX/.input"
+python3 "$INSTALL" "$prefix_lock" publish "$input" "$SONAME" \
+    "$CARGO_TARGET_DIR/x86_64-unknown-linux-musl/release/librust_fontconfig.so" \
+    "$tree/ffi/rust_fontconfig.h" "$PREFIX" "$VERSION"
 printf 'rust-fontconfig %s in %s\n' "$TAG" "$PREFIX"

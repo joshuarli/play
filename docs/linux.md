@@ -18,6 +18,10 @@ The build sets `-C target-feature=-crt-static`. A static-pie executable with Way
 
 Concurrent rust-fontconfig helper runs serialize on their installation prefix and on the checkout's `.work/tmp/rust-fontconfig` source directory. This covers separate checkouts that share a prefix. Concurrent Cargo readers are not covered by these locks.
 
+The helper validates its installed library, header, pkg-config file and symlink before reuse. Its current reuse identity does not yet cover the full compiler and toolchain. Conflicting unowned rust-fontconfig files cause it to stop without modifying them; relocate those files before rebuilding. A legacy cache with the previous helper's stamp at the default prefix is rebuilt automatically. Existing unmarked products or `.input` at a custom prefix must be moved before the helper can manage that prefix.
+
+The generated pkg-config metadata requires a prefix without whitespace, backslashes, colons, quotes, `#` or `${`. The helper rejects those paths before writing.
+
 Besides the four FFmpeg runtime libraries (`libavformat`, `libavcodec`, `libswscale`, `libavutil`, by the SONAMEs in the runtime manifest), the executable links only these shared libraries from the Alpine image:
 
 | Library | Alpine package |
