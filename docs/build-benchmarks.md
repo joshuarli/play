@@ -60,6 +60,8 @@ The [sccache architecture](https://github.com/mozilla/sccache/blob/main/docs/Arc
 
 ## Development shell
 
+The shell was removed from main when the campaign closed; the flake remains on `campaign/nix-shell`.
+
 The optional flake locks nixpkgs at the revision in `flake.lock`. Muon is 0.7.0, Meson 1.12.1, Samurai 1.3, Ninja 1.13.2, and pkgconf 3.0.10. The pkgconf source has the existing project's version and an ISC license. The Linux x86-64 pkgconf executable was 58,456 bytes and its Nix wrapper was 860 bytes in the test environment. These tools are development inputs and add no runtime dependency to the player.
 
 Nix 2.35.4 evaluated both shell definitions with `nix flake check --no-build --all-systems`. The x86-64 Linux shell ran under emulation in a disposable Linux container. Its `pkg-config` resolved a controlled `.pc` file, and `make -n linux` expanded identically inside and outside the shell. The shell did not expose a C compiler in that container. The Linux player build remains in the existing Alpine container.
