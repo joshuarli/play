@@ -224,23 +224,7 @@ def executable_identity(tree, executable):
     return None
 
 
-def linker_identity(tree):
-    name = "CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER"
-    linker = os.environ.get(name)
-    arguments = os.environ.get("CARGO_ENCODED_RUSTFLAGS", "").split("\x1f")
-    for index, argument in enumerate(arguments):
-        if argument == "-C" and index + 1 < len(arguments) and arguments[index + 1].startswith("linker="):
-            linker = arguments[index + 1][len("linker="):]
-        elif argument.startswith("-Clinker="):
-            linker = argument[len("-Clinker="):]
-    return executable_identity(tree, linker)
-
-
-def configured_rustc(tree):
-    if "RUSTC" in os.environ:
-        return os.environ["RUSTC"]
-    if "CARGO_BUILD_RUSTC" in os.environ:
-        return os.environ["CARGO_BUILD_RUSTC"]
+def cargo_configuration(tree):
     environment = dict(os.environ, RUSTC_BOOTSTRAP="1", KACHE_DAEMON_AUTOSTART="0")
     try:
         result = subprocess.run(["cargo", "-Z", "unstable-options", "config", "get", "--format", "json"],
@@ -248,30 +232,87 @@ def configured_rustc(tree):
         if result.returncode:
             return None
         configuration = json.loads(result.stdout)
-        build = configuration.get("build", {})
-        selected = build.get("rustc", "rustc")
-        if not isinstance(selected, str):
-            return None
-        if os.sep in selected and not os.path.isabs(selected):
-            origin = subprocess.run(["cargo", "-Z", "unstable-options", "config", "get", "build.rustc", "--show-origin"],
-                                    cwd=tree, env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            if origin.returncode:
-                return None
-            match = re.fullmatch(r'build\.rustc\s*=\s*("(?:[^"\\]|\\.)*")\s+# ([^\n]+)\n', origin.stdout.decode("utf-8"))
-            if match is None or tomllib.loads("rustc = " + match[1])["rustc"] != selected:
-                return None
-            config_path = match[2]
-            if not os.path.isabs(config_path):
-                return None
-            selected = os.path.normpath(os.path.join(os.path.dirname(os.path.dirname(config_path)), selected))
-        return selected
-    except (OSError, ValueError, AttributeError, TypeError, KeyError):
+        return configuration if isinstance(configuration, dict) else None
+    except (OSError, ValueError):
         return None
 
 
+def configured_program(tree, key, selected):
+    if not isinstance(selected, str):
+        return None
+    if os.sep not in selected or os.path.isabs(selected):
+        return selected
+    environment = dict(os.environ, RUSTC_BOOTSTRAP="1", KACHE_DAEMON_AUTOSTART="0")
+    try:
+        origin = subprocess.run(["cargo", "-Z", "unstable-options", "config", "get", key, "--show-origin"],
+                                cwd=tree, env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if origin.returncode:
+            return None
+        pattern = re.escape(key) + r'\s*=\s*("(?:[^"\\]|\\.)*")\s+# ([^\n]+)\n'
+        match = re.fullmatch(pattern, origin.stdout.decode("utf-8"))
+        if match is None or tomllib.loads("value = " + match[1])["value"] != selected:
+            return None
+        config_path = match[2]
+        if not os.path.isabs(config_path):
+            return None
+        return os.path.normpath(os.path.join(os.path.dirname(os.path.dirname(config_path)), selected))
+    except (OSError, ValueError, TypeError, KeyError):
+        return None
+
+
+def encoded_linker():
+    arguments = os.environ.get("CARGO_ENCODED_RUSTFLAGS", "").split("\x1f")
+    selected = None
+    for index, argument in enumerate(arguments):
+        if argument == "-C" and index + 1 < len(arguments) and arguments[index + 1].startswith("linker="):
+            selected = arguments[index + 1][len("linker="):]
+        elif argument.startswith("-Clinker="):
+            selected = argument[len("-Clinker="):]
+    return selected
+
+
+def linker_identity(tree, configuration):
+    linker = encoded_linker()
+    if linker is None:
+        linker = os.environ.get("CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER")
+    if linker is None:
+        if configuration is None:
+            return None
+        targets = configuration.get("target", {})
+        if not isinstance(targets, dict):
+            return None
+        target = targets.get("x86_64-unknown-linux-musl", {})
+        if not isinstance(target, dict):
+            return None
+        if "linker" in target:
+            linker = configured_program(tree, "target.x86_64-unknown-linux-musl.linker", target["linker"])
+            if linker is None:
+                return None
+        elif any(isinstance(name, str) and name.startswith("cfg(") and (not isinstance(value, dict) or "linker" in value)
+                 for name, value in targets.items()):
+            return None
+    return executable_identity(tree, linker)
+
+
+def configured_rustc(tree, configuration):
+    if "RUSTC" in os.environ:
+        return os.environ["RUSTC"]
+    if "CARGO_BUILD_RUSTC" in os.environ:
+        return os.environ["CARGO_BUILD_RUSTC"]
+    if configuration is None:
+        return None
+    build = configuration.get("build", {})
+    if not isinstance(build, dict):
+        return None
+    return configured_program(tree, "build.rustc", build.get("rustc", "rustc"))
+
+
 def build_environment_identity(tree):
-    linker = linker_identity(tree)
-    selected = configured_rustc(tree)
+    needs_configuration = ("RUSTC" not in os.environ and "CARGO_BUILD_RUSTC" not in os.environ) or (
+        encoded_linker() is None and "CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER" not in os.environ)
+    configuration = cargo_configuration(tree) if needs_configuration else None
+    linker = linker_identity(tree, configuration)
+    selected = configured_rustc(tree, configuration)
     if selected is None:
         return None
     compiler = executable_identity(tree, selected)
