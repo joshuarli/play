@@ -137,7 +137,8 @@ def matches(archive, entries, destination):
 def main():
     if len(sys.argv) != 4:
         raise ValueError("expected archive, root name and destination")
-    with tarfile.open(sys.argv[1], "r:gz") as archive:
+    source = sys.stdin.buffer if sys.argv[1] == "-" else None
+    with tarfile.open(None if source else sys.argv[1], "r:gz", fileobj=source) as archive:
         entries = archive_entries(archive, sys.argv[2])
         return 0 if matches(archive, entries, sys.argv[3]) else 1
 

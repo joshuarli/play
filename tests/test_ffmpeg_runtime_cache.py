@@ -1,8 +1,11 @@
+import errno
+import fcntl
 import hashlib
 import io
 import json
 import os
 from pathlib import Path
+import select
 import shutil
 import signal
 import subprocess
@@ -25,7 +28,7 @@ class FFmpegRuntimeCacheTest(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
         (self.root / "scripts").mkdir()
-        for name in ("fetch-ffmpeg-runtime.sh", "verify-ffmpeg-runtime.py"):
+        for name in ("fetch-ffmpeg-runtime.sh", "verify-ffmpeg-runtime.py", "ffmpeg-runtime-fs.py"):
             shutil.copy2(ROOT / "scripts" / name, self.root / "scripts" / name)
         self.destination = self.root / ".work/deps/ffmpeg-runtime" / TARGET
         cache = self.root / ".work/tmp/ffmpeg-runtime"
@@ -107,6 +110,19 @@ class FFmpegRuntimeCacheTest(unittest.TestCase):
                 self.assertEqual(os.readlink(link), "libfixture.so.1")
                 self.assertEqual(outside.read_bytes(), b"leave alone\n")
 
+    def test_unsafe_directory_removal_fails_without_deleting_runtime(self):
+        self.assertEqual(self.fetch().returncode, 0)
+        header = self.destination / "include/fixture.h"
+        header.write_bytes(b"damaged\n")
+        tools = self.root / "python-tools"
+        tools.mkdir()
+        (tools / "sitecustomize.py").write_text('import shutil\nshutil.rmtree.avoids_symlink_attacks = False\n')
+        env = dict(os.environ, PYTHONPATH=str(tools))
+        result = subprocess.run([str(self.root / "scripts/fetch-ffmpeg-runtime.sh"), TARGET], env=env, capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("safe FFmpeg runtime directory removal is unavailable", result.stderr)
+        self.assertEqual(header.read_bytes(), b"damaged\n")
+
     def test_unowned_product_is_preserved_and_rejected(self):
         first = self.fetch()
         self.assertEqual(first.returncode, 0, first.stderr)
@@ -154,6 +170,122 @@ class FFmpegRuntimeCacheTest(unittest.TestCase):
         self.assertEqual(sentinel.read_bytes(), b"leave alone\n")
         self.assertFalse(self.destination.is_symlink())
         self.assertEqual((self.destination / "include/fixture.h").read_bytes(), b"original header\n")
+
+    def test_symlinked_runtime_parent_does_not_write_outside_cache(self):
+        outside = self.root / "outside-runtime"
+        outside.mkdir()
+        sentinel = outside / "sentinel"
+        sentinel.write_bytes(b"leave alone\n")
+        self.destination.parent.parent.mkdir(parents=True)
+        self.destination.parent.symlink_to(outside, target_is_directory=True)
+        result = self.fetch()
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertEqual({path.name for path in outside.iterdir()}, {"sentinel"})
+        self.assertEqual(sentinel.read_bytes(), b"leave alone\n")
+
+    def test_symlinked_archive_parent_does_not_install(self):
+        cache = self.root / ".work/tmp/ffmpeg-runtime"
+        outside = self.root / "outside-archives"
+        cache.rename(outside)
+        cache.symlink_to(outside, target_is_directory=True)
+        result = self.fetch()
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertFalse(self.destination.exists())
+        self.assertEqual({path.name for path in outside.iterdir()}, {ASSET})
+
+    def test_runtime_parent_replaced_during_extraction_is_not_used(self):
+        outside = self.root / "outside-runtime"
+        outside.mkdir()
+        sentinel = outside / "sentinel"
+        sentinel.write_bytes(b"leave alone\n")
+        tools = self.root / "tools"
+        tools.mkdir()
+        tar = tools / "tar"
+        tar.write_text('#!/bin/sh\nmv "$TEST_PARENT" "$TEST_MOVED"\nln -s "$TEST_OUTSIDE" "$TEST_PARENT"\nexec "$TEST_REAL_TAR" "$@"\n')
+        tar.chmod(0o755)
+        env = dict(os.environ, PATH=str(tools) + os.pathsep + os.environ["PATH"],
+                   TEST_PARENT=str(self.destination.parent), TEST_MOVED=str(self.destination.parent.parent / "moved-runtime"),
+                   TEST_OUTSIDE=str(outside), TEST_REAL_TAR=shutil.which("tar"))
+        result = subprocess.run([str(self.root / "scripts/fetch-ffmpeg-runtime.sh"), TARGET], env=env, capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertEqual({path.name for path in outside.iterdir()}, {"sentinel"})
+        self.assertEqual(sentinel.read_bytes(), b"leave alone\n")
+
+    def test_archive_changed_during_extraction_is_not_published(self):
+        archive = self.root / ".work/tmp/ffmpeg-runtime" / ASSET
+        replacement = self.root / "replacement.tar.gz"
+        with tarfile.open(archive, "r:gz") as original, tarfile.open(replacement, "w:gz") as changed:
+            for member in original.getmembers():
+                if member.name.endswith("/include/fixture.h"):
+                    content = b"changed after checksum\n"
+                    member.size = len(content)
+                    changed.addfile(member, io.BytesIO(content))
+                else:
+                    changed.addfile(member, original.extractfile(member) if member.isfile() else None)
+        tools = self.root / "tools"
+        tools.mkdir()
+        tar = tools / "tar"
+        tar.write_text('#!/bin/sh\ncat "$TEST_REPLACEMENT" > "$TEST_ARCHIVE"\nexec "$TEST_REAL_TAR" "$@"\n')
+        tar.chmod(0o755)
+        env = dict(os.environ, PATH=str(tools) + os.pathsep + os.environ["PATH"],
+                   TEST_ARCHIVE=str(archive), TEST_REPLACEMENT=str(replacement), TEST_REAL_TAR=shutil.which("tar"))
+        result = subprocess.run([str(self.root / "scripts/fetch-ffmpeg-runtime.sh"), TARGET], env=env, capture_output=True, text=True)
+        if result.returncode == 0:
+            self.assertEqual((self.destination / "include/fixture.h").read_bytes(), b"original header\n")
+        else:
+            self.assertFalse(self.destination.exists())
+
+    def test_pin_changed_during_extraction_is_not_published(self):
+        tools = self.root / "tools"
+        tools.mkdir()
+        tar = tools / "tar"
+        tar.write_text('#!/bin/sh\nprintf "{}" > "$TEST_PIN"\nexec "$TEST_REAL_TAR" "$@"\n')
+        tar.chmod(0o755)
+        env = dict(os.environ, PATH=str(tools) + os.pathsep + os.environ["PATH"],
+                   TEST_PIN=str(self.root / "ffmpeg-runtime.lock.json"), TEST_REAL_TAR=shutil.which("tar"))
+        result = subprocess.run([str(self.root / "scripts/fetch-ffmpeg-runtime.sh"), TARGET], env=env, capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("pin changed", result.stderr)
+        self.assertFalse(self.destination.exists())
+
+    def test_lock_replaced_while_waiting_is_rejected(self):
+        self.destination.parent.mkdir(parents=True)
+        lock = self.destination.parent / (".lock-" + TARGET)
+        fd = os.open(lock, os.O_CREAT | os.O_RDWR, 0o600)
+        self.addCleanup(os.close, fd)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        tools = self.root / "python-tools"
+        tools.mkdir()
+        (tools / "sitecustomize.py").write_text('''import fcntl, os
+original = fcntl.flock
+def marked(fd, operation):
+    if operation == fcntl.LOCK_EX:
+        with open(os.environ["TEST_MARKER"], "w") as marker:
+            marker.write("waiting")
+    return original(fd, operation)
+fcntl.flock = marked
+''')
+        marker = self.root / "waiting"
+        env = dict(os.environ, PYTHONPATH=str(tools), TEST_MARKER=str(marker))
+        process = subprocess.Popen([str(self.root / "scripts/fetch-ffmpeg-runtime.sh"), TARGET],
+                                   env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        try:
+            deadline = time.monotonic() + 10
+            while not marker.exists() and process.poll() is None and time.monotonic() < deadline:
+                time.sleep(0.02)
+            self.assertTrue(marker.exists(), "fetch did not wait for the lock")
+            lock.rename(lock.with_name("old-lock"))
+            lock.touch()
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            stdout, stderr = process.communicate(timeout=10)
+            self.assertNotEqual(process.returncode, 0, stdout)
+            self.assertIn(b"lock changed", stderr)
+            self.assertFalse(self.destination.exists())
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            if process.poll() is None:
+                process.kill()
+                process.communicate(timeout=10)
 
     def test_unsafe_archive_entries_are_rejected_before_extraction(self):
         archive = self.root / ".work/tmp/ffmpeg-runtime" / ASSET
@@ -240,13 +372,56 @@ class FFmpegRuntimeCacheTest(unittest.TestCase):
             os.killpg(process.pid, signal.SIGKILL)
             process.communicate(timeout=10)
             self.assertFalse(self.destination.exists())
+            cache = self.root / ".work/tmp/ffmpeg-runtime"
+            self.assertTrue(list(cache.glob(".extract-" + TARGET + ".*")))
             retry = self.fetch()
             self.assertEqual(retry.returncode, 0, retry.stderr)
             self.assertEqual((self.destination / "include/fixture.h").read_bytes(), b"original header\n")
+            self.assertFalse(list(cache.glob(".extract-" + TARGET + ".*")))
         finally:
             if process.poll() is None:
                 os.killpg(process.pid, signal.SIGKILL)
                 process.communicate()
+
+    def test_killed_fetch_keeps_lock_until_extractor_exits(self):
+        tools = self.root / "tools"
+        tools.mkdir()
+        tar = tools / "tar"
+        tar.write_text('#!/bin/sh\npython3 -c \'import os; os.write(int(os.environ["TEST_READY_FD"]), b"ready"); os.read(int(os.environ["TEST_RELEASE_FD"]), 1)\'\nexec "$TEST_REAL_TAR" "$@"\n')
+        tar.chmod(0o755)
+        ready_read, ready_write = os.pipe()
+        release_read, release_write = os.pipe()
+        for fd in (ready_read, ready_write, release_read, release_write):
+            self.addCleanup(os.close, fd)
+        env = dict(os.environ, PATH=str(tools) + os.pathsep + os.environ["PATH"], TEST_REAL_TAR=shutil.which("tar"),
+                   TEST_READY_FD=str(ready_write), TEST_RELEASE_FD=str(release_read))
+        process = subprocess.Popen([str(self.root / "scripts/fetch-ffmpeg-runtime.sh"), TARGET], env=env,
+                                   pass_fds=(ready_write, release_read), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                   start_new_session=True)
+        try:
+            self.assertTrue(select.select([ready_read], [], [], 15)[0], "extractor did not start")
+            self.assertEqual(os.read(ready_read, 5), b"ready")
+            os.kill(process.pid, signal.SIGKILL)
+            self.assertEqual(process.wait(timeout=10), -signal.SIGKILL)
+            lock = self.destination.parent / (".lock-" + TARGET)
+            fd = os.open(lock, os.O_RDWR | os.O_NOFOLLOW)
+            try:
+                with self.assertRaises(BlockingIOError):
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            finally:
+                os.close(fd)
+            os.write(release_write, b"continue\n")
+            process.communicate(timeout=15)
+            self.assertFalse(self.destination.exists())
+            retry = self.fetch()
+            self.assertEqual(retry.returncode, 0, retry.stderr)
+            self.assertEqual((self.destination / "include/fixture.h").read_bytes(), b"original header\n")
+        finally:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.communicate(timeout=10)
 
     def test_explicit_archive_repairs_an_installed_runtime(self):
         first = self.fetch()
@@ -262,6 +437,41 @@ class FFmpegRuntimeCacheTest(unittest.TestCase):
         result = subprocess.run([str(self.root / "scripts/fetch-ffmpeg-runtime.sh"), "../../outside"], capture_output=True, text=True)
         self.assertNotEqual(result.returncode, 0, result.stdout)
         self.assertFalse((self.root / "outside").exists())
+
+    def test_archive_name_traversal_in_pin_is_rejected(self):
+        pin_path = self.root / "ffmpeg-runtime.lock.json"
+        pin = json.loads(pin_path.read_text())
+        pin["ffmpeg"] = "version/../../outside"
+        pin_path.write_text(json.dumps(pin))
+        result = self.fetch()
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("unsafe FFmpeg runtime archive name", result.stderr)
+        self.assertNotIn("download", result.stdout)
+        self.assertFalse((self.root / "outside").exists())
+
+    def test_non_utf8_checkout_path_is_supported(self):
+        moved = Path(os.fsdecode(os.fsencode(self.root) + b'-\xff'))
+        try:
+            self.root.rename(moved)
+        except OSError as error:
+            if error.errno in (errno.EILSEQ, errno.EINVAL):
+                self.skipTest("filesystem does not support non-UTF-8 names")
+            raise
+        self.addCleanup(moved.rename, self.root)
+        result = subprocess.run([os.fsencode(moved / "scripts/fetch-ffmpeg-runtime.sh"), os.fsencode(TARGET)],
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(os.fsencode(moved), result.stdout)
+        header = moved / ".work/deps/ffmpeg-runtime" / TARGET / "include/fixture.h"
+        self.assertEqual(header.read_bytes(), b"original header\n")
+
+    def test_symlinked_checkout_path_is_supported(self):
+        alias = self.root.parent / (self.root.name + "-alias")
+        alias.symlink_to(self.root, target_is_directory=True)
+        self.addCleanup(alias.unlink)
+        result = subprocess.run([str(alias / "scripts/fetch-ffmpeg-runtime.sh"), TARGET], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.destination / "include/fixture.h").read_bytes(), b"original header\n")
 
     def test_concurrent_fetches_publish_one_complete_runtime(self):
         tools = self.root / "tools"

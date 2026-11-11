@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-ROOT=$(cd "$(dirname "$0")/.." && pwd)
+ROOT=$(cd -P "$(dirname "$0")/.." && pwd -P)
 PIN="$ROOT/ffmpeg-runtime.lock.json"
 
 [ $# -eq 1 ] || [ $# -eq 2 ] || {
@@ -16,28 +16,13 @@ esac
 local_archive=${2:-}
 DEST="$ROOT/.work/deps/ffmpeg-runtime/$target"
 CACHE="$ROOT/.work/tmp/ffmpeg-runtime"
-LOCK="$ROOT/.work/deps/ffmpeg-runtime/.lock-$target"
+FS="$ROOT/scripts/ffmpeg-runtime-fs.py"
 export TMPDIR="$ROOT/.work/tmp"
-mkdir -p "$CACHE" "$(dirname "$DEST")"
 if [ -z "${PLAYER_FFMPEG_RUNTIME_LOCK_FD:-}" ]; then
-    exec python3 - "$LOCK" "$0" "$@" <<'PYLOCK'
-import fcntl, os, sys
-fd = os.open(sys.argv[1], os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
-fcntl.flock(fd, fcntl.LOCK_EX)
-os.set_inheritable(fd, True)
-os.environ["PLAYER_FFMPEG_RUNTIME_LOCK_FD"] = str(fd)
-os.execv(sys.argv[2], sys.argv[2:])
-PYLOCK
+    exec python3 "$FS" setup "$ROOT" "$target" "$ROOT/scripts/fetch-ffmpeg-runtime.sh" "$@"
 fi
-python3 - "$LOCK" "$PLAYER_FFMPEG_RUNTIME_LOCK_FD" <<'PYLOCK'
-import fcntl, os, stat, sys
-fd = int(sys.argv[2])
-actual = os.fstat(fd)
-expected = os.stat(sys.argv[1], follow_symlinks=False)
-if not stat.S_ISREG(actual.st_mode) or (actual.st_dev, actual.st_ino) != (expected.st_dev, expected.st_ino):
-    sys.exit("error: invalid FFmpeg runtime lock")
-fcntl.flock(fd, fcntl.LOCK_EX)
-PYLOCK
+python3 "$FS" check "$ROOT" "$target"
+CACHE=.
 
 pin_field() {
     python3 - "$PIN" "$target" "$1" <<'PY'
@@ -47,6 +32,8 @@ target, field = sys.argv[2], sys.argv[3]
 if pin.get("contract") != 2 or pin.get("profile") != "runtime":
     sys.exit("error: ffmpeg-runtime.lock.json must be contract 2, profile runtime")
 archive = f"ffmpeg-{pin['ffmpeg']}+{pin['release']}-{target}-runtime.tar.gz"
+if '/' in archive or '\0' in archive:
+    sys.exit("error: unsafe FFmpeg runtime archive name")
 if field == "archive":
     print(archive)
 elif field == "sha256":
@@ -60,7 +47,7 @@ PY
 }
 
 check_manifest() {
-    python3 - "$PIN" "$target" "$1/share/ffmpeg-build/manifest.json" <<'PY'
+    python3 "$FS" run "$ROOT" "$target" "$1" - python3 - "$PIN" "$target" "$2/share/ffmpeg-build/manifest.json" <<'PY'
 import json, sys
 pin = json.load(open(sys.argv[1]))
 target = sys.argv[2]
@@ -95,12 +82,19 @@ sha256() {
     fi
 }
 
-repository=$(pin_field repository)
-release=$(pin_field release)
-asset=$(pin_field archive)
-expected=$(pin_field sha256)
+if [ -n "${PLAYER_FFMPEG_RUNTIME_ARCHIVE_FD:-}" ]; then
+    release=$PLAYER_FFMPEG_RUNTIME_RELEASE
+    asset=$PLAYER_FFMPEG_RUNTIME_ARCHIVE_ASSET
+else
+    repository=$(pin_field repository)
+    release=$(pin_field release)
+    asset=$(pin_field archive)
+    expected=$(pin_field sha256)
+fi
 
-if [ -n "$local_archive" ]; then
+if [ -n "${PLAYER_FFMPEG_RUNTIME_ARCHIVE_FD:-}" ]; then
+    archive=@snapshot
+elif [ -n "$local_archive" ]; then
     [ "$(basename "$local_archive")" = "$asset" ] || {
         printf 'error: %s is not the pinned archive %s\n' "$local_archive" "$asset" >&2
         exit 1
@@ -118,17 +112,22 @@ else
         trap - EXIT
     fi
 fi
-actual=$(sha256 "$archive")
-if [ "$actual" != "$expected" ]; then
-    printf 'error: %s has sha256 %s; ffmpeg-runtime.lock.json pins %s\n' "$archive" "$actual" "$expected" >&2
-    [ -n "$local_archive" ] || rm -f "$archive"
-    exit 1
+if [ -z "${PLAYER_FFMPEG_RUNTIME_ARCHIVE_FD:-}" ]; then
+    actual=$(sha256 "$archive")
+    if [ "$actual" != "$expected" ]; then
+        printf 'error: %s has sha256 %s; ffmpeg-runtime.lock.json pins %s\n' "$archive" "$actual" "$expected" >&2
+        if [ -z "$local_archive" ]; then
+            rm -f "$archive"
+        fi
+        exit 1
+    fi
+    exec python3 "$FS" snapshot "$ROOT" "$target" "$archive" "$expected" "$asset" "$ROOT/scripts/fetch-ffmpeg-runtime.sh" "$@"
 fi
 
 root=${asset%.tar.gz}
-if python3 "$ROOT/scripts/verify-ffmpeg-runtime.py" "$archive" "$root" "$DEST"; then
+if python3 "$FS" run "$ROOT" "$target" dest "$archive" python3 "$ROOT/scripts/verify-ffmpeg-runtime.py" @archive "$root" "$target"; then
     if [ -z "$local_archive" ]; then
-        check_manifest "$DEST"
+        check_manifest dest "$target"
         printf 'FFmpeg runtime %s for %s already in %s\n' "$release" "$target" "$DEST"
         exit 0
     fi
@@ -139,24 +138,22 @@ else
         printf 'FFmpeg runtime cache invalid; reinstalling %s\n' "$target"
     fi
 fi
-staging="$CACHE/extract-$target"
-rm -rf "$staging"
-mkdir -p "$staging"
-tar -xzf "$archive" -C "$staging"
-entries=$(cd "$staging" && printf '%s\n' *)
+staging=$(python3 "$FS" prepare-stage "$ROOT" "$target")
+trap 'rm -rf "$staging"' EXIT
+python3 "$FS" run "$ROOT" "$target" "$staging" "$archive" tar -xzf @archive
+entries=$(python3 "$FS" run "$ROOT" "$target" "$staging" - python3 -c 'import os; print("\n".join(sorted(os.listdir("."))))')
 [ "$entries" = "$root" ] || {
     printf 'error: %s does not contain exactly %s/\n' "$asset" "$root" >&2
     exit 1
 }
-python3 "$ROOT/scripts/verify-ffmpeg-runtime.py" "$archive" "$root" "$staging/$root" || {
+python3 "$FS" run "$ROOT" "$target" "$staging" "$archive" python3 "$ROOT/scripts/verify-ffmpeg-runtime.py" @archive "$root" "$root" || {
     printf 'error: %s extraction does not match its archive\n' "$asset" >&2
     exit 1
 }
-check_manifest "$staging/$root" || {
+check_manifest "$staging" "$root" || {
     printf 'error: %s disagrees with ffmpeg-runtime.lock.json\n' "$asset" >&2
     exit 1
 }
-rm -rf "$DEST"
-mv "$staging/$root" "$DEST"
-rmdir "$staging"
+python3 "$FS" publish "$ROOT" "$target" "$staging" "$root"
+trap - EXIT
 printf 'FFmpeg runtime %s for %s in %s\n' "$release" "$target" "$DEST"
