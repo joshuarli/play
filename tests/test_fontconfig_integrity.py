@@ -1,5 +1,6 @@
 import os
 import fcntl
+import json
 from pathlib import Path
 import shutil
 import signal
@@ -51,7 +52,7 @@ printf library > "$CARGO_TARGET_DIR/x86_64-unknown-linux-musl/release/librust_fo
         cargo.chmod(0o755)
         self.env = dict(os.environ, PATH=str(tools) + os.pathsep + os.environ["PATH"],
                         RUST_FONTCONFIG_SOURCE=str(self.source), RUST_FONTCONFIG_PREFIX=str(self.prefix),
-                        TEST_RECORD=str(self.record), TEST_FLAGS=str(self.root / "flags"))
+                        RUSTC=shutil.which("rustc"), TEST_RECORD=str(self.record), TEST_FLAGS=str(self.root / "flags"))
 
     def build(self, **environment):
         return subprocess.run([str(self.root / "scripts/build-rust-fontconfig-linux.sh")],
@@ -363,6 +364,82 @@ if [ ! -e "$product" ]; then printf library > "$product"; fi
         self.assertEqual(repaired.returncode, 0, repaired.stderr)
         self.assertEqual(installed.read_bytes()[:4], b"\x7fELF")
 
+    def test_invalid_cargo_compiler_configuration_does_not_publish_success(self):
+        cargo = self.root / "tools/cargo"
+        cargo.write_text('#!/bin/sh\n[ "$1" = -Z ] || exit 22\nprintf invalid\n')
+        environment = dict(self.env)
+        environment.pop("RUSTC", None)
+        environment.pop("CARGO_BUILD_RUSTC", None)
+        result = subprocess.run([str(self.root / "scripts/build-rust-fontconfig-linux.sh")], env=environment, capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("compiler cannot be resolved", result.stderr)
+        self.assertFalse((self.prefix / ".input").exists())
+
+    def test_unknown_relative_compiler_origin_does_not_publish_success(self):
+        cargo = self.root / "tools/cargo"
+        cargo.write_text('''#!/bin/sh
+set -eu
+[ "$1" = -Z ] || exit 22
+case " $* " in
+    *" --show-origin "*) printf 'unrecognized origin\n' ;;
+    *) printf '{"build":{"rustc":"tools/rustc"}}\n' ;;
+esac
+''')
+        environment = dict(self.env)
+        environment.pop("RUSTC", None)
+        environment.pop("CARGO_BUILD_RUSTC", None)
+        result = subprocess.run([str(self.root / "scripts/build-rust-fontconfig-linux.sh")], env=environment, capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("compiler cannot be resolved", result.stderr)
+        self.assertFalse((self.prefix / ".input").exists())
+
+    def test_cargo_configuration_probe_does_not_change_build_environment(self):
+        cargo = self.root / "tools/cargo"
+        cargo.write_text('''#!/bin/sh
+set -eu
+if [ "$1" = -Z ]; then
+    [ "$KACHE_DAEMON_AUTOSTART" = 0 ] || exit 23
+    [ "$RUSTC_BOOTSTRAP" = 1 ] || exit 24
+    printf '{}\n'
+    exit 0
+fi
+[ "$KACHE_DAEMON_AUTOSTART" = 1 ] || exit 25
+[ "$RUSTC_BOOTSTRAP" = original ] || exit 26
+[ "$1" != clean ] || exit 0
+mkdir -p "$CARGO_TARGET_DIR/x86_64-unknown-linux-musl/release"
+printf library > "$CARGO_TARGET_DIR/x86_64-unknown-linux-musl/release/librust_fontconfig.so"
+''')
+        environment = dict(self.env, KACHE_DAEMON_AUTOSTART="1", RUSTC_BOOTSTRAP="original")
+        environment.pop("RUSTC", None)
+        environment.pop("CARGO_BUILD_RUSTC", None)
+        result = subprocess.run([str(self.root / "scripts/build-rust-fontconfig-linux.sh")], env=environment, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_cargo_compiler_configuration_changed_during_build_does_not_publish_success(self):
+        first = self.root / "tools/first-rustc"
+        second = self.root / "tools/second-rustc"
+        for compiler in (first, second):
+            compiler.write_text("#!/bin/sh\nprintf 'rustc fixture\\n'\n")
+            compiler.chmod(0o755)
+        config = self.root / "cargo-config.json"
+        config.write_text('{"build":{"rustc":' + json.dumps(str(first)) + '}}')
+        cargo = self.root / "tools/cargo"
+        cargo.write_text('''#!/bin/sh
+set -eu
+if [ "$1" = -Z ]; then cat "$TEST_CONFIG"; exit 0; fi
+[ "$1" != clean ] || exit 0
+printf '%s' "$TEST_CHANGED_CONFIG" > "$TEST_CONFIG"
+mkdir -p "$CARGO_TARGET_DIR/x86_64-unknown-linux-musl/release"
+printf library > "$CARGO_TARGET_DIR/x86_64-unknown-linux-musl/release/librust_fontconfig.so"
+''')
+        environment = dict(self.env, TEST_CONFIG=str(config), TEST_CHANGED_CONFIG='{"build":{"rustc":' + json.dumps(str(second)) + '}}')
+        environment.pop("RUSTC", None)
+        environment.pop("CARGO_BUILD_RUSTC", None)
+        result = subprocess.run([str(self.root / "scripts/build-rust-fontconfig-linux.sh")], env=environment, capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("compiler changed", result.stderr)
+        self.assertFalse((self.prefix / ".input").exists())
+
     def test_missing_selected_compiler_does_not_publish_success(self):
         result = self.build(RUSTC=str(self.root / "missing-rustc"))
         self.assertNotEqual(result.returncode, 0, result.stdout)
@@ -466,6 +543,37 @@ printf library > "$CARGO_TARGET_DIR/x86_64-unknown-linux-musl/release/librust_fo
                                        capture_output=True, text=True, timeout=30)
                 self.assertEqual(value.returncode, 0, value.stderr)
                 self.assertEqual(value.stdout.strip(), expected, result.stdout + result.stderr)
+
+    def check_real_cargo_configured_rustc_changes(self, *, relative):
+        environment, command = self.real_cargo_fixture()
+        (self.source / "src/lib.rs").write_text('#[unsafe(no_mangle)]\npub extern "C" fn fontconfig_probe() -> u32 { if cfg!(compiler_one) { 1 } else { 2 } }\n')
+        compiler = self.root / "configured # tools/rustc"
+        compiler.parent.mkdir()
+        compiler.write_text('#!/bin/sh\nexec "$TEST_REAL_RUSTC" --cfg compiler_one "$@"\n')
+        compiler.chmod(0o755)
+        configuration = self.root / ".cargo/config.toml"
+        configuration.parent.mkdir()
+        selected = "configured # tools/rustc" if relative else str(compiler)
+        configuration.write_text(f'[build]\nrustc = "{selected}"\n')
+        environment.update(TEST_REAL_RUSTC=shutil.which("rustc"))
+        environment.pop("RUSTC", None)
+        environment.pop("CARGO_BUILD_RUSTC", None)
+        installed = self.prefix / "lib/librust_fontconfig.so.5.0.2"
+        probe = 'import ctypes, sys; lib = ctypes.CDLL(sys.argv[1]); print(lib.fontconfig_probe())'
+        for flag, expected in (("compiler_one", "1"), ("compiler_two", "2")):
+            with self.subTest(flag=flag):
+                compiler.write_text(f'#!/bin/sh\nexec "$TEST_REAL_RUSTC" --cfg {flag} "$@"\n')
+                result = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=120)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                value = subprocess.run([sys.executable, "-c", probe, str(installed)], capture_output=True, text=True, timeout=30)
+                self.assertEqual(value.returncode, 0, value.stderr)
+                self.assertEqual(value.stdout.strip(), expected, result.stdout + result.stderr)
+
+    def test_real_cargo_rebuilds_when_configured_rustc_changes(self):
+        self.check_real_cargo_configured_rustc_changes(relative=False)
+
+    def test_real_cargo_rebuilds_when_relative_configured_rustc_changes(self):
+        self.check_real_cargo_configured_rustc_changes(relative=True)
 
     def test_real_cargo_rustc_overrides_cargo_build_rustc(self):
         environment, command = self.real_cargo_fixture()

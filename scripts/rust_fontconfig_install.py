@@ -1,11 +1,14 @@
 import contextlib
 import hashlib
+import json
 import os
+import re
 import secrets
 import shutil
 import stat
 import subprocess
 import sys
+import tomllib
 
 
 DIRECTORY_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
@@ -233,9 +236,44 @@ def linker_identity(tree):
     return executable_identity(tree, linker)
 
 
+def configured_rustc(tree):
+    if "RUSTC" in os.environ:
+        return os.environ["RUSTC"]
+    if "CARGO_BUILD_RUSTC" in os.environ:
+        return os.environ["CARGO_BUILD_RUSTC"]
+    environment = dict(os.environ, RUSTC_BOOTSTRAP="1", KACHE_DAEMON_AUTOSTART="0")
+    try:
+        result = subprocess.run(["cargo", "-Z", "unstable-options", "config", "get", "--format", "json"],
+                                cwd=tree, env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if result.returncode:
+            return None
+        configuration = json.loads(result.stdout)
+        build = configuration.get("build", {})
+        selected = build.get("rustc", "rustc")
+        if not isinstance(selected, str):
+            return None
+        if os.sep in selected and not os.path.isabs(selected):
+            origin = subprocess.run(["cargo", "-Z", "unstable-options", "config", "get", "build.rustc", "--show-origin"],
+                                    cwd=tree, env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            if origin.returncode:
+                return None
+            match = re.fullmatch(r'build\.rustc\s*=\s*("(?:[^"\\]|\\.)*")\s+# ([^\n]+)\n', origin.stdout.decode("utf-8"))
+            if match is None or tomllib.loads("rustc = " + match[1])["rustc"] != selected:
+                return None
+            config_path = match[2]
+            if not os.path.isabs(config_path):
+                return None
+            selected = os.path.normpath(os.path.join(os.path.dirname(os.path.dirname(config_path)), selected))
+        return selected
+    except (OSError, ValueError, AttributeError, TypeError, KeyError):
+        return None
+
+
 def build_environment_identity(tree):
     linker = linker_identity(tree)
-    selected = os.environ.get("RUSTC", os.environ.get("CARGO_BUILD_RUSTC", "rustc"))
+    selected = configured_rustc(tree)
+    if selected is None:
+        return None
     compiler = executable_identity(tree, selected)
     if linker is None or compiler is None:
         return None
