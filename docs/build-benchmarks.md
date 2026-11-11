@@ -2,6 +2,8 @@
 
 ## Compiler cache
 
+An Alpine x86-64 emulation experiment mounted the container root read-only, with `/work` and a workspace-backed `/tmp` writable. The guarded candidate rebuilt libplacebo, reused all three native components on the next dependency invocation, and completed `scripts/build-linux.sh` through the kache Cargo shim. The stripped player was 9,614,552 bytes and its median 1080p playback RSS was 71.14 MiB over seven runs, ranging from 71.04 to 71.29 MiB. The direct Docker experiment did not use the production launcher, and writable tool overrides remain untracked. It establishes feasibility on this emulator, not native Linux qualification or a complete toolchain identity.
+
 The macOS host uses kache 1.0.0 through Cargo's `rustc-wrapper`. The cross-checkout rpath regression and its fix are recorded in [the baseline](build-baseline.md). The host-wide `kache stats` output combines other projects and is not a Player benchmark.
 
 The native command comparisons below inspect Meson's compile database, not the arguments forwarded by kache. By default kache appends path-mapping flags: an Apple Clang `__FILE__` probe produced an absolute path directly and a `/kache/base-dir` path through kache. Setting `KACHE_CC_PATH_NORMALIZE=0` made the probe match. The earlier comparisons therefore did not establish equivalent compiler flags and do not justify adopting native caching.
