@@ -199,24 +199,16 @@ def check_target(path):
                 raise ValueError(f"invalid rust-fontconfig target path: {entry}")
 
 
-def linker_identity(tree):
-    name = "CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER"
-    linker = os.environ.get(name)
-    arguments = os.environ.get("CARGO_ENCODED_RUSTFLAGS", "").split("\x1f")
-    for index, argument in enumerate(arguments):
-        if argument == "-C" and index + 1 < len(arguments) and arguments[index + 1].startswith("linker="):
-            linker = arguments[index + 1][len("linker="):]
-        elif argument.startswith("-Clinker="):
-            linker = argument[len("-Clinker="):]
+def executable_identity(tree, executable):
     digest = hashlib.sha256()
-    if linker is None:
+    if executable is None:
         digest.update(b"unset")
         return digest.hexdigest()
-    digest.update(b"set\0" + os.fsencode(linker) + b"\0")
-    if os.sep in linker:
-        candidates = [linker if os.path.isabs(linker) else os.path.join(tree, linker)]
+    digest.update(b"set\0" + os.fsencode(executable) + b"\0")
+    if os.sep in executable:
+        candidates = [executable if os.path.isabs(executable) else os.path.join(tree, executable)]
     else:
-        candidates = [os.path.join(directory if os.path.isabs(directory) else os.path.join(tree, directory), linker)
+        candidates = [os.path.join(directory if os.path.isabs(directory) else os.path.join(tree, directory), executable)
                       for directory in os.environ.get("PATH", os.defpath).split(os.pathsep)]
     for candidate in candidates:
         if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
@@ -228,11 +220,24 @@ def linker_identity(tree):
     return None
 
 
+def linker_identity(tree):
+    name = "CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER"
+    linker = os.environ.get(name)
+    arguments = os.environ.get("CARGO_ENCODED_RUSTFLAGS", "").split("\x1f")
+    for index, argument in enumerate(arguments):
+        if argument == "-C" and index + 1 < len(arguments) and arguments[index + 1].startswith("linker="):
+            linker = arguments[index + 1][len("linker="):]
+        elif argument.startswith("-Clinker="):
+            linker = argument[len("-Clinker="):]
+    return executable_identity(tree, linker)
+
+
 def build_environment_identity(tree):
     linker = linker_identity(tree)
-    if linker is None:
+    compiler = executable_identity(tree, os.environ.get("RUSTC", os.environ.get("CARGO_BUILD_RUSTC", "rustc")))
+    if linker is None or compiler is None:
         return None
-    digest = hashlib.sha256(linker.encode())
+    digest = hashlib.sha256(linker.encode() + b"\0" + compiler.encode())
     ignored = {"CARGO_PROFILE_RELEASE_LTO", "CARGO_PROFILE_RELEASE_OPT_LEVEL", "CARGO_PROFILE_RELEASE_CODEGEN_UNITS"}
     for name in sorted(os.environ):
         if name.startswith("CARGO_PROFILE_RELEASE_") and name not in ignored:

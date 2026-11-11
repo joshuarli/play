@@ -363,6 +363,63 @@ if [ ! -e "$product" ]; then printf library > "$product"; fi
         self.assertEqual(repaired.returncode, 0, repaired.stderr)
         self.assertEqual(installed.read_bytes()[:4], b"\x7fELF")
 
+    def test_missing_selected_compiler_does_not_publish_success(self):
+        result = self.build(RUSTC=str(self.root / "missing-rustc"))
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("compiler cannot be resolved", result.stderr)
+        self.assertFalse((self.prefix / ".input").exists())
+
+    def test_selected_compiler_changed_during_build_does_not_publish_success(self):
+        compiler = self.root / "tools/rustc-fixture"
+        compiler.write_text("#!/bin/sh\nexit 0\n")
+        compiler.chmod(0o755)
+        cargo = self.root / "tools/cargo"
+        cargo.write_text('''#!/bin/sh
+set -eu
+[ "$1" != clean ] || exit 0
+printf '#!/bin/sh\nexit 1\n' > "$RUSTC"
+mkdir -p "$CARGO_TARGET_DIR/x86_64-unknown-linux-musl/release"
+printf library > "$CARGO_TARGET_DIR/x86_64-unknown-linux-musl/release/librust_fontconfig.so"
+''')
+        result = self.build(RUSTC=str(compiler))
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("compiler changed", result.stderr)
+        self.assertFalse((self.prefix / ".input").exists())
+
+    def test_real_cargo_rebuilds_when_cargo_selected_rustc_changes(self):
+        environment, command = self.real_cargo_fixture()
+        (self.source / "src/lib.rs").write_text('#[unsafe(no_mangle)]\npub extern "C" fn fontconfig_probe() -> u32 { if cfg!(compiler_one) { 1 } else { 2 } }\n')
+        compiler = self.root / "rustc"
+        compiler.write_text("")
+        compiler.chmod(0o755)
+        environment.update(CARGO_BUILD_RUSTC=str(compiler), TEST_REAL_RUSTC=shutil.which("rustc"))
+        environment.pop("RUSTC", None)
+        installed = self.prefix / "lib/librust_fontconfig.so.5.0.2"
+        probe = 'import ctypes, sys; lib = ctypes.CDLL(sys.argv[1]); print(lib.fontconfig_probe())'
+        for flag, expected in (("compiler_one", "1"), ("compiler_two", "2")):
+            with self.subTest(flag=flag):
+                compiler.write_text(f'#!/bin/sh\nexec "$TEST_REAL_RUSTC" --cfg {flag} "$@"\n')
+                result = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=120)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                value = subprocess.run([sys.executable, "-c", probe, str(installed)],
+                                       capture_output=True, text=True, timeout=30)
+                self.assertEqual(value.returncode, 0, value.stderr)
+                self.assertEqual(value.stdout.strip(), expected, result.stdout + result.stderr)
+
+    def test_real_cargo_rustc_overrides_cargo_build_rustc(self):
+        environment, command = self.real_cargo_fixture()
+        compiler = self.root / "rustc"
+        compiler.write_text('#!/bin/sh\nexec "$TEST_REAL_RUSTC" "$@"\n')
+        compiler.chmod(0o755)
+        environment.update(RUSTC=str(compiler), CARGO_BUILD_RUSTC="/missing/first-compiler",
+                           TEST_REAL_RUSTC=shutil.which("rustc"))
+        first = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=120)
+        self.assertEqual(first.returncode, 0, first.stderr)
+        environment["CARGO_BUILD_RUSTC"] = "/missing/second-compiler"
+        second = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=120)
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertIn("already in", second.stdout)
+
     def test_real_cargo_rebuilds_when_the_selected_linker_changes(self):
         environment, command = self.real_cargo_fixture()
         linker = self.root / "linker"
