@@ -1,14 +1,19 @@
 import os
+import sys
 from pathlib import Path
 import shutil
 import subprocess
 import tempfile
 import unittest
 
-from tests.test_fontconfig_writers import supported_host
-
-
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def supported_host():
+    if sys.platform != "linux" or os.uname().machine != "x86_64" or not shutil.which("ldd"):
+        return False
+    result = subprocess.run(["ldd", "--version"], capture_output=True, text=True)
+    return "musl" in (result.stdout + result.stderr).lower()
 
 
 @unittest.skipUnless(supported_host(), "requires x86-64 musl Linux")
