@@ -97,6 +97,36 @@ printf library > "$CARGO_TARGET_DIR/x86_64-unknown-linux-musl/release/librust_fo
         self.assertNotEqual(result.returncode, 0, result.stdout)
         self.assertEqual(list(outside.iterdir()), [])
 
+    def test_source_target_subdirectory_symlink_does_not_write_outside_the_cache(self):
+        outside = self.root / "outside"
+        outside.mkdir()
+        target = self.root / ".work/tmp/rust-fontconfig/target/x86_64-unknown-linux-musl"
+        target.mkdir(parents=True)
+        (target / "release").symlink_to(outside, target_is_directory=True)
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(list(outside.iterdir()), [])
+
+    def test_source_target_special_file_fails_without_opening_it(self):
+        target = self.root / ".work/tmp/rust-fontconfig/target"
+        target.mkdir(parents=True)
+        fifo = target / "fifo"
+        os.mkfifo(fifo)
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertTrue(fifo.exists())
+
+    def test_valid_installed_product_does_not_require_a_safe_target_tree(self):
+        self.assertEqual(self.build().returncode, 0)
+        target = self.root / ".work/tmp/rust-fontconfig/target"
+        fifo = target / "fifo"
+        os.mkfifo(fifo)
+        result = self.build()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("already in", result.stdout)
+        self.assertTrue(fifo.exists())
+        self.assertEqual(self.record.read_text().splitlines(), ["build"])
+
     def check_replaced_lock_path(self, path):
         self.assertEqual(self.build().returncode, 0)
         outside = self.root / "outside"

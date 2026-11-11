@@ -181,6 +181,24 @@ def require_current_directories(prefix, prefix_path, expected):
             raise ValueError("rust-fontconfig output directory changed during installation")
 
 
+def check_target(path):
+    def fail(error):
+        raise error
+
+    try:
+        root = os.lstat(path)
+    except FileNotFoundError:
+        return
+    if not stat.S_ISDIR(root.st_mode):
+        raise ValueError(f"invalid rust-fontconfig target path: {path}")
+    for directory, names, files in os.walk(path, followlinks=False, onerror=fail):
+        for name in names + files:
+            entry = os.path.join(directory, name)
+            mode = os.lstat(entry).st_mode
+            if not (stat.S_ISREG(mode) or stat.S_ISDIR(mode)):
+                raise ValueError(f"invalid rust-fontconfig target path: {entry}")
+
+
 def publish(prefix, identity, soname, library, header, prefix_path, version):
     stack, lib, pkgconfig, headers = directories(prefix, False)
     with stack:
@@ -207,6 +225,9 @@ def publish(prefix, identity, soname, library, header, prefix_path, version):
 
 
 def main():
+    if len(sys.argv) == 3 and sys.argv[1] == "check-target":
+        check_target(sys.argv[2])
+        return 0
     if len(sys.argv) == 4 and sys.argv[1] == "check-prefix":
         path = sys.argv[2]
         for value in (path, os.path.realpath(path)):

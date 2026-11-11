@@ -82,6 +82,7 @@ if python3 "$INSTALL" "$prefix_lock" validate "$input" "$SONAME"; then
     exit 0
 fi
 
+python3 "$INSTALL" check-target "$SRC/target"
 python3 "$INSTALL" "$prefix_lock" invalidate
 archive="$SRC/$TAG.tar.gz"
 if [ -n "$LOCAL" ]; then
