@@ -36,6 +36,10 @@ NINJA=${NINJA:-$(command -v samu 2>/dev/null || command -v samurai 2>/dev/null |
 # shared libraries libplacebo.dylib.N, and writes SDK framework paths into
 # libplacebo.pc Requires.private, so these projects need the meson frontend.
 MESON_SETUP_LIBPLACEBO=(meson setup)
+if command -v meson >/dev/null && [ "$(head -c 2 "$(command -v meson)")" != '#!' ]; then
+    printf 'error: %s is not the Python Meson; gluon meson lacks install, project arguments and soversion parity, so put Meson 1.12.1 first on PATH\n' "$(command -v meson)" >&2
+    exit 1
+fi
 
 for tool in curl tar shasum xcrun; do
     command -v "$tool" >/dev/null || {
