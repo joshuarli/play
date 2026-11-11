@@ -42,6 +42,11 @@ else
     flock -x "$source_lock"
     flock -x "$prefix_lock"
 fi
+if [[ "$(stat -Lc '%d:%i' -- "$PREFIX")" != "$prefix_id" ||
+      "$(stat -Lc '%d:%i' -- "$SRC")" != "$source_id" ]]; then
+    printf 'error: rust-fontconfig lock path changed while waiting\n' >&2
+    exit 1
+fi
 
 if ! python3 "$INSTALL" "$prefix_lock" prepare "$SONAME" "$DEFAULT_PREFIX" "$ALLOW_LEGACY_DEFAULT"; then
     python3 "$INSTALL" "$prefix_lock" invalidate

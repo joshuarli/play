@@ -1,8 +1,11 @@
 import os
+import fcntl
 from pathlib import Path
 import shutil
+import signal
 import subprocess
 import tempfile
+import time
 import unittest
 
 from tests.test_fontconfig_writers import supported_host
@@ -51,6 +54,49 @@ printf library > "$CARGO_TARGET_DIR/x86_64-unknown-linux-musl/release/librust_fo
     def build(self, **environment):
         return subprocess.run([str(self.root / "scripts/build-rust-fontconfig-linux.sh")],
                               env=dict(self.env, **environment), capture_output=True, text=True, errors="surrogateescape")
+
+    def test_replaced_prefix_is_not_accepted_after_waiting_for_its_lock(self):
+        self.check_replaced_lock_path(self.prefix)
+
+    def test_replaced_source_is_not_accepted_after_waiting_for_its_lock(self):
+        self.check_replaced_lock_path(self.root / ".work/tmp/rust-fontconfig")
+
+    def check_replaced_lock_path(self, path):
+        self.assertEqual(self.build().returncode, 0)
+        outside = self.root / "outside"
+        outside.mkdir()
+        marker = self.root / "waiting"
+        flock = self.root / "tools/flock"
+        flock.write_text('''#!/bin/sh
+set -eu
+if [ "$(readlink "/proc/$$/fd/$2")" = "$TEST_LOCK_PATH" ]; then
+    : > "$TEST_WAITING"
+fi
+exec "$TEST_FLOCK" "$@"
+''')
+        flock.chmod(0o755)
+        descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        environment = dict(self.env, TEST_LOCK_PATH=str(path), TEST_WAITING=str(marker), TEST_FLOCK=shutil.which("flock"))
+        process = subprocess.Popen([str(self.root / "scripts/build-rust-fontconfig-linux.sh")], env=environment,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+        try:
+            deadline = time.monotonic() + 10
+            while not marker.exists() and process.poll() is None and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertTrue(marker.exists(), "writer did not wait for the expected lock")
+            path.rename(self.root / "moved")
+            path.symlink_to(outside, target_is_directory=True)
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+            output = process.communicate(timeout=10)
+            self.assertNotEqual(process.returncode, 0, output)
+            self.assertIn(b"rust-fontconfig lock path changed", output[1])
+            self.assertEqual(list(outside.iterdir()), [])
+        finally:
+            os.close(descriptor)
+            if process.poll() is None:
+                os.killpg(process.pid, signal.SIGKILL)
+                process.communicate(timeout=10)
 
     def test_reuse_validates_all_owned_outputs(self):
         self.assertEqual(self.build().returncode, 0)
