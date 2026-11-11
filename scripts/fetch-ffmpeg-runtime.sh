@@ -9,11 +9,35 @@ PIN="$ROOT/ffmpeg-runtime.lock.json"
     exit 2
 }
 target=$1
+case "$target" in
+    aarch64-apple-darwin|x86_64-unknown-linux-musl) ;;
+    *) printf 'error: unsupported FFmpeg runtime target: %s\n' "$target" >&2; exit 2 ;;
+esac
 local_archive=${2:-}
 DEST="$ROOT/.work/deps/ffmpeg-runtime/$target"
 CACHE="$ROOT/.work/tmp/ffmpeg-runtime"
+LOCK="$ROOT/.work/deps/ffmpeg-runtime/.lock-$target"
 export TMPDIR="$ROOT/.work/tmp"
 mkdir -p "$CACHE" "$(dirname "$DEST")"
+if [ -z "${PLAYER_FFMPEG_RUNTIME_LOCK_FD:-}" ]; then
+    exec python3 - "$LOCK" "$0" "$@" <<'PYLOCK'
+import fcntl, os, sys
+fd = os.open(sys.argv[1], os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+fcntl.flock(fd, fcntl.LOCK_EX)
+os.set_inheritable(fd, True)
+os.environ["PLAYER_FFMPEG_RUNTIME_LOCK_FD"] = str(fd)
+os.execv(sys.argv[2], sys.argv[2:])
+PYLOCK
+fi
+python3 - "$LOCK" "$PLAYER_FFMPEG_RUNTIME_LOCK_FD" <<'PYLOCK'
+import fcntl, os, stat, sys
+fd = int(sys.argv[2])
+actual = os.fstat(fd)
+expected = os.stat(sys.argv[1], follow_symlinks=False)
+if not stat.S_ISREG(actual.st_mode) or (actual.st_dev, actual.st_ino) != (expected.st_dev, expected.st_ino):
+    sys.exit("error: invalid FFmpeg runtime lock")
+fcntl.flock(fd, fcntl.LOCK_EX)
+PYLOCK
 
 pin_field() {
     python3 - "$PIN" "$target" "$1" <<'PY'
@@ -76,11 +100,6 @@ release=$(pin_field release)
 asset=$(pin_field archive)
 expected=$(pin_field sha256)
 
-if [ -z "$local_archive" ] && [ -f "$DEST/share/ffmpeg-build/manifest.json" ] && check_manifest "$DEST" 2>/dev/null; then
-    printf 'FFmpeg runtime %s for %s already in %s\n' "$release" "$target" "$DEST"
-    exit 0
-fi
-
 if [ -n "$local_archive" ]; then
     [ "$(basename "$local_archive")" = "$asset" ] || {
         printf 'error: %s is not the pinned archive %s\n' "$local_archive" "$asset" >&2
@@ -92,8 +111,11 @@ else
     if [ ! -f "$archive" ] || [ "$(sha256 "$archive")" != "$expected" ]; then
         url="https://github.com/$repository/releases/download/$release/${asset//+/%2B}"
         printf 'download %s\n' "$url"
-        curl -fsSL --retry 3 "$url" -o "$archive.part"
-        mv "$archive.part" "$archive"
+        download=$(mktemp "$CACHE/.download-$target.XXXXXXXX")
+        trap 'rm -f "$download"' EXIT
+        curl -fsSL --retry 3 "$url" -o "$download"
+        mv "$download" "$archive"
+        trap - EXIT
     fi
 fi
 actual=$(sha256 "$archive")
@@ -104,6 +126,19 @@ if [ "$actual" != "$expected" ]; then
 fi
 
 root=${asset%.tar.gz}
+if python3 "$ROOT/scripts/verify-ffmpeg-runtime.py" "$archive" "$root" "$DEST"; then
+    if [ -z "$local_archive" ]; then
+        check_manifest "$DEST"
+        printf 'FFmpeg runtime %s for %s already in %s\n' "$release" "$target" "$DEST"
+        exit 0
+    fi
+else
+    verification=$?
+    [ "$verification" -eq 1 ] || exit "$verification"
+    if [ -e "$DEST" ] || [ -L "$DEST" ]; then
+        printf 'FFmpeg runtime cache invalid; reinstalling %s\n' "$target"
+    fi
+fi
 staging="$CACHE/extract-$target"
 rm -rf "$staging"
 mkdir -p "$staging"
@@ -111,6 +146,10 @@ tar -xzf "$archive" -C "$staging"
 entries=$(cd "$staging" && printf '%s\n' *)
 [ "$entries" = "$root" ] || {
     printf 'error: %s does not contain exactly %s/\n' "$asset" "$root" >&2
+    exit 1
+}
+python3 "$ROOT/scripts/verify-ffmpeg-runtime.py" "$archive" "$root" "$staging/$root" || {
+    printf 'error: %s extraction does not match its archive\n' "$asset" >&2
     exit 1
 }
 check_manifest "$staging/$root" || {
