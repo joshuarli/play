@@ -4,6 +4,7 @@ import os
 import secrets
 import shutil
 import stat
+import subprocess
 import sys
 
 
@@ -234,10 +235,17 @@ def linker_identity(tree):
 
 def build_environment_identity(tree):
     linker = linker_identity(tree)
-    compiler = executable_identity(tree, os.environ.get("RUSTC", os.environ.get("CARGO_BUILD_RUSTC", "rustc")))
+    selected = os.environ.get("RUSTC", os.environ.get("CARGO_BUILD_RUSTC", "rustc"))
+    compiler = executable_identity(tree, selected)
     if linker is None or compiler is None:
         return None
-    digest = hashlib.sha256(linker.encode() + b"\0" + compiler.encode())
+    try:
+        version = subprocess.run([selected, "-vV"], cwd=tree, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    except OSError:
+        return None
+    if version.returncode or not version.stdout:
+        return None
+    digest = hashlib.sha256(linker.encode() + b"\0" + compiler.encode() + b"\0" + version.stdout)
     ignored = {"CARGO_PROFILE_RELEASE_LTO", "CARGO_PROFILE_RELEASE_OPT_LEVEL", "CARGO_PROFILE_RELEASE_CODEGEN_UNITS"}
     for name in sorted(os.environ):
         if name.startswith("CARGO_PROFILE_RELEASE_") and name not in ignored:

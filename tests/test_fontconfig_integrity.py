@@ -369,9 +369,36 @@ if [ ! -e "$product" ]; then printf library > "$product"; fi
         self.assertIn("compiler cannot be resolved", result.stderr)
         self.assertFalse((self.prefix / ".input").exists())
 
-    def test_selected_compiler_changed_during_build_does_not_publish_success(self):
+    def test_compiler_without_version_does_not_publish_success(self):
         compiler = self.root / "tools/rustc-fixture"
         compiler.write_text("#!/bin/sh\nexit 0\n")
+        compiler.chmod(0o755)
+        result = self.build(RUSTC=str(compiler))
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("compiler cannot be resolved", result.stderr)
+        self.assertFalse((self.prefix / ".input").exists())
+
+    def test_compiler_version_is_selected_from_copied_source(self):
+        compiler = self.root / "tools/rustc-fixture"
+        compiler.write_text('#!/bin/sh\npwd > "$TEST_COMPILER_CWD"\nprintf "rustc fixture\\n"\n')
+        compiler.chmod(0o755)
+        recorded = self.root / "compiler-cwd"
+        result = self.build(RUSTC=str(compiler), TEST_COMPILER_CWD=str(recorded))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(recorded.read_text().strip(), str(self.root / ".work/tmp/rust-fontconfig/rust-fontconfig-5.0.2-laputa.2"))
+
+    def test_missing_compiler_working_directory_rebuilds(self):
+        first = self.build()
+        self.assertEqual(first.returncode, 0, first.stderr)
+        tree = self.root / ".work/tmp/rust-fontconfig/rust-fontconfig-5.0.2-laputa.2"
+        shutil.rmtree(tree)
+        second = self.build()
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertEqual(self.record.read_text().splitlines(), ["build", "build"])
+
+    def test_selected_compiler_changed_during_build_does_not_publish_success(self):
+        compiler = self.root / "tools/rustc-fixture"
+        compiler.write_text("#!/bin/sh\nprintf 'rustc fixture\\n'\n")
         compiler.chmod(0o755)
         cargo = self.root / "tools/cargo"
         cargo.write_text('''#!/bin/sh
@@ -385,6 +412,40 @@ printf library > "$CARGO_TARGET_DIR/x86_64-unknown-linux-musl/release/librust_fo
         self.assertNotEqual(result.returncode, 0, result.stdout)
         self.assertIn("compiler changed", result.stderr)
         self.assertFalse((self.prefix / ".input").exists())
+
+    def check_real_rustc_version_change(self, *, selected):
+        environment, command = self.real_cargo_fixture()
+        (self.source / "src/lib.rs").write_text('#[unsafe(no_mangle)]\npub extern "C" fn fontconfig_probe() -> u32 { if cfg!(compiler_one) { 1 } else { 2 } }\n')
+        directory = self.root / "compiler-tools"
+        directory.mkdir()
+        compiler = directory / "rustc"
+        compiler.write_text('#!/bin/sh\nif [ "$1" = -vV ]; then "$TEST_REAL_RUSTC" "$@"; cat "$TEST_VERSION"; else exec "$TEST_REAL_RUSTC" --cfg "$(cat "$TEST_VERSION")" "$@"; fi\n')
+        compiler.chmod(0o755)
+        selector = self.root / "compiler-version"
+        environment.update(TEST_REAL_RUSTC=shutil.which("rustc"), TEST_VERSION=str(selector))
+        environment.pop("RUSTC", None)
+        environment.pop("CARGO_BUILD_RUSTC", None)
+        if selected:
+            environment["RUSTC"] = str(compiler)
+        else:
+            environment["PATH"] = str(directory) + os.pathsep + environment["PATH"]
+        installed = self.prefix / "lib/librust_fontconfig.so.5.0.2"
+        probe = 'import ctypes, sys; lib = ctypes.CDLL(sys.argv[1]); print(lib.fontconfig_probe())'
+        for flag, expected in (("compiler_one", "1"), ("compiler_two", "2")):
+            with self.subTest(flag=flag):
+                selector.write_text(flag + "\n")
+                result = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=120)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                value = subprocess.run([sys.executable, "-c", probe, str(installed)],
+                                       capture_output=True, text=True, timeout=30)
+                self.assertEqual(value.returncode, 0, value.stderr)
+                self.assertEqual(value.stdout.strip(), expected, result.stdout + result.stderr)
+
+    def test_real_cargo_rebuilds_when_default_rustc_version_changes(self):
+        self.check_real_rustc_version_change(selected=False)
+
+    def test_real_cargo_rebuilds_when_selected_rustc_version_changes(self):
+        self.check_real_rustc_version_change(selected=True)
 
     def test_real_cargo_rebuilds_when_cargo_selected_rustc_changes(self):
         environment, command = self.real_cargo_fixture()
