@@ -61,6 +61,42 @@ printf library > "$CARGO_TARGET_DIR/x86_64-unknown-linux-musl/release/librust_fo
     def test_replaced_source_is_not_accepted_after_waiting_for_its_lock(self):
         self.check_replaced_lock_path(self.root / ".work/tmp/rust-fontconfig")
 
+    def test_source_symlink_does_not_modify_its_target(self):
+        outside = self.root / "outside"
+        tree = outside / "rust-fontconfig-5.0.2-laputa.2"
+        tree.mkdir(parents=True)
+        sentinel = tree / "sentinel"
+        sentinel.write_text("leave alone\n")
+        source = self.root / ".work/tmp/rust-fontconfig"
+        source.parent.mkdir(parents=True)
+        source.symlink_to(outside, target_is_directory=True)
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(sentinel.read_text(), "leave alone\n")
+
+    def test_source_parent_symlink_does_not_modify_its_target(self):
+        outside = self.root / "outside"
+        tree = outside / "rust-fontconfig/rust-fontconfig-5.0.2-laputa.2"
+        tree.mkdir(parents=True)
+        sentinel = tree / "sentinel"
+        sentinel.write_text("leave alone\n")
+        parent = self.root / ".work/tmp"
+        parent.parent.mkdir(parents=True)
+        parent.symlink_to(outside, target_is_directory=True)
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(sentinel.read_text(), "leave alone\n")
+
+    def test_source_target_symlink_does_not_write_outside_the_cache(self):
+        outside = self.root / "outside"
+        outside.mkdir()
+        source = self.root / ".work/tmp/rust-fontconfig"
+        source.mkdir(parents=True)
+        (source / "target").symlink_to(outside, target_is_directory=True)
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(list(outside.iterdir()), [])
+
     def check_replaced_lock_path(self, path):
         self.assertEqual(self.build().returncode, 0)
         outside = self.root / "outside"

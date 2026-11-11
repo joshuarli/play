@@ -25,6 +25,17 @@ case "$(uname -sm)/$(ldd --version 2>&1)" in
         ;;
 esac
 
+check_source_path() {
+    local directory
+    for directory in "$ROOT/.work" "$ROOT/.work/tmp" "$SRC" "$SRC/target"; do
+        if [ -L "$directory" ]; then
+            printf 'error: rust-fontconfig source path contains a symlink: %s\n' "$directory" >&2
+            return 1
+        fi
+    done
+}
+
+check_source_path
 python3 "$INSTALL" check-prefix "$PREFIX" "$ALLOW_LEGACY_DEFAULT"
 mkdir -p -- "$SRC" "$PREFIX"
 exec {prefix_lock}<"$PREFIX"
@@ -47,6 +58,7 @@ if [[ "$(stat -Lc '%d:%i' -- "$PREFIX")" != "$prefix_id" ||
     printf 'error: rust-fontconfig lock path changed while waiting\n' >&2
     exit 1
 fi
+check_source_path
 
 if ! python3 "$INSTALL" "$prefix_lock" prepare "$SONAME" "$DEFAULT_PREFIX" "$ALLOW_LEGACY_DEFAULT"; then
     python3 "$INSTALL" "$prefix_lock" invalidate
