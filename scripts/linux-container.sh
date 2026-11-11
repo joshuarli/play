@@ -2,9 +2,11 @@
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-IMAGE=player-linux
-
-docker build --platform linux/amd64 -q -t "$IMAGE" -f "$ROOT/docker/linux/Dockerfile" "$ROOT" >/dev/null
+IMAGE=$(docker build --platform linux/amd64 -q -t player-linux -f "$ROOT/docker/linux/Dockerfile" "$ROOT")
+if [[ ! "$IMAGE" =~ ^sha256:[[:xdigit:]]{64}$ ]]; then
+    printf 'error: docker build did not return an image ID\n' >&2
+    exit 1
+fi
 
 mkdir -p "$ROOT/.work/home"
 
