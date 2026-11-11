@@ -8,6 +8,8 @@ The linker-path probe also confirmed that Cargo's `[build] rustflags` can select
 
 In the pinned Cargo, a full `cargo config get --format json` omitted an environment-defined `CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_RUSTFLAGS`, while querying the target-specific key returned it. A full configuration dump alone is therefore not an exhaustive source of linker paths.
 
+An offline `cargo build -Z unstable-options --unit-graph` on the linker-path fixture reported targets, profiles, features and dependencies, but no effective rustc arguments. It cannot by itself close the fresh-build reader gap.
+
 ## Charter
 
 Work unattended within this grant, decide within the bounds below, and record a decision only when a later slice depends on it. Preserve behavior before optimizing. One writer at a time; no parallel writers are authorized by this sequence. After every accepted slice and on resume or repeated failure, perform the parent steering checkpoint in `orchestrate/references/campaigns.md`. Use the bridge and its worktree lifecycle if delegation becomes useful; use `.work/wt/<lane>` and disjoint ownership. The parent reviews and integrates. Commit each accepted slice with a Conventional Commit scoped `build`; put its ID and evidence in the body. No pushes or production releases.
