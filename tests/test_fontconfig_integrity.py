@@ -76,6 +76,49 @@ printf library > "$CARGO_TARGET_DIR/x86_64-unknown-linux-musl/release/librust_fo
         self.assertNotEqual(result.returncode, 0, result.stdout)
         self.assertEqual(sentinel.read_text(), "leave alone\n")
 
+    def test_source_manifest_symlinks_do_not_modify_their_targets(self):
+        for name in ("Cargo.toml", "Cargo.lock"):
+            with self.subTest(name=name):
+                original = self.source / name
+                if original.exists():
+                    original.unlink()
+                outside = self.root / ("outside-" + name)
+                outside.write_text("leave alone\n")
+                original.symlink_to(outside)
+                try:
+                    result = self.build()
+                    self.assertEqual(outside.read_text(), "leave alone\n")
+                    self.assertNotEqual(result.returncode, 0, result.stdout)
+                    self.assertFalse((self.prefix / ".input").exists())
+                finally:
+                    original.unlink(missing_ok=True)
+                    if name == "Cargo.toml":
+                        original.write_text('[package]\nname = "fixture"\nversion = "0.0.0"\n')
+
+
+    def test_source_tree_symlink_does_not_modify_its_target(self):
+        outside = self.root / "outside-tree"
+        outside.mkdir()
+        sentinel = outside / "sentinel"
+        sentinel.write_text("leave alone\n")
+        tree = self.root / ".work/tmp/rust-fontconfig/rust-fontconfig-5.0.2-laputa.2"
+        tree.parent.mkdir(parents=True)
+        tree.symlink_to(outside, target_is_directory=True)
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertTrue(tree.is_symlink())
+        self.assertEqual(sentinel.read_text(), "leave alone\n")
+
+
+    def test_source_tree_special_file_is_not_removed(self):
+        tree = self.root / ".work/tmp/rust-fontconfig/rust-fontconfig-5.0.2-laputa.2"
+        tree.parent.mkdir(parents=True)
+        os.mkfifo(tree)
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertTrue(tree.exists())
+
+
     def test_source_parent_symlink_does_not_modify_its_target(self):
         outside = self.root / "outside"
         tree = outside / "rust-fontconfig/rust-fontconfig-5.0.2-laputa.2"

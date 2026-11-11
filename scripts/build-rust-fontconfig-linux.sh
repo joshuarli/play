@@ -12,6 +12,7 @@ PREFIX="${RUST_FONTCONFIG_PREFIX:-$DEFAULT_PREFIX}"
 ALLOW_LEGACY_DEFAULT=0
 if [ -z "${RUST_FONTCONFIG_PREFIX:-}" ]; then ALLOW_LEGACY_DEFAULT=1; fi
 SRC="$ROOT/.work/tmp/rust-fontconfig"
+tree="$SRC/rust-fontconfig-${TAG#v}"
 SONAME="librust_fontconfig.so.$VERSION"
 INSTALL="$ROOT/scripts/rust_fontconfig_install.py"
 FLAG_HELPER="$ROOT/scripts/cargo-rustflags.sh"
@@ -27,12 +28,16 @@ esac
 
 check_source_path() {
     local directory
-    for directory in "$ROOT/.work" "$ROOT/.work/tmp" "$SRC" "$SRC/target"; do
+    for directory in "$ROOT/.work" "$ROOT/.work/tmp" "$SRC" "$SRC/target" "$tree"; do
         if [ -L "$directory" ]; then
             printf 'error: rust-fontconfig source path contains a symlink: %s\n' "$directory" >&2
             return 1
         fi
     done
+    if [ -e "$tree" ] && [ ! -d "$tree" ]; then
+        printf 'error: invalid rust-fontconfig source tree: %s\n' "$tree" >&2
+        return 1
+    fi
 }
 
 check_source_path
@@ -76,7 +81,6 @@ export RUSTFLAGS="-C target-feature=-crt-static -C link-arg=-static-libgcc -C li
 if [[ ! ${CARGO_ENCODED_RUSTFLAGS+x} ]]; then CARGO_ENCODED_RUSTFLAGS=; fi
 append_cargo_rustflags -C target-feature=-crt-static -C link-arg=-static-libgcc \
     -C link-arg=-Wl,--as-needed -C "link-arg=-Wl,-soname,$SONAME"
-tree="$SRC/rust-fontconfig-${TAG#v}"
 profile_settings() {
     local setting
     while IFS= read -r setting; do
@@ -116,6 +120,11 @@ else
         exit 1
     }
     tar -xzf "$archive" -C "$SRC"
+fi
+if [ -L "$tree/Cargo.toml" ] || [ ! -f "$tree/Cargo.toml" ] || \
+    [ -L "$tree/Cargo.lock" ] || { [ -e "$tree/Cargo.lock" ] && [ ! -f "$tree/Cargo.lock" ]; }; then
+    printf 'error: invalid rust-fontconfig source manifest or lockfile\n' >&2
+    exit 1
 fi
 cp "$LOCK" "$tree/Cargo.lock"
 printf '\n[workspace]\n' >>"$tree/Cargo.toml"
