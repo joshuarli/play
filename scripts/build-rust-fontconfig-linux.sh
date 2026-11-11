@@ -20,9 +20,22 @@ case "$(uname -sm)/$(ldd --version 2>&1)" in
         ;;
 esac
 
-mkdir -p "$SRC"
+mkdir -p "$SRC" "$PREFIX"
+exec {prefix_lock}<"$PREFIX"
 exec {source_lock}<"$SRC"
-flock -x "$source_lock"
+prefix_id=$(stat -Lc '%d:%i' "/proc/$$/fd/$prefix_lock")
+source_id=$(stat -Lc '%d:%i' "/proc/$$/fd/$source_lock")
+IFS=: read -r prefix_device prefix_inode <<<"$prefix_id"
+IFS=: read -r source_device source_inode <<<"$source_id"
+if [[ "$prefix_id" == "$source_id" ]]; then
+    flock -x "$prefix_lock"
+elif (( prefix_device < source_device || (prefix_device == source_device && prefix_inode < source_inode) )); then
+    flock -x "$prefix_lock"
+    flock -x "$source_lock"
+else
+    flock -x "$source_lock"
+    flock -x "$prefix_lock"
+fi
 
 LOCAL="${RUST_FONTCONFIG_SOURCE:-}"
 if [ -n "$LOCAL" ]; then
