@@ -71,8 +71,19 @@ if ! python3 "$INSTALL" "$prefix_lock" prepare "$SONAME" "$DEFAULT_PREFIX" "$ALL
 fi
 
 LOCAL="${RUST_FONTCONFIG_SOURCE:-}"
+calculate_source_digest() {
+    tar -c -C "$LOCAL" --sort=name --exclude=./target --exclude=./.git --exclude=./.work . | sha256sum | awk '{print $1}'
+}
+verify_source_digest() {
+    local current
+    current=$(calculate_source_digest) || {
+        printf 'error: cannot fingerprint rust-fontconfig source\n' >&2
+        return 1
+    }
+    [ "$current" = "$source_digest" ]
+}
 if [ -n "$LOCAL" ]; then
-    source_digest=$(tar -c -C "$LOCAL" --sort=name --exclude=./target --exclude=./.git --exclude=./.work . | sha256sum | awk '{print $1}')
+    source_digest=$(calculate_source_digest)
 else
     source_digest=$SHA256
 fi
@@ -97,6 +108,10 @@ calculate_input() {
 environment_identity=$(python3 "$INSTALL" build-environment-identity "$tree") || environment_identity=
 if [ -n "$environment_identity" ] && input=$(calculate_input "$environment_identity") && \
     python3 "$INSTALL" "$prefix_lock" validate "$input" "$SONAME"; then
+    if [ -n "$LOCAL" ] && ! verify_source_digest; then
+        printf 'error: rust-fontconfig source changed during validation\n' >&2
+        exit 1
+    fi
     printf 'rust-fontconfig %s already in %s\n' "$TAG" "$PREFIX"
     exit 0
 fi
@@ -114,6 +129,10 @@ rm -rf "$tree"
 if [ -n "$LOCAL" ]; then
     mkdir -p "$tree"
     tar -c -C "$LOCAL" --exclude=./target --exclude=./.git --exclude=./.work . | tar -x -C "$tree"
+    if ! verify_source_digest; then
+        printf 'error: rust-fontconfig source changed during copying\n' >&2
+        exit 1
+    fi
 else
     [ "$(sha256sum "$archive" | awk '{print $1}')" = "$SHA256" ] || {
         printf 'error: %s does not match the pinned sha256\n' "$archive" >&2
@@ -151,6 +170,10 @@ export CARGO_TARGET_DIR="$SRC/target"
 
 if [ "$(python3 "$INSTALL" build-environment-identity "$tree")" != "$environment_identity" ]; then
     printf 'error: configured rust-fontconfig linker changed during build\n' >&2
+    exit 1
+fi
+if [ -n "$LOCAL" ] && ! verify_source_digest; then
+    printf 'error: rust-fontconfig source changed during build\n' >&2
     exit 1
 fi
 python3 "$INSTALL" "$prefix_lock" publish "$input" "$SONAME" \

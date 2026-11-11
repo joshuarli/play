@@ -119,6 +119,86 @@ printf library > "$CARGO_TARGET_DIR/x86_64-unknown-linux-musl/release/librust_fo
         self.assertTrue(tree.exists())
 
 
+    def test_source_modified_during_build_publishes_no_success(self):
+        cargo = self.root / "tools/cargo"
+        cargo.write_text('''#!/bin/sh
+set -eu
+[ "$1" != clean ] || exit 0
+printf changed > "$RUST_FONTCONFIG_SOURCE/ffi/rust_fontconfig.h"
+mkdir -p "$CARGO_TARGET_DIR/x86_64-unknown-linux-musl/release"
+printf library > "$CARGO_TARGET_DIR/x86_64-unknown-linux-musl/release/librust_fontconfig.so"
+''')
+        result = self.build()
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("source changed during build", result.stderr)
+        self.assertFalse((self.prefix / ".input").exists())
+
+
+    def test_source_digest_failure_during_validation_is_not_reused(self):
+        first = self.build()
+        self.assertEqual(first.returncode, 0, first.stderr)
+        real_tar = shutil.which("tar")
+        tar = self.root / "tools/tar"
+        tar.write_text('''#!/bin/sh
+case " $* " in
+    *" --sort=name "*)
+        if [ -e "$TEST_DIGEST_MARKER" ]; then
+            "$TEST_REAL_TAR" "$@"
+            exit 1
+        fi
+        : > "$TEST_DIGEST_MARKER"
+        ;;
+esac
+exec "$TEST_REAL_TAR" "$@"
+''')
+        tar.chmod(0o755)
+        result = self.build(TEST_REAL_TAR=real_tar, TEST_DIGEST_MARKER=str(self.root / "digest-marker"))
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("source changed during validation", result.stderr)
+        self.assertEqual(self.record.read_text().splitlines(), ["build"])
+
+    def test_source_modified_during_validation_is_not_reused(self):
+        first = self.build()
+        self.assertEqual(first.returncode, 0, first.stderr)
+        real_tar = shutil.which("tar")
+        tar = self.root / "tools/tar"
+        tar.write_text('''#!/bin/sh
+case " $* " in
+    *" --sort=name "*)
+        if [ -e "$TEST_DIGEST_MARKER" ]; then
+            printf changed > "$RUST_FONTCONFIG_SOURCE/ffi/rust_fontconfig.h"
+        else
+            : > "$TEST_DIGEST_MARKER"
+        fi
+        ;;
+esac
+exec "$TEST_REAL_TAR" "$@"
+''')
+        tar.chmod(0o755)
+        result = self.build(TEST_REAL_TAR=real_tar, TEST_DIGEST_MARKER=str(self.root / "digest-marker"))
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("source changed during validation", result.stderr)
+        self.assertEqual(self.record.read_text().splitlines(), ["build"])
+        tar.unlink()
+        retry = self.build()
+        self.assertEqual(retry.returncode, 0, retry.stderr)
+        self.assertEqual(self.record.read_text().splitlines(), ["build", "build"])
+
+    def test_source_modified_during_copy_publishes_no_success(self):
+        real_tar = shutil.which("tar")
+        tar = self.root / "tools/tar"
+        tar.write_text('''#!/bin/sh
+if [ "$1" = -x ]; then
+    printf changed > "$RUST_FONTCONFIG_SOURCE/ffi/rust_fontconfig.h"
+fi
+exec "$TEST_REAL_TAR" "$@"
+''')
+        tar.chmod(0o755)
+        result = self.build(TEST_REAL_TAR=real_tar)
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("source changed during copying", result.stderr)
+        self.assertFalse((self.prefix / ".input").exists())
+
     def test_source_parent_symlink_does_not_modify_its_target(self):
         outside = self.root / "outside"
         tree = outside / "rust-fontconfig/rust-fontconfig-5.0.2-laputa.2"
