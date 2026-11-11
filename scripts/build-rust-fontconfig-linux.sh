@@ -77,11 +77,21 @@ if [[ ! ${CARGO_ENCODED_RUSTFLAGS+x} ]]; then CARGO_ENCODED_RUSTFLAGS=; fi
 append_cargo_rustflags -C target-feature=-crt-static -C link-arg=-static-libgcc \
     -C link-arg=-Wl,--as-needed -C "link-arg=-Wl,-soname,$SONAME"
 tree="$SRC/rust-fontconfig-${TAG#v}"
-calculate_input() {
-    cat "$0" "$INSTALL" "$FLAG_HELPER" "$LOCK" | cat - <(printf '%s\0%s\0%s\0%s\0' "$source_digest" "$PREFIX" "$CARGO_ENCODED_RUSTFLAGS" "$1") | sha256sum | awk '{print $1}'
+profile_settings() {
+    local setting
+    while IFS= read -r setting; do
+        [[ "$setting" =~ ^CARGO_PROFILE_RELEASE_[A-Z0-9_]+$ ]] || continue
+        case "$setting" in
+            CARGO_PROFILE_RELEASE_LTO|CARGO_PROFILE_RELEASE_OPT_LEVEL|CARGO_PROFILE_RELEASE_CODEGEN_UNITS) continue ;;
+        esac
+        printf '%s\0%s\0' "$setting" "${!setting}"
+    done < <(compgen -e | LC_ALL=C sort)
 }
-linker_identity=$(python3 "$INSTALL" linker-identity "$tree") || linker_identity=
-if [ -n "$linker_identity" ] && input=$(calculate_input "$linker_identity") && \
+calculate_input() {
+    cat "$0" "$INSTALL" "$FLAG_HELPER" "$LOCK" | cat - <(printf '%s\0%s\0%s\0%s\0' "$source_digest" "$PREFIX" "$CARGO_ENCODED_RUSTFLAGS" "$1") <(profile_settings) | sha256sum | awk '{print $1}'
+}
+environment_identity=$(python3 "$INSTALL" build-environment-identity "$tree") || environment_identity=
+if [ -n "$environment_identity" ] && input=$(calculate_input "$environment_identity") && \
     python3 "$INSTALL" "$prefix_lock" validate "$input" "$SONAME"; then
     printf 'rust-fontconfig %s already in %s\n' "$TAG" "$PREFIX"
     exit 0
@@ -109,11 +119,11 @@ else
 fi
 cp "$LOCK" "$tree/Cargo.lock"
 printf '\n[workspace]\n' >>"$tree/Cargo.toml"
-linker_identity=$(python3 "$INSTALL" linker-identity "$tree") || {
+environment_identity=$(python3 "$INSTALL" build-environment-identity "$tree") || {
     printf 'error: configured rust-fontconfig linker cannot be resolved\n' >&2
     exit 1
 }
-input=$(calculate_input "$linker_identity")
+input=$(calculate_input "$environment_identity")
 
 export CARGO_TARGET_DIR="$SRC/target"
 (
@@ -130,7 +140,7 @@ export CARGO_TARGET_DIR="$SRC/target"
         --config 'profile.release.codegen-units=1'
 )
 
-if [ "$(python3 "$INSTALL" linker-identity "$tree")" != "$linker_identity" ]; then
+if [ "$(python3 "$INSTALL" build-environment-identity "$tree")" != "$environment_identity" ]; then
     printf 'error: configured rust-fontconfig linker changed during build\n' >&2
     exit 1
 fi

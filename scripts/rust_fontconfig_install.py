@@ -228,6 +228,18 @@ def linker_identity(tree):
     return None
 
 
+def build_environment_identity(tree):
+    linker = linker_identity(tree)
+    if linker is None:
+        return None
+    digest = hashlib.sha256(linker.encode())
+    ignored = {"CARGO_PROFILE_RELEASE_LTO", "CARGO_PROFILE_RELEASE_OPT_LEVEL", "CARGO_PROFILE_RELEASE_CODEGEN_UNITS"}
+    for name in sorted(os.environ):
+        if name.startswith("CARGO_PROFILE_RELEASE_") and name not in ignored:
+            digest.update(b"\0" + os.fsencode(name) + b"\0" + os.fsencode(os.environ[name]))
+    return digest.hexdigest()
+
+
 def publish(prefix, identity, soname, library, header, prefix_path, version):
     stack, lib, pkgconfig, headers = directories(prefix, False)
     with stack:
@@ -254,8 +266,8 @@ def publish(prefix, identity, soname, library, header, prefix_path, version):
 
 
 def main():
-    if len(sys.argv) == 3 and sys.argv[1] == "linker-identity":
-        identity = linker_identity(sys.argv[2])
+    if len(sys.argv) == 3 and sys.argv[1] == "build-environment-identity":
+        identity = build_environment_identity(sys.argv[2])
         if identity is None:
             return 1
         print(identity)

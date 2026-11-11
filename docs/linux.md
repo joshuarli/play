@@ -28,6 +28,8 @@ The generated pkg-config metadata requires a prefix without whitespace, backslas
 
 When `CARGO_ENCODED_RUSTFLAGS` is set, the Linux build scripts preserve those flags and append the required musl and linker flags to the encoded list. The rust-fontconfig cache identity includes that effective list.
 
+The identity also includes Cargo release-profile environment settings. The helper's command-line LTO, optimization level and codegen-unit settings take precedence, so changes to those three environment settings do not invalidate it.
+
 Besides the four FFmpeg runtime libraries (`libavformat`, `libavcodec`, `libswscale`, `libavutil`, by the SONAMEs in the runtime manifest), the executable links only these shared libraries from the Alpine image:
 
 | Library | Alpine package |

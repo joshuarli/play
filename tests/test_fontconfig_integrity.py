@@ -4,6 +4,7 @@ from pathlib import Path
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -267,6 +268,43 @@ if [ ! -e "$product" ]; then printf library > "$product"; fi
         result = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=120)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual((self.prefix / "lib/librust_fontconfig.so.5.0.2").read_bytes()[:4], b"\x7fELF")
+
+    def test_real_cargo_rebuilds_when_release_panic_policy_changes(self):
+        environment, command = self.real_cargo_fixture()
+        (self.source / "src/lib.rs").write_text('#[unsafe(no_mangle)]\npub extern "C" fn fontconfig_probe() -> u32 { if cfg!(panic = "abort") { 1 } else { 2 } }\n')
+        installed = self.prefix / "lib/librust_fontconfig.so.5.0.2"
+        probe = 'import ctypes, sys; lib = ctypes.CDLL(sys.argv[1]); print(lib.fontconfig_probe())'
+        for policy, expected in (("abort", "1"), ("unwind", "2")):
+            with self.subTest(policy=policy):
+                environment["CARGO_PROFILE_RELEASE_PANIC"] = policy
+                result = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=120)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                value = subprocess.run([sys.executable, "-c", probe, str(installed)],
+                                       capture_output=True, text=True, timeout=30)
+                self.assertEqual(value.returncode, 0, value.stderr)
+                self.assertEqual(value.stdout.strip(), expected)
+
+    def test_overridden_profile_environment_does_not_invalidate_reuse(self):
+        first = {"CARGO_PROFILE_RELEASE_LTO": "off", "CARGO_PROFILE_RELEASE_OPT_LEVEL": "0",
+                 "CARGO_PROFILE_RELEASE_CODEGEN_UNITS": "16"}
+        second = {"CARGO_PROFILE_RELEASE_LTO": "thin", "CARGO_PROFILE_RELEASE_OPT_LEVEL": "2",
+                  "CARGO_PROFILE_RELEASE_CODEGEN_UNITS": "8"}
+        self.assertEqual(self.build(**first).returncode, 0)
+        result = self.build(**second)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("already in", result.stdout)
+        self.assertEqual(self.record.read_text().splitlines(), ["build"])
+
+    def test_profile_environment_order_does_not_invalidate_reuse(self):
+        first = dict(self.env, CARGO_PROFILE_RELEASE_PANIC="abort", CARGO_PROFILE_RELEASE_DEBUG="0")
+        second = dict(reversed(list(first.items())))
+        command = [str(self.root / "scripts/build-rust-fontconfig-linux.sh")]
+        result = subprocess.run(command, env=first, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        result = subprocess.run(command, env=second, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("already in", result.stdout)
+        self.assertEqual(self.record.read_text().splitlines(), ["build"])
 
     def test_encoded_flags_keep_required_policy_and_invalidate_reuse(self):
         first = "-C\x1fdebuginfo=1"
