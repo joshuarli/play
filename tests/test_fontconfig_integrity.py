@@ -646,11 +646,81 @@ printf library > "$CARGO_TARGET_DIR/x86_64-unknown-linux-musl/release/librust_fo
         self.assertIn("linker changed during build", result.stderr)
         self.assertFalse((self.prefix / ".input").exists())
 
-    def test_conditional_configured_linker_fails_without_an_explicit_target_linker(self):
+    def check_real_cargo_conditional_linker_changes(self, *, custom):
+        environment, command = self.real_cargo_fixture()
+        linker = self.root / "conditional # linker/linker"
+        linker.parent.mkdir()
+        linker.write_text('#!/bin/sh\nprintf "one\\n" >> "$TEST_LINK_LOG"\nexec "$TEST_REAL_LINKER" "$@"\n')
+        linker.chmod(0o755)
+        configuration = self.root / ".cargo/config.toml"
+        configuration.parent.mkdir()
+        condition = "cfg(custom_linker)" if custom else 'cfg(any(target_os = "macos", all(target_os = "linux", target_arch = "x86_64")))'
+        configuration.write_text(f'[target.\'{condition}\']\nlinker = "conditional # linker/linker"\n'
+                                 '[target.\'cfg(target_os = "macos")\']\nlinker = "/missing/mac-linker"\n')
+        if custom:
+            environment["CARGO_ENCODED_RUSTFLAGS"] = "--cfg\x1fcustom_linker"
+        log = self.root / "link-log"
+        environment.update(TEST_REAL_LINKER=str(ROOT / "docker/linux/musl-cc-wrap.sh"), TEST_LINK_LOG=str(log))
+        environment.pop("CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER", None)
+        first = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=120)
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertIn("one", log.read_text().splitlines())
+        linker.write_text('#!/bin/sh\nprintf "two\\n" >> "$TEST_LINK_LOG"\nexec "$TEST_REAL_LINKER" "$@"\n')
+        second = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=120)
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertIn("two", log.read_text().splitlines())
+        before = log.read_bytes()
+        third = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=120)
+        self.assertEqual(third.returncode, 0, third.stderr)
+        self.assertIn("already in", third.stdout)
+        self.assertEqual(log.read_bytes(), before)
+
+    def test_real_cargo_rebuilds_when_conditional_configured_linker_changes(self):
+        self.check_real_cargo_conditional_linker_changes(custom=False)
+
+    def test_real_cargo_resolves_linker_condition_from_encoded_flags(self):
+        self.check_real_cargo_conditional_linker_changes(custom=True)
+
+    def test_nonmatching_conditional_linker_does_not_prevent_reuse(self):
         environment, command = self.real_cargo_fixture()
         configuration = self.root / ".cargo/config.toml"
         configuration.parent.mkdir()
-        configuration.write_text('[target.\'cfg(target_os = "linux")\']\nlinker = "/missing/cfg-linker"\n')
+        configuration.write_text('[target.\'cfg(target_os = "macos")\']\nlinker = "/missing/mac-linker"\n')
+        environment.pop("CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER", None)
+        first = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=120)
+        self.assertEqual(first.returncode, 0, first.stderr)
+        second = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=120)
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertIn("already in", second.stdout)
+
+    def test_invalid_conditional_linker_metadata_does_not_publish_success(self):
+        cargo = self.root / "tools/cargo"
+        cargo.write_text('''#!/bin/sh
+set -eu
+if [ "$1" = -Z ]; then
+    printf '%s' "$TEST_CONFIG"
+    exit 0
+fi
+[ "$1" = metadata ] || exit 22
+printf reached > "$TEST_METADATA_CALLED"
+printf invalid
+''')
+        marker = self.root / "metadata-called"
+        config = {"target": {'cfg(target_os = "linux")': {"linker": "/missing"}}}
+        environment = dict(self.env, TEST_CONFIG=json.dumps(config), TEST_METADATA_CALLED=str(marker))
+        environment.pop("CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER", None)
+        result = subprocess.run([str(self.root / "scripts/build-rust-fontconfig-linux.sh")], env=environment, capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("linker cannot be resolved", result.stderr)
+        self.assertTrue(marker.exists())
+        self.assertFalse((self.prefix / ".input").exists())
+
+    def test_multiple_matching_conditional_linkers_do_not_publish_success(self):
+        environment, command = self.real_cargo_fixture()
+        configuration = self.root / ".cargo/config.toml"
+        configuration.parent.mkdir()
+        configuration.write_text('[target.\'cfg(target_os = "linux")\']\nlinker = "/first"\n'
+                                 '[target.\'cfg(target_arch = "x86_64")\']\nlinker = "/second"\n')
         environment.pop("CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER", None)
         result = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=120)
         self.assertNotEqual(result.returncode, 0, result.stdout)

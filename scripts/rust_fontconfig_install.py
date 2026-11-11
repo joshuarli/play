@@ -2,12 +2,14 @@ import contextlib
 import hashlib
 import json
 import os
+from pathlib import Path
 import re
 import secrets
 import shutil
 import stat
 import subprocess
 import sys
+import tempfile
 import tomllib
 
 
@@ -237,7 +239,7 @@ def cargo_configuration(tree):
         return None
 
 
-def configured_program(tree, key, selected):
+def configured_program(tree, key, selected, parts):
     if not isinstance(selected, str):
         return None
     if os.sep not in selected or os.path.isabs(selected):
@@ -248,15 +250,50 @@ def configured_program(tree, key, selected):
                                 cwd=tree, env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         if origin.returncode:
             return None
-        pattern = re.escape(key) + r'\s*=\s*("(?:[^"\\]|\\.)*")\s+# ([^\n]+)\n'
+        pattern = r'(.+?)\s*=\s*("(?:[^"\\]|\\.)*")\s+# ([^\n]+)\n'
         match = re.fullmatch(pattern, origin.stdout.decode("utf-8"))
-        if match is None or tomllib.loads("value = " + match[1])["value"] != selected:
+        if match is None:
             return None
-        config_path = match[2]
+        value = tomllib.loads(match[1] + " = " + match[2])
+        for part in parts:
+            value = value[part]
+        if value != selected:
+            return None
+        config_path = match[3]
         if not os.path.isabs(config_path):
             return None
         return os.path.normpath(os.path.join(os.path.dirname(os.path.dirname(config_path)), selected))
     except (OSError, ValueError, TypeError, KeyError):
+        return None
+
+
+def matching_linker_conditions(tree, predicates):
+    environment = dict(os.environ, KACHE_DAEMON_AUTOSTART="0")
+    try:
+        with tempfile.TemporaryDirectory(dir=os.environ["TMPDIR"], prefix="fontconfig-cfg-") as directory:
+            probe = Path(directory)
+            (probe / "src").mkdir()
+            (probe / "src/lib.rs").write_text("")
+            manifest = ['[package]\nname = "fontconfig_cfg_probe"\nversion = "0.0.0"\nedition = "2024"\n[workspace]\n']
+            for index, predicate in enumerate(predicates):
+                dependency = probe / f"dependency-{index}"
+                (dependency / "src").mkdir(parents=True)
+                (dependency / "src/lib.rs").write_text("")
+                (dependency / "Cargo.toml").write_text(f'[package]\nname = "fontconfig_cfg_{index}"\nversion = "0.0.0"\nedition = "2024"\n')
+                manifest.append(f'[target.{json.dumps(predicate, ensure_ascii=False)}.dependencies]\nfontconfig_cfg_{index} = {{ path = "dependency-{index}" }}\n')
+            (probe / "Cargo.toml").write_text("".join(manifest))
+            result = subprocess.run(["cargo", "metadata", "--format-version", "1", "--manifest-path", str(probe / "Cargo.toml"),
+                                     "--filter-platform", "x86_64-unknown-linux-musl", "--offline"],
+                                    cwd=tree, env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            if result.returncode or b"non-trivial mutual dependency between target-specific configuration and RUSTFLAGS" in result.stderr:
+                return None
+            resolution = json.loads(result.stdout)["resolve"]
+            nodes = [node for node in resolution["nodes"] if node["id"] == resolution["root"]]
+            if len(nodes) != 1 or not isinstance(nodes[0]["deps"], list):
+                return None
+            names = {dependency["name"] for dependency in nodes[0]["deps"]}
+            return [predicate for index, predicate in enumerate(predicates) if f"fontconfig_cfg_{index}" in names]
+    except (OSError, ValueError, KeyError, TypeError):
         return None
 
 
@@ -285,12 +322,24 @@ def linker_identity(tree, configuration):
         if not isinstance(target, dict):
             return None
         if "linker" in target:
-            linker = configured_program(tree, "target.x86_64-unknown-linux-musl.linker", target["linker"])
+            linker = configured_program(tree, "target.x86_64-unknown-linux-musl.linker", target["linker"], ("target", "x86_64-unknown-linux-musl", "linker"))
             if linker is None:
                 return None
-        elif any(isinstance(name, str) and name.startswith("cfg(") and (not isinstance(value, dict) or "linker" in value)
-                 for name, value in targets.items()):
-            return None
+        else:
+            predicates = [name for name, value in targets.items()
+                          if isinstance(name, str) and name.startswith("cfg(") and (not isinstance(value, dict) or "linker" in value)]
+            if predicates:
+                matched = matching_linker_conditions(tree, predicates)
+                if matched is None or len(matched) > 1:
+                    return None
+                if matched:
+                    predicate = matched[0]
+                    target = targets[predicate]
+                    if not isinstance(target, dict):
+                        return None
+                    linker = configured_program(tree, "target." + predicate + ".linker", target["linker"], ("target", predicate, "linker"))
+                    if linker is None:
+                        return None
     return executable_identity(tree, linker)
 
 
@@ -304,7 +353,7 @@ def configured_rustc(tree, configuration):
     build = configuration.get("build", {})
     if not isinstance(build, dict):
         return None
-    return configured_program(tree, "build.rustc", build.get("rustc", "rustc"))
+    return configured_program(tree, "build.rustc", build.get("rustc", "rustc"), ("build", "rustc"))
 
 
 def build_environment_identity(tree):
