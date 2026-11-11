@@ -287,6 +287,28 @@ fcntl.flock = marked
                 process.kill()
                 process.communicate(timeout=10)
 
+    def test_forged_lock_is_rejected_before_waiting_on_it(self):
+        cache = self.root / ".work/tmp/ffmpeg-runtime"
+        self.destination.parent.mkdir(parents=True)
+        lock = self.destination.parent / (".lock-" + TARGET)
+        lock.touch()
+        outside = self.root / "unrelated-lock"
+        first = os.open(outside, os.O_CREAT | os.O_RDWR, 0o600)
+        second = os.open(outside, os.O_RDWR)
+        root_fd = os.open(self.root, os.O_RDONLY | os.O_DIRECTORY)
+        cache_fd = os.open(cache, os.O_RDONLY | os.O_DIRECTORY)
+        dest_fd = os.open(self.destination.parent, os.O_RDONLY | os.O_DIRECTORY)
+        for fd in (first, second, root_fd, cache_fd, dest_fd):
+            self.addCleanup(os.close, fd)
+        fcntl.flock(first, fcntl.LOCK_SH)
+        fcntl.flock(second, fcntl.LOCK_SH)
+        env = dict(os.environ, PLAYER_FFMPEG_RUNTIME_ROOT_FD=str(root_fd), PLAYER_FFMPEG_RUNTIME_CACHE_FD=str(cache_fd),
+                   PLAYER_FFMPEG_RUNTIME_DEST_FD=str(dest_fd), PLAYER_FFMPEG_RUNTIME_LOCK_FD=str(first))
+        result = subprocess.run(["python3", str(self.root / "scripts/ffmpeg-runtime-fs.py"), "check", str(self.root), TARGET],
+                                env=env, pass_fds=(first, root_fd, cache_fd, dest_fd), capture_output=True, text=True, timeout=3)
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("lock changed", result.stderr)
+
     def test_unsafe_archive_entries_are_rejected_before_extraction(self):
         archive = self.root / ".work/tmp/ffmpeg-runtime" / ASSET
         root = ASSET.removesuffix(".tar.gz")

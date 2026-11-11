@@ -46,12 +46,7 @@ def same_inode(first, second):
     return (left.st_dev, left.st_ino) == (right.st_dev, right.st_ino)
 
 
-def check(root, target):
-    root_fd = descriptor("PLAYER_FFMPEG_RUNTIME_ROOT_FD")
-    cache_fd = descriptor("PLAYER_FFMPEG_RUNTIME_CACHE_FD")
-    dest_fd = descriptor("PLAYER_FFMPEG_RUNTIME_DEST_FD")
-    lock_fd = descriptor("PLAYER_FFMPEG_RUNTIME_LOCK_FD")
-    fcntl.flock(lock_fd, fcntl.LOCK_EX)
+def check_directories(root, root_fd, cache_fd, dest_fd):
     opened_root = os.open(root, FLAGS)
     try:
         if not same_inode(root_fd, opened_root):
@@ -66,10 +61,25 @@ def check(root, target):
                 raise ValueError("FFmpeg runtime directory changed")
         finally:
             os.close(current)
+
+
+def check_lock(dest_fd, lock_fd, target):
     locked = os.fstat(lock_fd)
     current = os.stat('.lock-' + target, dir_fd=dest_fd, follow_symlinks=False)
     if not stat.S_ISREG(locked.st_mode) or (locked.st_dev, locked.st_ino) != (current.st_dev, current.st_ino):
         raise ValueError("FFmpeg runtime lock changed")
+
+
+def check(root, target):
+    root_fd = descriptor("PLAYER_FFMPEG_RUNTIME_ROOT_FD")
+    cache_fd = descriptor("PLAYER_FFMPEG_RUNTIME_CACHE_FD")
+    dest_fd = descriptor("PLAYER_FFMPEG_RUNTIME_DEST_FD")
+    lock_fd = descriptor("PLAYER_FFMPEG_RUNTIME_LOCK_FD")
+    check_directories(root, root_fd, cache_fd, dest_fd)
+    check_lock(dest_fd, lock_fd, target)
+    fcntl.flock(lock_fd, fcntl.LOCK_EX)
+    check_directories(root, root_fd, cache_fd, dest_fd)
+    check_lock(dest_fd, lock_fd, target)
     pin_digest = os.environ.get('PLAYER_FFMPEG_RUNTIME_PIN_SHA256')
     if os.environ.get('PLAYER_FFMPEG_RUNTIME_ARCHIVE_FD') and pin_digest is None:
         raise ValueError("missing FFmpeg runtime pin identity")
