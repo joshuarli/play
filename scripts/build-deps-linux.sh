@@ -20,7 +20,7 @@ export GIT_CEILING_DIRECTORIES="$SRC"
 SHADERC_PREBUILT_TAR="$ROOT/native/prebuilt/shaderc-combined-x86_64-linux-musl-2026.4.tar.gz"
 SHADERC_PREBUILT_SHA=cbd1172afd26321bac14ee9389b4981308717d06fdc27f742513b92091d4d1dd
 
-INPUT_HASH=$(cat "$ROOT/scripts/build-deps-linux.sh" "$SHADERC_PREBUILT_TAR" | sha256sum | awk '{print $1}')
+INPUT_HASH=$(cat "$ROOT/scripts/build-deps-linux.sh" "$ROOT/scripts/patches/libplacebo-python.patch" "$SHADERC_PREBUILT_TAR" | sha256sum | awk '{print $1}')
 
 MESON=${MESON:-$(command -v muon 2>/dev/null || command -v meson 2>/dev/null || printf meson)}
 NINJA=${NINJA:-$(command -v samu 2>/dev/null || command -v samurai 2>/dev/null || command -v ninja 2>/dev/null || printf ninja)}
@@ -152,12 +152,12 @@ PC
 fi
 
 if ! have libplacebo; then
-    unset PYTHONPATH
-    export PYTHONNOUSERSITE=1
     LP="libplacebo-v$LIBPLACEBO_VERSION.tar.bz2"
     fetch "https://code.videolan.org/videolan/libplacebo/-/archive/v$LIBPLACEBO_VERSION/libplacebo-v$LIBPLACEBO_VERSION.tar.bz2" \
         14ceeeb14d1c08fcdb1a782a06129da11f842c6fddbf3a43c1c4061406ad03d2 "$SRC/$LP"
     extract "$SRC/$LP" "$SRC/libplacebo-v$LIBPLACEBO_VERSION"
+    run_log libplacebo-python patch -d "$SRC/libplacebo-v$LIBPLACEBO_VERSION" -p1 --forward \
+        -i "$ROOT/scripts/patches/libplacebo-python.patch"
     fetch "https://github.com/fastfloat/fast_float/archive/refs/tags/v$FAST_FLOAT_VERSION.tar.gz" \
         71bb9e865b888df01351558db5a39586d13ea97ada162156b3a07784d8c1b26b "$SRC/fast_float-$FAST_FLOAT_VERSION.tar.gz"
     fetch "https://files.pythonhosted.org/packages/6e/5a/d62b24fe1c7c2f34e15c2aa4418a5327a8550fdc272999a59e0dddebc3ee/glad2-$GLAD_VERSION.tar.gz" \

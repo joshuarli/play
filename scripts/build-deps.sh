@@ -20,7 +20,7 @@ mkdir -p "$PREFIX" "$SRC" "$LOGS"
 # Player's own version into the dependency. Stop git's search at $SRC.
 export GIT_CEILING_DIRECTORIES="$SRC"
 
-INPUT_HASH=$(cat "$ROOT/scripts/build-deps.sh" "$ROOT/scripts/patches/libplacebo-metal.patch" \
+INPUT_HASH=$(cat "$ROOT/scripts/build-deps.sh" "$ROOT/scripts/patches/libplacebo-metal.patch" "$ROOT/scripts/patches/libplacebo-python.patch" \
     "$ROOT/native/spirv-cross/meson.build" "$ROOT/native/spirv-cross/gitversion.h.in" |
     shasum -a 256 | awk '{print $1}')
 
@@ -226,12 +226,12 @@ if ! have spirv-cross; then
 fi
 
 if ! have libplacebo; then
-    unset PYTHONPATH
-    export PYTHONNOUSERSITE=1
     LP="libplacebo-v$LIBPLACEBO_VERSION.tar.bz2"
     fetch "https://code.videolan.org/videolan/libplacebo/-/archive/v$LIBPLACEBO_VERSION/libplacebo-v$LIBPLACEBO_VERSION.tar.bz2" \
         14ceeeb14d1c08fcdb1a782a06129da11f842c6fddbf3a43c1c4061406ad03d2 "$SRC/$LP"
     extract "$SRC/$LP" "$SRC/libplacebo-v$LIBPLACEBO_VERSION"
+    run_log libplacebo-python patch -d "$SRC/libplacebo-v$LIBPLACEBO_VERSION" -p1 --forward \
+        -i "$ROOT/scripts/patches/libplacebo-python.patch"
     fetch "https://github.com/fastfloat/fast_float/archive/refs/tags/v$FAST_FLOAT_VERSION.tar.gz" \
         71bb9e865b888df01351558db5a39586d13ea97ada162156b3a07784d8c1b26b "$SRC/fast_float-$FAST_FLOAT_VERSION.tar.gz"
     fetch "https://files.pythonhosted.org/packages/6e/5a/d62b24fe1c7c2f34e15c2aa4418a5327a8550fdc272999a59e0dddebc3ee/glad2-$GLAD_VERSION.tar.gz" \

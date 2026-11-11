@@ -1,0 +1,19 @@
+--- a/meson.build
++++ b/meson.build
+@@ -495,4 +495,5 @@
+ python_env = environment()
+-python_env.append('PYTHONPATH', thirdparty/'jinja/src')
++python_env.set('PYTHONPATH', thirdparty/'jinja/src')
++python_env.set('PYTHONNOUSERSITE', '1')
+ python_env.append('PYTHONPATH', thirdparty/'markupsafe/src')
+ python_env.append('PYTHONPATH', thirdparty/'glad')
+--- a/src/meson.build
++++ b/src/meson.build
+@@ -235,6 +235,7 @@
+ version_h = custom_target(
+   command: [ python, join_paths(meson.current_source_dir(), 'version.py'),
+              '@INPUT@', '@OUTPUT@', '@CURRENT_SOURCE_DIR@', version_pretty ],
++  env: python_env,
+   input: 'version.h.in',
+   output: 'version.h',
+   build_by_default: true,

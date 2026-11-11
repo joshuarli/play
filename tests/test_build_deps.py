@@ -24,7 +24,10 @@ class MacosBuildDepsTest(unittest.TestCase):
             with self.subTest(name=name):
                 self.check_bottle_install(reinstall=False, changed_recipe=name)
 
-    def check_bottle_install(self, reinstall, changed_recipe=None):
+    def test_python_patch_changes_invalidate_dependencies(self):
+        self.check_bottle_install(reinstall=False, changed_patch=True)
+
+    def check_bottle_install(self, reinstall, changed_recipe=None, changed_patch=False):
         scratch = ROOT / ".work/tmp"
         scratch.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=scratch, prefix="build-deps-test-") as directory:
@@ -34,6 +37,7 @@ class MacosBuildDepsTest(unittest.TestCase):
             (scripts / "patches").mkdir()
             shutil.copy2(ROOT / "scripts/build-deps.sh", scripts / "build-deps.sh")
             shutil.copy2(ROOT / "scripts/patches/libplacebo-metal.patch", scripts / "patches/libplacebo-metal.patch")
+            shutil.copy2(ROOT / "scripts/patches/libplacebo-python.patch", scripts / "patches/libplacebo-python.patch")
             shutil.copytree(ROOT / "native/spirv-cross", root / "native/spirv-cross")
             archives = root / "archives"
             archives.mkdir()
@@ -100,10 +104,11 @@ printf '%s  %s\\n' "$digest" "${3:--}"
             self.assertTrue((prefix / ".stamp-vulkan-loader").is_file())
             self.assertEqual((prefix / "lib/libshaderc_shared.1.dylib").read_bytes(), b"shaderc")
             self.assertTrue((prefix / ".stamp-shaderc").is_file())
-            if changed_recipe:
+            if changed_recipe or changed_patch:
                 cross_stamp = prefix / ".stamp-spirv-cross"
                 cross_stamp.write_bytes((prefix / ".stamp-vulkan-loader").read_bytes())
-                recipe = root / "native/spirv-cross" / changed_recipe
+                recipe = (root / "native/spirv-cross" / changed_recipe if changed_recipe else
+                          scripts / "patches/libplacebo-python.patch")
                 recipe.write_bytes(recipe.read_bytes() + b"\n")
                 loader = prefix / "lib/libvulkan.1.dylib"
                 loader.write_bytes(b"old")
@@ -136,6 +141,10 @@ class LibplaceboPythonTest(unittest.TestCase):
         self.root = Path(self.temporary.name)
 
     def test_libplacebo_uses_pinned_python_packages(self):
+        real_meson = "/opt/homebrew/bin/meson" if Path("/opt/homebrew/bin/meson").is_file() else shutil.which("meson")
+        real_ninja = shutil.which("ninja") or shutil.which("samu")
+        if not real_meson or not real_ninja:
+            self.skipTest("requires Meson and a Ninja-compatible backend")
         external = self.root / "external"
         external.mkdir()
         (external / "jinja2.py").write_text('value = "external"\n')
@@ -144,7 +153,11 @@ class LibplaceboPythonTest(unittest.TestCase):
         user_site = Path(subprocess.check_output([sys.executable, "-c", "import site; print(site.getusersitepackages())"],
                                                  env=site_environment, text=True).strip())
         user_site.mkdir(parents=True)
-        (user_site / "sitecustomize.py").write_text('import os\nfrom pathlib import Path\nPath(os.environ["TEST_USER_SITE_MARKER"]).touch()\n')
+        (user_site / "frontend_runtime.py").write_text('value = "available"\n')
+        (user_site / "sitecustomize.py").write_text('import os, sys\nfrom pathlib import Path\nif sys.argv[0].endswith(("generator.py", "version.py")):\n    Path(os.environ["TEST_USER_SITE_MARKER"]).touch()\n')
+        patches = self.root / "scripts/patches"
+        patches.mkdir(parents=True)
+        shutil.copy2(ROOT / "scripts/patches/libplacebo-python.patch", patches / "libplacebo-python.patch")
         for platform in ("macos", "linux"):
             with self.subTest(platform=platform):
                 script = ROOT / "scripts" / ("build-deps.sh" if platform == "macos" else "build-deps-linux.sh")
@@ -152,17 +165,45 @@ class LibplaceboPythonTest(unittest.TestCase):
                 start = recipe.index("if ! have libplacebo; then")
                 body = recipe[start:recipe.index("\nfi", start) + len("\nfi")]
                 source = self.root / platform
-                for directory in ("libplacebo-v1/3rdparty", "fast_float-1", "glad2-1/glad", "jinja2-1/src/jinja2", "markupsafe-1/src/markupsafe"):
+                for directory in ("libplacebo-v1/3rdparty", "libplacebo-v1/src", "fast_float-1", "glad2-1/glad", "jinja2-1/src/jinja2", "markupsafe-1/src/markupsafe"):
                     (source / directory).mkdir(parents=True)
                 (source / "jinja2-1/src/jinja2/__init__.py").write_text('value = "pinned"\n')
+                project = source / "libplacebo-v1"
+                library = "libplacebo.dylib" if platform == "macos" else "libplacebo.a"
+                (project / "meson.build").write_text("project('fixture')\n" + "\n" * 490 + '''thirdparty = meson.project_source_root()/'3rdparty'
+python = find_program(meson.project_source_root()/'python-wrapper')
+python_env = environment()
+python_env.append('PYTHONPATH', thirdparty/'jinja/src')
+python_env.append('PYTHONPATH', thirdparty/'markupsafe/src')
+python_env.append('PYTHONPATH', thirdparty/'glad')
+
+if host_machine.system() == 'windows'
+  threads = []
+endif
+version_pretty = '1'
+custom_target('library', command: [python, files('generator.py'), '@OUTPUT@'],
+  output: 'LIBRARY', env: python_env, install: true, install_dir: get_option('libdir'))
+subdir('src')
+'''.replace('LIBRARY', library))
+                (project / "generator.py").write_text('import jinja2, sys\nfrom pathlib import Path\nPath(sys.argv[1]).write_text(jinja2.value)\n')
+                wrapper = project / "python-wrapper"
+                wrapper.write_text('#!/bin/sh\nexec "$TEST_PYTHON" "$@"\n')
+                wrapper.chmod(0o755)
+                (project / "src/meson.build").write_text("\n" * 234 + '''version_h = custom_target(
+  command: [ python, join_paths(meson.current_source_dir(), 'version.py'),
+             '@INPUT@', '@OUTPUT@', '@CURRENT_SOURCE_DIR@', version_pretty ],
+  input: 'version.h.in',
+  output: 'version.h',
+  build_by_default: true,
+  build_always_stale: true,
+)
+''')
+                (project / "src/version.h.in").write_text("version\n")
+                (project / "src/version.py").write_text('import sys\nfrom pathlib import Path\nPath(sys.argv[2]).write_text("version")\n')
                 prefix = self.root / (platform + "-prefix")
-                result = self.root / (platform + "-result")
                 meson = self.root / (platform + "-meson")
-                meson.write_text('#!/bin/sh\nPYTHONPATH="${PYTHONPATH:+$PYTHONPATH:}$TEST_SOURCE/libplacebo-v1/3rdparty/jinja/src" "$TEST_PYTHON" -c "import jinja2; print(jinja2.value)" > "$TEST_RESULT"\n')
+                meson.write_text('#!/bin/sh\n"$TEST_PYTHON" -c "import frontend_runtime" || exit 1\nexec "$TEST_REAL_MESON" "$1" "$2" "$3" --prefix="$PREFIX" --libdir=lib\n')
                 meson.chmod(0o755)
-                ninja = self.root / (platform + "-ninja")
-                ninja.write_text('#!/bin/sh\nmkdir -p "$PREFIX/lib"\nprintf product > "$PREFIX/lib/libplacebo.a"\nprintf product > "$PREFIX/lib/libplacebo.dylib"\n')
-                ninja.chmod(0o755)
                 driver = self.root / (platform + "-recipe")
                 driver.write_text('''#!/bin/bash
 set -eu
@@ -176,7 +217,7 @@ run_log() {
     case "$name" in libplacebo-patch|libplacebo-id) return ;; esac
     "$@"
 }
-MESON_SETUP_LIBPLACEBO=("$TEST_MESON")
+MESON_SETUP_LIBPLACEBO=("$TEST_MESON" setup)
 NINJA=$TEST_NINJA
 SRC=$TEST_SOURCE
 ROOT=$TEST_ROOT
@@ -189,11 +230,12 @@ export PREFIX
 ''' + body + '\n')
                 driver.chmod(0o755)
                 environment = dict(os.environ, PYTHONPATH=str(external), TEST_SOURCE=str(source), TEST_ROOT=str(self.root),
-                                   TEST_MESON=str(meson), TEST_NINJA=str(ninja), TEST_PYTHON=sys.executable,
-                                   TEST_RESULT=str(result), PREFIX=str(prefix), PYTHONUSERBASE=str(user_base),
+                                   TEST_MESON=str(meson), TEST_REAL_MESON=real_meson, TEST_NINJA=real_ninja,
+                                   TEST_PYTHON=sys.executable, PREFIX=str(prefix), PYTHONUSERBASE=str(user_base),
                                    PYTHONNOUSERSITE="", TEST_USER_SITE_MARKER=str(self.root / (platform + "-site-loaded")))
-                subprocess.run([str(driver)], env=environment, check=True, capture_output=True, text=True)
-                self.assertEqual(result.read_text().strip(), "pinned")
+                run = subprocess.run([str(driver)], env=environment, capture_output=True, text=True)
+                self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+                self.assertEqual((prefix / "lib" / library).read_text(), "pinned")
                 self.assertFalse(Path(environment["TEST_USER_SITE_MARKER"]).exists())
 
 

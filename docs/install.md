@@ -37,7 +37,7 @@ build/mpv FILE
 build/mpv --gpu-api=vulkan FILE
 ```
 
-The macOS and Linux libplacebo recipes ignore the caller's `PYTHONPATH` and disable Python's user site packages while building. This keeps those locations from overriding the pinned packages in the source tree. The selected Meson and Python installations must work without those user packages.
+The macOS and Linux libplacebo generators use the pinned Python packages in the source tree, ignoring the caller's `PYTHONPATH` and Python user site. Meson and the other build tools retain the caller's Python environment.
 
 Build the release app:
 
