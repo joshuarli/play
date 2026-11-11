@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 import unittest
@@ -124,6 +125,76 @@ printf '%s  %s\\n' "$digest" "${3:--}"
     def executable(path, contents):
         path.write_text(contents)
         path.chmod(0o755)
+
+
+class LibplaceboPythonTest(unittest.TestCase):
+    def setUp(self):
+        scratch = ROOT / ".work/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        self.temporary = tempfile.TemporaryDirectory(dir=scratch, prefix="libplacebo-python-test-")
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+
+    def test_libplacebo_uses_pinned_python_packages(self):
+        external = self.root / "external"
+        external.mkdir()
+        (external / "jinja2.py").write_text('value = "external"\n')
+        user_base = self.root / "python-user"
+        site_environment = dict(os.environ, PYTHONUSERBASE=str(user_base), PYTHONNOUSERSITE="1")
+        user_site = Path(subprocess.check_output([sys.executable, "-c", "import site; print(site.getusersitepackages())"],
+                                                 env=site_environment, text=True).strip())
+        user_site.mkdir(parents=True)
+        (user_site / "sitecustomize.py").write_text('import os\nfrom pathlib import Path\nPath(os.environ["TEST_USER_SITE_MARKER"]).touch()\n')
+        for platform in ("macos", "linux"):
+            with self.subTest(platform=platform):
+                script = ROOT / "scripts" / ("build-deps.sh" if platform == "macos" else "build-deps-linux.sh")
+                recipe = script.read_text()
+                start = recipe.index("if ! have libplacebo; then")
+                body = recipe[start:recipe.index("\nfi", start) + len("\nfi")]
+                source = self.root / platform
+                for directory in ("libplacebo-v1/3rdparty", "fast_float-1", "glad2-1/glad", "jinja2-1/src/jinja2", "markupsafe-1/src/markupsafe"):
+                    (source / directory).mkdir(parents=True)
+                (source / "jinja2-1/src/jinja2/__init__.py").write_text('value = "pinned"\n')
+                prefix = self.root / (platform + "-prefix")
+                result = self.root / (platform + "-result")
+                meson = self.root / (platform + "-meson")
+                meson.write_text('#!/bin/sh\nPYTHONPATH="${PYTHONPATH:+$PYTHONPATH:}$TEST_SOURCE/libplacebo-v1/3rdparty/jinja/src" "$TEST_PYTHON" -c "import jinja2; print(jinja2.value)" > "$TEST_RESULT"\n')
+                meson.chmod(0o755)
+                ninja = self.root / (platform + "-ninja")
+                ninja.write_text('#!/bin/sh\nmkdir -p "$PREFIX/lib"\nprintf product > "$PREFIX/lib/libplacebo.a"\nprintf product > "$PREFIX/lib/libplacebo.dylib"\n')
+                ninja.chmod(0o755)
+                driver = self.root / (platform + "-recipe")
+                driver.write_text('''#!/bin/bash
+set -eu
+have() { return 1; }
+fetch() { :; }
+extract() { :; }
+stamp() { :; }
+run_log() {
+    name=$1
+    shift
+    case "$name" in libplacebo-patch|libplacebo-id) return ;; esac
+    "$@"
+}
+MESON_SETUP_LIBPLACEBO=("$TEST_MESON")
+NINJA=$TEST_NINJA
+SRC=$TEST_SOURCE
+ROOT=$TEST_ROOT
+LIBPLACEBO_VERSION=1
+FAST_FLOAT_VERSION=1
+GLAD_VERSION=1
+JINJA_VERSION=1
+MARKUPSAFE_VERSION=1
+export PREFIX
+''' + body + '\n')
+                driver.chmod(0o755)
+                environment = dict(os.environ, PYTHONPATH=str(external), TEST_SOURCE=str(source), TEST_ROOT=str(self.root),
+                                   TEST_MESON=str(meson), TEST_NINJA=str(ninja), TEST_PYTHON=sys.executable,
+                                   TEST_RESULT=str(result), PREFIX=str(prefix), PYTHONUSERBASE=str(user_base),
+                                   PYTHONNOUSERSITE="", TEST_USER_SITE_MARKER=str(self.root / (platform + "-site-loaded")))
+                subprocess.run([str(driver)], env=environment, check=True, capture_output=True, text=True)
+                self.assertEqual(result.read_text().strip(), "pinned")
+                self.assertFalse(Path(environment["TEST_USER_SITE_MARKER"]).exists())
 
 
 if __name__ == "__main__":

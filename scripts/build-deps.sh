@@ -226,6 +226,8 @@ if ! have spirv-cross; then
 fi
 
 if ! have libplacebo; then
+    unset PYTHONPATH
+    export PYTHONNOUSERSITE=1
     LP="libplacebo-v$LIBPLACEBO_VERSION.tar.bz2"
     fetch "https://code.videolan.org/videolan/libplacebo/-/archive/v$LIBPLACEBO_VERSION/libplacebo-v$LIBPLACEBO_VERSION.tar.bz2" \
         14ceeeb14d1c08fcdb1a782a06129da11f842c6fddbf3a43c1c4061406ad03d2 "$SRC/$LP"
