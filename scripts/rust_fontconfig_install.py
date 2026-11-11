@@ -199,6 +199,35 @@ def check_target(path):
                 raise ValueError(f"invalid rust-fontconfig target path: {entry}")
 
 
+def linker_identity(tree):
+    name = "CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER"
+    linker = os.environ.get(name)
+    arguments = os.environ.get("CARGO_ENCODED_RUSTFLAGS", "").split("\x1f")
+    for index, argument in enumerate(arguments):
+        if argument == "-C" and index + 1 < len(arguments) and arguments[index + 1].startswith("linker="):
+            linker = arguments[index + 1][len("linker="):]
+        elif argument.startswith("-Clinker="):
+            linker = argument[len("-Clinker="):]
+    digest = hashlib.sha256()
+    if linker is None:
+        digest.update(b"unset")
+        return digest.hexdigest()
+    digest.update(b"set\0" + os.fsencode(linker) + b"\0")
+    if os.sep in linker:
+        candidates = [linker if os.path.isabs(linker) else os.path.join(tree, linker)]
+    else:
+        candidates = [os.path.join(directory if os.path.isabs(directory) else os.path.join(tree, directory), linker)
+                      for directory in os.environ.get("PATH", os.defpath).split(os.pathsep)]
+    for candidate in candidates:
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            digest.update(os.fsencode(os.path.realpath(candidate)) + b"\0")
+            with open(candidate, "rb") as file:
+                for chunk in iter(lambda: file.read(1024 * 1024), b""):
+                    digest.update(chunk)
+            return digest.hexdigest()
+    return None
+
+
 def publish(prefix, identity, soname, library, header, prefix_path, version):
     stack, lib, pkgconfig, headers = directories(prefix, False)
     with stack:
@@ -225,6 +254,12 @@ def publish(prefix, identity, soname, library, header, prefix_path, version):
 
 
 def main():
+    if len(sys.argv) == 3 and sys.argv[1] == "linker-identity":
+        identity = linker_identity(sys.argv[2])
+        if identity is None:
+            return 1
+        print(identity)
+        return 0
     if len(sys.argv) == 3 and sys.argv[1] == "check-target":
         check_target(sys.argv[2])
         return 0

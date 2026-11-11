@@ -213,7 +213,7 @@ if [ ! -e "$product" ]; then printf library > "$product"; fi
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(installed.read_text(), "library")
 
-    def test_real_cargo_repairs_a_corrupted_product_on_a_rebuild(self):
+    def real_cargo_fixture(self):
         kache = shutil.which("kache")
         if not kache:
             self.skipTest("requires kache")
@@ -224,6 +224,10 @@ if [ ! -e "$product" ]; then printf library > "$product"; fi
         environment = dict(self.env, PATH=os.environ["PATH"], RUSTC_WRAPPER=kache,
                            KACHE_CACHE_DIR=str(self.root / "kache-cache"), KACHE_DAEMON_AUTOSTART="0")
         command = [str(self.root / "scripts/build-rust-fontconfig-linux.sh")]
+        return environment, command
+
+    def test_real_cargo_repairs_a_corrupted_product_on_a_rebuild(self):
+        environment, command = self.real_cargo_fixture()
         first = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=120)
         self.assertEqual(first.returncode, 0, first.stderr)
         target = self.root / ".work/tmp/rust-fontconfig/target/x86_64-unknown-linux-musl/release/librust_fontconfig.so"
@@ -234,6 +238,35 @@ if [ ! -e "$product" ]; then printf library > "$product"; fi
         repaired = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=120)
         self.assertEqual(repaired.returncode, 0, repaired.stderr)
         self.assertEqual(installed.read_bytes()[:4], b"\x7fELF")
+
+    def test_real_cargo_rebuilds_when_the_selected_linker_changes(self):
+        environment, command = self.real_cargo_fixture()
+        linker = self.root / "linker"
+        linker.write_text('#!/bin/sh\nprintf "one\\n" >> "$TEST_LINK_LOG"\nexec "$TEST_REAL_LINKER" "$@"\n')
+        linker.chmod(0o755)
+        log = self.root / "link-log"
+        environment.update(CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=str(linker),
+                           TEST_REAL_LINKER=str(ROOT / "docker/linux/musl-cc-wrap.sh"), TEST_LINK_LOG=str(log))
+        first = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=120)
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertIn("one", log.read_text().splitlines())
+        linker.write_text('#!/bin/sh\nprintf "two\\n" >> "$TEST_LINK_LOG"\nexec "$TEST_REAL_LINKER" "$@"\n')
+        second = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=120)
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertIn("two", log.read_text().splitlines())
+        before = log.read_bytes()
+        third = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=120)
+        self.assertEqual(third.returncode, 0, third.stderr)
+        self.assertIn("already in", third.stdout)
+        self.assertEqual(log.read_bytes(), before)
+
+    def test_real_cargo_honors_encoded_linker_override(self):
+        environment, command = self.real_cargo_fixture()
+        environment.update(CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER="/missing/configured",
+                           CARGO_ENCODED_RUSTFLAGS=f"-C\x1flinker={ROOT / 'docker/linux/musl-cc-wrap.sh'}")
+        result = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=120)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.prefix / "lib/librust_fontconfig.so.5.0.2").read_bytes()[:4], b"\x7fELF")
 
     def test_encoded_flags_keep_required_policy_and_invalidate_reuse(self):
         first = "-C\x1fdebuginfo=1"
@@ -248,6 +281,91 @@ if [ ! -e "$product" ]; then printf library > "$product"; fi
         self.assertEqual(self.build(CARGO_ENCODED_RUSTFLAGS=first).returncode, 0)
         self.assertEqual(self.record.read_text().splitlines(), ["build"])
         self.assertEqual(self.build(CARGO_ENCODED_RUSTFLAGS="-C\x1fdebuginfo=2").returncode, 0)
+        self.assertEqual(self.record.read_text().splitlines(), ["build", "build"])
+
+    def test_configured_linker_path_and_contents_invalidate_reuse(self):
+        linker = self.root / "tools/linker"
+        linker.write_text("#!/bin/sh\nexit 0\n")
+        linker.chmod(0o755)
+        environment = {"CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER": str(linker)}
+        result = self.build(**environment)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.build(**environment).returncode, 0)
+        self.assertEqual(self.record.read_text().splitlines(), ["build"])
+        linker.write_text("#!/bin/sh\nexit 1\n")
+        result = self.build(**environment)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.record.read_text().splitlines(), ["build", "build"])
+        second = self.root / "tools/second-linker"
+        shutil.copy2(linker, second)
+        result = self.build(CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=str(second))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.record.read_text().splitlines(), ["build", "build", "build"])
+
+    def test_changed_linker_during_build_publishes_no_success(self):
+        linker = self.root / "tools/linker"
+        linker.write_text("#!/bin/sh\nexit 0\n")
+        linker.chmod(0o755)
+        cargo = self.root / "tools/cargo"
+        cargo.write_text('''#!/bin/sh
+set -eu
+[ "$1" != clean ] || exit 0
+printf '#!/bin/sh\\nexit 1\\n' > "$TEST_LINKER"
+mkdir -p "$CARGO_TARGET_DIR/x86_64-unknown-linux-musl/release"
+printf library > "$CARGO_TARGET_DIR/x86_64-unknown-linux-musl/release/librust_fontconfig.so"
+''')
+        result = self.build(CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=str(linker), TEST_LINKER=str(linker))
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("linker changed during build", result.stderr)
+        self.assertFalse((self.prefix / ".input").exists())
+
+    def test_relative_linker_in_local_source_can_be_reused(self):
+        linker = self.source / "fixture-linker"
+        linker.write_text("#!/bin/sh\nexit 0\n")
+        linker.chmod(0o755)
+        environment = {"CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER": "./fixture-linker"}
+        first = self.build(**environment)
+        self.assertEqual(first.returncode, 0, first.stderr)
+        second = self.build(**environment)
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertIn("already in", second.stdout)
+        self.assertEqual(self.record.read_text().splitlines(), ["build"])
+
+    def test_path_selected_linker_changes_invalidate_reuse(self):
+        first_directory = self.root / "tools"
+        second_directory = self.root / "other-tools"
+        second_directory.mkdir()
+        for directory, value in ((first_directory, "first"), (second_directory, "second")):
+            linker = directory / "fixture-linker"
+            linker.write_text(f"#!/bin/sh\nprintf {value}\n")
+            linker.chmod(0o755)
+        environment = {"CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER": "fixture-linker"}
+        self.assertEqual(self.build(**environment).returncode, 0)
+        self.assertEqual(self.build(**environment).returncode, 0)
+        environment["PATH"] = str(second_directory) + os.pathsep + self.env["PATH"]
+        result = self.build(**environment)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.record.read_text().splitlines(), ["build", "build"])
+
+    def test_missing_configured_linker_does_not_publish_success(self):
+        result = self.build(CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=str(self.root / "missing-linker"))
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("linker cannot be resolved", result.stderr)
+        self.assertFalse((self.prefix / ".input").exists())
+
+    def test_encoded_linker_overrides_the_configured_linker(self):
+        linker = self.root / "tools/linker"
+        linker.write_text("#!/bin/sh\nexit 0\n")
+        linker.chmod(0o755)
+        encoded = f"-Clinker=/missing/first\x1f-C\x1flinker={linker}"
+        environment = {"CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER": "/missing/configured",
+                       "CARGO_ENCODED_RUSTFLAGS": encoded}
+        first = self.build(**environment)
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertEqual(self.build(**environment).returncode, 0)
+        linker.write_text("#!/bin/sh\nexit 1\n")
+        changed = self.build(**environment)
+        self.assertEqual(changed.returncode, 0, changed.stderr)
         self.assertEqual(self.record.read_text().splitlines(), ["build", "build"])
 
     def test_empty_encoded_flags_keep_required_policy(self):
