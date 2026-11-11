@@ -205,7 +205,7 @@ def check_target(path):
                 raise ValueError(f"invalid rust-fontconfig target path: {entry}")
 
 
-def executable_identity(tree, executable):
+def executable_identity(tree, executable, *, kache_companion=False):
     digest = hashlib.sha256()
     if executable is None:
         digest.update(b"unset")
@@ -218,10 +218,22 @@ def executable_identity(tree, executable):
                       for directory in os.environ.get("PATH", os.defpath).split(os.pathsep)]
     for candidate in candidates:
         if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
-            digest.update(os.fsencode(os.path.realpath(candidate)) + b"\0")
+            resolved = os.path.realpath(candidate)
+            digest.update(os.fsencode(resolved) + b"\0")
             with open(candidate, "rb") as file:
                 for chunk in iter(lambda: file.read(1024 * 1024), b""):
                     digest.update(chunk)
+            if kache_companion and os.path.basename(resolved) == "kache":
+                engine = os.path.join(os.path.dirname(resolved), "kache-engine")
+                if os.path.lexists(engine):
+                    if not os.path.isfile(engine) or not os.access(engine, os.X_OK):
+                        return None
+                    digest.update(b"\0engine\0" + os.fsencode(os.path.realpath(engine)) + b"\0")
+                    with open(engine, "rb") as file:
+                        for chunk in iter(lambda: file.read(1024 * 1024), b""):
+                            digest.update(chunk)
+                else:
+                    digest.update(b"\0no-engine")
             return digest.hexdigest()
     return None
 
@@ -356,16 +368,38 @@ def configured_rustc(tree, configuration):
     return configured_program(tree, "build.rustc", build.get("rustc", "rustc"), ("build", "rustc"))
 
 
+def configured_wrapper(tree, configuration, variable, cargo_variable, key):
+    if variable in os.environ:
+        return os.environ[variable]
+    if cargo_variable in os.environ:
+        return os.environ[cargo_variable]
+    if configuration is None:
+        return None
+    build = configuration.get("build", {})
+    if not isinstance(build, dict):
+        return None
+    selected = build.get(key, "")
+    if selected == "":
+        return ""
+    return configured_program(tree, "build." + key, selected, ("build", key))
+
+
 def build_environment_identity(tree):
     needs_configuration = ("RUSTC" not in os.environ and "CARGO_BUILD_RUSTC" not in os.environ) or (
-        encoded_linker() is None and "CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER" not in os.environ)
+        encoded_linker() is None and "CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER" not in os.environ) or (
+        "RUSTC_WRAPPER" not in os.environ and "CARGO_BUILD_RUSTC_WRAPPER" not in os.environ) or (
+        "RUSTC_WORKSPACE_WRAPPER" not in os.environ and "CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER" not in os.environ)
     configuration = cargo_configuration(tree) if needs_configuration else None
     linker = linker_identity(tree, configuration)
     selected = configured_rustc(tree, configuration)
-    if selected is None:
+    wrapper = configured_wrapper(tree, configuration, "RUSTC_WRAPPER", "CARGO_BUILD_RUSTC_WRAPPER", "rustc-wrapper")
+    workspace_wrapper = configured_wrapper(tree, configuration, "RUSTC_WORKSPACE_WRAPPER", "CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER", "rustc-workspace-wrapper")
+    if selected is None or wrapper is None or workspace_wrapper is None:
         return None
     compiler = executable_identity(tree, selected)
-    if linker is None or compiler is None:
+    outer = executable_identity(tree, wrapper or None, kache_companion=True)
+    inner = executable_identity(tree, workspace_wrapper or None, kache_companion=True)
+    if linker is None or compiler is None or outer is None or inner is None:
         return None
     try:
         version = subprocess.run([selected, "-vV"], cwd=tree, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -373,7 +407,7 @@ def build_environment_identity(tree):
         return None
     if version.returncode or not version.stdout:
         return None
-    digest = hashlib.sha256(linker.encode() + b"\0" + compiler.encode() + b"\0" + version.stdout)
+    digest = hashlib.sha256(linker.encode() + b"\0" + compiler.encode() + b"\0" + outer.encode() + b"\0" + inner.encode() + b"\0" + version.stdout)
     ignored = {"CARGO_PROFILE_RELEASE_LTO", "CARGO_PROFILE_RELEASE_OPT_LEVEL", "CARGO_PROFILE_RELEASE_CODEGEN_UNITS"}
     for name in sorted(os.environ):
         if name.startswith("CARGO_PROFILE_RELEASE_") and name not in ignored:

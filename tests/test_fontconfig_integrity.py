@@ -52,7 +52,8 @@ printf library > "$CARGO_TARGET_DIR/x86_64-unknown-linux-musl/release/librust_fo
         cargo.chmod(0o755)
         self.env = dict(os.environ, PATH=str(tools) + os.pathsep + os.environ["PATH"],
                         RUST_FONTCONFIG_SOURCE=str(self.source), RUST_FONTCONFIG_PREFIX=str(self.prefix),
-                        RUSTC=shutil.which("rustc"), TEST_RECORD=str(self.record), TEST_FLAGS=str(self.root / "flags"))
+                        RUSTC=shutil.which("rustc"), RUSTC_WRAPPER="", RUSTC_WORKSPACE_WRAPPER="",
+                        TEST_RECORD=str(self.record), TEST_FLAGS=str(self.root / "flags"))
 
     def build(self, **environment):
         return subprocess.run([str(self.root / "scripts/build-rust-fontconfig-linux.sh")],
@@ -564,6 +565,131 @@ printf library > "$CARGO_TARGET_DIR/x86_64-unknown-linux-musl/release/librust_fo
                                        capture_output=True, text=True, timeout=30)
                 self.assertEqual(value.returncode, 0, value.stderr)
                 self.assertEqual(value.stdout.strip(), expected, result.stdout + result.stderr)
+
+    def check_real_cargo_workspace_wrapper_changes(self, selection):
+        environment, command = self.real_cargo_fixture()
+        (self.source / "src/lib.rs").write_text('#[unsafe(no_mangle)]\npub extern "C" fn fontconfig_probe() -> u32 { if cfg!(compiler_one) { 1 } else { 2 } }\n')
+        wrapper = self.root / "configured # tools/workspace-wrapper"
+        wrapper.parent.mkdir()
+        wrapper.write_text("")
+        wrapper.chmod(0o755)
+        if selection == "environment":
+            environment["RUSTC_WORKSPACE_WRAPPER"] = str(wrapper)
+            environment["CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER"] = "/missing/overridden-wrapper"
+        elif selection == "cargo-environment":
+            environment.pop("RUSTC_WORKSPACE_WRAPPER", None)
+            environment["CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER"] = str(wrapper)
+        else:
+            environment.pop("RUSTC_WORKSPACE_WRAPPER", None)
+            environment.pop("CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER", None)
+            configuration = self.root / ".cargo/config.toml"
+            configuration.parent.mkdir()
+            selected = "configured # tools/workspace-wrapper" if selection == "relative-config" else str(wrapper)
+            configuration.write_text(f'[build]\nrustc-workspace-wrapper = {json.dumps(selected)}\n')
+        installed = self.prefix / "lib/librust_fontconfig.so.5.0.2"
+        probe = 'import ctypes, sys; lib = ctypes.CDLL(sys.argv[1]); print(lib.fontconfig_probe())'
+        for flag, expected in (("compiler_one", "1"), ("compiler_two", "2")):
+            with self.subTest(flag=flag):
+                wrapper.write_text(f'#!/bin/sh\ncompiler="$1"\nshift\nexec "$compiler" --cfg {flag} "$@"\n')
+                result = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=120)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                value = subprocess.run([sys.executable, "-c", probe, str(installed)], capture_output=True, text=True, timeout=30)
+                self.assertEqual(value.returncode, 0, value.stderr)
+                self.assertEqual(value.stdout.strip(), expected, result.stdout + result.stderr)
+
+    def test_real_cargo_rebuilds_when_workspace_wrapper_changes(self):
+        self.check_real_cargo_workspace_wrapper_changes("environment")
+
+    def test_real_cargo_rebuilds_when_cargo_workspace_wrapper_changes(self):
+        self.check_real_cargo_workspace_wrapper_changes("cargo-environment")
+
+    def test_real_cargo_rebuilds_when_configured_workspace_wrapper_changes(self):
+        self.check_real_cargo_workspace_wrapper_changes("config")
+
+    def test_real_cargo_rebuilds_when_relative_configured_workspace_wrapper_changes(self):
+        self.check_real_cargo_workspace_wrapper_changes("relative-config")
+
+    def test_real_cargo_rebuilds_when_relative_configured_outer_wrapper_changes(self):
+        environment, command = self.real_cargo_fixture()
+        (self.source / "src/lib.rs").write_text('#[unsafe(no_mangle)]\npub extern "C" fn fontconfig_probe() -> u32 { if cfg!(compiler_one) { 1 } else { 2 } }\n')
+        wrapper = self.root / "configured # tools/outer-wrapper"
+        wrapper.parent.mkdir()
+        wrapper.write_text("")
+        wrapper.chmod(0o755)
+        configuration = self.root / ".cargo/config.toml"
+        configuration.parent.mkdir()
+        configuration.write_text('[build]\nrustc-wrapper = "configured # tools/outer-wrapper"\n')
+        environment["TEST_KACHE"] = environment.pop("RUSTC_WRAPPER")
+        environment.pop("CARGO_BUILD_RUSTC_WRAPPER", None)
+        installed = self.prefix / "lib/librust_fontconfig.so.5.0.2"
+        probe = 'import ctypes, sys; lib = ctypes.CDLL(sys.argv[1]); print(lib.fontconfig_probe())'
+        for flag, expected in (("compiler_one", "1"), ("compiler_two", "2")):
+            with self.subTest(flag=flag):
+                wrapper.write_text(f'#!/bin/sh\ncompiler="$1"\nshift\nexec "$TEST_KACHE" "$compiler" --cfg {flag} "$@"\n')
+                result = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=120)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                value = subprocess.run([sys.executable, "-c", probe, str(installed)], capture_output=True, text=True, timeout=30)
+                self.assertEqual(value.returncode, 0, value.stderr)
+                self.assertEqual(value.stdout.strip(), expected, result.stdout + result.stderr)
+
+    def test_outer_wrapper_changes_invalidate_reuse(self):
+        wrapper = self.root / "tools/wrapper"
+        wrapper.write_text("#!/bin/sh\nexit 0\n")
+        wrapper.chmod(0o755)
+        environment = {"RUSTC_WRAPPER": str(wrapper)}
+        self.assertEqual(self.build(**environment).returncode, 0)
+        self.assertEqual(self.build(**environment).returncode, 0)
+        wrapper.write_text("#!/bin/sh\nexit 1\n")
+        result = self.build(**environment)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.record.read_text().splitlines(), ["build", "build"])
+
+    def test_real_cargo_rebuilds_when_kache_engine_changes(self):
+        environment, command = self.real_cargo_fixture()
+        frontend = Path(environment["RUSTC_WRAPPER"]).resolve()
+        engine = frontend.with_name("kache-engine")
+        if not engine.is_file():
+            self.skipTest("requires a separate kache engine")
+        installation = self.root / "kache"
+        installation.mkdir()
+        shutil.copy2(frontend, installation / "kache")
+        shutil.copy2(engine, installation / "kache-engine")
+        environment["RUSTC_WRAPPER"] = str(installation / "kache")
+        first = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=120)
+        self.assertEqual(first.returncode, 0, first.stderr)
+        with (installation / "kache-engine").open("ab") as file:
+            file.write(b"\0")
+        second = subprocess.run(command, env=environment, capture_output=True, text=True, timeout=120)
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertNotIn("already in", second.stdout)
+
+    def test_empty_wrapper_overrides_cargo_environment(self):
+        first = self.build(CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER="/missing/first")
+        self.assertEqual(first.returncode, 0, first.stderr)
+        second = self.build(CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER="/missing/second")
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertIn("already in", second.stdout)
+
+    def test_missing_selected_workspace_wrapper_does_not_publish(self):
+        result = self.build(RUSTC_WORKSPACE_WRAPPER=str(self.root / "missing-wrapper"))
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertFalse((self.prefix / ".input").exists())
+
+    def test_workspace_wrapper_changed_during_build_does_not_publish(self):
+        wrapper = self.root / "tools/wrapper"
+        wrapper.write_text("#!/bin/sh\nexit 0\n")
+        wrapper.chmod(0o755)
+        cargo = self.root / "tools/cargo"
+        cargo.write_text('''#!/bin/sh
+set -eu
+[ "$1" != clean ] || exit 0
+printf '#!/bin/sh\nexit 1\n' > "$RUSTC_WORKSPACE_WRAPPER"
+mkdir -p "$CARGO_TARGET_DIR/x86_64-unknown-linux-musl/release"
+printf library > "$CARGO_TARGET_DIR/x86_64-unknown-linux-musl/release/librust_fontconfig.so"
+''')
+        result = self.build(RUSTC_WORKSPACE_WRAPPER=str(wrapper))
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertFalse((self.prefix / ".input").exists())
 
     def check_real_cargo_configured_rustc_changes(self, *, relative):
         environment, command = self.real_cargo_fixture()

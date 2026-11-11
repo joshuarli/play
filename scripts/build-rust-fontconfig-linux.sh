@@ -151,7 +151,7 @@ fi
 cp "$LOCK" "$tree/Cargo.lock"
 printf '\n[workspace]\n' >>"$tree/Cargo.toml"
 environment_identity=$(python3 "$INSTALL" build-environment-identity "$tree") || {
-    printf 'error: configured rust-fontconfig linker cannot be resolved, or compiler cannot be resolved\n' >&2
+    printf 'error: configured rust-fontconfig linker cannot be resolved, or compiler cannot be resolved (including wrappers)\n' >&2
     exit 1
 }
 input=$(calculate_input "$environment_identity")
@@ -172,7 +172,7 @@ export CARGO_TARGET_DIR="$SRC/target"
 )
 
 if [ "$(python3 "$INSTALL" build-environment-identity "$tree")" != "$environment_identity" ]; then
-    printf 'error: configured rust-fontconfig linker changed during build, or compiler changed\n' >&2
+    printf 'error: configured rust-fontconfig linker changed during build, or compiler changed (including wrappers)\n' >&2
     exit 1
 fi
 if [ -n "$LOCAL" ] && ! verify_source_digest; then
