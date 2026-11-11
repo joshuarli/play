@@ -35,7 +35,8 @@ fn main() {
         "pkg-config --libs rust-fontconfig harfbuzz freetype2 failed ({PREFIX_ENV} or the system must provide rust-fontconfig; run scripts/build-rust-fontconfig-linux.sh): {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    for flag in String::from_utf8_lossy(&output.stdout).split_whitespace() {
+    let link_flags = std::str::from_utf8(&output.stdout).expect("pkg-config returned non-UTF-8 link flags");
+    for flag in link_flags.split_whitespace() {
         if let Some(path) = flag.strip_prefix("-L") {
             println!("cargo:rustc-link-search=native={}", search_path(Path::new(path), prefix.as_deref(), &out_dir));
         } else if let Some(name) = flag.strip_prefix("-l") {
