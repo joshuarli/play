@@ -71,8 +71,11 @@ if ! python3 "$INSTALL" "$prefix_lock" prepare "$SONAME" "$DEFAULT_PREFIX" "$ALL
 fi
 
 LOCAL="${RUST_FONTCONFIG_SOURCE:-}"
+calculate_tree_digest() {
+    tar -c -C "$1" --sort=name --exclude=./target --exclude=./.git --exclude=./.work . | sha256sum | awk '{print $1}'
+}
 calculate_source_digest() {
-    tar -c -C "$LOCAL" --sort=name --exclude=./target --exclude=./.git --exclude=./.work . | sha256sum | awk '{print $1}'
+    calculate_tree_digest "$LOCAL"
 }
 verify_source_digest() {
     local current
@@ -129,7 +132,7 @@ rm -rf "$tree"
 if [ -n "$LOCAL" ]; then
     mkdir -p "$tree"
     tar -c -C "$LOCAL" --exclude=./target --exclude=./.git --exclude=./.work . | tar -x -C "$tree"
-    if ! verify_source_digest; then
+    if ! copied_digest=$(calculate_tree_digest "$tree") || [ "$copied_digest" != "$source_digest" ] || ! verify_source_digest; then
         printf 'error: rust-fontconfig source changed during copying\n' >&2
         exit 1
     fi

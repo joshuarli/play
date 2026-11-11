@@ -120,6 +120,27 @@ printf library > "$CARGO_TARGET_DIR/x86_64-unknown-linux-musl/release/librust_fo
         self.assertTrue(tree.exists())
 
 
+    def test_transient_source_change_during_copy_does_not_publish(self):
+        real_tar = shutil.which("tar")
+        wrapper = self.root / "tools/tar"
+        wrapper.write_text('''#!/bin/sh
+set -eu
+if [ "$1" = -c ] && [ "$2" = -C ] && [ "$3" = "$RUST_FONTCONFIG_SOURCE" ]; then
+    case " $* " in *" --sort=name "*) exec "$TEST_REAL_TAR" "$@" ;; esac
+    cp -p "$RUST_FONTCONFIG_SOURCE/ffi/rust_fontconfig.h" "$TEST_ORIGINAL"
+    printf 'transient header\n' > "$RUST_FONTCONFIG_SOURCE/ffi/rust_fontconfig.h"
+    "$TEST_REAL_TAR" "$@"
+    cp -p "$TEST_ORIGINAL" "$RUST_FONTCONFIG_SOURCE/ffi/rust_fontconfig.h"
+    exit 0
+fi
+exec "$TEST_REAL_TAR" "$@"
+''')
+        wrapper.chmod(0o755)
+        result = self.build(TEST_REAL_TAR=real_tar, TEST_ORIGINAL=str(self.root / "original-header"))
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertEqual((self.source / "ffi/rust_fontconfig.h").read_text(), "fixture header\n")
+        self.assertFalse((self.prefix / ".input").exists())
+
     def test_source_modified_during_build_publishes_no_success(self):
         cargo = self.root / "tools/cargo"
         cargo.write_text('''#!/bin/sh

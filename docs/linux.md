@@ -24,7 +24,7 @@ The helper validates its installed library, header, pkg-config file and symlink 
 
 On an installed-cache miss, the helper cleans the workspace's release artifacts for the musl target before rebuilding. This prevents an altered Cargo output from being republished as a valid library; an unchanged installed-cache hit may run Cargo to inspect its configuration, without compiling or installing.
 
-For a local rust-fontconfig source, the helper checks that its contents remain stable during cache validation, copying and compilation. A change or fingerprint failure stops the build before publishing a new success marker.
+For a local rust-fontconfig source, the helper checks that its contents remain stable during cache validation, copying and compilation. It also compares the copied tree with the source fingerprint before building. A change or fingerprint failure stops the build before publishing a new success marker.
 
 The generated pkg-config metadata requires a prefix without whitespace, backslashes, colons, quotes, `#` or `${`. The helper rejects those paths before writing. Cargo builds also reject non-UTF-8 link flags instead of changing their path bytes.
 
