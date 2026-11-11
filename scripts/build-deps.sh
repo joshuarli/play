@@ -5,6 +5,13 @@ set -euo pipefail
 # artifacts (Homebrew bottles, rewritten into this prefix). Runtime libraries
 # come only from this prefix.
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
+BOTTLE_TAG=${HOMEBREW_BOTTLE_TAG:-arm64_tahoe}
+if [ "$BOTTLE_TAG" != arm64_tahoe ]; then
+    printf 'error: no pinned vulkan-loader bottle for %s; set HOMEBREW_BOTTLE_TAG or build the loader manually\n' "$BOTTLE_TAG" >&2
+    exit 1
+fi
+VL_SHA=6d5ee00d4104774f3ae56e5e9441a59a6a6f5d800f937f4e926a8f9e01ed046f
+SH_SHA=12ba0c59a98fb8f671f9473573002b2a812f26d2e60ea4f577f0c8c750c9838a
 PREFIX="$ROOT/.work/deps/release"
 SRC="$ROOT/.work/tmp/release"
 LOGS="$SRC/logs"
@@ -160,13 +167,8 @@ if ! have vulkan-headers; then
 fi
 
 if ! have vulkan-loader; then
-    BOTTLE_TAG=${HOMEBREW_BOTTLE_TAG:-arm64_tahoe}
     VL_BOTTLE="vulkan-loader-$VULKAN_VERSION.$BOTTLE_TAG.bottle.tar.gz"
-    case "$BOTTLE_TAG" in
-        arm64_tahoe) vl_sha=6d5ee00d4104774f3ae56e5e9441a59a6a6f5d800f937f4e926a8f9e01ed046f ;;
-        *) printf 'error: no pinned vulkan-loader bottle for %s; set HOMEBREW_BOTTLE_TAG or build the loader manually\n' "$BOTTLE_TAG" >&2; exit 1 ;;
-    esac
-    fetch_blob "https://ghcr.io/v2/homebrew/core/vulkan-loader/blobs/sha256:$vl_sha" "$vl_sha" "$SRC/$VL_BOTTLE"
+    fetch_blob "https://ghcr.io/v2/homebrew/core/vulkan-loader/blobs/sha256:$VL_SHA" "$VL_SHA" "$SRC/$VL_BOTTLE"
     rm -rf "$SRC/vulkan-loader-bottle"
     mkdir -p "$SRC/vulkan-loader-bottle"
     tar -xzf "$SRC/$VL_BOTTLE" -C "$SRC/vulkan-loader-bottle"
@@ -185,13 +187,8 @@ if ! have vulkan-loader; then
 fi
 
 if ! have shaderc; then
-    BOTTLE_TAG=${HOMEBREW_BOTTLE_TAG:-arm64_tahoe}
     SH_BOTTLE="shaderc-$SHADERC_VERSION.$BOTTLE_TAG.bottle.tar.gz"
-    case "$BOTTLE_TAG" in
-        arm64_tahoe) sh_sha=12ba0c59a98fb8f671f9473573002b2a812f26d2e60ea4f577f0c8c750c9838a ;;
-        *) printf 'error: no pinned shaderc bottle for %s; set HOMEBREW_BOTTLE_TAG or provide a pinned prebuilt\n' "$BOTTLE_TAG" >&2; exit 1 ;;
-    esac
-    fetch_blob "https://ghcr.io/v2/homebrew/core/shaderc/blobs/sha256:$sh_sha" "$sh_sha" "$SRC/$SH_BOTTLE"
+    fetch_blob "https://ghcr.io/v2/homebrew/core/shaderc/blobs/sha256:$SH_SHA" "$SH_SHA" "$SRC/$SH_BOTTLE"
     rm -rf "$SRC/shaderc-bottle"
     mkdir -p "$SRC/shaderc-bottle"
     tar -xzf "$SRC/$SH_BOTTLE" -C "$SRC/shaderc-bottle"

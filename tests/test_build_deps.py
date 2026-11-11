@@ -27,7 +27,10 @@ class MacosBuildDepsTest(unittest.TestCase):
     def test_python_patch_changes_invalidate_dependencies(self):
         self.check_bottle_install(reinstall=False, changed_patch=True)
 
-    def check_bottle_install(self, reinstall, changed_recipe=None, changed_patch=False):
+    def test_unsupported_bottle_tag_is_rejected_on_cache_hit(self):
+        self.check_bottle_install(reinstall=False, unsupported_tag=True)
+
+    def check_bottle_install(self, reinstall, changed_recipe=None, changed_patch=False, unsupported_tag=False):
         scratch = ROOT / ".work/tmp"
         scratch.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=scratch, prefix="build-deps-test-") as directory:
@@ -104,6 +107,15 @@ printf '%s  %s\\n' "$digest" "${3:--}"
             self.assertTrue((prefix / ".stamp-vulkan-loader").is_file())
             self.assertEqual((prefix / "lib/libshaderc_shared.1.dylib").read_bytes(), b"shaderc")
             self.assertTrue((prefix / ".stamp-shaderc").is_file())
+            if unsupported_tag:
+                cached = (prefix / ".stamp-vulkan-loader").read_bytes()
+                selected = dict(environment, HOMEBREW_BOTTLE_TAG="unsupported")
+                result = subprocess.run([str(scripts / "build-deps.sh")], env=selected,
+                                        capture_output=True, text=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("no pinned vulkan-loader bottle for unsupported", result.stderr)
+                self.assertNotIn("spirv-cross requested", result.stderr)
+                self.assertEqual((prefix / ".stamp-vulkan-loader").read_bytes(), cached)
             if changed_recipe or changed_patch:
                 cross_stamp = prefix / ".stamp-spirv-cross"
                 cross_stamp.write_bytes((prefix / ".stamp-vulkan-loader").read_bytes())
