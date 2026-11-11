@@ -45,7 +45,7 @@ jobs:
           cargo --version
 
       - name: Install build tools
-        run: brew install meson samurai pkgconf ripgrep
+        run: brew install pkgconf ripgrep
 
       - name: Cache dependencies
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -53,7 +53,7 @@ jobs:
           path: |
             .work/deps/release
             target
-          key: player-macos-deps-${{ github.workspace }}-${{ hashFiles('scripts/build-deps.sh', 'scripts/patches/libplacebo-metal.patch', 'native/spirv-cross/**', 'ffmpeg-runtime.lock.json', 'scripts/fetch-ffmpeg-runtime.sh', 'Cargo.lock', 'rust-toolchain.toml') }}
+          key: player-macos-deps-${{ github.workspace }}-${{ hashFiles('scripts/build-deps.sh', 'scripts/fetch-gluon.sh', 'scripts/patches/libplacebo-metal.patch', 'native/spirv-cross/**', 'ffmpeg-runtime.lock.json', 'scripts/fetch-ffmpeg-runtime.sh', 'Cargo.lock', 'rust-toolchain.toml') }}
           restore-keys: |
             player-macos-deps-${{ github.workspace }}-
 

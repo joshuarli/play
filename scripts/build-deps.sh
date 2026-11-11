@@ -27,19 +27,13 @@ mkdir -p "$PREFIX" "$SRC" "$LOGS"
 # Player's own version into the dependency. Stop git's search at $SRC.
 export GIT_CEILING_DIRECTORIES="$SRC"
 
-INPUT_HASH=$(cat "$ROOT/scripts/build-deps.sh" "$ROOT/scripts/patches/libplacebo-metal.patch" "$ROOT/scripts/patches/libplacebo-python.patch" \
+INPUT_HASH=$(cat "$ROOT/scripts/build-deps.sh" "$ROOT/scripts/fetch-gluon.sh" "$ROOT/scripts/patches/libplacebo-metal.patch" "$ROOT/scripts/patches/libplacebo-python.patch" \
     "$ROOT/native/spirv-cross/meson.build" "$ROOT/native/spirv-cross/gitversion.h.in" |
     shasum -a 256 | awk '{print $1}')
 
-NINJA=${NINJA:-$(command -v samu 2>/dev/null || command -v samurai 2>/dev/null || command -v ninja 2>/dev/null || printf ninja)}
-# muon 0.7.0 on macOS installs static libraries without building them, names
-# shared libraries libplacebo.dylib.N, and writes SDK framework paths into
-# libplacebo.pc Requires.private, so these projects need the meson frontend.
-MESON_SETUP_LIBPLACEBO=(meson setup)
-if command -v meson >/dev/null && [ "$(head -c 2 "$(command -v meson)")" != '#!' ]; then
-    printf 'error: %s is not the Python Meson; gluon meson lacks install, project arguments and soversion parity, so put Meson 1.12.1 first on PATH\n' "$(command -v meson)" >&2
-    exit 1
-fi
+GLUON=$("$ROOT/scripts/fetch-gluon.sh" aarch64-apple-darwin)
+NINJA=${NINJA:-$GLUON/ninja}
+MESON_SETUP_LIBPLACEBO=("$GLUON/meson" setup)
 
 for tool in curl tar shasum xcrun; do
     command -v "$tool" >/dev/null || {
@@ -49,11 +43,7 @@ for tool in curl tar shasum xcrun; do
 done
 
 tool_version() {
-    local tool=$1
-    case "$(basename "$tool")" in
-        samu|samurai|ninja) "$tool" --version 2>&1 | head -1 | rg -o '[0-9]+(\.[0-9]+)+' | head -1 ;;
-        *) "$tool" --version 2>&1 | head -1 | rg -o '[0-9]+(\.[0-9]+)+' | head -1 ;;
-    esac
+    "$1" --version 2>&1 | head -1 | rg -o '[0-9]+(\.[0-9]+)+' | head -1
 }
 
 require_tool() {
@@ -76,7 +66,6 @@ require_version() {
     fi
 }
 
-require_tool meson
 require_tool "$NINJA"
 require_version pkg-config 0.29
 require_version python3 3.9

@@ -20,23 +20,7 @@ export GIT_CEILING_DIRECTORIES="$SRC"
 SHADERC_PREBUILT_TAR="$ROOT/native/prebuilt/shaderc-combined-x86_64-linux-musl-2026.4.tar.gz"
 SHADERC_PREBUILT_SHA=cbd1172afd26321bac14ee9389b4981308717d06fdc27f742513b92091d4d1dd
 
-INPUT_HASH=$(cat "$ROOT/scripts/build-deps-linux.sh" "$ROOT/scripts/patches/libplacebo-python.patch" "$SHADERC_PREBUILT_TAR" | sha256sum | awk '{print $1}')
-
-MESON=${MESON:-$(command -v muon 2>/dev/null || command -v meson 2>/dev/null || printf meson)}
-NINJA=${NINJA:-$(command -v samu 2>/dev/null || command -v samurai 2>/dev/null || command -v ninja 2>/dev/null || printf ninja)}
-case "$(basename "$MESON")" in
-    muon*) MESON_SETUP=("$MESON" meson setup) ;;
-    *) MESON_SETUP=("$MESON" setup) ;;
-esac
-MESON_SETUP_LIBPLACEBO=("${MESON_SETUP[@]}")
-case "$(basename "$MESON")" in
-    muon*)
-        if command -v meson >/dev/null 2>&1; then
-            printf 'note: using meson for libplacebo (muon frontend compatibility fallback); using %s backend\n' "$NINJA" >&2
-            MESON_SETUP_LIBPLACEBO=(meson setup)
-        fi
-        ;;
-esac
+INPUT_HASH=$(cat "$ROOT/scripts/build-deps-linux.sh" "$ROOT/scripts/fetch-gluon.sh" "$ROOT/scripts/patches/libplacebo-python.patch" "$SHADERC_PREBUILT_TAR" | sha256sum | awk '{print $1}')
 
 case "$(uname -sm)/$(ldd --version 2>&1)" in
     "Linux x86_64/"*musl*) ;;
@@ -45,6 +29,12 @@ case "$(uname -sm)/$(ldd --version 2>&1)" in
         exit 1
         ;;
 esac
+
+GLUON=$("$ROOT/scripts/fetch-gluon.sh" x86_64-unknown-linux-musl)
+MESON=${MESON:-$GLUON/meson}
+NINJA=${NINJA:-$GLUON/ninja}
+MESON_SETUP=("$MESON" setup)
+MESON_SETUP_LIBPLACEBO=("${MESON_SETUP[@]}")
 
 for tool in curl tar sha256sum "$MESON" "$NINJA" pkg-config python3 make; do
     command -v "$tool" >/dev/null || {

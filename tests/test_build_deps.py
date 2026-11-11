@@ -39,6 +39,13 @@ class MacosBuildDepsTest(unittest.TestCase):
             scripts.mkdir()
             (scripts / "patches").mkdir()
             shutil.copy2(ROOT / "scripts/build-deps.sh", scripts / "build-deps.sh")
+            shutil.copy2(ROOT / "scripts/fetch-gluon.sh", scripts / "fetch-gluon.sh")
+            tag = next(line.split("=", 1)[1] for line in (ROOT / "scripts/fetch-gluon.sh").read_text().splitlines()
+                       if line.startswith("TAG="))
+            gluon = root / ".work/tools/gluon" / f"{tag}-aarch64-apple-darwin"
+            gluon.mkdir(parents=True)
+            for tool in ("meson", "ninja"):
+                self.executable(gluon / tool, "#!/bin/sh\nexit 0\n")
             shutil.copy2(ROOT / "scripts/patches/libplacebo-metal.patch", scripts / "patches/libplacebo-metal.patch")
             shutil.copy2(ROOT / "scripts/patches/libplacebo-python.patch", scripts / "patches/libplacebo-python.patch")
             shutil.copytree(ROOT / "native/spirv-cross", root / "native/spirv-cross")
@@ -153,10 +160,11 @@ class LibplaceboPythonTest(unittest.TestCase):
         self.root = Path(self.temporary.name)
 
     def test_libplacebo_uses_pinned_python_packages(self):
-        real_meson = "/opt/homebrew/bin/meson" if Path("/opt/homebrew/bin/meson").is_file() else shutil.which("meson")
-        real_ninja = shutil.which("ninja") or shutil.which("samu")
-        if not real_meson or not real_ninja:
-            self.skipTest("requires Meson and a Ninja-compatible backend")
+        target = "x86_64-unknown-linux-musl" if sys.platform.startswith("linux") else "aarch64-apple-darwin"
+        gluon = Path(subprocess.run([str(ROOT / "scripts/fetch-gluon.sh"), target], check=True,
+                                    capture_output=True, text=True).stdout.strip())
+        real_meson = str(gluon / "meson")
+        real_ninja = str(gluon / "ninja")
         external = self.root / "external"
         external.mkdir()
         (external / "jinja2.py").write_text('value = "external"\n')

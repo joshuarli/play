@@ -28,7 +28,7 @@ make linux
 
 ## Release app
 
-The macOS build needs the Xcode command-line tools, the pinned Rust toolchain, Meson and a Ninja-compatible backend for SPIRV-Cross and libplacebo (`meson` with `samurai`/`samu` or `ninja`; muon 0.7.0 produces broken macOS products and is not used, and gluon's native `meson` is rejected until it reaches Meson parity), pkg-config, Python 3, curl, and `shasum`; `scripts/dev-deps.sh` installs the pinned Homebrew build tools and the FFmpeg used to generate test fixtures. The development build and the Rust tests link the same pinned closure as the app, so build it first; `scripts/build.sh` and `cargo test` fail until it exists:
+The macOS build needs the Xcode command-line tools, the pinned Rust toolchain, pkg-config, Python 3, curl, `unzip`, and `shasum`; `scripts/dev-deps.sh` installs the pinned Homebrew pkgconf and the FFmpeg used to generate test fixtures. SPIRV-Cross and libplacebo build with the `meson` and `ninja` from the gluon release pinned in `scripts/fetch-gluon.sh`, which downloads and checksums it into `.work/tools/gluon`; the Linux build uses the same release's musl binaries. No Python Meson, Ninja, samurai, or muon is needed. The development build and the Rust tests link the same pinned closure as the app, so build it first; `scripts/build.sh` and `cargo test` fail until it exists:
 
 ```sh
 scripts/build-deps.sh
@@ -37,7 +37,7 @@ build/mpv FILE
 build/mpv --gpu-api=vulkan FILE
 ```
 
-The macOS and Linux libplacebo generators use the pinned Python packages in the source tree, ignoring the caller's `PYTHONPATH` and Python user site. Meson and the other build tools retain the caller's Python environment.
+The macOS and Linux libplacebo generators use the pinned Python packages in the source tree, ignoring the caller's `PYTHONPATH` and Python user site. The other build tools retain the caller's Python environment.
 
 Build the release app:
 
