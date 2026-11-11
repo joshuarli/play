@@ -89,7 +89,7 @@ printf '%s  %s\\n' "$digest" "${3:--}"
             for tool in ("install_name_tool", "codesign", "xcrun"):
                 self.executable(tools / tool, "#!/bin/sh\nexit 0\n")
             environment = dict(os.environ, PATH=str(tools) + os.pathsep + os.environ["PATH"],
-                               FIXTURE_ARCHIVES=str(archives), MESON="/usr/bin/true", NINJA="/usr/bin/true")
+                               FIXTURE_ARCHIVES=str(archives), NINJA="/usr/bin/true")
             prefix = root / ".work/deps/release"
             if reinstall:
                 library = prefix / "lib"
