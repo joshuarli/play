@@ -20,6 +20,10 @@ case "$(uname -sm)/$(ldd --version 2>&1)" in
         ;;
 esac
 
+mkdir -p "$SRC"
+exec {source_lock}<"$SRC"
+flock -x "$source_lock"
+
 LOCAL="${RUST_FONTCONFIG_SOURCE:-}"
 if [ -n "$LOCAL" ]; then
     source_digest=$(tar -c -C "$LOCAL" --sort=name --exclude=./target --exclude=./.git --exclude=./.work . | sha256sum | awk '{print $1}')
