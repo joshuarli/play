@@ -31,24 +31,11 @@ INPUT_HASH=$(cat "$ROOT/scripts/build-deps.sh" "$ROOT/scripts/patches/libplacebo
     "$ROOT/native/spirv-cross/meson.build" "$ROOT/native/spirv-cross/gitversion.h.in" |
     shasum -a 256 | awk '{print $1}')
 
-MESON=${MESON:-$(command -v muon 2>/dev/null || command -v meson 2>/dev/null || printf meson)}
 NINJA=${NINJA:-$(command -v samu 2>/dev/null || command -v samurai 2>/dev/null || command -v ninja 2>/dev/null || printf ninja)}
-case "$(basename "$MESON")" in
-    muon*) MESON_SETUP=("$MESON" meson setup) ;;
-    *) MESON_SETUP=("$MESON" setup) ;;
-esac
-MESON_SETUP_LIBPLACEBO=("${MESON_SETUP[@]}")
-case "$(basename "$MESON")" in
-    muon*)
-        # muon 0.7.0 can mis-handle macOS shared-library install naming for
-        # libplacebo (v7.387.0 + this repo's Metal patch); use meson for the
-        # libplacebo frontend and keep samu/ninja as the backend.
-        if command -v meson >/dev/null 2>&1; then
-            printf 'note: using meson for libplacebo (muon frontend incompatible here); using %s backend\n' "$NINJA" >&2
-            MESON_SETUP_LIBPLACEBO=(meson setup)
-        fi
-        ;;
-esac
+# muon 0.7.0 on macOS installs static libraries without building them, names
+# shared libraries libplacebo.dylib.N, and writes SDK framework paths into
+# libplacebo.pc Requires.private, so these projects need the meson frontend.
+MESON_SETUP_LIBPLACEBO=(meson setup)
 
 for tool in curl tar shasum xcrun; do
     command -v "$tool" >/dev/null || {
@@ -60,7 +47,6 @@ done
 tool_version() {
     local tool=$1
     case "$(basename "$tool")" in
-        muon) "$tool" version 2>&1 | head -1 | rg -o '[0-9]+(\.[0-9]+)+' | head -1 ;;
         samu|samurai|ninja) "$tool" --version 2>&1 | head -1 | rg -o '[0-9]+(\.[0-9]+)+' | head -1 ;;
         *) "$tool" --version 2>&1 | head -1 | rg -o '[0-9]+(\.[0-9]+)+' | head -1 ;;
     esac
@@ -86,7 +72,7 @@ require_version() {
     fi
 }
 
-require_tool "$MESON"
+require_tool meson
 require_tool "$NINJA"
 require_version pkg-config 0.29
 require_version python3 3.9

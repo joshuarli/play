@@ -28,7 +28,7 @@ make linux
 
 ## Release app
 
-The macOS build needs the Xcode command-line tools, the pinned Rust toolchain, a Meson implementation and Ninja-compatible backend for SPIRV-Cross and libplacebo (`muon` and `samurai`/`samu` preferred; `meson` and `ninja` also work), pkg-config, Python 3, curl, and `shasum`; `scripts/dev-deps.sh` installs the pinned Homebrew build tools and the FFmpeg used to generate test fixtures. The development build and the Rust tests link the same pinned closure as the app, so build it first; `scripts/build.sh` and `cargo test` fail until it exists:
+The macOS build needs the Xcode command-line tools, the pinned Rust toolchain, Meson and a Ninja-compatible backend for SPIRV-Cross and libplacebo (`meson` with `samurai`/`samu` or `ninja`; muon 0.7.0 produces broken macOS products and is not used), pkg-config, Python 3, curl, and `shasum`; `scripts/dev-deps.sh` installs the pinned Homebrew build tools and the FFmpeg used to generate test fixtures. The development build and the Rust tests link the same pinned closure as the app, so build it first; `scripts/build.sh` and `cargo test` fail until it exists:
 
 ```sh
 scripts/build-deps.sh
