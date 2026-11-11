@@ -22,6 +22,8 @@ The helper validates its installed library, header, pkg-config file and symlink 
 
 The generated pkg-config metadata requires a prefix without whitespace, backslashes, colons, quotes, `#` or `${`. The helper rejects those paths before writing. Cargo builds also reject non-UTF-8 link flags instead of changing their path bytes.
 
+When `CARGO_ENCODED_RUSTFLAGS` is set, the Linux build scripts preserve those flags and append the required musl and linker flags to the encoded list. The rust-fontconfig cache identity includes that effective list.
+
 Besides the four FFmpeg runtime libraries (`libavformat`, `libavcodec`, `libswscale`, `libavutil`, by the SONAMEs in the runtime manifest), the executable links only these shared libraries from the Alpine image:
 
 | Library | Alpine package |

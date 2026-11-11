@@ -23,6 +23,7 @@ class FontconfigIntegrityTest(unittest.TestCase):
         (self.root / "docker/linux").mkdir(parents=True)
         shutil.copy2(ROOT / "scripts/build-rust-fontconfig-linux.sh", self.root / "scripts/build-rust-fontconfig-linux.sh")
         shutil.copy2(ROOT / "scripts/rust_fontconfig_install.py", self.root / "scripts/rust_fontconfig_install.py")
+        shutil.copy2(ROOT / "scripts/cargo-rustflags.sh", self.root / "scripts/cargo-rustflags.sh")
         shutil.copy2(ROOT / "docker/linux/rust-fontconfig.Cargo.lock", self.root / "docker/linux/rust-fontconfig.Cargo.lock")
         self.source = self.root / "source"
         (self.source / "ffi").mkdir(parents=True)
@@ -36,6 +37,7 @@ class FontconfigIntegrityTest(unittest.TestCase):
         cargo.write_text('''#!/bin/sh
 set -eu
 printf 'build\\n' >> "$TEST_RECORD"
+printf '%s' "${CARGO_ENCODED_RUSTFLAGS-}" > "$TEST_FLAGS"
 [ "${TEST_FAIL:-}" != 1 ] || exit 37
 [ "${TEST_REMOVE_HEADER:-}" != 1 ] || rm -f ffi/rust_fontconfig.h
 mkdir -p "$CARGO_TARGET_DIR/x86_64-unknown-linux-musl/release"
@@ -44,7 +46,7 @@ printf library > "$CARGO_TARGET_DIR/x86_64-unknown-linux-musl/release/librust_fo
         cargo.chmod(0o755)
         self.env = dict(os.environ, PATH=str(tools) + os.pathsep + os.environ["PATH"],
                         RUST_FONTCONFIG_SOURCE=str(self.source), RUST_FONTCONFIG_PREFIX=str(self.prefix),
-                        TEST_RECORD=str(self.record))
+                        TEST_RECORD=str(self.record), TEST_FLAGS=str(self.root / "flags"))
 
     def build(self, **environment):
         return subprocess.run([str(self.root / "scripts/build-rust-fontconfig-linux.sh")],
@@ -75,6 +77,38 @@ printf library > "$CARGO_TARGET_DIR/x86_64-unknown-linux-musl/release/librust_fo
         result = self.build(TEST_FAIL="1")
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse((self.prefix / ".input").exists())
+
+    def test_encoded_flags_keep_required_policy_and_invalidate_reuse(self):
+        first = "-C\x1fdebuginfo=1"
+        result = self.build(CARGO_ENCODED_RUSTFLAGS=first)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        flags = (self.root / "flags").read_text().split("\x1f")
+        self.assertEqual(flags[:2], ["-C", "debuginfo=1"])
+        self.assertIn("target-feature=-crt-static", flags)
+        self.assertIn("link-arg=-static-libgcc", flags)
+        self.assertIn("link-arg=-Wl,--as-needed", flags)
+        self.assertIn("link-arg=-Wl,-soname,librust_fontconfig.so.5.0.2", flags)
+        self.assertEqual(self.build(CARGO_ENCODED_RUSTFLAGS=first).returncode, 0)
+        self.assertEqual(self.record.read_text().splitlines(), ["build"])
+        self.assertEqual(self.build(CARGO_ENCODED_RUSTFLAGS="-C\x1fdebuginfo=2").returncode, 0)
+        self.assertEqual(self.record.read_text().splitlines(), ["build", "build"])
+
+    def test_empty_encoded_flags_keep_required_policy(self):
+        result = self.build(CARGO_ENCODED_RUSTFLAGS="")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        flags = (self.root / "flags").read_text().split("\x1f")
+        self.assertIn("target-feature=-crt-static", flags)
+        self.assertIn("link-arg=-static-libgcc", flags)
+        self.assertIn("link-arg=-Wl,-soname,librust_fontconfig.so.5.0.2", flags)
+
+    def test_absent_and_empty_encoded_flags_reuse_the_same_build(self):
+        environment = dict(self.env)
+        environment.pop("CARGO_ENCODED_RUSTFLAGS", None)
+        first = subprocess.run([str(self.root / "scripts/build-rust-fontconfig-linux.sh")],
+                               env=environment, capture_output=True, text=True)
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertEqual(self.build(CARGO_ENCODED_RUSTFLAGS="").returncode, 0)
+        self.assertEqual(self.record.read_text().splitlines(), ["build"])
 
     def test_failed_install_does_not_publish_a_success_marker(self):
         self.assertEqual(self.build().returncode, 0)

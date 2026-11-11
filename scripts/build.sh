@@ -10,9 +10,10 @@ case "$(uname -s)" in
 esac
 
 if [ "$(uname -s)" = "Linux" ]; then
+    source "$ROOT/scripts/cargo-rustflags.sh"
     # A development binary that links Wayland must use the dynamic musl
     # loader; the default static-pie dies before main.
-    export RUSTFLAGS="${RUSTFLAGS:-} -C target-feature=-crt-static"
+    append_cargo_rustflags -C target-feature=-crt-static
 fi
 
 cargo build -p player-app

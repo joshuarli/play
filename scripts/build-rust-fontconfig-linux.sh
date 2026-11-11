@@ -14,6 +14,7 @@ if [ -z "${RUST_FONTCONFIG_PREFIX:-}" ]; then ALLOW_LEGACY_DEFAULT=1; fi
 SRC="$ROOT/.work/tmp/rust-fontconfig"
 SONAME="librust_fontconfig.so.$VERSION"
 INSTALL="$ROOT/scripts/rust_fontconfig_install.py"
+FLAG_HELPER="$ROOT/scripts/cargo-rustflags.sh"
 export TMPDIR="$ROOT/.work/tmp"
 
 case "$(uname -sm)/$(ldd --version 2>&1)" in
@@ -53,7 +54,12 @@ if [ -n "$LOCAL" ]; then
 else
     source_digest=$SHA256
 fi
-input=$(cat "$0" "$INSTALL" "$LOCK" | cat - <(printf '%s\0%s\0' "$source_digest" "$PREFIX") | sha256sum | awk '{print $1}')
+source "$FLAG_HELPER"
+export RUSTFLAGS="-C target-feature=-crt-static -C link-arg=-static-libgcc -C link-arg=-Wl,--as-needed -C link-arg=-Wl,-soname,$SONAME"
+if [[ ! ${CARGO_ENCODED_RUSTFLAGS+x} ]]; then CARGO_ENCODED_RUSTFLAGS=; fi
+append_cargo_rustflags -C target-feature=-crt-static -C link-arg=-static-libgcc \
+    -C link-arg=-Wl,--as-needed -C "link-arg=-Wl,-soname,$SONAME"
+input=$(cat "$0" "$INSTALL" "$FLAG_HELPER" "$LOCK" | cat - <(printf '%s\0%s\0%s\0' "$source_digest" "$PREFIX" "$CARGO_ENCODED_RUSTFLAGS") | sha256sum | awk '{print $1}')
 if python3 "$INSTALL" "$prefix_lock" validate "$input" "$SONAME"; then
     printf 'rust-fontconfig %s already in %s\n' "$TAG" "$PREFIX"
     exit 0
@@ -83,7 +89,6 @@ cp "$LOCK" "$tree/Cargo.lock"
 printf '\n[workspace]\n' >>"$tree/Cargo.toml"
 
 export CARGO_TARGET_DIR="$SRC/target"
-export RUSTFLAGS="-C target-feature=-crt-static -C link-arg=-static-libgcc -C link-arg=-Wl,--as-needed -C link-arg=-Wl,-soname,$SONAME"
 (
     cd "$tree"
     cargo rustc --locked --release --lib --crate-type cdylib \

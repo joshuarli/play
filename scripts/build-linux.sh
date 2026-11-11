@@ -21,9 +21,10 @@ DIST="$ROOT/dist"
 mkdir -p "$RUST_TARGET_DIR" "$ROOT/.work/tmp" "$BUILD_DIR" "$DIST"
 export CARGO_TARGET_DIR="$RUST_TARGET_DIR"
 export PKG_CONFIG_PATH="$DEPS/lib/pkgconfig"
+source "$ROOT/scripts/cargo-rustflags.sh"
 # The Wayland-linked binary must use the dynamic musl loader. A static-pie
 # with Wayland in NEEDED dies in the loader before main.
-export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$ROOT=. -C target-feature=-crt-static -C link-arg=-static-libgcc"
+append_cargo_rustflags "--remap-path-prefix=$ROOT=." -C target-feature=-crt-static -C link-arg=-static-libgcc
 cargo build --profile dist --target "$RUST_TRIPLE" \
     --manifest-path "$ROOT/Cargo.toml" -p player-app
 
