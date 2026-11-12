@@ -12,7 +12,7 @@ fn layout(text: &str, max_width: Option<f64>) -> std::sync::Arc<TextLayout> {
 }
 
 fn inked(layout: &TextLayout) -> usize {
-    layout.canvas.rgba.chunks_exact(4).filter(|pixel| pixel[3] > 128).count()
+    layout.canvas.rgba.as_chunks::<4>().0.iter().filter(|pixel| pixel[3] > 128).count()
 }
 
 fn assert_renders(text: &str) -> std::sync::Arc<TextLayout> {
@@ -93,7 +93,9 @@ fn emoji_render_in_color() {
     let colored = layout
         .canvas
         .rgba
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .filter(|pixel| pixel[3] > 200 && (pixel[0] != pixel[1] || pixel[1] != pixel[2]))
         .count();
     assert!(colored > 50, "emoji keep their own colors");
@@ -129,7 +131,9 @@ fn colored_pixels(layout: &TextLayout) -> usize {
     layout
         .canvas
         .rgba
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .filter(|pixel| pixel[3] > 200 && (pixel[0] != pixel[1] || pixel[1] != pixel[2]))
         .count()
 }

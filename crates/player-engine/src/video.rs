@@ -13,7 +13,9 @@ use player_output::{
     PL_COLOR_SYSTEM_BT_709,
 };
 use std::collections::VecDeque;
-use std::sync::{mpsc, Arc, Mutex};
+use std::cell::{RefCell, RefMut};
+use std::rc::Rc;
+use std::sync::mpsc;
 
 const NO_TIMESTAMP: i64 = i64::MIN;
 const MAX_QUEUED_FRAMES: usize = 64;
@@ -115,7 +117,7 @@ pub(crate) struct SharedVideo {
     evicted: u64,
 }
 
-pub(crate) type SharedHandle = Arc<Mutex<Option<SharedVideo>>>;
+pub(crate) type SharedHandle = Rc<RefCell<Option<SharedVideo>>>;
 
 pub struct EngineVideo {
     shared: SharedHandle,
@@ -131,7 +133,7 @@ impl EngineVideo {
             Err(error) => return Err(error),
         };
         Ok((EngineVideo {
-            shared: Arc::new(Mutex::new(Some(SharedVideo {
+            shared: Rc::new(RefCell::new(Some(SharedVideo {
                 session: decoder,
                 queue: VecDeque::new(),
                 next_id: 0,
@@ -143,12 +145,12 @@ impl EngineVideo {
     }
 
     pub fn active_hardware(&self) -> Option<HwRequest> {
-        self.shared.lock().ok()?.as_ref().map(|shared| shared.session.active_hardware())
+        self.shared.try_borrow().ok()?.as_ref().map(|shared| shared.session.active_hardware())
     }
 
     pub fn passive() -> Self {
         EngineVideo {
-            shared: Arc::new(Mutex::new(None)),
+            shared: Rc::new(RefCell::new(None)),
         }
     }
 
@@ -156,10 +158,10 @@ impl EngineVideo {
         self.shared.clone()
     }
 
-    fn lock(&self) -> Result<std::sync::MutexGuard<'_, Option<SharedVideo>>, String> {
+    fn lock(&self) -> Result<RefMut<'_, Option<SharedVideo>>, String> {
         self.shared
-            .lock()
-            .map_err(|_| "video decoder lock poisoned".to_string())
+            .try_borrow_mut()
+            .map_err(|_| "video decoder already borrowed".to_string())
     }
 }
 
@@ -273,26 +275,26 @@ impl VideoDecoder for EngineVideo {
     }
 
     fn flush(&mut self) {
-        if let Ok(mut guard) = self.shared.lock() {
-            if let Some(shared) = guard.as_mut() {
-                shared.session.reset();
-                shared.queue.clear();
-                shared.drained = shared.next_id;
-            }
+        if let Ok(mut guard) = self.shared.try_borrow_mut()
+            && let Some(shared) = guard.as_mut()
+        {
+            shared.session.reset();
+            shared.queue.clear();
+            shared.drained = shared.next_id;
         }
     }
 
     fn release(&mut self, id: u64) {
-        if let Ok(mut guard) = self.shared.lock() {
-            if let Some(shared) = guard.as_mut() {
-                shared.release(id);
-            }
+        if let Ok(mut guard) = self.shared.try_borrow_mut()
+            && let Some(shared) = guard.as_mut()
+        {
+            shared.release(id);
         }
     }
 
     fn decoded(&self) -> u64 {
         self.shared
-            .lock()
+            .try_borrow()
             .ok()
             .and_then(|guard| guard.as_ref().map(|shared| shared.decoded))
             .unwrap_or(0)
@@ -300,7 +302,7 @@ impl VideoDecoder for EngineVideo {
 
     fn evicted(&self) -> u64 {
         self.shared
-            .lock()
+            .try_borrow()
             .ok()
             .and_then(|guard| guard.as_ref().map(|shared| shared.evicted))
             .unwrap_or(0)
@@ -308,7 +310,7 @@ impl VideoDecoder for EngineVideo {
 
     fn undrained(&self) -> u64 {
         self.shared
-            .lock()
+            .try_borrow()
             .ok()
             .and_then(|guard| guard.as_ref().map(SharedVideo::undrained))
             .unwrap_or(0)
@@ -322,7 +324,7 @@ pub struct EngineVideoOutput {
 }
 
 impl EngineVideoOutput {
-    pub fn open(shared: SharedHandle, sink: mpsc::SyncSender<PresentedFrame>) -> Self {
+    pub(crate) fn open(shared: SharedHandle, sink: mpsc::SyncSender<PresentedFrame>) -> Self {
         EngineVideoOutput {
             shared,
             discard: false,
@@ -330,7 +332,7 @@ impl EngineVideoOutput {
         }
     }
 
-    pub fn passive(shared: SharedHandle, sink: mpsc::SyncSender<PresentedFrame>) -> Self {
+    pub(crate) fn passive(shared: SharedHandle, sink: mpsc::SyncSender<PresentedFrame>) -> Self {
         EngineVideoOutput {
             shared,
             discard: false,
@@ -338,7 +340,7 @@ impl EngineVideoOutput {
         }
     }
 
-    pub fn null(shared: SharedHandle, sink: mpsc::SyncSender<PresentedFrame>) -> Self {
+    pub(crate) fn null(shared: SharedHandle, sink: mpsc::SyncSender<PresentedFrame>) -> Self {
         EngineVideoOutput {
             shared,
             discard: true,
@@ -347,7 +349,7 @@ impl EngineVideoOutput {
     }
 
     fn take_frame(&self, id: u64) -> Option<VideoFrame> {
-        let mut guard = self.shared.lock().ok()?;
+        let mut guard = self.shared.try_borrow_mut().ok()?;
         let shared = guard.as_mut()?;
         shared.take(id)
     }
@@ -389,9 +391,7 @@ fn color_of(space: i32, range: i32, height: i32) -> ColorSpec {
         PL_COLOR_SYSTEM_BT_601
     } else if space == AVCOL_SPC_BT2020_NCL {
         PL_COLOR_SYSTEM_BT_2020_NC
-    } else if space != AVCOL_SPC_UNSPECIFIED {
-        PL_COLOR_SYSTEM_BT_709
-    } else if height > 576 {
+    } else if space != AVCOL_SPC_UNSPECIFIED || height > 576 {
         PL_COLOR_SYSTEM_BT_709
     } else {
         PL_COLOR_SYSTEM_BT_601
@@ -471,7 +471,7 @@ mod tests {
     #[cfg(target_os = "macos")]
     fn native_surface_matches_transfer(path: &str, expected_layout: PixelLayout) {
         use player_media::PumpResult;
-        use player_output::{Gpu, render_frame_with_geometry, render_surface_to_target};
+        use player_output::{FrameSpec, Gpu, RenderTarget, render_frame, render_surface_to_target};
 
         fn next(decoder: &mut VideoSession, id: u64) -> PresentedFrame {
             loop {
@@ -496,8 +496,8 @@ mod tests {
             assert!(frame.surface().is_some(), "hardware IOSurface required");
             let size = (frame.width as i32, frame.height as i32);
             let image = frame.with_software_planes(|layout, planes| {
-                render_frame_with_geometry(&gpu, &renderer, layout, frame.color, planes,
-                    size.0, size.1, frame.geometry, None)
+                render_frame(&gpu, &renderer, FrameSpec::new(layout, frame.color).with_geometry(frame.geometry),
+                    planes, size, None)
             }).expect("software reference");
             expected.push(image);
             if id == 0 { retained_frame = Some(frame); }
@@ -506,17 +506,19 @@ mod tests {
         let frame = retained_frame.take().unwrap();
         let size = (frame.width as i32, frame.height as i32);
         let image = player_output::render_surface_frame(&gpu, &renderer, frame.surface().unwrap(),
-            frame.layout, frame.color, size, size, frame.geometry).unwrap().expect("direct import");
+            FrameSpec::new(frame.layout, frame.color).with_geometry(frame.geometry), size, size)
+            .unwrap().expect("direct import");
         let worst = image.iter().zip(&expected[0]).map(|(a, b)| a.abs_diff(*b)).max().unwrap();
         assert!(worst <= 2, "frame after decoder shutdown differs by {worst}");
         if expected_layout == PixelLayout::Nv12 {
             let vulkan = Gpu::vulkan().expect("Vulkan device");
             let vk_renderer = vulkan.create_renderer().unwrap();
             assert!(player_output::render_surface_frame(&vulkan, &vk_renderer, frame.surface().unwrap(),
-                frame.layout, frame.color, size, size, frame.geometry).unwrap().is_none());
+                FrameSpec::new(frame.layout, frame.color).with_geometry(frame.geometry), size, size)
+                .unwrap().is_none());
             let fallback = frame.with_software_planes(|layout, planes| {
-                render_frame_with_geometry(&vulkan, &vk_renderer, layout, frame.color, planes,
-                    size.0, size.1, frame.geometry, None)
+                render_frame(&vulkan, &vk_renderer, FrameSpec::new(layout, frame.color).with_geometry(frame.geometry),
+                    planes, size, None)
             }).expect("Vulkan software fallback");
             assert_eq!(fallback.len(), expected[0].len());
             let worst = fallback.iter().zip(&expected[0]).map(|(a, b)| a.abs_diff(*b)).max().unwrap();
@@ -524,13 +526,14 @@ mod tests {
         }
         let fallback_format = gpu.find_rgba8(1 << 3).unwrap();
         let fallback_target = gpu.create_render_target(size.0, size.1, fallback_format).unwrap();
+        let fallback_render_target = RenderTarget { tex: fallback_target, width: size.0, height: size.1, flipped: false };
         assert!(!render_surface_to_target(&gpu, &renderer, frame.surface().unwrap(),
-            PixelLayout::Rgba8, frame.color, size, fallback_target, size, false,
-            frame.geometry, None).unwrap(), "unsupported native layout requests fallback");
+            FrameSpec::new(PixelLayout::Rgba8, frame.color).with_geometry(frame.geometry), size,
+            fallback_render_target, None).unwrap(), "unsupported native layout requests fallback");
         frame.with_software_planes(|layout, planes| {
-            player_output::render_to_target_with_geometry(&gpu, &renderer, layout,
-                frame.color, planes, fallback_target, size.0, size.1, false,
-                frame.geometry, None)
+            player_output::render_to_target(&gpu, &renderer,
+                FrameSpec::new(layout, frame.color).with_geometry(frame.geometry),
+                planes, fallback_render_target, None)
         }).expect("fallback renders the same target");
         let fallback_pixels = gpu.download(fallback_target, size.0, size.1).unwrap();
         let worst = fallback_pixels.iter().zip(&expected[0]).map(|(a,b)| a.abs_diff(*b)).max().unwrap();
@@ -549,8 +552,10 @@ mod tests {
             assert_eq!(frame.layout, expected_layout);
             let size = (frame.width as i32, frame.height as i32);
             let target = gpu.create_render_target(size.0, size.1, format).unwrap();
+            let spec = FrameSpec::new(frame.layout, frame.color).with_geometry(frame.geometry);
+            let render_target = RenderTarget { tex: target, width: size.0, height: size.1, flipped: false };
             assert!(render_surface_to_target(&gpu, &renderer, frame.surface().expect("native surface"),
-                frame.layout, frame.color, size, target, size, false, frame.geometry, None).unwrap(),
+                spec, size, render_target, None).unwrap(),
                 "direct import required");
             targets.push((target, size, index as usize % 12));
             drop(frame);
@@ -568,8 +573,10 @@ mod tests {
         let frame = next(&mut decoder, 0);
         let size = (frame.width as i32, frame.height as i32);
         let target = gpu.create_render_target(size.0, size.1, format).unwrap();
-        assert!(render_surface_to_target(&gpu, &renderer, frame.surface().unwrap(), frame.layout,
-            frame.color, size, target, size, false, frame.geometry, None).unwrap());
+        let spec = FrameSpec::new(frame.layout, frame.color).with_geometry(frame.geometry);
+        let render_target = RenderTarget { tex: target, width: size.0, height: size.1, flipped: false };
+        assert!(render_surface_to_target(&gpu, &renderer, frame.surface().unwrap(), spec, size,
+            render_target, None).unwrap());
         drop(frame);
         drop(decoder);
         gpu.destroy_tex(target);

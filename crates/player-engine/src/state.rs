@@ -49,7 +49,7 @@ pub struct Rejected {
 impl Rejected {
     fn of(state: &State, event: Event) -> Self {
         Rejected {
-            state: state.clone(),
+            state: *state,
             event,
         }
     }
@@ -59,6 +59,12 @@ pub struct Machine {
     state: State,
     generation: u64,
     error: Option<String>,
+}
+
+impl Default for Machine {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Machine {
@@ -457,7 +463,7 @@ mod tests {
         ];
         for (path, event) in cases {
             let mut machine = drive(path);
-            let before = machine.state().clone();
+            let before = *machine.state();
             assert!(machine.apply(*event).is_err(), "reject {event:?} in {before:?}");
             assert_eq!(*machine.state(), before);
         }

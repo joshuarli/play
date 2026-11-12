@@ -94,7 +94,6 @@ impl HostWindow {
                     InputEvent::PointerAxis { vertical, value } => (vertical && value != 0.0)
                         .then_some(HostEvent::Wheel { up: value < 0.0 }),
                     InputEvent::PointerLeave => Some(HostEvent::PointerLeave),
-                    _ => None,
                 })
                 .collect())
         }
@@ -140,13 +139,16 @@ impl HostWindow {
         }
         #[cfg(target_os = "macos")]
         if let Some(surface) = frame.surface() {
-            self.window.present_surface(surface, frame.layout, frame.color,
-                (frame.width as i32, frame.height as i32), frame.geometry, overlay,
+            let spec = player_output::FrameSpec::new(frame.layout, frame.color).with_geometry(frame.geometry);
+            self.window.present_surface(surface, spec,
+                (frame.width as i32, frame.height as i32), overlay,
                 |gpu, renderer, target, size| {
                     frame.with_software_planes(|layout, planes| {
-                        player_output::render_to_target_with_geometry(gpu, renderer, layout,
-                            frame.color, planes, target.fbo, size.0, size.1, target.flipped,
-                            frame.geometry, overlay)
+                        let spec = player_output::FrameSpec::new(layout, frame.color).with_geometry(frame.geometry);
+                        let target = player_output::RenderTarget {
+                            tex: target.fbo, width: size.0, height: size.1, flipped: target.flipped,
+                        };
+                        player_output::render_to_target(gpu, renderer, spec, planes, target, overlay)
                     })
                 })?;
             self.presented += 1;

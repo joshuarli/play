@@ -540,11 +540,11 @@ where
         };
         self.audio.flush();
         self.flush_video();
-        if let Some(stream) = self.selected_sub_stream() {
-            if let Err(message) = self.prime_subtitles(stream, target) {
-                self.fail(message);
-                return;
-            }
+        if let Some(stream) = self.selected_sub_stream()
+            && let Err(message) = self.prime_subtitles(stream, target)
+        {
+            self.fail(message);
+            return;
         }
         self.demux.seek(target);
         self.audio_out.flush();
@@ -917,13 +917,12 @@ where
             return;
         }
         if self.prerolling_video {
-            if !self.pending_frames.is_empty()
-                || self.startup_audio_seconds() >= PREROLL_AUDIO_LIMIT
+            if (!self.pending_frames.is_empty()
+                || self.startup_audio_seconds() >= PREROLL_AUDIO_LIMIT)
+                && let Err(message) = self.begin_playback(now)
             {
-                if let Err(message) = self.begin_playback(now) {
-                    self.fail(message);
-                    return;
-                }
+                self.fail(message);
+                return;
             }
             self.observe(now);
             return;

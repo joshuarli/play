@@ -309,7 +309,7 @@ impl CoreAudioSink {
 
 impl AudioSink for CoreAudioSink {
     fn write(&mut self, frames: &[f32]) -> Result<(), String> {
-        if frames.len() % self.channels != 0 {
+        if !frames.len().is_multiple_of(self.channels) {
             return Err("sink write must hold whole frames".to_string());
         }
         let mut frames = frames;

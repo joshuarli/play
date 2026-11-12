@@ -234,7 +234,9 @@ mod tests {
 
     fn inked(frame: &[u8]) -> usize {
         frame
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .filter(|pixel| pixel[..3].iter().any(|value| *value > 0))
             .count()
     }
@@ -316,7 +318,7 @@ mod tests {
             .expect("overlay has ink");
         assert_eq!((cropped.x, cropped.y, cropped.width, cropped.height), (40, 30, 50, 30));
         assert_eq!(cropped.rgba.len(), cropped.width as usize * cropped.height as usize * 4);
-        assert!(cropped.rgba.chunks_exact(4).any(|pixel| pixel[3] > 0));
+        assert!(cropped.rgba.as_chunks::<4>().0.iter().any(|pixel| pixel[3] > 0));
     }
 
     #[test]

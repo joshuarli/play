@@ -528,10 +528,10 @@ fn track_list(app: &App, status: &EngineStatus) -> NativeValue {
                 NativeValue::Bool(stream.is_some_and(|stream| stream.forced)),
             ),
         ];
-        if let Some(language) = &track.language {
-            if language != "und" {
-                fields.push(("lang".to_owned(), NativeValue::String(language.clone())));
-            }
+        if let Some(language) = &track.language
+            && language != "und"
+        {
+            fields.push(("lang".to_owned(), NativeValue::String(language.clone())));
         }
         if let Some(title) = &track.title {
             fields.push(("title".to_owned(), NativeValue::String(title.clone())));
@@ -624,7 +624,7 @@ fn probe_track_list(app: &App) -> NativeValue {
         };
         let selected = match stream.kind {
             StreamKind::Video => !stream.attached && video_id == 1,
-            StreamKind::Audio => !app.aid_disabled && app.aid == Some(audio_id as i64),
+            StreamKind::Audio => !app.aid_disabled && app.aid == Some(audio_id),
             _ => false,
         };
         let codec = match stream.kind {
@@ -645,10 +645,10 @@ fn probe_track_list(app: &App) -> NativeValue {
             ("default".to_owned(), NativeValue::Bool(stream.default)),
             ("forced".to_owned(), NativeValue::Bool(stream.forced)),
         ];
-        if let Some(language) = &stream.language {
-            if language != "und" {
-                fields.push(("lang".to_owned(), NativeValue::String(language.clone())));
-            }
+        if let Some(language) = &stream.language
+            && language != "und"
+        {
+            fields.push(("lang".to_owned(), NativeValue::String(language.clone())));
         }
         if let Some(title) = &stream.title {
             fields.push(("title".to_owned(), NativeValue::String(title.clone())));
@@ -893,6 +893,34 @@ fn osd_dimensions(app: &App) -> NativeValue {
     ])
 }
 
+fn input_bindings() -> NativeValue {
+    let bindings = [
+        ("SPACE", "cycle pause"),
+        ("f", "cycle fullscreen"),
+        ("9", "add volume 2"),
+        ("0", "add volume -2"),
+        ("m", "cycle mute"),
+        ("[", "add speed -0.1"),
+        ("]", "add speed 0.1"),
+        (".", "frame-step"),
+        ("q", "quit"),
+        ("o", "cycle osc-visibility"),
+    ];
+    let values: Vec<NativeValue> = bindings
+        .iter()
+        .map(|(key, command)| {
+            NativeValue::Map(vec![
+                ("key".to_owned(), NativeValue::String((*key).to_owned())),
+                ("cmd".to_owned(), NativeValue::String((*command).to_owned())),
+                ("section".to_owned(), NativeValue::String("default".to_owned())),
+                ("is_weak".to_owned(), NativeValue::Bool(false)),
+                ("owner".to_owned(), NativeValue::String("builtin".to_owned())),
+            ])
+        })
+        .collect();
+    NativeValue::Array(values)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -982,32 +1010,4 @@ mod tests {
         assert!(!fields.iter().any(|(key, _)| key == "cache-duration"));
         assert!(!fields.iter().any(|(key, _)| key == "cache-end"));
     }
-}
-
-fn input_bindings() -> NativeValue {
-    let bindings = [
-        ("SPACE", "cycle pause"),
-        ("f", "cycle fullscreen"),
-        ("9", "add volume 2"),
-        ("0", "add volume -2"),
-        ("m", "cycle mute"),
-        ("[", "add speed -0.1"),
-        ("]", "add speed 0.1"),
-        (".", "frame-step"),
-        ("q", "quit"),
-        ("o", "cycle osc-visibility"),
-    ];
-    let values: Vec<NativeValue> = bindings
-        .iter()
-        .map(|(key, command)| {
-            NativeValue::Map(vec![
-                ("key".to_owned(), NativeValue::String((*key).to_owned())),
-                ("cmd".to_owned(), NativeValue::String((*command).to_owned())),
-                ("section".to_owned(), NativeValue::String("default".to_owned())),
-                ("is_weak".to_owned(), NativeValue::Bool(false)),
-                ("owner".to_owned(), NativeValue::String("builtin".to_owned())),
-            ])
-        })
-        .collect();
-    NativeValue::Array(values)
 }

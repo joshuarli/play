@@ -175,7 +175,7 @@ mod tests {
         assert_eq!(pipeline.target_layout(), Layout::Stereo);
         let pcm = pipeline.drain_all().expect("drain works");
         let (left, right): (Vec<f32>, Vec<f32>) =
-            pcm.chunks_exact(2).map(|frame| (frame[0], frame[1])).unzip();
+            pcm.as_chunks::<2>().0.iter().map(|frame| (frame[0], frame[1])).unzip();
         assert!(
             rms(&left) > 0.03,
             "left channel is silent: layout order wrong?"

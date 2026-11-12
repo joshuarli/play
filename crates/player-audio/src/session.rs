@@ -34,7 +34,7 @@ pub struct DecoderSession {
 enum PacketCodec {
     Symphonia(Box<dyn AudioDecoder>),
     HighEfficiency {
-        decoder: rusty_aac::AacDecoder,
+        decoder: Box<rusty_aac::AacDecoder>,
         configuration: Vec<u8>,
         channels: Channels,
     },
@@ -102,7 +102,7 @@ impl DecoderSession {
         }
         let decoder = if stream.codec_name == "aac" && matches!(stream.profile, AAC_HE_PROFILE | AAC_HE_V2_PROFILE) {
             PacketCodec::HighEfficiency {
-                decoder: open_he_aac(&stream.extradata)?,
+                decoder: Box::new(open_he_aac(&stream.extradata)?),
                 configuration: stream.extradata.clone(),
                 channels: params.channels.clone().ok_or("HE-AAC stream has no channel layout")?,
             }
@@ -131,7 +131,7 @@ impl DecoderSession {
         match &mut self.decoder {
             PacketCodec::Symphonia(decoder) => decoder.reset(),
             PacketCodec::HighEfficiency { decoder, configuration, .. } => {
-                *decoder = open_he_aac(configuration).expect("the validated HE-AAC configuration still parses");
+                **decoder = open_he_aac(configuration).expect("the validated HE-AAC configuration still parses");
             }
         }
         self.cursor = None;
@@ -234,18 +234,13 @@ mod tests {
     fn drain(session: &mut MediaSession, decoder: &mut DecoderSession) -> (usize, DecodedAudio) {
         let mut total = 0;
         let mut last = None;
-        loop {
-            match session.read_packet() {
-                Ok(packet) => {
-                    if packet.stream_index != decoder.stream_index() {
-                        continue;
-                    }
-                    let decoded = decoder.decode(&packet).expect("packet decodes");
-                    total += decoded.frames;
-                    last = Some(decoded);
-                }
-                Err(_) => break,
+        while let Ok(packet) = session.read_packet() {
+            if packet.stream_index != decoder.stream_index() {
+                continue;
             }
+            let decoded = decoder.decode(&packet).expect("packet decodes");
+            total += decoded.frames;
+            last = Some(decoded);
         }
         (total, last.expect("at least one audio packet"))
     }
@@ -433,7 +428,7 @@ mod he_aac_tests {
             for bit in (0..count).rev() { bits.push(((value >> bit) & 1) as u8); }
         }
         bits.resize(bits.len().div_ceil(8) * 8, 0);
-        bits.chunks_exact(8).map(|byte| byte.iter().fold(0u8, |value, bit| (value << 1) | bit)).collect()
+        bits.as_chunks::<8>().0.iter().map(|byte| byte.iter().fold(0u8, |value, bit| (value << 1) | bit)).collect()
     }
 
     #[test]
@@ -448,7 +443,7 @@ mod he_aac_tests {
                 if packet.stream_index == stream.index { packets.push(packet); }
             }
             let bytes = std::fs::read(root.join(format!("{name}-reference.f32"))).unwrap();
-            let reference: Vec<_> = bytes.chunks_exact(4).map(|bytes| f32::from_le_bytes(bytes.try_into().unwrap())).collect();
+            let reference: Vec<_> = bytes.as_chunks::<4>().0.iter().map(|bytes| f32::from_le_bytes(*bytes)).collect();
             for explicit in [false, true] {
                 let mut info = stream.clone();
                 if explicit { info.extradata = explicit_configuration(ps); }
@@ -471,7 +466,7 @@ mod he_aac_tests {
                     let left: Vec<_> = output.iter().step_by(2).copied().collect();
                     let power = left.iter().map(|x| (*x as f64).powi(2)).sum::<f64>();
                     let high_band = left.windows(2).map(|w| (w[1] as f64 - w[0] as f64).powi(2)).sum::<f64>();
-                    let stereo = output.chunks_exact(2).map(|frame| (frame[0] as f64 - frame[1] as f64).powi(2)).sum::<f64>();
+                    let stereo = output.as_chunks::<2>().0.iter().map(|frame| (frame[0] as f64 - frame[1] as f64).powi(2)).sum::<f64>();
                     assert!(high_band / power > 0.1, "{name}: high frequencies lost");
                     assert!(stereo / power > 0.5, "{name}: stereo collapsed");
                     previous = Some(pcm);

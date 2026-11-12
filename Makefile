@@ -40,7 +40,11 @@ uninstall:
 endif
 
 lint:
+ifeq ($(shell uname -s),Darwin)
 	cargo clippy --workspace --all-targets -- -D warnings
+else
+	scripts/linux-container.sh bash -c 'scripts/fetch-ffmpeg-runtime.sh x86_64-unknown-linux-musl && scripts/build-rust-fontconfig-linux.sh && cargo clippy --workspace --all-targets -- -D warnings'
+endif
 
 test:
 ifeq ($(shell uname -s),Darwin)

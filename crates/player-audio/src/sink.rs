@@ -79,7 +79,7 @@ impl AudioSink for NullSink {
         if self.channels == 0 {
             return Err("null sink has no channels".to_string());
         }
-        if frames.len() % self.channels != 0 {
+        if !frames.len().is_multiple_of(self.channels) {
             return Err("sink write must hold whole frames".to_string());
         }
         if self.paused {

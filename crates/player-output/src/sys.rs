@@ -3,18 +3,11 @@ use core::ffi::{c_char, c_int, c_uint, c_void};
 pub const PLACEBO_VERSION: &str = "v7.387.0";
 pub const PLACEBO_API_VERSION: c_int = 387;
 
-pub const PL_LOG_NONE: c_int = 0;
-pub const PL_LOG_FATAL: c_int = 1;
-pub const PL_LOG_ERR: c_int = 2;
-pub const PL_LOG_WARN: c_int = 3;
-pub const PL_LOG_INFO: c_int = 4;
-
-pub const PL_FMT_UNKNOWN: c_int = 0;
 pub const PL_FMT_UNORM: c_int = 1;
-pub const PL_FMT_FLOAT: c_int = 5;
 
 pub const PL_FMT_CAP_SAMPLEABLE: c_int = 1;
 pub const PL_FMT_CAP_RENDERABLE: c_int = 1 << 3;
+#[cfg(test)]
 pub const PL_FMT_CAP_HOST_READABLE: c_int = 1 << 9;
 
 pub type PlLog = *const c_void;
@@ -22,15 +15,11 @@ pub type PlGpu = *mut c_void;
 pub type PlTex = *mut c_void;
 pub type PlFmt = *const c_void;
 pub type PlRenderer = *mut c_void;
-pub type PlTimer = *mut c_void;
-pub type PlBuf = *mut c_void;
 
-pub const PL_COLOR_SYSTEM_UNKNOWN: c_int = 0;
 pub const PL_COLOR_SYSTEM_BT_601: c_int = 1;
 pub const PL_COLOR_SYSTEM_BT_709: c_int = 2;
 pub const PL_COLOR_SYSTEM_BT_2020_NC: c_int = 4;
 pub const PL_COLOR_SYSTEM_RGB: c_int = 12;
-pub const PL_COLOR_LEVELS_UNKNOWN: c_int = 0;
 pub const PL_COLOR_LEVELS_LIMITED: c_int = 1;
 pub const PL_COLOR_LEVELS_FULL: c_int = 2;
 pub const PL_COLOR_PRIM_BT_709: c_int = 3;
@@ -102,8 +91,6 @@ pub struct PlRect2df {
 }
 
 pub const PL_OVERLAY_NORMAL: c_int = 0;
-pub const PL_OVERLAY_MONOCHROME: c_int = 1;
-pub const PL_OVERLAY_COORDS_SRC_FRAME: c_int = 1;
 pub const PL_OVERLAY_COORDS_DST_FRAME: c_int = 3;
 
 #[repr(C)]
@@ -214,14 +201,10 @@ pub struct PlMetalSwapchainParams {
 pub type PlSwapchain = *mut c_void;
 
 pub type VkInstance = *mut c_void;
-pub type VkPhysicalDevice = *mut c_void;
 pub type VkSurfaceKHR = u64;
-pub type VkBool32 = u32;
 pub type VkFlags = u32;
 
 pub const VK_SUCCESS: c_int = 0;
-pub const VK_SUBOPTIMAL_KHR: c_int = 1000001003;
-pub const VK_ERROR_OUT_OF_DATE_KHR: c_int = -1000001004;
 
 pub const VK_STRUCTURE_TYPE_APPLICATION_INFO: c_int = 0;
 pub const VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO: c_int = 1;
@@ -231,9 +214,7 @@ pub const VK_STRUCTURE_TYPE_METAL_SURFACE_CREATE_INFO_EXT: c_int = 1000217000;
 #[cfg(target_os = "macos")]
 pub const VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR: VkFlags = 0x00000001;
 
-pub const VK_PRESENT_MODE_IMMEDIATE_KHR: c_int = 0;
 pub const VK_PRESENT_MODE_MAILBOX_KHR: c_int = 1;
-pub const VK_PRESENT_MODE_FIFO_KHR: c_int = 2;
 
 pub const VK_API_VERSION_1_2: u32 = 4202496;
 
@@ -343,7 +324,6 @@ unsafe extern "C" {
         params: *const PlVulkanSwapchainParams,
     ) -> PlSwapchain;
     pub fn pl_swapchain_destroy(sw: *mut PlSwapchain);
-    pub fn pl_swapchain_latency(sw: PlSwapchain) -> c_int;
     pub fn pl_swapchain_resize(sw: PlSwapchain, width: *mut c_int, height: *mut c_int) -> bool;
     pub fn pl_swapchain_start_frame(sw: PlSwapchain, frame: *mut PlSwapchainFrame) -> bool;
     pub fn pl_swapchain_submit_frame(sw: PlSwapchain) -> bool;
@@ -560,14 +540,10 @@ mod tests {
         }
 
         assert_eq!(VK_SUCCESS, 0);
-        assert_eq!(VK_SUBOPTIMAL_KHR, 1000001003);
-        assert_eq!(VK_ERROR_OUT_OF_DATE_KHR, -1000001004);
         assert_eq!(VK_STRUCTURE_TYPE_APPLICATION_INFO, 0);
         assert_eq!(VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO, 1);
         assert_eq!(VK_STRUCTURE_TYPE_WAYLAND_SURFACE_CREATE_INFO_KHR, 1000006000);
-        assert_eq!(VK_PRESENT_MODE_IMMEDIATE_KHR, 0);
         assert_eq!(VK_PRESENT_MODE_MAILBOX_KHR, 1);
-        assert_eq!(VK_PRESENT_MODE_FIFO_KHR, 2);
         assert_eq!(VK_API_VERSION_1_2, 4202496);
         assert_eq!(size_of::<PlHdrMetadata>(), 148);
         assert_eq!(size_of::<PlIccProfile>(), 24);
@@ -590,8 +566,6 @@ mod tests {
         assert_eq!(offset_of!(PlFrame, user_data), 736);
 
         assert_eq!(PL_OVERLAY_NORMAL, 0);
-        assert_eq!(PL_OVERLAY_MONOCHROME, 1);
-        assert_eq!(PL_OVERLAY_COORDS_SRC_FRAME, 1);
         assert_eq!(PL_OVERLAY_COORDS_DST_FRAME, 3);
 
         assert_eq!(size_of::<PlOverlayPart>(), 48);

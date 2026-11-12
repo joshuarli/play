@@ -10,7 +10,7 @@ impl Renderer {
         self.rr
     }
 
-    pub fn new(log: sys::PlLog, gpu: sys::PlGpu) -> Result<Self, String> {
+    pub(crate) fn new(log: sys::PlLog, gpu: sys::PlGpu) -> Result<Self, String> {
         // SAFETY: log and gpu are live.
         let rr = unsafe { sys::pl_renderer_create(log, gpu) };
         if rr.is_null() {

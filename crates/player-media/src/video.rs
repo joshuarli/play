@@ -101,7 +101,7 @@ fn thread_count() -> i64 {
     let parallelism = std::thread::available_parallelism()
         .map(|count| count.get())
         .unwrap_or(1);
-    (parallelism + 1).min(FRAME_THREADS_MAX).max(1) as i64
+    (parallelism + 1).clamp(1, FRAME_THREADS_MAX) as i64
 }
 
 fn set_option(context: *mut AvCodecContext, name: &str, value: i64) -> Result<(), String> {
@@ -182,6 +182,9 @@ unsafe extern "C" {
     fn CVPixelBufferGetWidthOfPlane(buffer: *mut c_void, plane: usize) -> usize;
     fn CVPixelBufferGetHeightOfPlane(buffer: *mut c_void, plane: usize) -> usize;
 }
+
+#[cfg(target_os = "macos")]
+pub type IoSurfacePlanes = (*mut c_void, i32, [(i32, i32); 2]);
 
 pub struct VideoFrame {
     frame: *mut AvFrame,
@@ -275,7 +278,7 @@ impl VideoFrame {
     }
 
     #[cfg(target_os = "macos")]
-    pub fn iosurface(&self) -> Option<(*mut c_void, i32, [(i32, i32); 2])> {
+    pub fn iosurface(&self) -> Option<IoSurfacePlanes> {
         if self.format() != AV_PIX_FMT_VIDEOTOOLBOX {
             return None;
         }
@@ -682,10 +685,10 @@ impl VideoSession {
                 geometry.pixel_aspect = value;
             }
             let side = av_frame_get_side_data(frame, 6);
-            if !side.is_null() {
-                if let Some(value) = matrix_rotation((*side).data, (*side).size) {
-                    geometry.rotation = value;
-                }
+            if !side.is_null()
+                && let Some(value) = matrix_rotation((*side).data, (*side).size)
+            {
+                geometry.rotation = value;
             }
         }
         Ok(Some(VideoFrame { frame, geometry }))
@@ -1135,7 +1138,7 @@ mod tests {
                 .unwrap_or_else(|| panic!("{name}: no decoded cover art"));
             let pixels = frame.to_rgb24(64, 64).expect("scale cover art");
             assert_eq!(pixels.len(), 64 * 64 * 3, "{name}: thumbnail size");
-            assert!(pixels.chunks_exact(3).any(|pixel| pixel != [0, 0, 0]));
+            assert!(pixels.as_chunks::<3>().0.iter().any(|pixel| *pixel != [0, 0, 0]));
         }
         let h264 = fixture("h264.mp4");
         assert!(VideoSession::open(&h264, 99, HwRequest::None).is_err());
