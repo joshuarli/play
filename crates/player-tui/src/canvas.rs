@@ -191,17 +191,16 @@ impl Canvas {
             let _ = write!(out, "\x1b[{};1H", y + 1);
             let mut current: Option<(Rgb, Rgb, bool)> = None;
             for x in 0..self.cols {
-                if let Some(rect) = skip {
-                    if y >= rect.y
-                        && y < rect.y + rect.h
-                        && x >= rect.x
-                        && x < rect.x + rect.w
-                    {
-                        if x == rect.x && rect.x + rect.w < self.cols {
-                            let _ = write!(out, "\x1b[{};{}H", y + 1, rect.x + rect.w + 1);
-                        }
-                        continue;
+                if let Some(rect) = skip
+                    && y >= rect.y
+                    && y < rect.y + rect.h
+                    && x >= rect.x
+                    && x < rect.x + rect.w
+                {
+                    if x == rect.x && rect.x + rect.w < self.cols {
+                        let _ = write!(out, "\x1b[{};{}H", y + 1, rect.x + rect.w + 1);
                     }
+                    continue;
                 }
                 let cell = &self.cells[y * self.cols + x];
                 if cell.cont {

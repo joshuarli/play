@@ -45,6 +45,8 @@ struct Target {
 
 type PixelBox = (usize, usize, usize, usize);
 type Frame = (usize, usize);
+type ResolvedPaints<'a> = Vec<(Paint<'a>, PixelBox)>;
+type ResolvedLayers<'a> = (ResolvedPaints<'a>, Option<PixelBox>);
 
 impl Target {
     fn new((x0, y0, x1, y1): PixelBox) -> Self {
@@ -67,7 +69,12 @@ impl Target {
 
     fn to_image(&self) -> OverlayImage {
         let mut rgba = vec![0u8; self.width * self.height * 4];
-        for (out, pixel) in rgba.chunks_exact_mut(4).zip(self.premultiplied.chunks_exact(4)) {
+        for (out, pixel) in rgba
+            .as_chunks_mut::<4>()
+            .0
+            .iter_mut()
+            .zip(self.premultiplied.as_chunks::<4>().0.iter())
+        {
             let alpha = pixel[3];
             if alpha <= 0.0 {
                 continue;
@@ -187,7 +194,7 @@ fn resolve_layers<'a>(
     layers: &[&'a DisplayList],
     text: &mut TextEngine,
     frame: Frame,
-) -> Result<(Vec<(Paint<'a>, PixelBox)>, Option<PixelBox>), String> {
+) -> Result<ResolvedLayers<'a>, String> {
     let mut union: Option<PixelBox> = None;
     let mut paints = Vec::new();
     for layer in layers {

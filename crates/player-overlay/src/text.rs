@@ -199,7 +199,7 @@ fn outlined(text: &Canvas, width: f64, color: Color) -> Canvas {
             }
         }
     }
-    let alpha: Vec<f32> = text.rgba.chunks_exact(4).map(|pixel| pixel[3] as f32 / 255.0).collect();
+    let alpha: Vec<f32> = text.rgba.as_chunks::<4>().0.iter().map(|pixel| pixel[3] as f32 / 255.0).collect();
     let mut out = Canvas::new(text.width, text.height);
     let outline_alpha = color.a as f32 / 255.0;
     for y in 0..h {

@@ -39,6 +39,9 @@ uninstall:
 	rm -rf "$(INSTALLED_HOME)"
 endif
 
+lint:
+	cargo clippy --workspace --all-targets -- -D warnings
+
 test:
 ifeq ($(shell uname -s),Darwin)
 	@mkdir -p .work/tmp .work/fixtures .work/deps

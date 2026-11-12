@@ -12,11 +12,10 @@ fn main() {
         return;
     }
     println!("cargo:rustc-link-arg=/usr/lib/libasound.so");
-    for closure in ["../player-output/linux-link.args"] {
-        player_build::emit_linux_closure(
-            "player-app",
-            &dir.join(closure),
-            &dir.join("../../.work/deps/linux/lib"),
-        );
-    }
+    let closure = "../player-output/linux-link.args";
+    player_build::emit_linux_closure(
+        "player-app",
+        &dir.join(closure),
+        &dir.join("../../.work/deps/linux/lib"),
+    );
 }

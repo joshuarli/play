@@ -190,7 +190,7 @@ impl Backend {
 
     fn font(&mut self, weight: Weight, size: f64) -> Result<&Font, String> {
         let key = (weight, size.to_bits());
-        if !self.fonts.contains_key(&key) {
+        if let std::collections::hash_map::Entry::Vacant(e) = self.fonts.entry(key) {
             let kind = match weight {
                 Weight::Regular => UI_FONT_SYSTEM,
                 Weight::Bold => UI_FONT_EMPHASIZED_SYSTEM,
@@ -200,7 +200,7 @@ impl Backend {
             // SAFETY: `font.0` is a live CTFont.
             let (ascent, descent, leading) =
                 unsafe { (CTFontGetAscent(font.0), CTFontGetDescent(font.0), CTFontGetLeading(font.0)) };
-            self.fonts.insert(key, Font { font, ascent, descent, leading });
+            e.insert(Font { font, ascent, descent, leading });
         }
         Ok(&self.fonts[&key])
     }
@@ -335,7 +335,7 @@ impl Backend {
             }
         }
         drop(context);
-        for pixel in pixels.chunks_exact_mut(4) {
+        for pixel in pixels.as_chunks_mut::<4>().0.iter_mut() {
             let alpha = pixel[3] as u32;
             if alpha == 0 || alpha == 255 {
                 continue;
