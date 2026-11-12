@@ -19,7 +19,7 @@ The macOS app is ad-hoc signed and not notarized. Open it from the Finder contex
 
 ## Linux
 
-The build runs in Docker, in the pinned Alpine edge image (`docker/linux/Dockerfile`), through `scripts/linux-container.sh`:
+The build runs in Docker, in the pinned Alpine image (`docker/linux/Dockerfile`), through `scripts/linux-container.sh`:
 
 ```sh
 make linux
@@ -64,9 +64,9 @@ Music played from a terminal opens the terminal UI by default. To use it for any
 dist/Player.app/Contents/MacOS/player --tui FILE
 ```
 
-Kitty-capable terminals show the embedded cover at full resolution; others use truecolor half-blocks. See [Terminal UI](tui-design.md).
+Kitty-capable terminals display a 320×320 rendition of the embedded cover; others use truecolor half-blocks. See [Terminal UI](tui-design.md).
 
-The bundle carries its own pinned dylibs, Vulkan loader, and MoltenVK, and its libplacebo includes the default Metal backend beside Vulkan (`--gpu-api=vulkan`). FFmpeg is not in the bundle: the executable loads the pinned shared runtime through `@rpath`, from `lib/` beside `Player.app`. It does not use Homebrew or a global FFmpeg. It is ad-hoc signed and not notarized. Do not distribute the build without a signing identity. It declares `MPVBUNDLE` and the supported document types in `Info.plist`.
+The bundle carries its own pinned dylibs, Vulkan loader, and MoltenVK, and its libplacebo includes the default Metal backend beside Vulkan (`--gpu-api=vulkan`). FFmpeg is not in the bundle: the executable loads the pinned shared runtime through `@rpath`, from `lib/` beside `Player.app`. It does not use Homebrew or a global FFmpeg. It is ad-hoc signed and not notarized, matching the published release artifacts. It declares `MPVBUNDLE` and the supported document types in `Info.plist`.
 
 ## Local-only contract
 
@@ -81,7 +81,17 @@ scripts/build.sh
 tests/run.sh suite
 ```
 
-The development build is `build/mpv`; scratch files live under `.work/`. `scripts/release.sh` is the only supported way to produce the app. Do not hand-assemble `Contents/Frameworks`.
+The macOS development build is `build/mpv`; Linux uses `build-linux/mpv`. Scratch files live under `.work/`. `scripts/release.sh` is the supported way to produce the macOS app. Do not hand-assemble `Contents/Frameworks`.
+
+Keep Linux Cargo target directories private to each checkout or worktree. The container mounts every checkout at `/work`, so sharing a target directory can let Cargo's mtime checks reuse artifacts from a different source tree.
+
+## Build policy
+
+Use the canonical Cargo and native build/release entrypoints, pinned inputs, and conservative stamp-based invalidation. The runtime and rust-fontconfig fetch/build helpers retain their current pinned-input reuse checks; they do not implement a general integrity-checked, concurrent artifact store. Arbitrary Cargo configuration, compiler wrappers, GCC specs, and hostile concurrent mutation are outside the supported cache contract.
+
+The owner rejected the incremental-cache prototype because the small gain on rare native-recipe edits did not justify its extra machinery and slower unchanged dependency runs; everyday Rust edits did not improve. Keep that no-go decision in force unless the owner reopens it. The kache Cargo shim, optional Nix shell, and reverted cache-hardening prototypes are not part of the supported build. Cargo, the native Apple toolchain, and the pinned Alpine musl build remain the foundations; no replacement build system, remote cache service, or Nix prerequisite was accepted.
+
+The experiments were parked with no retry condition. Their refs are `campaign/build-cache`, `campaign/build-cache-shim`, `campaign/container-identity-probe`, `campaign/gcc-prefix-player-probe`, `campaign/ffmpeg-cache`, `campaign/fontconfig-rustc-identity`, `campaign/build-nix`, and `campaign/nix-shell`; related kache fork work was retained in `~/d/kache`. Git history holds the measurements and rejected implementations.
 
 ## Owner checks
 

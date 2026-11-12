@@ -34,7 +34,7 @@ The accent is sampled from the cover and used only for the progress fill, the kn
 
 ## Art
 
-- Kitty graphics protocol when Ghostty, kitty, or WezTerm is identified and tmux passthrough is on.
+- Kitty graphics protocol when Ghostty, kitty, or WezTerm is identified. Inside tmux, this also requires passthrough.
 - Truecolor half-block cells everywhere else.
 - Inside tmux with `allow-passthrough off`, the half-block fallback is deliberate. The half-block cover is about 52 × 52 pixels, so text baked into the artwork is not legible; that is the cost of the fallback, not a bug.
 - Sixel is not implemented. Linux terminals without kitty graphics get the fallback.

@@ -95,4 +95,4 @@ Move to a new runtime release only after it is published with its `SHA256SUMS`:
 
 ## Fixtures
 
-`tests/fixtures/gen.sh` needs a full host FFmpeg 9.0.2: Homebrew `ffmpeg` on macOS (`scripts/dev-deps.sh` pins it), and the Alpine `ffmpeg` package in `docker/linux/Dockerfile`. That FFmpeg is a test-only dependency, and the app never runs it.
+`tests/fixtures/gen.sh` needs FFmpeg 9.0.2 with the corpus's encoders: Homebrew `ffmpeg` on macOS (`scripts/dev-deps.sh` pins it), or the checksum-pinned ffmpeg-build fixtures archive installed at `/opt/ffmpeg-fixtures` by `docker/linux/Dockerfile`. The container puts that archive's `bin/` first on `PATH`. This is a test-only dependency; the app never runs the fixture generator's FFmpeg. The generator currently checks the version before generation but does not preflight all required encoders (PLAY-41).

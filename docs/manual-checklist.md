@@ -19,12 +19,11 @@ Owner-run checks before a release and after a platform change. Automated gates a
 | Interaction | Keyboard bindings match the shipped help | not run |
 | Interaction | Drag-and-drop and external subtitle loading | not run |
 | Interaction | Clean quit and repeated open/close | not run |
-| Platform | Other Apple Silicon Macs and older macOS versions, if distributed | not run |
+| Platform | Other Apple Silicon Macs running the supported macOS 27 or later | not run |
 | Metal | `--gpu-api=metal` beside `--gpu-api=vulkan` on a real display: color, scaling, subtitle and OSC placement, resize, fullscreen | not run |
 | Metal | HDR/EDR content and an external or ProMotion display under Metal: frame pacing and tone mapping (`scripts/bench.py frames` on that display) | not run |
-| Metal | `--gpu-api=metal` on a non-Apple-Silicon Mac; the carried patch was validated only on Apple GPUs | not run |
 | Metal | Keyboard focus and window behavior under `--gpu-api=metal` | not run |
-| Distribution | Signing and notarization, if distributed | not run |
+| Distribution | Ad-hoc signature verifies and the documented first-launch quarantine steps work | not run |
 | Distribution | A tagged release verifies against `SHA256SUMS`, and `sh dl player` installs it on macOS and x86-64 Linux | not run |
 | Linux | `gpu-next` selects the GPU Vulkan device and plays with default FIFO swap on a real compositor | not run |
 | Linux | Fractional scale, fullscreen, resize, and cursor shape on sway, GNOME, or KDE | not run |

@@ -4,12 +4,12 @@ Player is a local-only media player built on a Rust playback engine, the pinned 
 
 ## Commands
 
-- `scripts/build.sh` builds the development player at `build/mpv`. On macOS it and the Rust tests link `.work/deps/release`, so run `scripts/build-deps.sh` first.
+- `scripts/build.sh` builds the development player at `build/mpv` on macOS or `build-linux/mpv` on Linux. On macOS it and the Rust tests link `.work/deps/release`, so run `scripts/build-deps.sh` first; use the pinned container for Linux.
 - `tests/run.sh suite` runs the full suite. `tests/run.sh <gate>` runs one gate.
-- `scripts/audit.sh` runs the FFmpeg manifest, build-surface, and local-only audits.
-- `scripts/build-deps.sh` builds the pinned release dependency closure under `.work/deps/release`.
+- `scripts/audit.sh` runs the macOS FFmpeg manifest, build-surface, and local-only audits; use `scripts/audit-linux.sh` in the Linux container.
+- `scripts/build-deps.sh` builds the pinned macOS release dependency closure under `.work/deps/release`.
 - `scripts/release.sh` builds and bundles `dist/Player.app`.
-- `make install` copies the macOS app to `~/Applications` or the Linux binary to `~/.local/bin`.
+- `make install` installs the macOS app and runtime under `~/Applications/Player`, or the Linux binary and libraries under `~/.local/opt/player` with a `~/.local/bin/player` link. See the install guide for overrides.
 - `scripts/measure.sh final` checks the release budgets.
 - `make linux` builds the Linux dependency prefix and tarball in the pinned Alpine image; `scripts/linux-container.sh COMMAND` runs any command there, such as `tests/run.sh suite` or `scripts/audit-linux.sh`.
 - `cargo test` runs the Rust tests.
@@ -36,9 +36,7 @@ Player is a local-only media player built on a Rust playback engine, the pinned 
 - [docs/metrics.md](docs/metrics.md): measurement history and release budgets.
 - [docs/manual-checklist.md](docs/manual-checklist.md): owner-run visual and audio checks.
 - [docs/tui-design.md](docs/tui-design.md): terminal UI layout, art transport, and limits.
-- [docs/perf-campaign.md](docs/perf-campaign.md): performance campaign and remaining checks.
-- [docs/build-campaign.md](docs/build-campaign.md): closed build campaign.
-- [docs/build-baseline.md](docs/build-baseline.md): build baseline record.
-- [docs/build-benchmarks.md](docs/build-benchmarks.md): build experiment results.
-- [native-metal.md](native-metal.md): Metal backend campaign record.
+- [docs/rfc/PLAY-45-audio-speed.md](docs/rfc/PLAY-45-audio-speed.md): draft audio speed, pitch, and clock contract.
+- [docs/rfc/PLAY-47-video-pixel-depth.md](docs/rfc/PLAY-47-video-pixel-depth.md): draft 10-bit frame representation.
+- [docs/rfc/PLAY-30-osc-coordinates.md](docs/rfc/PLAY-30-osc-coordinates.md): draft OSC coordinate and injected-input contract.
 - [TODO.md](TODO.md): open work.

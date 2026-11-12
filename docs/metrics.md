@@ -39,7 +39,7 @@ The `3c2f7e61356d` row is the first build on the `ffmpeg-build` `play-sdk` relea
 
 ## Budgets
 
-`scripts/measure.sh final` gates the release app on: distributable at most 29,542,136 B, executable at most 10 MB, 1080p RSS at most 300 MB, first frame at most 1 s, seek at most 250 ms, one `file` protocol, no network scheme, no Lua symbol, and no audio underrun. Timings are headless (`--vo=null --ao=null`). CPU is compared, not gated. A video-only clip costs about one CPU-second per media-second because the scheduler worker spins when no audio is queued, not because of wall-time pacing; see **Campaign**.
+`scripts/measure.sh final` gates the release app on: distributable at most 29,542,136 B, executable at most 10 MB, 1080p RSS at most 300 MB, first frame at most 1 s, seek at most 250 ms, one `file` protocol, no network scheme, no Lua symbol, and no audio underrun. Timings are headless (`--vo=null --ao=null`). CPU is compared, not gated. The historical baseline below spent about one CPU-second per media-second on video-only playback because its scheduler worker spun when no audio was queued. The current worker waits for commands until its scheduling deadline; that baseline does not describe current behavior.
 
 `scripts/measure.sh cpu BASELINE_PLAYER` runs seven interleaved baseline and candidate pairs and reports `improved`, `regressed`, `unchanged`, or `inconclusive` from the paired differences: the second-smallest and second-largest difference must both clear `max(5% of the baseline median, the metric's floor)`, and neither side's spread widens that tolerance. A failed trial makes the comparison `invalid`. `scripts/measure.sh compare BEFORE AFTER` applies the same rule between two recorded labels. Both print `perf gate deferred: host busy` and exit 75 when `perf-gate-ready` reports load.
 
@@ -63,13 +63,13 @@ CPU is the process's own CPU time from `proc_pid_rusage` on macOS and `/proc/PID
 - `seek`: a target trace precomputed from `--seed`; latency runs from the command to its `playback-restart`, and the landing error is read from `time-pos` then. A seek that times out or lands outside its precision bound (1.5 frames for `exact`, the GOP for `keyframes`) fails the trial instead of becoming a sample. Success count, absolute error, and latency are reported separately, 15 per fixture and precision; mpv runs exact only.
 - `audio-cpu`: CPU percent over 10 s of `--no-video --ao=null` playback.
 - `frames`: fullscreen playback with the OSC hidden then shown: dropped frames, CPU, and RSS.
-- `gui-cpu --baseline OLD_PLAYER` or `--baseline-arg OPTION`: interleaved candidate and baseline runs of four scenarios (paused with the OSC hidden or shown, the pointer sweeping the seek bar at 60 Hz, playing with the OSC hidden), medians and max-min spread of `--runs`.
+- `gui-cpu --baseline OLD_PLAYER` or `--baseline-arg OPTION`: interleaved candidate and baseline runs of four scenarios (paused with the OSC hidden or shown, the pointer sweeping the seek bar at a target of 60 Hz, playing with the OSC hidden), medians and max-min spread of `--runs`. The JSON records achieved `pointer_rate_hz`; use it when comparing hover workloads, because synchronous IPC can keep the rate below the target.
 - `workloads`: `paused-open`, `ended-open`, and `playing` on each workload fixture. `playing` warms up until `time-pos` passes 0.5 s, then measures CPU, memory and the engine counters the player exposes (`frame-drop-count`, `estimated-vf-fps`) over `--seconds` of steady playback. It reports CPU-s per media-s and fails a trial when `time-pos` does not advance at least 90% of the wall window. A fixture shorter than warmup + window + 2 s is regenerated, or the run stops if the recipe itself is too short.
 - `--player-arg OPTION` (repeatable) passes an option such as `--gpu-api=metal` to the measured player; `--baseline-arg` does the same for the `gui-cpu` baseline, so one binary can be compared against itself. Every row names the options it ran with.
 
 `--runs` is the pass count for every mode when given, so a paired run over `--baseline` gets exactly that many interleaved pairs. Without it, seek uses 15 samples and the paired modes keep 3 pairs for `audio-cpu`, `frames` and `workloads` and 5 for `gui-cpu`.
 
-Per-metric absolute floors live in `perfstat.METRIC_FLOORS` and enter the paired-comparison tolerance as `max(5% of the baseline median, floor)`: 0.5 percentage points for `cpu_percent`, 0.01 CPU-s per media-s, 8 MB for either RSS figure, 5 ms for `latency_ms`, and 0.01 s for `error_s`. An A/A run of one binary against itself stays inside them on every metric (see **Campaign**).
+Per-metric absolute floors live in `perfstat.METRIC_FLOORS` and enter the paired-comparison tolerance as `max(5% of the baseline median, floor)`: 0.5 percentage points for `cpu_percent`, 0.01 CPU-s per media-s, 8 MB for either RSS figure, 5 ms for `latency_ms`, and 0.01 s for `error_s`. The recorded A/A run of one binary against itself stayed inside them on every metric (see [the historical scheduler measurements](#historical-scheduler-and-osc-measurements)).
 
 Results from 2026-11-03 on the native-OSC build. The host was not quiet for every run, so treat them as indicative:
 
@@ -82,11 +82,11 @@ Results from 2026-11-03 on the native-OSC build. The host was not quiet for ever
 | Fullscreen, OSC hidden | 0 drops, 16-20% CPU, 263-287 MB | |
 | Fullscreen, OSC shown | 0-1 drops, 29-33% CPU, 414-437 MB | |
 
-The libass-to-native overlay change (`gui-cpu`, five interleaved runs against `d0e94ad`) measured: paused 0.4-1.0% against 0.4-1.0%, playing 20.2% against 19.2% (h264) and 24.4% against 25.8% (VP9), and seek-bar hover 14.3% against 9.0% (h264) but 12.0% against 11.6% (VP9). The host went busy before the closing check, so the run does not count as a gate; the h264 hover gap is open as PLAY-29.
+The libass-to-native overlay change (`gui-cpu`, five interleaved runs against `d0e94ad`) measured: paused 0.4-1.0% against 0.4-1.0%, playing 20.2% against 19.2% (h264) and 24.4% against 25.8% (VP9), and seek-bar hover 14.3% against 9.0% (h264) but 12.0% against 11.6% (VP9). The host went busy before the closing check, so the run does not count as a gate.
 
-## Campaign
+## Historical scheduler and OSC measurements
 
-Results from `docs/perf-campaign.md`, all on this Apple Silicon host with `perf-gate-ready` quiet before and after, measured on the `dist` build. They are not comparable with the history above, which mixed profiles and hosts.
+These completed measurements used an Apple Silicon host with `perf-gate-ready` quiet before and after, on the `dist` build except the explicitly labeled dev-build row. They are not a measurement of the current revision and are not comparable with the history above, which mixed profiles and hosts.
 
 Baseline `4ef6495`, `bench.py workloads`, 3 s windows of steady playback, headless:
 
@@ -100,23 +100,23 @@ Baseline `4ef6495`, `bench.py workloads`, 3 s windows of steady playback, headle
 
 The A/A run of that binary against itself (7 pairs) gave `unchanged` on every metric: the playing CPU per media-second differed by -0.009 to +0.003 against a 0.049 tolerance.
 
-After the optimization slices (`bench.py`, 7 interleaved pairs, quiet host):
+Recorded improvements (`bench.py`, 7 interleaved pairs, quiet host):
 
-| Slice | Workload | Before | After |
+| Change | Workload | Before | After |
 |---|---|---:|---:|
-| O1 | video-1080p playing, CPU-s per media-s | 0.99 | 0.27 |
-| O1 | video-1080p playing, steady RSS | 274 MB | 85 MB |
-| O1 | video-4k playing, steady RSS | 987 MB | 227 MB |
-| O1 | video-only drops per 3 s | about 76 | 0 |
-| O2 | GUI h264 1080p playing, OSC hidden, CPU | 52.5% | 41.8% |
-| O2 | GUI playing, OSC hidden, RSS | | 38-40 MB less |
-| O3 | GUI seek-bar hover, CPU (dev build) | 16.7% | 14.0% |
+| Scheduler waiting and frame ownership | video-1080p playing, CPU-s per media-s | 0.99 | 0.27 |
+| Scheduler waiting and frame ownership | video-1080p playing, steady RSS | 274 MB | 85 MB |
+| Scheduler waiting and frame ownership | video-4k playing, steady RSS | 987 MB | 227 MB |
+| Scheduler waiting and frame ownership | video-only drops per 3 s | about 76 | 0 |
+| Single-device presentation | GUI h264 1080p playing, OSC hidden, CPU | 52.5% | 41.8% |
+| Single-device presentation | GUI playing, OSC hidden, RSS | | 38-40 MB less |
+| Overlay recomposition | GUI seek-bar hover, CPU (dev build) | 16.7% | 14.0% |
 
-av-1080p headless playback was unchanged by O1 (0.26 CPU-s per media-s). The hover workload drives the pointer at about 6 Hz, not 60 Hz (PLAY-40).
+av-1080p headless playback was unchanged by the scheduler change (0.26 CPU-s per media-s). The recorded hover workload achieved about 6 Hz against its 60 Hz target (PLAY-40); reruns must be compared at an established achieved rate.
 
-## Metal backend
+## Historical Metal backend comparison
 
-Candidate `--gpu-api=metal` measured against baseline `--gpu-api=vulkan` on the same release binary (`dist/Player.app/Contents/MacOS/player`, revision `a6ccaba`). The host was quiet throughout (`perf-gate-ready` passed before and after each mode with load <= 0.38/core; earlier measurements taken on a busy host were deferred). Both backends pay the two-device headless-render CPU readback and window re-upload (PLAY-31).
+Candidate `--gpu-api=metal` measured against baseline `--gpu-api=vulkan` on the same release binary (`dist/Player.app/Contents/MacOS/player`, revision `a6ccaba`). The host was quiet throughout (`perf-gate-ready` passed before and after each mode with load <= 0.38/core; earlier measurements taken on a busy host were deferred). These runs used the former two-device pipeline with headless-render CPU readback and window re-upload. Current normal presentation uses one device and no CPU readback, so these results do not establish the current backend cost.
 
 ### GUI CPU and memory
 
@@ -126,14 +126,14 @@ Medians and max-min spread across five interleaved candidate and baseline runs o
 |---|---|---:|---:|---:|---:|
 | h264-gop10 | Paused, OSC hidden | 0.60% ± 0.22% | 0.78% ± 0.20% | 208 MB | 234 MB |
 | h264-gop10 | Paused, OSC shown | 0.79% ± 0.22% | 0.78% ± 0.19% | 293 MB | 334 MB |
-| h264-gop10 | Seek bar hover (60 Hz) | 5.88% ± 0.65% | 5.38% ± 0.43% | 297 MB | 321 MB |
+| h264-gop10 | Seek bar hover (target 60 Hz) | 5.88% ± 0.65% | 5.38% ± 0.43% | 297 MB | 321 MB |
 | h264-gop10 | Playing, OSC hidden | 27.29% ± 0.60% | 22.72% ± 1.11% | 270 MB | 288 MB |
 | vp9-opus | Paused, OSC hidden | 0.78% ± 0.21% | 0.78% ± 0.22% | 184 MB | 210 MB |
 | vp9-opus | Paused, OSC shown | 0.79% ± 0.21% | 0.78% ± 0.20% | 268 MB | 308 MB |
-| vp9-opus | Seek bar hover (60 Hz) | 5.73% ± 1.10% | 4.88% ± 0.70% | 279 MB | 296 MB |
+| vp9-opus | Seek bar hover (target 60 Hz) | 5.73% ± 1.10% | 4.88% ± 0.70% | 279 MB | 296 MB |
 | vp9-opus | Playing, OSC hidden | 32.13% ± 1.18% | 25.78% ± 0.64% | 247 MB | 262 MB |
 
-Metal holds 15–41 MB less resident memory across all GUI scenarios. Paused CPU and seek-bar hover are at parity within spread. Active playback draws 4.5–6.4% more CPU on Metal under the two-device readback pipeline.
+In these runs Metal held 15–41 MB less resident memory across all GUI scenarios. Paused CPU and seek-bar hover were at parity within spread. Active playback drew 4.5–6.4 percentage points more CPU on Metal under the former two-device readback pipeline.
 
 ### Fullscreen frame drops
 

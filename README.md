@@ -48,4 +48,4 @@ Run `player --help` for command-line options. Report problems in [GitHub issues]
 
 ## Limits
 
-Video currently decodes in software. Paths must be UTF-8. Linux requires musl and Wayland; glibc and X11 are not supported.
+Video currently decodes in software. Window rendering accepts a subset of 8-bit pixel formats; 10-bit input presentation is still open, and Metal output is SDR. Paths must be UTF-8. Linux requires musl and Wayland; glibc and X11 are not supported. [TODO.md](TODO.md) tracks the open playback and interaction limitations.

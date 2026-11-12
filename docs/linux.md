@@ -1,6 +1,6 @@
 # Linux
 
-Player builds for Linux x86-64 on musl. The playback engine and application layer are the same Rust code as macOS; the platform split is Wayland for the window and input, Vulkan for rendering, and ALSA for audio. The executable links the renderer closure statically and FFmpeg from the shared runtime (see `docs/ffmpeg.md`). It needs a small shared-library set because a fully static binary cannot load a Vulkan ICD, and a `wlshm` fallback was rejected because it has no GPU, HDR, or hardware decode. The build host is the Alpine 3.24 image in `docker/linux/Dockerfile`, pinned by digest. `scripts/linux-container.sh COMMAND...` runs a command in that image as the calling user with the repository mounted at `/work`.
+Player builds for Linux x86-64 on musl. The playback engine and application layer are the same Rust code as macOS; the platform split is Wayland for the window and input, Vulkan for rendering, and ALSA for audio. The executable links the renderer closure statically and FFmpeg from the shared runtime (see `docs/ffmpeg.md`). It needs a small shared-library set because a fully static binary cannot load a Vulkan ICD, and a `wlshm` fallback was rejected because it has no GPU, HDR, or hardware decode. The build host is the Alpine image in `docker/linux/Dockerfile`, pinned by digest. `scripts/linux-container.sh COMMAND...` runs a command in that image as the calling user with the repository mounted at `/work`.
 
 ## Build
 
@@ -8,7 +8,7 @@ Player builds for Linux x86-64 on musl. The playback engine and application laye
 make linux
 ```
 
-runs `scripts/build-deps-linux.sh` and `scripts/release-linux.sh` in the container. Individual steps: `scripts/linux-container.sh scripts/build-linux.sh` builds the Cargo `dist` profile for `x86_64-unknown-linux-musl`, writes the unstripped binary to `build-linux/bin/mpv` and a stripped `dist/bin/player`, each with a `build-linux/mpv` or `dist/player` link and a `lib` link to the FFmpeg runtime's libraries, the installed layout `$ORIGIN/../lib` expects; `scripts/linux-container.sh scripts/audit-linux.sh` checks it. `scripts/linux-container.sh` runs with `seccomp=unconfined` and `apparmor=unconfined` so the local-only gate can create a user and network namespace with `unshare -rn`.
+runs `scripts/build-deps-linux.sh` and `scripts/release-linux.sh` in the container. Individual steps: `scripts/linux-container.sh scripts/build-linux.sh` builds the Cargo `dist` profile for `x86_64-unknown-linux-musl`, writes the unstripped binary to `build-linux/bin/mpv` and a stripped `dist/bin/player`, each with a `build-linux/mpv` or `dist/player` link and a sibling `lib/` directory containing links to the FFmpeg runtime and rust-fontconfig libraries, as the installed layout `$ORIGIN/../lib` expects; `scripts/linux-container.sh scripts/audit-linux.sh` checks it. `scripts/linux-container.sh` runs with `seccomp=unconfined` and `apparmor=unconfined` so the local-only gate can create a user and network namespace with `unshare -rn`.
 
 The build sets `-C target-feature=-crt-static`. A static-pie executable with Wayland in `NEEDED` dies in the musl loader before `main`; the production binary therefore uses the dynamic musl loader and a narrow shared-library set.
 
@@ -48,7 +48,7 @@ The VA driver comes from the host, the same way the Vulkan ICD does: `mesa-va-ga
 
 ## ALSA
 
-`tests/run.sh linux-audio` plays the mono, stereo, and 5.1 audio fixtures with `--ao=alsa --audio-device=alsa/null --audio-channels=auto`, then checks pause, seek, and device selection on the stereo fixture. ALSA's `null` PCM is built into `libasound`, so the gate needs no sound card and loads no plugin. The engine mixes to the requested layout and opens the named ALSA device. The gate starts paused and keeps the file open so `audio-params` stays readable. Audibility, channel placement, and underruns on real hardware are owner checks, and the release must not rely on the `default` PCM, which may route through a shared plugin.
+`tests/run.sh linux-audio` plays the mono, stereo, and 5.1 audio fixtures with `--ao=alsa --audio-device=alsa/null --audio-channels=auto`, then checks pause, seek, and device selection on the stereo fixture. ALSA's `null` PCM is built into `libasound`, so the gate needs no sound card and loads no plugin. The engine opens the named ALSA device and chooses mono for an initial mono track or stereo otherwise; it retains that output layout on track switches. The 5.1 fixture therefore exercises downmixing, not a six-channel device layout. The gate starts paused and keeps the file open so `audio-params` stays readable. Audibility, channel placement, and underruns on real hardware are owner checks, and the release must not rely on the `default` PCM, which may route through a shared plugin.
 
 ## Fixtures
 
