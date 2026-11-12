@@ -10,7 +10,6 @@ use player_output::{
     Swapchain, Gpu,
 };
 use std::collections::VecDeque;
-use std::os::fd::{AsRawFd, FromRawFd};
 use std::time::{Duration, Instant};
 
 use wayland_client::protocol::{
@@ -199,16 +198,22 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for App {
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
+        state.keyboard_event(event);
+    }
+}
+
+impl App {
+    fn keyboard_event(&mut self, event: wl_keyboard::Event) {
         match event {
             wl_keyboard::Event::Keymap { fd, .. } => {
-                drop_keymap(fd.as_raw_fd());
+                drop(fd);
             }
             wl_keyboard::Event::Key {
                 key,
                 state: key_state,
                 ..
             } => {
-                state.pending.push_back(InputEvent::Key {
+                self.pending.push_back(InputEvent::Key {
                     code: key,
                     pressed: translate_key_state(key_state),
                 });
@@ -260,11 +265,6 @@ impl Dispatch<wl_pointer::WlPointer, ()> for App {
             _ => {}
         }
     }
-}
-
-fn drop_keymap(fd: std::os::fd::RawFd) {
-    let owned = unsafe { std::fs::File::from_raw_fd(fd) };
-    drop(owned);
 }
 
 fn translate_key_state(state: wayland_client::WEnum<wl_keyboard::KeyState>) -> bool {
@@ -719,5 +719,29 @@ mod seat_tests {
             requests.iter().any(|request| request.object == pointer && request.opcode == 1),
             "pointer released after the capability went away: {requests:?}"
         );
+    }
+}
+
+
+#[cfg(test)]
+mod keyboard_tests {
+    use super::*;
+    use std::io::Read;
+    use std::os::fd::OwnedFd;
+    use std::os::unix::net::UnixStream;
+
+    #[test]
+    fn keymap_event_releases_its_single_descriptor_owner() {
+        let (mut peer, keymap) = UnixStream::pair().unwrap();
+        peer.set_nonblocking(true).unwrap();
+        let fd: OwnedFd = keymap.into();
+        let mut app = App::new(32, 32);
+        app.keyboard_event(wl_keyboard::Event::Keymap {
+            format: wayland_client::WEnum::Value(wl_keyboard::KeymapFormat::XkbV1),
+            fd,
+            size: 0,
+        });
+        assert_eq!(peer.read(&mut [0]).unwrap(), 0);
+        assert!(app.pending.is_empty());
     }
 }

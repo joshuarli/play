@@ -9,15 +9,6 @@ Priorities are assigned by impact and likelihood. Source-confirmed paths are dis
 
 ## P2
 
-### PLAY-44 · P2 · Wayland keymap handling closes one descriptor twice
-
-- **Area:** Concurrency
-- **Where:** `crates/player-display/src/display.rs:203`, `crates/player-display/src/display.rs:265`, `Cargo.lock:662`.
-- **Problem:** wayland-client 0.31.15 supplies Keymap.fd as OwnedFd. The event handler borrows its raw descriptor, then drop_keymap constructs and drops a second owner with File::from_raw_fd. The original OwnedFd still drops at the end of the match arm. A normal keyboard keymap event therefore double-closes the descriptor; if another thread reuses that number between closes, the second close can affect an unrelated resource. The ownership violation is source-confirmed; a particular crash was not reproduced.
-- **Recommendation:** Keep exactly one descriptor owner: drop the received OwnedFd directly while the keymap is unused, or move it into the keymap reader when implementing layout translation. Remove the raw-descriptor ownership reconstruction. Exercise keymap receipt with descriptor ownership checks and a real Wayland session.
-- **Fix with:** `os-boundaries`
-- **Effort:** S (hours)
-
 ### PLAY-47 · P2 · 10-bit decoded video fails before reaching the renderer
 
 - **Area:** Types
