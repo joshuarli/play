@@ -102,15 +102,38 @@ pub fn mix_into(input: &[f32], from: &Channels, to: Layout, output: &mut Vec<f32
     };
     match to {
         Layout::Mono => {
-            let left = channel_index(from, Position::FRONT_LEFT);
-            let right = channel_index(from, Position::FRONT_RIGHT);
+            // Fold the stereo downmix to mono: front channels have half gain,
+            // centre and surrounds retain the stereo mix coefficients. Other
+            // positioned channels contribute at half gain; both LFE channels
+            // are deliberately omitted. The sum may exceed full scale.
             for frame in input.chunks_exact(from_count) {
-                let value = match (left, right) {
-                    (Some(l), Some(r)) => 0.5 * (frame[l] + frame[r]),
-                    (Some(l), None) => frame[l],
-                    (None, Some(r)) => frame[r],
-                    (None, None) => frame.iter().sum::<f32>() / from_count as f32,
-                };
+                let mut value = 0.0;
+                for (index, sample) in frame.iter().enumerate() {
+                    let mask = match from {
+                        Channels::Positioned(positions) => (0..64)
+                            .filter(|shift| positions.bits() & (1u64 << shift) != 0)
+                            .nth(index).map_or(0, |shift| 1u64 << shift),
+                        Channels::Discrete(_) => [
+                            Position::FRONT_LEFT, Position::FRONT_RIGHT,
+                            Position::FRONT_CENTER, Position::LFE1,
+                            Position::REAR_LEFT, Position::REAR_RIGHT,
+                            Position::SIDE_LEFT, Position::SIDE_RIGHT,
+                        ].get(index).map_or(0, |position| position.bits()),
+                        _ => 0,
+                    };
+                    if mask & (Position::LFE1.bits() | Position::LFE2.bits()) != 0 {
+                        continue;
+                    }
+                    let gain = if mask == Position::FRONT_CENTER.bits() {
+                        CENTRE_MIX
+                    } else if mask & (Position::REAR_LEFT | Position::REAR_RIGHT
+                        | Position::SIDE_LEFT | Position::SIDE_RIGHT).bits() != 0 {
+                        0.5 * CENTRE_MIX
+                    } else {
+                        0.5
+                    };
+                    value += sample * gain;
+                }
                 output.push(value);
             }
         }
@@ -241,6 +264,20 @@ mod tests {
         let right = 0.5 + CENTRE_MIX + 0.5 * CENTRE_MIX;
         assert!((output[0] - left).abs() < 1e-6);
         assert!((output[1] - right).abs() < 1e-6);
+    }
+
+    #[test]
+    fn mono_output_keeps_surround_and_centre_after_track_switch() {
+        let mut output = Vec::new();
+        mix_into(&[0.25], &mono(), Layout::Mono, &mut output);
+        assert_eq!(output, vec![0.25]);
+        for (channel, expected) in [0.5, 0.5, CENTRE_MIX, 0.0,
+            0.5 * CENTRE_MIX, 0.5 * CENTRE_MIX].into_iter().enumerate() {
+            let mut impulse = [0.0; 6];
+            impulse[channel] = 1.0;
+            mix_into(&impulse, &five_one(), Layout::Mono, &mut output);
+            assert!((output[0] - expected).abs() < 1e-6, "channel {channel}: {output:?}");
+        }
     }
 
     #[test]

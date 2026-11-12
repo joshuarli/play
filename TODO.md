@@ -47,15 +47,6 @@ Priorities are assigned by impact and likelihood. Source-confirmed paths are dis
 - **Fix with:** `lifecycle-concurrency`
 - **Effort:** M (days)
 
-### PLAY-49 · P2 · Switching from mono to surround drops center and surround audio
-
-- **Area:** Data
-- **Where:** `crates/player-engine/src/backend.rs:683`, `crates/player-engine/src/backend.rs:221`, `crates/player-audio/src/mix.rs:103`.
-- **Problem:** The first selected track determines a mono or stereo output layout, and reconfigure retains it. After starting on mono and switching to 5.1, Layout::Mono sees front-left/front-right and averages only those two channels. It ignores center and surround samples, so center-only dialogue becomes silent. This follows from the reachable switch path and mixer equation; it does not depend on a physical 5.1 sink.
-- **Recommendation:** Correct the multichannel-to-mono coefficients so all supported non-LFE positions contribute with an explicit gain policy; keep any deliberate LFE omission documented. Verify isolated channel impulses and a mono-to-5.1 track switch. Reopening the sink or preserving later stereo separation is broader work and is not needed to fix the missing dialogue.
-- **Fix with:** `none`
-- **Effort:** S (hours)
-
 ### PLAY-48 · P2 · Presentation ignores sample aspect ratio and display rotation
 
 - **Area:** Types
