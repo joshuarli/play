@@ -7,24 +7,6 @@ Priorities are assigned by impact and likelihood. Source-confirmed paths are dis
 
 ## P1
 
-### PLAY-42 · P1 · IPC socket setup and cleanup can delete unrelated files
-
-- **Area:** Data
-- **Where:** `crates/player-app/src/ipc.rs:20`, `crates/player-app/src/ipc.rs:143`, `crates/player-app/src/app.rs:691`.
-- **Problem:** Binding the user-supplied IPC path unconditionally removes the existing directory entry before UnixListener::bind. A regular file at that path is deleted even if binding subsequently fails; an active socket is also unlinked. Drop removes the path again without checking that it still names this server's socket, so a replacement file can be deleted on exit. These are reachable filesystem operations, not a hypothetical network attacker.
-- **Recommendation:** Refuse occupied non-socket paths and live sockets. If stale-socket recovery is retained, make it conservative and verify the identity of the socket owned by this instance before cleanup. Add temporary-directory cases for an existing regular file, a live listener, failed bind, and a replacement path; assert foreign contents survive.
-- **Fix with:** `os-boundaries`
-- **Effort:** M (days)
-
-### PLAY-43 · P1 · Automatic screenshots overwrite shots from earlier sessions
-
-- **Area:** Data
-- **Where:** `crates/player-app/src/app.rs:129`, `crates/player-app/src/app.rs:1508`.
-- **Problem:** Every App starts screenshot_index at zero. The first automatic screenshot chooses shot0001.png in the working directory and std::fs::write truncates an existing file. Restarting the player and taking another screenshot silently destroys the previous shot; two instances can collide as well. Explicit screenshot-to-file overwrite behavior is a separate contract.
-- **Recommendation:** Allocate automatic names with exclusive creation, skipping occupied names without a check-then-write race. Write through the successfully reserved file and report write failures. Verify pre-existing shots and competing creators keep their contents, while a new automatic screenshot gets an unused name.
-- **Fix with:** `os-boundaries`
-- **Effort:** S (hours)
-
 ## P2
 
 ### PLAY-44 · P2 · Wayland keymap handling closes one descriptor twice
@@ -82,15 +64,6 @@ Priorities are assigned by impact and likelihood. Source-confirmed paths are dis
 - **Recommendation:** Read frame/stream aspect ratio and display-matrix metadata, carry it in the presentation description, and apply it consistently to fitting, libplacebo rendering, screenshots, and reported properties. Verify an anamorphic image and a known-valid remuxed 90-degree display-matrix fixture, checking metadata as well as rendered geometry.
 - **Fix with:** `api-surface-and-module-boundaries`
 - **Effort:** M (days)
-
-### PLAY-50 · P2 · Playlist insertion changes which entry current points to
-
-- **Area:** Data
-- **Where:** `crates/player-app/src/playlist.rs:46`, `crates/player-app/src/playlist.rs:94`, `crates/player-app/src/app.rs:601`.
-- **Problem:** Playlist::insert shifts entries but leaves current unchanged, and loadfile exposes this through insert-at. Playing B in [A,B,C] with current=1, then inserting X at index 0, produces [X,A,B,C] with current still 1: the backend plays B while playlist state identifies A. Next advances to B again and playlist properties disagree with playback.
-- **Recommendation:** Preserve the identity of the active entry by shifting current by the inserted count when insertion is at or before it, after clamping the insertion index. Cover insertion before, at, and after current, empty inserts, and multi-entry playlist expansion; verify IPC properties and next/previous behavior.
-- **Fix with:** `audit-implicit-state-machine`
-- **Effort:** S (hours)
 
 ### PLAY-23 · P2 · HE-AAC is rejected or decoded without SBR and parametric stereo
 

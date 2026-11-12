@@ -100,3 +100,5 @@ scripts/manual-checklist.sh --fixture-dir .work/fixtures --release
 ```
 
 Record results in `docs/manual-checklist.md`. Visual quality, real audio, real mouse and drag, HDR and Retina, and signing or notarization are not automated gates. `TODO.md` lists open user-facing defects.
+
+IPC socket paths must be unused; remove stale sockets explicitly before starting the player. Automatic screenshots reserve the next unused `shotNNNN.png` name without overwriting files or following symlinks. `screenshot-to-file` retains explicit overwrite behavior.

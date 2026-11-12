@@ -45,9 +45,12 @@ impl Playlist {
 
     pub fn insert(&mut self, index: usize, entries: Vec<Entry>) {
         let index = index.min(self.entries.len());
-        for (offset, entry) in entries.into_iter().enumerate() {
-            self.entries.insert(index + offset, entry);
+        if let Some(current) = self.current.as_mut()
+            && index <= *current
+        {
+            *current += entries.len();
         }
+        self.entries.splice(index..index, entries);
     }
 
     pub fn append(&mut self, entries: Vec<Entry>) {
@@ -242,4 +245,27 @@ fn resolve_entry(value: &str, base: &Path, title: Option<String>) -> Option<Entr
     };
     let path = path.to_string_lossy().into_owned();
     local_entry(&path).ok().map(|entry| Entry { title, ..entry })
+}
+
+#[cfg(test)]
+mod insertion_tests {
+    use super::*;
+    fn entry(path: &str) -> Entry { Entry { path: path.to_owned(), title: None } }
+
+    #[test]
+    fn insertion_preserves_active_entry_and_navigation() {
+        for (index, inserted, expected) in [(0, 2, 3), (1, 2, 3), (2, 2, 1), (99, 2, 1), (0, 0, 1)] {
+            let mut list = Playlist::new();
+            list.append(vec![entry("A"), entry("B"), entry("C")]);
+            list.set_current(Some(1));
+            list.insert(index, (0..inserted).map(|_| entry("X")).collect());
+            assert_eq!(list.current(), Some(expected));
+            assert_eq!(list.current_entry().unwrap().path, "B");
+            assert_eq!(list.entries()[list.next_index().unwrap()].path, if index == 2 { "X" } else { "C" });
+            assert_eq!(list.entries()[list.previous_index().unwrap()].path, if index == 1 { "X" } else { "A" });
+        }
+        let mut list = Playlist::new();
+        list.insert(99, vec![entry("X")]);
+        assert_eq!(list.current(), None);
+    }
 }

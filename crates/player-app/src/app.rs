@@ -306,6 +306,7 @@ impl App {
         self.shown = 0;
         self.presented_serial = self.frame_serial;
         self.backend = None;
+        self.last_frame = None;
         self.probe = None;
         self.end_sent = false;
         self.eof_reached = false;
@@ -1505,15 +1506,13 @@ impl App {
             backend.compose(&mut rgba, width, height, osc)?;
         }
         let png = crate::png::encode_png(&rgba, width, height)?;
-        let target = match path {
-            Some(path) => Path::new(path).to_path_buf(),
+        match path {
+            Some(path) => std::fs::write(path, png)
+                .map_err(|error| format!("cannot write {path}: {error}"))?,
             None => {
-                self.screenshot_index += 1;
-                Path::new(&format!("shot{:04}.png", self.screenshot_index)).to_path_buf()
+                crate::png::write_automatic(Path::new("."), &mut self.screenshot_index, &png)?;
             }
-        };
-        std::fs::write(&target, png)
-            .map_err(|error| format!("cannot write {}: {error}", target.display()))?;
+        }
         Ok(NativeValue::None)
     }
 

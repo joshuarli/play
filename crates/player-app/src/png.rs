@@ -109,3 +109,55 @@ mod tests {
         assert!(encode_png(&[0; 3], 2, 2).is_err());
     }
 }
+
+
+pub(crate) fn write_automatic(
+    directory: &std::path::Path,
+    index: &mut u32,
+    png: &[u8],
+) -> Result<std::path::PathBuf, String> {
+    use std::io::Write;
+    loop {
+        *index = index.checked_add(1).ok_or("screenshot names exhausted")?;
+        let target = directory.join(format!("shot{:04}.png", index));
+        let mut file = match std::fs::OpenOptions::new().write(true).create_new(true).open(&target) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(format!("cannot create {}: {error}", target.display())),
+        };
+        file.write_all(png)
+            .map_err(|error| format!("cannot write {}: {error}", target.display()))?;
+        return Ok(target);
+    }
+}
+
+#[cfg(test)]
+mod automatic_tests {
+    use super::*;
+
+    #[test]
+    fn automatic_shots_preserve_files_and_competing_creators() {
+        let directory = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join(format!("../../.work/tmp/shots-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(directory.join("shot0001.png"), b"original").unwrap();
+        std::os::unix::fs::symlink("shot0001.png", directory.join("shot0002.png")).unwrap();
+        let barrier = std::sync::Barrier::new(8);
+        let results = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..8u8).map(|value| {
+                let directory = &directory;
+                let barrier = &barrier;
+                scope.spawn(move || {
+                    barrier.wait();
+                    let path = write_automatic(directory, &mut 0, &[value]).unwrap();
+                    (path, value)
+                })
+            }).collect();
+            handles.into_iter().map(|handle| handle.join().unwrap()).collect::<Vec<_>>()
+        });
+        assert_eq!(std::fs::read(directory.join("shot0001.png")).unwrap(), b"original");
+        for (path, value) in results { assert_eq!(std::fs::read(path).unwrap(), [value]); }
+        assert!(write_automatic(&directory.join("missing"), &mut 0, b"fail").is_err());
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+}

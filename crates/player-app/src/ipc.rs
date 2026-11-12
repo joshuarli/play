@@ -1,4 +1,5 @@
 use std::io::{ErrorKind, Read, Write};
+use std::os::unix::fs::{FileTypeExt, MetadataExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 
@@ -7,6 +8,7 @@ use crate::value::{format_json, parse_json, NativeValue};
 pub struct IpcServer {
     listener: UnixListener,
     path: PathBuf,
+    identity: (u64, u64),
     client: Option<Client>,
 }
 
@@ -18,17 +20,20 @@ struct Client {
 
 impl IpcServer {
     pub fn bind(path: &Path) -> Result<Self, String> {
-        let _ = std::fs::remove_file(path);
         let listener = UnixListener::bind(path)
             .map_err(|error| format!("cannot bind IPC socket {}: {error}", path.display()))?;
-        listener
-            .set_nonblocking(true)
-            .map_err(|error| format!("cannot make IPC socket nonblocking: {error}"))?;
-        Ok(IpcServer {
+        let metadata = std::fs::symlink_metadata(path)
+            .map_err(|error| format!("cannot inspect IPC socket: {error}"))?;
+        let server = IpcServer {
             listener,
             path: path.to_owned(),
+            identity: (metadata.dev(), metadata.ino()),
             client: None,
-        })
+        };
+        server.listener
+            .set_nonblocking(true)
+            .map_err(|error| format!("cannot make IPC socket nonblocking: {error}"))?;
+        Ok(server)
     }
 
     pub fn poll(&mut self) -> Vec<NativeValue> {
@@ -143,7 +148,14 @@ impl Client {
 impl Drop for IpcServer {
     fn drop(&mut self) {
         self.client = None;
-        let _ = std::fs::remove_file(&self.path);
+        if let Ok(metadata) = std::fs::symlink_metadata(&self.path)
+            && metadata.file_type().is_socket()
+            && (metadata.dev(), metadata.ino()) == self.identity
+        {
+            if let Err(error) = std::fs::remove_file(&self.path) {
+                eprintln!("player: cannot remove IPC socket {}: {error}", self.path.display());
+            }
+        }
     }
 }
 
@@ -168,4 +180,74 @@ pub fn event(name: &str, fields: Vec<(String, NativeValue)>) -> NativeValue {
     let mut map = vec![("event".to_owned(), NativeValue::String(name.to_owned()))];
     map.extend(fields);
     NativeValue::Map(map)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct Directory(PathBuf);
+    impl Directory {
+        fn new() -> Self {
+            static NEXT: AtomicUsize = AtomicUsize::new(0);
+            let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.work/tmp");
+            std::fs::create_dir_all(&root).unwrap();
+            let path = root.join(format!("ipc-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+            std::fs::create_dir(&path).unwrap();
+            Self(path)
+        }
+        fn socket(&self) -> PathBuf { self.0.join("socket") }
+    }
+    impl Drop for Directory {
+        fn drop(&mut self) { std::fs::remove_dir_all(&self.0).unwrap(); }
+    }
+
+    #[test]
+    fn occupied_paths_survive_failed_binding() {
+        let dir = Directory::new();
+        let path = dir.socket();
+        std::fs::write(&path, b"keep").unwrap();
+        assert!(IpcServer::bind(&path).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), b"keep");
+        std::fs::remove_file(&path).unwrap();
+        let listener = UnixListener::bind(&path).unwrap();
+        assert!(IpcServer::bind(&path).is_err());
+        assert!(UnixStream::connect(&path).is_ok());
+        drop(listener);
+        assert!(IpcServer::bind(&path).is_err(), "stale sockets require explicit removal");
+    }
+
+    #[test]
+    fn cleanup_preserves_replacement_entries() {
+        let dir = Directory::new();
+        let path = dir.socket();
+        let server = IpcServer::bind(&path).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        std::fs::write(&path, b"replacement").unwrap();
+        drop(server);
+        assert_eq!(std::fs::read(&path).unwrap(), b"replacement");
+        std::fs::remove_file(&path).unwrap();
+        let server = IpcServer::bind(&path).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        let replacement = UnixListener::bind(&path).unwrap();
+        drop(server);
+        assert!(UnixStream::connect(&path).is_ok());
+        drop(replacement);
+    }
+
+    #[test]
+    fn cleanup_removes_owned_socket_and_binding_rejects_symlinks() {
+        let dir = Directory::new();
+        let path = dir.socket();
+        drop(IpcServer::bind(&path).unwrap());
+        assert!(!path.exists());
+        let target = dir.0.join("target");
+        std::fs::write(&target, b"keep").unwrap();
+        std::os::unix::fs::symlink(&target, &path).unwrap();
+        assert!(IpcServer::bind(&path).is_err());
+        assert!(std::fs::symlink_metadata(&path).unwrap().file_type().is_symlink());
+        assert_eq!(std::fs::read(&target).unwrap(), b"keep");
+        assert!(IpcServer::bind(&dir.0.join("missing/socket")).is_err());
+    }
 }
