@@ -37,7 +37,7 @@ version = "0.6.1"
 [workspace.dependencies]
 lazy_static = "1.5.1"
 log = "0.4"
-smallvec = "1.16.4"
+smallvec = "1.16.5"
 
 #cargo-features = ["profile-rustflags"]
 
