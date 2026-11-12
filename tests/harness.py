@@ -1934,6 +1934,25 @@ def gate_playlist(results, args):
                       str(playlist))
     results.check("playlist: exit", mpv.returncode == 0, f"exit {mpv.returncode}")
 
+    with Mpv(["--vo=null", "--ao=null", "--pause=yes"]) as mpv:
+        mpv.load(first_path)
+        mpv.wait_event("file-loaded", timeout=10)
+        mpv.load(second_path, "append")
+        mpv.load(first_path, "append")
+        mpv.command("playlist-next")
+        mpv.wait_property("playlist-pos", lambda value: value == 1, timeout=10)
+        mpv.load(first_path, "insert-at:0")
+        mpv.wait_property("playlist-pos", lambda value: value == 2, timeout=10)
+        results.check("playlist: insertion preserves playing entry",
+                      mpv.get_property("path") == str(second_path))
+        mpv.command("playlist-next")
+        mpv.wait_property("playlist-pos", lambda value: value == 3, timeout=10)
+        mpv.command("playlist-prev")
+        mpv.wait_property("playlist-pos", lambda value: value == 2, timeout=10)
+        results.check("playlist: navigation follows shifted current entry",
+                      mpv.get_property("path") == str(second_path))
+    results.check("playlist: insertion exit", mpv.returncode == 0, f"exit {mpv.returncode}")
+
     folder = TMP / "playlist-dir"
     shutil.rmtree(folder, ignore_errors=True)
     (folder / "nested").mkdir(parents=True)
