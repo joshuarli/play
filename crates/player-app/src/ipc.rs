@@ -1,14 +1,11 @@
 use std::io::{ErrorKind, Read, Write};
-use std::os::unix::fs::{FileTypeExt, MetadataExt};
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::value::{format_json, parse_json, NativeValue};
 
 pub struct IpcServer {
     listener: UnixListener,
-    path: PathBuf,
-    identity: (u64, u64),
     client: Option<Client>,
 }
 
@@ -22,18 +19,10 @@ impl IpcServer {
     pub fn bind(path: &Path) -> Result<Self, String> {
         let listener = UnixListener::bind(path)
             .map_err(|error| format!("cannot bind IPC socket {}: {error}", path.display()))?;
-        let metadata = std::fs::symlink_metadata(path)
-            .map_err(|error| format!("cannot inspect IPC socket: {error}"))?;
-        let server = IpcServer {
-            listener,
-            path: path.to_owned(),
-            identity: (metadata.dev(), metadata.ino()),
-            client: None,
-        };
-        server.listener
+        listener
             .set_nonblocking(true)
             .map_err(|error| format!("cannot make IPC socket nonblocking: {error}"))?;
-        Ok(server)
+        Ok(IpcServer { listener, client: None })
     }
 
     pub fn poll(&mut self) -> Vec<NativeValue> {
@@ -145,20 +134,6 @@ impl Client {
     }
 }
 
-impl Drop for IpcServer {
-    fn drop(&mut self) {
-        self.client = None;
-        if let Ok(metadata) = std::fs::symlink_metadata(&self.path)
-            && metadata.file_type().is_socket()
-            && (metadata.dev(), metadata.ino()) == self.identity
-        {
-            if let Err(error) = std::fs::remove_file(&self.path) {
-                eprintln!("player: cannot remove IPC socket {}: {error}", self.path.display());
-            }
-        }
-    }
-}
-
 pub fn reply(request_id: i64, result: Result<NativeValue, String>) -> NativeValue {
     let mut fields = Vec::new();
     match result {
@@ -185,6 +160,7 @@ pub fn event(name: &str, fields: Vec<(String, NativeValue)>) -> NativeValue {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct Directory(PathBuf);
@@ -237,11 +213,13 @@ mod tests {
     }
 
     #[test]
-    fn cleanup_removes_owned_socket_and_binding_rejects_symlinks() {
+    fn close_leaves_the_socket_entry_and_binding_rejects_symlinks() {
         let dir = Directory::new();
         let path = dir.socket();
         drop(IpcServer::bind(&path).unwrap());
-        assert!(!path.exists());
+        assert!(path.exists());
+        assert!(UnixStream::connect(&path).is_err());
+        std::fs::remove_file(&path).unwrap();
         let target = dir.0.join("target");
         std::fs::write(&target, b"keep").unwrap();
         std::os::unix::fs::symlink(&target, &path).unwrap();

@@ -101,4 +101,4 @@ scripts/manual-checklist.sh --fixture-dir .work/fixtures --release
 
 Record results in `docs/manual-checklist.md`. Visual quality, real audio, real mouse and drag, HDR and Retina, and signing or notarization are not automated gates. `TODO.md` lists open user-facing defects.
 
-IPC socket paths must be unused; remove stale sockets explicitly before starting the player. Automatic screenshots reserve the next unused `shotNNNN.png` name without overwriting files or following symlinks. `screenshot-to-file` retains explicit overwrite behavior.
+IPC socket paths must be unused. Socket entries remain after close, including a clean exit; remove them explicitly before starting another server at the same path. Automatic unlinking cannot safely distinguish a concurrent replacement on both supported operating systems. Automatic screenshots reserve the next unused `shotNNNN.png` name without overwriting files or following symlinks. `screenshot-to-file` retains explicit overwrite behavior.
