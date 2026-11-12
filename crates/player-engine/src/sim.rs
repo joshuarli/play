@@ -893,6 +893,7 @@ mod tests {
         let mut h = Harness::new(FakeDemux::av(14.0, 25.0, 0.04).with_keyframes(5.0), false);
         h.run(25, DT, &[]);
         let presented_before = h.sim.video_output().delivered.len();
+        let audio_before = h.sim.audio_output().log.len();
         h.sim.send(Command::Seek(9.0, SeekPrecision::Keyframe, 1));
         h.run(30, DT, &[]);
         let presented: Vec<f64> = h.sim.video_output().delivered[presented_before..]
@@ -900,6 +901,9 @@ mod tests {
             .map(|(pts, _)| *pts)
             .collect();
         assert!((presented[0] - 5.0).abs() < 1e-9, "keyframe seek resumes at 5.0: {presented:?}");
+        let first_audio = h.sim.audio_output().log[audio_before].0;
+        assert!((first_audio - presented[0]).abs() < 0.04,
+            "first video {}, first audio {first_audio}", presented[0]);
         assert_eq!(h.sim.stats().dropped_late, 0);
         let position = h.sim.clock_position(h.now);
         assert!((5.0..6.0).contains(&position), "clock follows the keyframe: {position}");

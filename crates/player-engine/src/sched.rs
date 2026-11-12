@@ -576,6 +576,7 @@ where
                         if let Some(pts) = packet.pts {
                             target = pts.max(0.0);
                             self.audio_cursor = target;
+                            self.output_cursor = target;
                             self.video_cursor = target;
                         }
                     }
