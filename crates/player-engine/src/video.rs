@@ -1,4 +1,5 @@
 use crate::sched::{DecodedFrame, Packet, PresentOutcome, VideoDecoder, VideoOutput};
+use player_media::video::{AV_PIX_FMT_YUVJ420P, AV_PIX_FMT_YUVJ422P, AV_PIX_FMT_YUVJ444P};
 use player_media::{
     HwRequest, MediaSession, VideoFrame, VideoSession, AVCOL_RANGE_JPEG,
     AVCOL_SPC_BT2020_NCL, AVCOL_SPC_BT470BG, AVCOL_SPC_BT709, AVCOL_SPC_SMPTE170M,
@@ -313,9 +314,9 @@ fn layout_of(format: i32) -> Result<PixelLayout, String> {
         AV_PIX_FMT_YUV420P10LE => Ok(PixelLayout::Yuv420p10),
         AV_PIX_FMT_YUV422P10LE => Ok(PixelLayout::Yuv422p10),
         AV_PIX_FMT_YUV444P10LE => Ok(PixelLayout::Yuv444p10),
-        AV_PIX_FMT_YUV420P => Ok(PixelLayout::Yuv420),
-        AV_PIX_FMT_YUV422P => Ok(PixelLayout::Yuv422),
-        AV_PIX_FMT_YUV444P => Ok(PixelLayout::Yuv444),
+        AV_PIX_FMT_YUV420P | AV_PIX_FMT_YUVJ420P => Ok(PixelLayout::Yuv420),
+        AV_PIX_FMT_YUV422P | AV_PIX_FMT_YUVJ422P => Ok(PixelLayout::Yuv422),
+        AV_PIX_FMT_YUV444P | AV_PIX_FMT_YUVJ444P => Ok(PixelLayout::Yuv444),
         AV_PIX_FMT_NV12 => Ok(PixelLayout::Nv12),
         AV_PIX_FMT_NV21 => Ok(PixelLayout::Nv21),
         AV_PIX_FMT_RGB24 => Ok(PixelLayout::Rgb24),

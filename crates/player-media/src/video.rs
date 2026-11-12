@@ -13,6 +13,7 @@ pub const AVCOL_RANGE_MPEG: c_int = 1;
 pub const AVCOL_RANGE_JPEG: c_int = 2;
 
 pub use crate::sys::{
+    AV_PIX_FMT_YUVJ420P, AV_PIX_FMT_YUVJ422P, AV_PIX_FMT_YUVJ444P,
     AV_PIX_FMT_GRAY8, AV_PIX_FMT_NV12, AV_PIX_FMT_NV21, AV_PIX_FMT_RGB24, AV_PIX_FMT_RGBA,
     AV_PIX_FMT_YUV420P, AV_PIX_FMT_YUV422P, AV_PIX_FMT_YUV444P,
     AV_PIX_FMT_YUV420P10LE, AV_PIX_FMT_YUV422P10LE, AV_PIX_FMT_YUV444P10LE,
@@ -221,7 +222,7 @@ impl VideoFrame {
     fn plane_height(&self, index: usize) -> usize {
         let height = self.height().max(0) as usize;
         match self.format() {
-            AV_PIX_FMT_YUV420P | AV_PIX_FMT_YUV420P10LE | AV_PIX_FMT_NV12 | AV_PIX_FMT_NV21 => {
+            AV_PIX_FMT_YUV420P | AV_PIX_FMT_YUVJ420P | AV_PIX_FMT_YUV420P10LE | AV_PIX_FMT_NV12 | AV_PIX_FMT_NV21 => {
                 if index == 0 {
                     height
                 } else {
