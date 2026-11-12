@@ -5,83 +5,17 @@ Next: 55
 
 Priorities are assigned by impact and likelihood. Source-confirmed paths are distinguished from hardware checks and historical measurements that remain unproven on the current build.
 
-## P1
-
 ## P2
-
-### PLAY-47 · P2 · 10-bit decoded video fails before reaching the renderer
-
-- **Area:** Types
-- **Where:** `crates/player-engine/src/video.rs:287`, `crates/player-engine/src/video.rs:340`, `crates/player-output/src/frame.rs:89`, `crates/player-output/src/frame.rs:150`, `tests/diff_mpv.py:143`.
-- **Problem:** The normal presentation path accepts only the listed 8-bit formats; a decoded yuv420p10le frame returns unsupported pixel format. No conversion runs on that path. Both renderer upload paths also request 8-bit textures. This affects ordinary H.264 High 10, HEVC Main 10, and VP9 profile 2 inputs even on an SDR display. The mpv-diff gate uses --vo=null, which returns before format validation, so its 10-bit cases cannot establish display support.
-- **Recommendation:** Carry storage depth, meaningful component depth, packing, and stride through the frame/upload boundary, with an explicit policy for unsupported layouts. Prefer preserving 10-bit precision into libplacebo; verify an actual rendered High 10/Main 10 gradient and the screenshot path. Keep this separate from Metal HDR output in PLAY-33.
-- **Fix with:** `api-surface-and-module-boundaries`
-- **Effort:** M (days)
-- **Design:** [Draft RFC](docs/rfc/PLAY-47-video-pixel-depth.md)
-
-### PLAY-45 · P2 · Playback speed changes the clock but leaves audio at normal speed
-
-- **Area:** Concurrency
-- **Where:** `crates/player-engine/src/sched.rs:440`, `crates/player-engine/src/backend.rs:326`, `crates/player-audio/src/decode.rs:59`, `crates/player-audio/src/sink.rs:7`.
-- **Problem:** SetSpeed changes only the media clock. Audio decoding still resamples at the fixed source/device ratio and the sink receives unchanged sample counts at its original rate; no audio speed or tempo path exists. At 2x the clock and video advance faster while audio still takes its normal duration, breaking A/V synchronization and audio-only speed controls. The existing clock simulation does not prove audible playback rate.
-- **Recommendation:** Apply speed in the PCM processing path and define how media time maps to samples consumed by the device. Re-anchor speed transitions and handle already-queued samples without claiming a new rate before audio follows it. Verify duration and A/V alignment at 0.5x, 1x, and 2x, including paused and midstream changes. Resolve pitch policy in the linked draft.
-- **Fix with:** `lifecycle-concurrency`
-- **Effort:** L (weeks)
-- **Design:** [Draft RFC](docs/rfc/PLAY-45-audio-speed.md)
-
-### PLAY-46 · P2 · Audio output collapses timestamp offsets and gaps
-
-- **Area:** Concurrency
-- **Where:** `crates/player-engine/src/sched.rs:615`, `crates/player-engine/src/sched.rs:701`, `crates/player-engine/src/sched.rs:855`, `crates/player-audio/src/decode.rs:95`, `crates/player-engine/src/backend.rs:326`.
-- **Problem:** Decoded chunks retain the first packet's pts, but the decoder coalesces subsequent packets without preserving discontinuities. feed_output then queues chunks solely by the output watermark and EngineOutput::push writes only samples. Startup rebasing from the first video frame does not delay the audio. A track whose first packet starts one second after video is queued as soon as decoded, and later gaps collapse into contiguous PCM. An isolated Matroska fixture probe confirmed video start 0 and audio start 1; the player behavior is established by the scheduling path, not a live A/V run.
-- **Recommendation:** Preserve timestamp discontinuities before coalescing decoded packets, then align those spans to the shared media timeline before sink writes: insert bounded silence for positive gaps, handle overlap explicitly, and reset alignment on seek and track changes. Keep device time and media time distinct, including non-unit speed. Add delayed-start and midstream-gap cases that assert the output sample timeline, followed by an audible A/V check.
-- **Fix with:** `lifecycle-concurrency`
-- **Effort:** M (days)
-
-### PLAY-48 · P2 · Presentation ignores sample aspect ratio and display rotation
-
-- **Area:** Types
-- **Where:** `crates/player-engine/src/video.rs:20`, `crates/player-output/src/frame.rs:286`, `crates/player-output/src/frame.rs:376`, `crates/player-app/src/properties.rs:758`.
-- **Problem:** The presentation arguments passed to the output carry coded width and height but no sample aspect ratio or display transform. Rendering hard-codes square pixels and zero rotation, fit_crop uses coded dimensions, and video-params reports par=1 and rotate=0. Anamorphic video is displayed with the wrong shape, and rotation metadata is ignored. Headless decode-to-end coverage cannot detect either. The existing rotation fixture recipe must be checked with ffprobe before relying on it; an encode-time rotate tag did not produce a display matrix in a disposable system-FFmpeg probe.
-- **Recommendation:** Read frame/stream aspect ratio and display-matrix metadata, carry it in the presentation description, and apply it consistently to fitting, libplacebo rendering, screenshots, and reported properties. Verify an anamorphic image and a known-valid remuxed 90-degree display-matrix fixture, checking metadata as well as rendered geometry.
-- **Fix with:** `api-surface-and-module-boundaries`
-- **Effort:** M (days)
-
-### PLAY-23 · P2 · HE-AAC is rejected or decoded without SBR and parametric stereo
-
-- **Area:** Dependencies
-- **Where:** `vendor/symphonia/symphonia-codec-aac/src/aac/mod.rs:152`, `vendor/symphonia/symphonia-codec-aac/src/aac/mod.rs:243`, `vendor/symphonia/symphonia-common/src/mpeg/audio/mod.rs:246`.
-- **Problem:** Explicit SBR/PS in AudioSpecificConfig sets sbr_present and is rejected by the decoder's complexity guard. In-band SBR extensions are recognized but their payloads are skipped, leaving only the AAC-LC core and no parametric-stereo reconstruction. The earlier ticket's claim that every HE-AAC file plays as its core was too broad. Play-to-end alone does not establish full-bandwidth or stereo fidelity.
-- **Recommendation:** Add SBR/PS support to the audio decode path; report unsupported signaling accurately until supported. Verify both explicit and implicit signaling with reference PCM, output rate, high-frequency energy, and stereo separation, rather than completion alone.
-- **Fix with:** `none`
-- **Effort:** L (weeks)
-
-### PLAY-25 · P2 · GUI audio has no embedded-cover presentation path
-
-- **Area:** Architecture
-- **Where:** `crates/player-engine/src/backend.rs:40`, `crates/player-engine/src/backend.rs:711`, `crates/player-app/src/app.rs:305`, `crates/player-app/src/app.rs:860`.
-- **Problem:** A fresh --gui or bundled window opens for cover-art audio, but EngineDemux excludes attached-picture streams and selects passive video, so no cover frame reaches last_frame. The window has no image to render. Switching from video can instead retain its stale last_frame because unload does not clear it. The TUI decodes cover art independently; the existing cover-art gate checks the no-window audio path.
-- **Recommendation:** Provide a one-frame decode/presentation path for attached pictures in GUI audio sessions and clear the previous file's frame when changing content. Verify fresh GUI playback and a video-to-cover-art transition, preserving ordinary audio-only startup and the separate TUI path.
-- **Fix with:** `api-surface-and-module-boundaries`
-- **Effort:** M (days)
-
-### PLAY-20 · P2 · The playback scheduler never requests hardware video decoding
-
-- **Area:** Performance
-- **Where:** `crates/player-engine/src/video.rs:65`, `crates/player-media/src/video.rs:485`.
-- **Problem:** EngineVideo::open always passes HwRequest::None, so playback remains software-decoded even though player-media has VideoToolbox and VA-API paths. Accepting --hwdec does not wire those paths into the scheduler or establish which decoder opened.
-- **Recommendation:** Thread the validated hardware-decode request through engine startup and decoder selection, retain explicit software fallback, and derive hwdec-current from the actual opened decoder. Verify software behavior without a GPU and VideoToolbox/VA-API on suitable hardware; do not infer success from accepting an option.
-- **Fix with:** `api-surface-and-module-boundaries`
-- **Effort:** M (days)
 
 ### PLAY-32 · P2 · VideoToolbox frames still require a CPU transfer before Metal
 
 - **Area:** Performance
 - **Where:** `crates/player-engine/src/video.rs:344`, `scripts/patches/libplacebo-metal.patch:2261`.
-- **Problem:** After PLAY-20 enables VideoToolbox, the current presentation boundary would transfer every hardware frame to software and upload its planes again. The carried Metal patch already exposes pl_metal_wrap_iosurface, but no player path uses it. This is dependent follow-on work, not a measured regression in today's software decoder.
-- **Recommendation:** After PLAY-20, carry owned CVPixelBuffer/IOSurface lifetime through the frame handoff and import it into the window's existing Metal device. Keep a software fallback for unsupported formats and verify ownership through presentation, seek, and shutdown. Compare equivalent hardware-decoded workloads before claiming a performance gain.
+- **Problem:** Hardware decoding is now forwarded through the scheduler, but the presentation boundary transfers every hardware frame to software and uploads its planes again. The carried Metal patch already exposes pl_metal_wrap_iosurface, but no player path uses it. Direct IOSurface import remains unimplemented. This is not a measured regression.
+- **Recommendation:** Carry owned CVPixelBuffer/IOSurface lifetime through the frame handoff and import it into the window's existing Metal device. Keep a software fallback for unsupported formats and verify ownership through presentation, seek, and shutdown. Compare equivalent hardware-decoded workloads before claiming a performance gain.
 - **Fix with:** `make-it-fast`
 - **Effort:** M (days)
+- **Environment:** Metal creation fails and MoltenVK reports Metal unavailable in this agent session. Implementation and equivalent-workload measurements require a render-capable Apple Silicon session.
 
 ### PLAY-21 · P2 · Terminal-launched macOS keyboard focus still needs owner verification
 
@@ -91,6 +25,7 @@ Priorities are assigned by impact and likelihood. Source-confirmed paths are dis
 - **Recommendation:** On an Apple Silicon Mac, launch build/mpv FILE from the terminal and verify immediate keyboard control under both Metal and Vulkan. Record the result; if it fails, trace activation/focus at launch before changing policy. Delete this ticket if the current behavior passes.
 - **Fix with:** `os-boundaries`
 - **Effort:** S (hours)
+- **Status:** The owner could not run the interactive check during the 2026-11-12 fix session. No focus-policy change was made without a reproduction.
 
 ## P3
 

@@ -36,7 +36,5 @@ Player is a local-only media player built on a Rust playback engine, the pinned 
 - [docs/metrics.md](docs/metrics.md): measurement history and release budgets.
 - [docs/manual-checklist.md](docs/manual-checklist.md): owner-run visual and audio checks.
 - [docs/tui-design.md](docs/tui-design.md): terminal UI layout, art transport, and limits.
-- [docs/rfc/PLAY-45-audio-speed.md](docs/rfc/PLAY-45-audio-speed.md): draft audio speed, pitch, and clock contract.
-- [docs/rfc/PLAY-47-video-pixel-depth.md](docs/rfc/PLAY-47-video-pixel-depth.md): draft 10-bit frame representation.
 - [docs/rfc/PLAY-30-osc-coordinates.md](docs/rfc/PLAY-30-osc-coordinates.md): draft OSC coordinate and injected-input contract.
 - [TODO.md](TODO.md): open work.

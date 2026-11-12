@@ -43,6 +43,8 @@ The `3c2f7e61356d` row is the first build on the `ffmpeg-build` `play-sdk` relea
 
 `scripts/measure.sh cpu BASELINE_PLAYER` runs seven interleaved baseline and candidate pairs and reports `improved`, `regressed`, `unchanged`, or `inconclusive` from the paired differences: the second-smallest and second-largest difference must both clear `max(5% of the baseline median, the metric's floor)`, and neither side's spread widens that tolerance. A failed trial makes the comparison `invalid`. `scripts/measure.sh compare BEFORE AFTER` applies the same rule between two recorded labels. Both print `perf gate deferred: host busy` and exit 75 when `perf-gate-ready` reports load.
 
+The 2026-11-12 P1/P2 fix build passes the static release budgets: executable 2,028,176 B, bundled rendering closure 12,994,928 B, combined 15,023,104 B. A single three-second 1080p software-decode run with null audio and video used 73,138,176 B peak RSS. Timing gates are deferred: `perf-gate-ready` reports a busy host with swap above its threshold.
+
 ## Native OSC
 
 Removing Lua took the executable from 7,600,640 B to 7,074,160 B; headless timings did not move beyond noise (1080p CPU 2.98 s against 2.97 s over seven interleaved pairs). GUI CPU at 2560x1440 backing pixels on 1080p video, median of five interleaved runs against the Lua release:
