@@ -10,6 +10,7 @@ pub const RPATH_ENV: &str = "PLAYER_FFMPEG_RPATH";
 pub const LINUX_DEFAULT_RPATH: &str = "$ORIGIN/../lib";
 pub const MACOS_DEFAULT_RPATH: &str = "@executable_path/../../../lib";
 const CONTRACT: &str = "2";
+const RELEASE_PREFIX: &str = "release-";
 const MANIFEST: &str = "share/ffmpeg-build/manifest.json";
 const HEADER: &str = "include/libavformat/avformat.h";
 
@@ -254,6 +255,10 @@ fn is_sha256(text: &str) -> bool {
     text.len() == 64 && text.bytes().all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
 }
 
+fn is_commit(text: &str) -> bool {
+    text.len() == 40 && text.bytes().all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+}
+
 fn strings(json: Option<&Json>) -> Option<Vec<String>> {
     match json {
         Some(Json::Array(items)) => items.iter().map(|item| item.str().map(str::to_owned)).collect(),
@@ -294,9 +299,13 @@ impl Pin {
                 .ok_or_else(|| format!("{PIN_FILE} sha256 for {target} is not a lowercase SHA-256"))?;
             sha256.insert(target.clone(), digest.to_owned());
         }
+        let release = field("release")?;
+        if release.strip_prefix(RELEASE_PREFIX).is_none_or(|commit| !is_commit(commit)) {
+            return Err(format!("{PIN_FILE} release {release:?} is not release-<40 hex commit>"));
+        }
         Ok(Pin {
             repository: field("repository")?,
-            release: field("release")?,
+            release,
             ffmpeg: field("ffmpeg")?,
             libraries,
             sha256,
@@ -308,11 +317,15 @@ impl Pin {
     }
 
     pub fn archive_root(&self, target: &str) -> String {
-        format!("ffmpeg-{}-{target}-{PROFILE}", self.runtime_release())
+        format!("ffmpeg-{PROFILE}-{}-{target}", self.ffmpeg)
     }
 
     pub fn archive(&self, target: &str) -> String {
-        format!("{}.tar.gz", self.archive_root(target))
+        format!("{}.tar.xz", self.archive_root(target))
+    }
+
+    pub fn commit(&self) -> &str {
+        self.release.strip_prefix(RELEASE_PREFIX).unwrap_or(&self.release)
     }
 
     pub fn sha256(&self, target: &str) -> Result<&str, String> {
@@ -328,7 +341,7 @@ impl Pin {
             (&["profile"][..], PROFILE),
             (&["target"][..], target),
             (&["sources", "ffmpeg", "version"][..], self.ffmpeg.as_str()),
-            (&["release", "tag"][..], self.release.as_str()),
+            (&["producer", "commit"][..], self.commit()),
             (&["release", "archive"][..], archive.as_str()),
         ];
         for (keys, want) in checks {
@@ -550,6 +563,7 @@ mod tests {
     const LINUX: &str = "x86_64-unknown-linux-musl";
     const MACOS: &str = "aarch64-apple-darwin";
     const SHA: &str = "0000000000000000000000000000000000000000000000000000000000000000";
+    const COMMIT: &str = "ac29c7720327f7dee4ed4677ce8421673fcc3563";
 
     fn pin_text() -> String {
         format!(
@@ -558,14 +572,14 @@ mod tests {
               "repository": "laputa-systems/ffmpeg-build",
               "profile": "runtime",
               "ffmpeg": "9.0.2",
-              "release": "20261107",
+              "release": "release-{COMMIT}",
               "libraries": ["libavformat", "libavutil"],
               "sha256": {{"{LINUX}": "{SHA}"}}
             }}"#
         )
     }
 
-    fn manifest(target: &str, tag: &str, identity: &str) -> Json {
+    fn manifest(target: &str, commit: &str, identity: &str) -> Json {
         let soname = |library: &str| match Platform::of_target(target).unwrap() {
             Platform::Linux => format!(r#""soname": "{library}{identity}""#),
             Platform::Macos => format!(r#""install_name": "@rpath/{library}{identity}""#),
@@ -573,7 +587,8 @@ mod tests {
         Json::parse(&format!(
             r#"{{"profile": "runtime", "target": "{target}",
                "sources": {{"ffmpeg": {{"version": "9.0.2", "sha256": "x"}}}},
-               "release": {{"tag": "{tag}", "archive": "ffmpeg-9.0.2+{tag}-{target}-runtime.tar.gz"}},
+               "producer": {{"repository": "laputa-systems/ffmpeg-build", "commit": "{commit}"}},
+               "release": {{"archive": "ffmpeg-runtime-9.0.2-{target}.tar.xz"}},
                "libraries": {{
                  "libavformat": {{"file": "lib/libavformat.so.63.1.102", "links": ["lib/libavformat.so"], {}, "sha256": "x"}},
                  "libavutil": {{"file": "lib/libavutil.so.61.1.102", "links": ["lib/libavutil.so"], {}, "sha256": "x"}}
@@ -588,8 +603,10 @@ mod tests {
     #[test]
     fn pin_names_the_runtime_release_and_its_archive() {
         let pin = Pin::parse(&pin_text()).unwrap();
-        assert_eq!(pin.runtime_release(), "9.0.2+20261107");
-        assert_eq!(pin.archive(LINUX), "ffmpeg-9.0.2+20261107-x86_64-unknown-linux-musl-runtime.tar.gz");
+        assert_eq!(pin.runtime_release(), format!("9.0.2+release-{COMMIT}"));
+        assert_eq!(pin.commit(), COMMIT);
+        assert_eq!(pin.archive_root(LINUX), "ffmpeg-runtime-9.0.2-x86_64-unknown-linux-musl");
+        assert_eq!(pin.archive(LINUX), "ffmpeg-runtime-9.0.2-x86_64-unknown-linux-musl.tar.xz");
         assert_eq!(pin.sha256(LINUX), Ok(SHA));
         assert!(pin.sha256(MACOS).is_err());
     }
@@ -597,10 +614,10 @@ mod tests {
     #[test]
     fn pin_accepts_a_matching_manifest_and_returns_the_pinned_libraries() {
         let pin = Pin::parse(&pin_text()).unwrap();
-        let libraries = pin.check_manifest(&manifest(LINUX, "20261107", ".so.63"), LINUX).unwrap();
+        let libraries = pin.check_manifest(&manifest(LINUX, COMMIT, ".so.63"), LINUX).unwrap();
         let identities: Vec<_> = libraries.iter().map(|library| library.identity.as_str()).collect();
         assert_eq!(identities, ["libavformat.so.63", "libavutil.so.63"]);
-        let macos = pin.check_manifest(&manifest(MACOS, "20261107", ".63.dylib"), MACOS).unwrap();
+        let macos = pin.check_manifest(&manifest(MACOS, COMMIT, ".63.dylib"), MACOS).unwrap();
         assert_eq!(macos[0].identity, "@rpath/libavformat.63.dylib");
     }
 
@@ -608,9 +625,9 @@ mod tests {
     fn pin_rejects_another_release_target_or_library_identity() {
         let pin = Pin::parse(&pin_text()).unwrap();
         assert!(pin.check_manifest(&manifest(LINUX, "local", ".so.63"), LINUX).is_err());
-        assert!(pin.check_manifest(&manifest(MACOS, "20261107", ".63.dylib"), LINUX).is_err());
-        assert!(pin.check_manifest(&manifest(LINUX, "20261107", ".so"), LINUX).is_err());
-        assert!(pin.check_manifest(&manifest(LINUX, "20261107", ".a"), LINUX).is_err());
+        assert!(pin.check_manifest(&manifest(MACOS, COMMIT, ".63.dylib"), LINUX).is_err());
+        assert!(pin.check_manifest(&manifest(LINUX, COMMIT, ".so"), LINUX).is_err());
+        assert!(pin.check_manifest(&manifest(LINUX, COMMIT, ".a"), LINUX).is_err());
     }
 
     #[test]
@@ -620,6 +637,8 @@ mod tests {
             text.replace("\"runtime\"", "\"play-sdk\""),
             text.replace("\"contract\": 2", "\"contract\": 1"),
             text.replace(SHA, "abc"),
+            text.replace("release-", "20261107-"),
+            text.replace(COMMIT, "abc"),
             text.replace("[\"libavformat\", \"libavutil\"]", "[]"),
         ] {
             assert!(Pin::parse(&bad).is_err(), "{bad}");

@@ -78,8 +78,9 @@ def check():
     case(f"target is {target}", manifest.get("target") == target, manifest.get("target"))
     version = manifest.get("sources", {}).get("ffmpeg", {}).get("version")
     case(f"FFmpeg {pin['ffmpeg']}", version == pin["ffmpeg"], version)
-    tag = manifest.get("release", {}).get("tag")
-    case(f"release {pin['release']} matches the pin", tag == pin["release"], tag)
+    commit = manifest.get("producer", {}).get("commit")
+    want = pin["release"].removeprefix("release-")
+    case(f"release {pin['release']} matches the pin", commit == want, commit)
 
     enabled = {key: set(value) for key, value in manifest.get("components", {}).items()}
     case("no devices beyond the lavfi indev",
