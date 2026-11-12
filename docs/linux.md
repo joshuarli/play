@@ -1,6 +1,6 @@
 # Linux
 
-Player builds for Linux x86-64 on musl. The playback engine and application layer are the same Rust code as macOS; the platform split is Wayland for the window and input, Vulkan for rendering, and ALSA for audio. The executable links the renderer closure statically and FFmpeg from the shared runtime (see `docs/ffmpeg.md`). It needs a small shared-library set because a fully static binary cannot load a Vulkan ICD, and a `wlshm` fallback was rejected because it has no GPU, HDR, or hardware decode. The build host is the Alpine edge image in `docker/linux/Dockerfile`, pinned by digest. `scripts/linux-container.sh COMMAND...` runs a command in that image as the calling user with the repository mounted at `/work`.
+Player builds for Linux x86-64 on musl. The playback engine and application layer are the same Rust code as macOS; the platform split is Wayland for the window and input, Vulkan for rendering, and ALSA for audio. The executable links the renderer closure statically and FFmpeg from the shared runtime (see `docs/ffmpeg.md`). It needs a small shared-library set because a fully static binary cannot load a Vulkan ICD, and a `wlshm` fallback was rejected because it has no GPU, HDR, or hardware decode. The build host is the Alpine 3.24 image in `docker/linux/Dockerfile`, pinned by digest. `scripts/linux-container.sh COMMAND...` runs a command in that image as the calling user with the repository mounted at `/work`.
 
 ## Build
 
@@ -52,4 +52,4 @@ The VA driver comes from the host, the same way the Vulkan ICD does: `mesa-va-ga
 
 ## Fixtures
 
-`tests/fixtures/gen.sh` generates the corpus with the image's FFmpeg 9.0.2; `tests/fixtures/manifest.json` lists the files. Stream structure matches the manifest exactly. The external encoders choose threads and SIMD paths from the host at run time, so their bytes differ from the macOS Homebrew ones and between Linux hosts; the gate compares structure only on Linux. Byte hashes are checked on macOS against the tracked manifest. After an intended structural change, review the drift and run `tests/fixtures/gen.sh --write-manifest`.
+`tests/fixtures/gen.sh` generates the corpus with the pinned ffmpeg-build fixtures archive (FFmpeg 9.0.2); `tests/fixtures/manifest.json` lists the files. Stream structure matches the manifest exactly. The external encoders choose threads and SIMD paths from the host at run time, so their bytes differ from the macOS Homebrew ones and between Linux hosts; the gate compares structure only on Linux. Byte hashes are checked on macOS against the tracked manifest. After an intended structural change, review the drift and run `tests/fixtures/gen.sh --write-manifest`.
