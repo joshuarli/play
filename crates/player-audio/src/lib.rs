@@ -11,6 +11,7 @@ pub mod pipeline;
 pub mod resample;
 pub mod session;
 pub mod sink;
+pub mod stretch;
 pub mod underrun;
 
 pub fn open_sink(

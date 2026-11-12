@@ -202,7 +202,7 @@ mod tests {
                 return Err("audio decode failed".to_string());
             }
             let pts = packet.pts.expect("scheduler stamps timestamps");
-            let samples = vec![0.0f32; (self.chunk_seconds * 48000.0 * 2.0) as usize];
+            let samples = vec![1.0f32; (self.chunk_seconds * 48000.0 * 2.0) as usize];
             self.pending.push_back(AudioChunk {
                 pts,
                 stream: packet.stream,
@@ -396,6 +396,8 @@ mod tests {
         paused: bool,
         pushes: usize,
         fail_at_push: Option<usize>,
+        segments: Vec<(usize, bool)>,
+        speed: f64,
     }
 
     impl FakeAudioOutput {
@@ -407,6 +409,8 @@ mod tests {
                 paused: false,
                 pushes: 0,
                 fail_at_push: None,
+                segments: Vec::new(),
+                speed: 1.0,
             }
         }
 
@@ -428,7 +432,8 @@ mod tests {
             }
             let duration = chunk.samples.len() as f64 / (chunk.channels as f64 * chunk.rate as f64);
             self.log.push((chunk.pts, chunk.stream));
-            self.queued += duration;
+            self.segments.push((chunk.samples.len() / chunk.channels as usize, chunk.samples.iter().all(|sample| *sample == 0.0)));
+            self.queued += duration / self.speed;
             Ok(())
         }
 
@@ -442,6 +447,11 @@ mod tests {
 
         fn set_paused(&mut self, paused: bool) {
             self.paused = paused;
+        }
+
+        fn set_speed(&mut self, speed: f64) -> Result<(), String> {
+            self.speed = speed;
+            Ok(())
         }
 
         fn flush(&mut self) {
@@ -1113,6 +1123,114 @@ mod tests {
             }
         }
         assert!(h.sim.audio_output().log.len() > pushed, "re-selected audio never resumed");
+    }
+
+    #[test]
+    fn timestamp_gaps_and_overlaps_reach_the_sample_timeline() {
+        let mut demux = FakeDemux::build(0.3, 0.0, 0.04, 1, false, false);
+        demux.script.truncate(3);
+        for (packet, pts) in demux.script.iter_mut().zip([0.10, 0.20, 0.22]) {
+            packet.pts = Some(pts);
+        }
+        let mut h = Harness::new(demux, false);
+        h.run(300, 0.01, &[]);
+        assert_eq!(h.sim.state(), State::Ended);
+        let segments = &h.sim.audio_output().segments;
+        let mut runs: Vec<(usize, bool)> = Vec::new();
+        for &(frames, silent) in segments {
+            if let Some(last) = runs.last_mut() {
+                if last.1 == silent { last.0 += frames; continue; }
+            }
+            runs.push((frames, silent));
+        }
+        assert_eq!(runs, vec![(4800, true), (1920, false), (2880, true), (2880, false)]);
+    }
+
+    #[test]
+    fn seek_and_track_switch_reset_audio_alignment() {
+        let mut h = Harness::new(FakeDemux::build(3.0, 25.0, 0.04, 2, false, false), false);
+        h.sim.open();
+        for _ in 0..35 { h.step_checked(0.01); }
+        let before_seek = h.sim.audio_output().log.len();
+        h.sim.send(Command::Seek(1.0, SeekPrecision::Exact, 12));
+        h.sim.step(h.now);
+        for _ in 0..10 { h.step_checked(0.01); }
+        let output = h.sim.audio_output();
+        let first = output.log.iter().zip(&output.segments).skip(before_seek)
+            .find(|(_, (_, silent))| !*silent).unwrap().0;
+        assert!((first.0 - 1.0).abs() <= 0.041, "seek resumed at {}", first.0);
+        let position = h.sim.clock_position(h.now);
+        let before_switch = output.log.len();
+        h.sim.send(Command::SwitchAudio(1));
+        for _ in 0..20 { h.step_checked(0.01); }
+        let output = h.sim.audio_output();
+        let first = output.log.iter().zip(&output.segments).skip(before_switch)
+            .find(|(_, (_, silent))| !*silent).unwrap().0;
+        assert_eq!(first.1, 1);
+        assert!((first.0 - position).abs() <= 0.081, "switch resumed at {}, position {position}", first.0);
+    }
+
+    #[test]
+    fn delayed_audio_starts_after_video_preroll() {
+        let mut demux = FakeDemux::build(0.4, 25.0, 0.04, 1, false, false);
+        demux.script.retain(|packet| packet.kind != StreamKind::Audio || packet.pts.unwrap() < 0.12);
+        for packet in &mut demux.script {
+            if packet.kind == StreamKind::Audio { packet.pts = packet.pts.map(|pts| pts + 0.1); }
+        }
+        demux.script.sort_by(|a, b| a.pts.unwrap().total_cmp(&b.pts.unwrap()));
+        let mut h = Harness::new(demux, false);
+        h.sim.enable_video_preroll();
+        h.run(300, 0.01, &[]);
+        assert_eq!(h.sim.state(), State::Ended);
+        let segments = &h.sim.audio_output().segments;
+        let silence: usize = segments.iter().take_while(|(_, silent)| *silent).map(|(frames, _)| frames).sum();
+        assert_eq!(silence, 4800);
+        assert!(segments.iter().any(|(_, silent)| !silent));
+        assert_eq!(h.sim.video_output().delivered.first().unwrap().0, 0.0);
+    }
+
+    #[test]
+    fn speed_transition_restarts_at_audible_position_and_stays_paused() {
+        let mut h = Harness::new(FakeDemux::build(3.0, 25.0, 0.04, 1, false, false), false);
+        h.sim.open();
+        for _ in 0..40 { h.step_checked(0.01); }
+        let before = h.sim.clock_position(h.now);
+        let pushed = h.sim.audio_output().log.len();
+        h.sim.send(Command::SetSpeed(2.0));
+        h.sim.step(h.now);
+        let after = h.sim.clock_position(h.now);
+        assert!((after - before).abs() <= 0.011, "{before} -> {after}");
+        let output = h.sim.audio_output();
+        let resumed = output.log.iter().zip(&output.segments).skip(pushed)
+            .find(|(_, (_, silent))| !*silent).unwrap().0.0;
+        assert!((resumed - after).abs() <= 0.041, "resumed {resumed}, position {after}");
+        h.sim.send(Command::Pause(true));
+        h.sim.step(h.now);
+        let paused = h.sim.clock_position(h.now);
+        h.sim.send(Command::SetSpeed(0.5));
+        h.sim.step(h.now);
+        h.now += 1.0;
+        h.sim.step(h.now);
+        assert!((h.sim.clock_position(h.now) - paused).abs() < 1e-9);
+        h.sim.send(Command::Pause(false));
+        h.sim.step(h.now);
+        for _ in 0..20 { h.step_checked(0.01); }
+        let advance = h.sim.clock_position(h.now) - paused;
+        assert!((advance - 0.1).abs() < 0.02, "advance {advance}");
+    }
+
+    #[test]
+    fn speed_change_preserves_pending_seek_completion() {
+        let mut h = Harness::new(FakeDemux::av(3.0, 25.0, 0.04), false);
+        h.sim.open();
+        h.sim.send(Command::Seek(1.0, SeekPrecision::Exact, 9));
+        h.sim.send(Command::SetSpeed(2.0));
+        for _ in 0..30 {
+            h.step_checked(0.01);
+            if h.stats().seek_completed_generation == 9 { break; }
+        }
+        assert_eq!(h.stats().seek_completed_generation, 9);
+        assert_eq!(h.sim.speed(), 2.0);
     }
 
     #[test]

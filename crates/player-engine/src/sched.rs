@@ -1,5 +1,5 @@
 use crate::clock::{judge_frame, ClockMode, FrameVerdict, MasterClock};
-use crate::state::{Event, Machine, SeekResume, State};
+use crate::state::{Event, Machine, PlayResume, SeekResume, State};
 use crate::sub::EngineSub;
 use std::time::Instant;
 
@@ -86,6 +86,8 @@ pub trait AudioOutput {
     fn queued_seconds(&self) -> f64;
     fn device_position(&self) -> f64;
     fn set_paused(&mut self, paused: bool);
+    fn set_speed(&mut self, speed: f64) -> Result<(), String>;
+    fn pump(&mut self) -> Result<bool, String> { Ok(false) }
     fn flush(&mut self);
     fn finish(&mut self) -> Result<(), String> {
         Ok(())
@@ -172,6 +174,7 @@ pub struct Scheduler<D, A, V, AO, VO> {
     startup_audio: std::collections::VecDeque<AudioChunk>,
     prerolling_video: bool,
     audio_cursor: f64,
+    output_cursor: f64,
     video_cursor: f64,
     eof_seen: bool,
     stats: Stats,
@@ -212,6 +215,7 @@ where
             startup_audio: std::collections::VecDeque::new(),
             prerolling_video: false,
             audio_cursor: 0.0,
+            output_cursor: 0.0,
             video_cursor: 0.0,
             eof_seen: false,
             stats: Stats::default(),
@@ -440,9 +444,21 @@ where
                 Command::SetSpeed(speed) => {
                     if matches!(
                         *self.machine.state(),
-                        State::Playing | State::Paused { .. } | State::Seeking { .. }
-                    ) {
-                        self.clock.set_speed(speed, now);
+                        State::Playing | State::Paused { .. } | State::Draining
+                    ) && speed.is_finite() && (0.01..=100.0).contains(&speed) {
+                        if speed != self.clock.speed() {
+                            self.observe(now);
+                            let position = self.clock.position(now);
+                            if self.has_active_audio() {
+                                self.restart_audio(position, now);
+                                if matches!(self.machine.state(), State::Error) { return; }
+                            }
+                            if let Err(message) = self.audio_out.set_speed(speed) {
+                                self.fail(message);
+                                return;
+                            }
+                            self.clock.set_speed(speed, now);
+                        }
                     } else {
                         self.stats.commands_ignored += 1;
                     }
@@ -460,10 +476,10 @@ where
                                     self.audio_disabled = false;
                                     self.clock.use_audio_time(now);
                                 }
-                                self.audio.flush();
-                                self.audio_out.flush();
-                                self.audio_backlog.clear();
-                                self.audio_cursor = self.clock.position(now);
+                                self.observe(now);
+                                let position = self.clock.position(now);
+                                self.restart_audio(position, now);
+                                if matches!(self.machine.state(), State::Error) { return; }
                             }
                             _ => self.stats.commands_ignored += 1,
                         }
@@ -496,11 +512,23 @@ where
         }
     }
 
+    fn restart_audio(&mut self, position: f64, now: f64) {
+        let pending = self.in_flight_seek;
+        let stats = (self.stats.seeks_completed, self.stats.seek_completed_generation);
+        self.command_seek(position, SeekPrecision::Exact, self.stats.seek_generation, now);
+        self.stats.seeks_completed = stats.0;
+        self.stats.seek_completed_generation = stats.1;
+        self.in_flight_seek = pending;
+    }
+
     fn command_seek(&mut self, target: f64, precision: SeekPrecision, generation: u64, now: f64) {
+        let paused_drain = matches!(self.machine.state(), State::Paused { resume: PlayResume::Draining });
+        if paused_drain { let _ = self.machine.apply(Event::Resume); }
         if self.machine.apply(Event::Seek).is_err() {
             self.stats.commands_ignored += 1;
             return;
         }
+        if paused_drain { let _ = self.machine.apply(Event::Pause); }
         self.in_flight_seek = None;
         let resume = match *self.machine.state() {
             State::Seeking { resume } => resume,
@@ -520,6 +548,7 @@ where
         self.startup_audio.clear();
         self.prerolling_video = false;
         self.audio_cursor = target;
+        self.output_cursor = target;
         self.video_cursor = target;
         self.eof_seen = false;
         self.clock.seek_rebase(target, now);
@@ -615,13 +644,14 @@ where
     fn begin_playback(&mut self, now: f64) -> Result<(), String> {
         self.prerolling_video = false;
         self.audio_backlog.extend(std::mem::take(&mut self.startup_audio));
-        if self.feed_output() {
-            return Ok(());
-        }
         if let Some(frame) = self.pending_frames.pop_front() {
             let pts = frame.pts;
             self.present_frame(frame)?;
             self.clock.seek_rebase(pts, now);
+            self.output_cursor = pts;
+        }
+        if self.feed_output() {
+            return Ok(());
         }
         Ok(())
     }
@@ -700,9 +730,54 @@ where
 
     fn feed_output(&mut self) -> bool {
         while self.audio_out.queued_seconds() < AUDIO_HIGH_WATER {
-            let Some(chunk) = self.audio_backlog.pop_front() else {
+            match self.audio_out.pump() {
+                Ok(true) => continue,
+                Ok(false) => {},
+                Err(message) => { self.fail(message); return true; }
+            }
+            let Some(mut chunk) = self.audio_backlog.pop_front() else {
                 break;
             };
+            let channels = chunk.channels as usize;
+            let rate = chunk.rate as f64;
+            if channels == 0 || rate == 0.0 || !chunk.pts.is_finite() || !self.output_cursor.is_finite() || chunk.samples.len() % channels != 0 {
+                self.fail("invalid audio chunk format".to_string());
+                return true;
+            }
+            let delta = ((chunk.pts - self.output_cursor) * rate).round() as i64;
+            if delta > 0 {
+                let frames = (delta as usize).min((rate * 0.04).ceil() as usize).max(1);
+                let silence = AudioChunk { pts: self.output_cursor, stream: chunk.stream, channels: chunk.channels, rate: chunk.rate, samples: vec![0.0; frames * channels] };
+                self.output_cursor += frames as f64 / rate;
+                self.audio_backlog.push_front(chunk);
+                if let Err(message) = self.audio_out.push(silence) {
+                    self.fail(message);
+                    return true;
+                }
+                continue;
+            }
+            if delta < 0 {
+                let trim = delta.unsigned_abs().min((chunk.samples.len() / channels) as u64) as usize;
+                chunk.samples.drain(..trim * channels);
+                chunk.pts += trim as f64 / rate;
+            }
+            if chunk.samples.is_empty() {
+                continue;
+            }
+            let frames = chunk.samples.len() / channels;
+            let max_frames = (rate * 0.04 * self.clock.speed()).ceil().max(1.0) as usize;
+            let frames = frames.min(max_frames);
+            if frames < chunk.samples.len() / channels {
+                let rest = chunk.samples.split_off(frames * channels);
+                self.audio_backlog.push_front(AudioChunk {
+                    pts: chunk.pts + frames as f64 / rate,
+                    stream: chunk.stream,
+                    channels: chunk.channels,
+                    rate: chunk.rate,
+                    samples: rest,
+                });
+            }
+            self.output_cursor += frames as f64 / rate;
             if let Err(message) = self.audio_out.push(chunk) {
                 self.fail(message);
                 return true;
@@ -956,7 +1031,7 @@ where
         if self.feed_output() {
             return;
         }
-        if self.audio_backlog.is_empty()
+        if self.audio_backlog.is_empty() && self.audio_out.queued_seconds() < AUDIO_HIGH_WATER
             && let Err(message) = self.audio_out.finish()
         {
             self.fail(message);

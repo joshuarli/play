@@ -101,6 +101,10 @@ impl Resampler {
         if self.scratch.is_empty() {
             return Ok(());
         }
+        let input_frames = self.dropped as u128 + (self.scratch.len() / self.channels) as u128;
+        let target = (input_frames * self.out_rate as u128).div_ceil(self.in_rate as u128);
+        let remaining = target.saturating_sub(self.emitted as u128) as usize;
+        let output_start = output.len();
         let mut pad = Vec::new();
         pad.resize(4 * self.channels, 0.0);
         let last = self.scratch.len() - self.channels;
@@ -108,6 +112,7 @@ impl Resampler {
             frame.copy_from_slice(&self.scratch[last..]);
         }
         self.push(&pad, output)?;
+        output.truncate(output_start + remaining * self.channels);
         self.scratch.clear();
         self.emitted = 0;
         self.dropped = 0;

@@ -72,9 +72,11 @@ impl Pipeline {
             if packet.stream_index != self.stream_index {
                 continue;
             }
-            let pts = packet.pts_seconds.unwrap_or(0.0);
-            if let Some(chunk) = self.core.feed(&packet, pts)? {
-                output.extend_from_slice(&chunk.samples);
+            let chunks = self.core.feed(&packet)?;
+            if !chunks.is_empty() {
+                for chunk in chunks {
+                    output.extend_from_slice(&chunk.samples);
+                }
                 return Ok(false);
             }
         }

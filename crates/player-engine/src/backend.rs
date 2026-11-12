@@ -242,8 +242,7 @@ impl AudioDecoder for EngineAudio {
             keyframe: false,
             data: packet.payload,
         };
-        let pts = packet.pts.unwrap_or(0.0);
-        if let Some(ready) = core.feed(&media, pts)? {
+        for ready in core.feed(&media)? {
             self.outbox.push_back(AudioChunk {
                 pts: ready.pts,
                 stream: self.stream,
@@ -291,6 +290,8 @@ pub struct EngineOutput {
     written: u64,
     volume: f32,
     muted: bool,
+    stretch: player_audio::stretch::TimeStretch,
+    finishing: bool,
 }
 
 impl EngineOutput {
@@ -330,8 +331,12 @@ impl AudioOutput for EngineOutput {
                 *sample *= gain;
             }
         }
-        self.sink.write(&chunk.samples)?;
-        self.written += (chunk.samples.len() / self.sink.channels().max(1)) as u64;
+        let mut processed = Vec::new();
+        self.stretch.push(&chunk.samples, &mut processed)?;
+        if !processed.is_empty() {
+            self.sink.write(&processed)?;
+            self.written += (processed.len() / self.sink.channels().max(1)) as u64;
+        }
         Ok(())
     }
 
@@ -351,17 +356,40 @@ impl AudioOutput for EngineOutput {
         }
     }
 
+    fn set_speed(&mut self, speed: f64) -> Result<(), String> {
+        self.stretch.reset(speed)
+    }
+
+    fn pump(&mut self) -> Result<bool, String> {
+        let mut samples = Vec::new();
+        self.stretch.pump(&mut samples);
+        if samples.is_empty() { return Ok(false); }
+        self.sink.write(&samples)?;
+        self.written += (samples.len() / self.sink.channels()) as u64;
+        Ok(true)
+    }
+
     fn flush(&mut self) {
+        self.finishing = false;
+        self.stretch.discard();
         self.written = self.written.saturating_sub(self.sink.queued_frames());
         let _ = self.sink.flush();
     }
 
     fn finish(&mut self) -> Result<(), String> {
-        self.sink.finish()
+        self.finishing = true;
+        let mut tail = Vec::new();
+        self.stretch.finish(&mut tail);
+        if !tail.is_empty() {
+            self.sink.write(&tail)?;
+            self.written += (tail.len() / self.sink.channels().max(1)) as u64;
+        }
+        if self.stretch.finished() { self.sink.finish()?; }
+        Ok(())
     }
 
     fn drained(&self) -> bool {
-        self.sink.queued_frames() == 0
+        self.finishing && self.stretch.finished() && self.sink.queued_frames() == 0
     }
 }
 
@@ -702,8 +730,11 @@ fn run_worker(
                 let rate = sink.rate();
                 (sink, EngineAudio::silent(rate), None)
             };
+        let stretch = player_audio::stretch::TimeStretch::new(sink.rate(), sink.channels());
         let output = EngineOutput {
             sink,
+            stretch,
+            finishing: false,
             written: 0,
             volume: start.volume,
             muted: start.muted,
@@ -1162,10 +1193,70 @@ mod tests {
         }
     }
 
+    struct SampleSink(std::rc::Rc<std::cell::RefCell<Vec<f32>>>);
+
+    impl AudioSink for SampleSink {
+        fn write(&mut self, frames: &[f32]) -> Result<(), String> { self.0.borrow_mut().extend_from_slice(frames); Ok(()) }
+        fn channels(&self) -> usize { 1 }
+        fn rate(&self) -> u32 { 8000 }
+        fn queued_frames(&self) -> u64 { 0 }
+        fn pause(&mut self) -> Result<(), String> { Ok(()) }
+        fn resume(&mut self) -> Result<(), String> { Ok(()) }
+        fn flush(&mut self) -> Result<(), String> { Ok(()) }
+    }
+
+    #[test]
+    fn engine_audio_forwards_both_resampled_spans_at_a_gap() {
+        let info = StreamInfo {
+            index: 0, kind: player_media::StreamKind::Audio, codec_name: "pcm_s16le".to_string(),
+            width: 0, height: 0, sample_rate: 44_100, channels: 1, time_base: (1, 44_100),
+            duration_seconds: None, extradata: Vec::new(), channel_mask: 0,
+            attached: false, default: false, forced: false, language: None, title: None,
+        };
+        let packet = |pts: f64, value: i16| Packet {
+            stream: 0, kind: StreamKind::Audio, pts: Some(pts), duration: Some(0.01),
+            payload: (0..441).flat_map(|_| value.to_le_bytes()).collect(),
+        };
+        let mut audio = EngineAudio::open(&info, 48_000).unwrap();
+        audio.send(packet(1.0, 12_000)).unwrap();
+        let first = audio.drain().unwrap();
+        audio.send(packet(1.25, -12_000)).unwrap();
+        let spans = audio.drain().unwrap();
+        assert_eq!(spans.len(), 2);
+        assert!((spans[0].pts - (first[0].pts + first[0].samples.len() as f64 / 48_000.0)).abs() < 1e-10);
+        assert!(spans[0].samples.iter().all(|sample| *sample > 0.36));
+        assert_eq!(spans[1].pts, 1.25);
+        assert!(spans[1].samples.iter().all(|sample| *sample < -0.36));
+    }
+
+    #[test]
+    fn output_speed_changes_device_duration_without_changing_pitch() {
+        let input: Vec<f32> = (0..8000).map(|i| (2.0 * std::f32::consts::PI * 200.0 * i as f32 / 8000.0).sin()).collect();
+        for speed in [0.5, 1.0, 2.0] {
+            let samples = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+            let mut output = EngineOutput { sink: Box::new(SampleSink(samples.clone())), written: 0, volume: 1.0, muted: false, stretch: player_audio::stretch::TimeStretch::new(8000, 1), finishing: false };
+            output.set_speed(speed).unwrap();
+            for (index, chunk) in input.chunks(320).enumerate() {
+                output.push(AudioChunk { pts: index as f64 * 0.04, stream: 0, channels: 1, rate: 8000, samples: chunk.to_vec() }).unwrap();
+                while output.pump().unwrap() {}
+            }
+            while !output.drained() { output.finish().unwrap(); }
+            let samples = samples.borrow();
+            assert_eq!(samples.len(), (8000.0_f64 / speed).round() as usize);
+            assert!((output.device_position() - 1.0 / speed).abs() < 0.0001);
+            let body = &samples[samples.len()/4..samples.len()*3/4];
+            let crossings = body.windows(2).filter(|w| w[0] <= 0.0 && w[1] > 0.0).count();
+            let pitch = crossings as f64 * 8000.0 / body.len() as f64;
+            assert!((pitch - 200.0).abs() < 5.0, "{speed}: {pitch} Hz");
+        }
+    }
+
     #[test]
     fn flushing_queued_audio_keeps_the_device_position() {
         let mut output = EngineOutput {
             sink: Box::new(QueueSink { queued: 0 }),
+            stretch: player_audio::stretch::TimeStretch::new(48_000, 2),
+            finishing: false,
             written: 0,
             volume: 1.0,
             muted: false,
