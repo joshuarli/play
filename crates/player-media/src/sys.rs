@@ -56,6 +56,9 @@ pub const AV_PIX_FMT_GRAY8: c_int = 8;
 pub const AV_PIX_FMT_NV12: c_int = 23;
 pub const AV_PIX_FMT_NV21: c_int = 24;
 pub const AV_PIX_FMT_RGBA: c_int = 26;
+pub const AV_PIX_FMT_YUV420P10LE: c_int = 62;
+pub const AV_PIX_FMT_YUV422P10LE: c_int = 64;
+pub const AV_PIX_FMT_YUV444P10LE: c_int = 68;
 pub const AV_PIX_FMT_VAAPI: c_int = 44;
 pub const AV_PIX_FMT_VIDEOTOOLBOX: c_int = 157;
 

@@ -4,6 +4,7 @@ use player_media::{
     AVCOL_SPC_BT2020_NCL, AVCOL_SPC_BT470BG, AVCOL_SPC_BT709, AVCOL_SPC_SMPTE170M,
     AVCOL_SPC_UNSPECIFIED, AV_PIX_FMT_NV12, AV_PIX_FMT_NV21, AV_PIX_FMT_RGB24, AV_PIX_FMT_RGBA,
     AV_PIX_FMT_YUV420P, AV_PIX_FMT_YUV422P, AV_PIX_FMT_YUV444P,
+    AV_PIX_FMT_YUV420P10LE, AV_PIX_FMT_YUV422P10LE, AV_PIX_FMT_YUV444P10LE,
 };
 use player_output::{
     ColorSpec, PixelLayout, Plane, PL_COLOR_LEVELS_FULL,
@@ -28,6 +29,15 @@ pub struct PresentedFrame {
 }
 
 impl PresentedFrame {
+    pub fn from_frame(frame: VideoFrame, pts: f64, id: u64) -> Result<Self, String> {
+        let frame = if frame.is_hardware() { frame.transfer_to_software()? } else { frame };
+        let layout = layout_of(frame.format())?;
+        let width = frame.width().max(0) as u32;
+        let height = frame.height().max(0) as u32;
+        let color = color_of(frame.color_space(), frame.color_range(), height as i32);
+        Ok(Self { frame, pts, id, layout, color, width, height })
+    }
+
     pub fn planes(&self) -> Result<Vec<Plane<'_>>, String> {
         let dimensions = plane_dimensions(self.layout, self.frame.width(), self.frame.height());
         let mut planes = Vec::with_capacity(dimensions.len());
@@ -64,8 +74,18 @@ pub struct EngineVideo {
 
 impl EngineVideo {
     pub fn open(session: &MediaSession, stream: usize) -> Result<Self, String> {
-        let decoder = VideoSession::open_shared(session, stream, HwRequest::None)?;
-        Ok(EngineVideo {
+        Self::open_with_hw(session, stream, HwRequest::None).map(|(video, _)| video)
+    }
+
+    pub fn open_with_hw(session: &MediaSession, stream: usize, hw: HwRequest) -> Result<(Self, Option<String>), String> {
+        let (decoder, fallback) = match VideoSession::open_shared(session, stream, hw) {
+            Ok(decoder) => (decoder, None),
+            Err(error) if hw != HwRequest::None => {
+                (VideoSession::open_shared(session, stream, HwRequest::None)?, Some(error))
+            }
+            Err(error) => return Err(error),
+        };
+        Ok((EngineVideo {
             shared: Arc::new(Mutex::new(Some(SharedVideo {
                 session: decoder,
                 queue: VecDeque::new(),
@@ -74,7 +94,11 @@ impl EngineVideo {
                 decoded: 0,
                 evicted: 0,
             }))),
-        })
+        }, fallback))
+    }
+
+    pub fn active_hardware(&self) -> Option<HwRequest> {
+        self.shared.lock().ok()?.as_ref().map(|shared| shared.session.active_hardware())
     }
 
     pub fn passive() -> Self {
@@ -286,6 +310,9 @@ impl EngineVideoOutput {
 
 fn layout_of(format: i32) -> Result<PixelLayout, String> {
     match format {
+        AV_PIX_FMT_YUV420P10LE => Ok(PixelLayout::Yuv420p10),
+        AV_PIX_FMT_YUV422P10LE => Ok(PixelLayout::Yuv422p10),
+        AV_PIX_FMT_YUV444P10LE => Ok(PixelLayout::Yuv444p10),
         AV_PIX_FMT_YUV420P => Ok(PixelLayout::Yuv420),
         AV_PIX_FMT_YUV422P => Ok(PixelLayout::Yuv422),
         AV_PIX_FMT_YUV444P => Ok(PixelLayout::Yuv444),
@@ -301,9 +328,9 @@ fn plane_dimensions(layout: PixelLayout, width: i32, height: i32) -> Vec<(i32, i
     let half_width = (width + 1) / 2;
     let half_height = (height + 1) / 2;
     match layout {
-        PixelLayout::Yuv420 => vec![(width, height), (half_width, half_height), (half_width, half_height)],
-        PixelLayout::Yuv422 => vec![(width, height), (half_width, height), (half_width, height)],
-        PixelLayout::Yuv444 => vec![(width, height), (width, height), (width, height)],
+        PixelLayout::Yuv420 | PixelLayout::Yuv420p10 => vec![(width, height), (half_width, half_height), (half_width, half_height)],
+        PixelLayout::Yuv422 | PixelLayout::Yuv422p10 => vec![(width, height), (half_width, height), (half_width, height)],
+        PixelLayout::Yuv444 | PixelLayout::Yuv444p10 => vec![(width, height), (width, height), (width, height)],
         PixelLayout::Nv12 | PixelLayout::Nv21 => vec![(width, height), (half_width, half_height)],
         PixelLayout::Rgb24 | PixelLayout::Rgba8 => vec![(width, height)],
     }
@@ -341,27 +368,8 @@ impl VideoOutput for EngineVideoOutput {
             drop(frame);
             return Ok(PresentOutcome::Discarded);
         }
-        let frame = if frame.is_hardware() {
-            frame.transfer_to_software()?
-        } else {
-            frame
-        };
-        let layout = layout_of(frame.format())?;
-        let width = frame.width().max(0) as u32;
-        let height = frame.height().max(0) as u32;
-        let color = color_of(frame.color_space(), frame.color_range(), height as i32);
-        let sent = self
-            .sink
-            .send(PresentedFrame {
-                frame,
-                pts,
-                id,
-                layout,
-                color,
-                width,
-                height,
-            })
-            .is_ok();
+        let presented = PresentedFrame::from_frame(frame, pts, id)?;
+        let sent = self.sink.send(presented).is_ok();
         Ok(if sent {
             PresentOutcome::Delivered
         } else {
@@ -408,6 +416,18 @@ mod tests {
                 player_media::PumpResult::NeedMore => {}
                 player_media::PumpResult::Ended => panic!("the fixture decoded no frame"),
             }
+        }
+    }
+
+    #[test]
+    fn ten_bit_layouts_keep_chroma_dimensions() {
+        for (format, layout, chroma) in [
+            (AV_PIX_FMT_YUV420P10LE, PixelLayout::Yuv420p10, (3, 2)),
+            (AV_PIX_FMT_YUV422P10LE, PixelLayout::Yuv422p10, (3, 3)),
+            (AV_PIX_FMT_YUV444P10LE, PixelLayout::Yuv444p10, (5, 3)),
+        ] {
+            assert_eq!(layout_of(format).unwrap(), layout);
+            assert_eq!(plane_dimensions(layout, 5, 3), vec![(5, 3), chroma, chroma]);
         }
     }
 

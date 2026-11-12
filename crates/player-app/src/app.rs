@@ -382,6 +382,18 @@ impl App {
             self.defer_event(ipc::event("audio-reconfig", Vec::new()));
         }
         self.backend = Some(EngineBackend::open(engine));
+        if self.window.is_some() && !displays_video && !self.options.no_video && !self.options.null_video {
+            self.last_frame = match crate::art::gui_cover(&entry.path) {
+                Ok(frame) => frame,
+                Err(error) => {
+                    eprintln!("player: cannot display cover art: {error}");
+                    None
+                }
+            };
+            if self.last_frame.is_some() {
+                self.frame_serial += 1;
+            }
+        }
         self.probe = Some(probe);
         self.paused = self.options.pause;
         self.volume = self.options.volume;
@@ -2060,6 +2072,17 @@ impl ScreenshotRenderer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unloading_clears_the_previous_files_frame() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.work/fixtures");
+        let mut app = App::new(Options::default());
+        app.last_frame = crate::art::gui_cover(root.join("audio-cover.flac").to_str().unwrap()).unwrap();
+        assert!(app.last_frame.is_some());
+        app.unload();
+        assert!(app.last_frame.is_none());
+        assert!(app.write_screenshot(None).is_err());
+    }
 
     #[test]
     fn tui_replays_a_finished_track_with_no_next_entry() {

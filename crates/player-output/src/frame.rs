@@ -7,10 +7,26 @@ pub enum PixelLayout {
     Yuv420,
     Yuv422,
     Yuv444,
+    Yuv420p10,
+    Yuv422p10,
+    Yuv444p10,
     Nv12,
     Nv21,
     Rgb24,
     Rgba8,
+}
+
+impl PixelLayout {
+    fn storage_depth(self) -> c_int {
+        match self {
+            Self::Yuv420p10 | Self::Yuv422p10 | Self::Yuv444p10 => 16,
+            _ => 8,
+        }
+    }
+
+    fn color_depth(self) -> c_int {
+        if self.storage_depth() == 16 { 10 } else { 8 }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -83,10 +99,11 @@ fn render_frame_in_pool(
             planes.len()
         ));
     }
+    validate_planes(layout, planes, &indexed)?;
     let mut texs: Vec<sys::PlTex> = Vec::with_capacity(indexed.len());
     for (plane, spec) in planes.iter().zip(indexed.iter()) {
         let fmt = gpu
-            .find_format(sys::PL_FMT_UNORM, spec.components, 8, sys::PL_FMT_CAP_SAMPLEABLE)
+            .find_format(sys::PL_FMT_UNORM, spec.components, layout.storage_depth(), sys::PL_FMT_CAP_SAMPLEABLE)
             .ok_or_else(|| "no sampleable texture format".to_string())?;
         let tex = gpu.create_tex(plane.width, plane.height, fmt)?;
         if gpu
@@ -144,10 +161,11 @@ pub fn render_to_target(
             planes.len()
         ));
     }
+    validate_planes(layout, planes, &indexed)?;
     let mut texs: Vec<sys::PlTex> = Vec::with_capacity(indexed.len());
     for (plane, spec) in planes.iter().zip(indexed.iter()) {
         let fmt = gpu
-            .find_format(sys::PL_FMT_UNORM, spec.components, 8, sys::PL_FMT_CAP_SAMPLEABLE)
+            .find_format(sys::PL_FMT_UNORM, spec.components, layout.storage_depth(), sys::PL_FMT_CAP_SAMPLEABLE)
             .ok_or_else(|| "no sampleable texture format".to_string())?;
         let tex = gpu.create_tex(plane.width, plane.height, fmt)?;
         if gpu
@@ -196,7 +214,8 @@ fn plane_specs(layout: PixelLayout) -> Result<Vec<PlaneSpec>, String> {
         mapping: [index, 0, 0, 0],
     };
     match layout {
-        PixelLayout::Yuv420 | PixelLayout::Yuv422 | PixelLayout::Yuv444 => {
+        PixelLayout::Yuv420 | PixelLayout::Yuv422 | PixelLayout::Yuv444
+        | PixelLayout::Yuv420p10 | PixelLayout::Yuv422p10 | PixelLayout::Yuv444p10 => {
             Ok(vec![one(0), one(1), one(2)])
         }
         PixelLayout::Nv12 => Ok(vec![
@@ -222,6 +241,21 @@ fn plane_specs(layout: PixelLayout) -> Result<Vec<PlaneSpec>, String> {
             mapping: [0, 1, 2, 3],
         }]),
     }
+}
+
+fn validate_planes(layout: PixelLayout, planes: &[Plane<'_>], specs: &[PlaneSpec]) -> Result<(), String> {
+    for (plane, spec) in planes.iter().zip(specs) {
+        let width = usize::try_from(plane.width).map_err(|_| "invalid plane width")?;
+        let height = usize::try_from(plane.height).map_err(|_| "invalid plane height")?;
+        let row = width.checked_mul(spec.components as usize)
+            .and_then(|n| n.checked_mul((layout.storage_depth() / 8) as usize))
+            .ok_or("plane row size overflow")?;
+        let size = plane.stride.checked_mul(height).ok_or("plane size overflow")?;
+        if width == 0 || height == 0 || plane.stride < row || plane.data.len() < size {
+            return Err("invalid plane dimensions, stride, or buffer length".to_string());
+        }
+    }
+    Ok(())
 }
 
 fn render_planes(
@@ -258,8 +292,8 @@ fn render_planes(
             },
             alpha: sys::PL_ALPHA_INDEPENDENT,
             bits: sys::PlBitEncoding {
-                sample_depth: 8,
-                color_depth: 8,
+                sample_depth: layout.storage_depth(),
+                color_depth: layout.color_depth(),
                 bit_shift: 0,
             },
             dovi: core::ptr::null(),
@@ -552,6 +586,43 @@ mod tests {
         }
     }
 
+    fn yuv420p10_padded_samples_match_eight_bit_reference(open: OpenGpu) {
+        let (gpu, renderer) = setup(open);
+        let values = [216u16, 396, 1020];
+        let dimensions = [(8, 8), (4, 4), (4, 4)];
+        let data: Vec<Vec<u8>> = values.iter().zip(dimensions).map(|(value, (w, h))| {
+            let stride = w * 2 + 4;
+            let mut bytes = vec![0u8; stride * h];
+            for row in bytes.chunks_exact_mut(stride) {
+                for pixel in row[..w * 2].chunks_exact_mut(2) {
+                    pixel.copy_from_slice(&value.to_le_bytes());
+                }
+            }
+            bytes
+        }).collect();
+        let planes: Vec<Plane<'_>> = data.iter().zip(dimensions).map(|(bytes, (w, h))| Plane {
+            data: bytes,
+            stride: w * 2 + 4,
+            width: w as c_int,
+            height: h as c_int,
+        }).collect();
+        let out = render_frame(&gpu, &renderer, PixelLayout::Yuv420p10,
+            ColorSpec::bt709_full(), &planes, 8, 8, None).expect("10-bit frame renders");
+        let reference = render_solid(open, 54, 99, 255);
+        let worst = out.iter().zip(reference.iter()).map(|(a, b)| a.abs_diff(*b)).max().unwrap();
+        assert!(worst <= 4, "10-bit samples differ by {worst}");
+    }
+
+    #[test]
+    fn rejects_short_ten_bit_rows_and_buffers() {
+        let specs = plane_specs(PixelLayout::Yuv420p10).unwrap();
+        let data = [0u8; 16];
+        let short_row = [Plane { data: &data, stride: 7, width: 4, height: 2 }];
+        assert!(validate_planes(PixelLayout::Yuv420p10, &short_row, &specs).is_err());
+        let short_buffer = [Plane { data: &data[..15], stride: 8, width: 4, height: 2 }];
+        assert!(validate_planes(PixelLayout::Yuv420p10, &short_buffer, &specs).is_err());
+    }
+
     fn nv12_matches_yuv420(open: OpenGpu) {
         let (vk, renderer) = setup(open);
         let w = 8;
@@ -752,6 +823,7 @@ mod tests {
         yuv420_solid_colors_match_software_reference,
         presented_frame_fits_the_target_with_letterbox_bars,
         nv12_matches_yuv420,
+        yuv420p10_padded_samples_match_eight_bit_reference,
         overlay_alpha_blends_with_the_base,
         rgba8_passthrough_matches_input,
         overlay_covers_only_its_rect,

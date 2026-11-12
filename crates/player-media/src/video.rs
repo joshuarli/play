@@ -15,6 +15,7 @@ pub const AVCOL_RANGE_JPEG: c_int = 2;
 pub use crate::sys::{
     AV_PIX_FMT_GRAY8, AV_PIX_FMT_NV12, AV_PIX_FMT_NV21, AV_PIX_FMT_RGB24, AV_PIX_FMT_RGBA,
     AV_PIX_FMT_YUV420P, AV_PIX_FMT_YUV422P, AV_PIX_FMT_YUV444P,
+    AV_PIX_FMT_YUV420P10LE, AV_PIX_FMT_YUV422P10LE, AV_PIX_FMT_YUV444P10LE,
 };
 
 const AV_CODEC_ID_MPEG4: c_int = 12;
@@ -220,7 +221,7 @@ impl VideoFrame {
     fn plane_height(&self, index: usize) -> usize {
         let height = self.height().max(0) as usize;
         match self.format() {
-            AV_PIX_FMT_YUV420P | AV_PIX_FMT_NV12 | AV_PIX_FMT_NV21 => {
+            AV_PIX_FMT_YUV420P | AV_PIX_FMT_YUV420P10LE | AV_PIX_FMT_NV12 | AV_PIX_FMT_NV21 => {
                 if index == 0 {
                     height
                 } else {
@@ -521,6 +522,14 @@ impl VideoSession {
         unsafe { (*self.context).pix_fmt }
     }
 
+    pub fn active_hardware(&self) -> HwRequest {
+        match self.negotiated_format() {
+            AV_PIX_FMT_VIDEOTOOLBOX => HwRequest::VideoToolbox,
+            AV_PIX_FMT_VAAPI => HwRequest::VaApi,
+            _ => HwRequest::None,
+        }
+    }
+
     pub fn time_base(&self) -> (i32, i32) {
         self.time_base
     }
@@ -799,6 +808,9 @@ mod tests {
     #[test]
     fn pixfmt_constants_match_linked_library() {
         assert_eq!(pix_name(AV_PIX_FMT_YUV420P), "yuv420p");
+        assert_eq!(pix_name(AV_PIX_FMT_YUV420P10LE), "yuv420p10le");
+        assert_eq!(pix_name(AV_PIX_FMT_YUV422P10LE), "yuv422p10le");
+        assert_eq!(pix_name(AV_PIX_FMT_YUV444P10LE), "yuv444p10le");
         assert_eq!(pix_name(AV_PIX_FMT_YUV422P), "yuv422p");
         assert_eq!(pix_name(AV_PIX_FMT_YUV444P), "yuv444p");
         assert_eq!(pix_name(AV_PIX_FMT_NV12), "nv12");

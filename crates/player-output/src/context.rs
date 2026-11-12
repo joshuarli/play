@@ -173,7 +173,7 @@ impl Gpu {
         caps: c_int,
     ) -> Option<sys::PlFmt> {
         // SAFETY: the gpu is live.
-        let fmt = unsafe { sys::pl_find_fmt(self.gpu, format_type, components, depth, 8, caps) };
+        let fmt = unsafe { sys::pl_find_fmt(self.gpu, format_type, components, depth, depth, caps) };
         if fmt.is_null() {
             None
         } else {
