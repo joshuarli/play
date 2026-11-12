@@ -159,7 +159,7 @@ mod tests {
             (stream < self.audio_streams).then(|| player_media::StreamInfo {
                 index: stream,
                 kind: player_media::StreamKind::Audio,
-                codec_name: "fake".to_owned(),
+                codec_name: "fake".to_owned(), profile: -99,
                 width: 0,
                 height: 0,
                 sample_rate: 48_000,
@@ -753,7 +753,7 @@ mod tests {
         let info = player_media::StreamInfo {
             index: 7,
             kind: player_media::StreamKind::Subtitle,
-            codec_name: "subrip".to_owned(),
+            codec_name: "subrip".to_owned(), profile: -99,
             width: 0,
             height: 0,
             sample_rate: 0,

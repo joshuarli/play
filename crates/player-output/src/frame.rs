@@ -10,6 +10,7 @@ pub enum PixelLayout {
     Yuv420p10,
     Yuv422p10,
     Yuv444p10,
+    P010,
     Nv12,
     Nv21,
     Rgb24,
@@ -19,7 +20,7 @@ pub enum PixelLayout {
 impl PixelLayout {
     fn storage_depth(self) -> c_int {
         match self {
-            Self::Yuv420p10 | Self::Yuv422p10 | Self::Yuv444p10 => 16,
+            Self::Yuv420p10 | Self::Yuv422p10 | Self::Yuv444p10 | Self::P010 => 16,
             _ => 8,
         }
     }
@@ -66,6 +67,23 @@ pub struct Overlay<'a> {
     pub dst: OverlayRect,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct VideoGeometry {
+    pub pixel_aspect: f64,
+    pub rotation: u16,
+}
+
+impl Default for VideoGeometry {
+    fn default() -> Self { Self { pixel_aspect: 1.0, rotation: 0 } }
+}
+
+impl VideoGeometry {
+    pub fn display_size(self, width: u32, height: u32) -> (u32, u32) {
+        let width = (width as f64 * self.pixel_aspect).round().clamp(1.0, u32::MAX as f64) as u32;
+        if self.rotation == 90 || self.rotation == 270 { (height, width) } else { (width, height) }
+    }
+}
+
 pub fn render_frame(
     gpu: &Gpu,
     renderer: &Renderer,
@@ -76,8 +94,16 @@ pub fn render_frame(
     height: c_int,
     overlay: Option<&Overlay>,
 ) -> Result<Vec<u8>, String> {
+    render_frame_with_geometry(gpu, renderer, layout, color, planes, width, height, VideoGeometry::default(), overlay)
+}
+
+pub fn render_frame_with_geometry(
+    gpu: &Gpu, renderer: &Renderer, layout: PixelLayout, color: ColorSpec,
+    planes: &[Plane<'_>], width: c_int, height: c_int, geometry: VideoGeometry,
+    overlay: Option<&Overlay>,
+) -> Result<Vec<u8>, String> {
     crate::with_autorelease_pool(|| {
-        render_frame_in_pool(gpu, renderer, layout, color, planes, width, height, overlay)
+        render_frame_in_pool(gpu, renderer, layout, color, planes, width, height, geometry, overlay)
     })
 }
 
@@ -89,6 +115,7 @@ fn render_frame_in_pool(
     planes: &[Plane<'_>],
     width: c_int,
     height: c_int,
+    geometry: VideoGeometry,
     overlay: Option<&Overlay>,
 ) -> Result<Vec<u8>, String> {
     let indexed = plane_specs(layout)?;
@@ -126,10 +153,11 @@ fn render_frame_in_pool(
         layout,
         color,
         &texs,
-        (width, height),
+        (planes[0].width, planes[0].height),
         target,
         (width, height),
         false,
+        geometry,
         overlay,
     );
     for tex in texs {
@@ -152,6 +180,15 @@ pub fn render_to_target(
     target_height: c_int,
     flipped: bool,
     overlay: Option<&Overlay>,
+) -> Result<(), String> {
+    render_to_target_with_geometry(gpu, renderer, layout, color, planes, target,
+        target_width, target_height, flipped, VideoGeometry::default(), overlay)
+}
+
+pub fn render_to_target_with_geometry(
+    gpu: &Gpu, renderer: &Renderer, layout: PixelLayout, color: ColorSpec,
+    planes: &[Plane<'_>], target: sys::PlTex, target_width: c_int, target_height: c_int,
+    flipped: bool, geometry: VideoGeometry, overlay: Option<&Overlay>,
 ) -> Result<(), String> {
     let indexed = plane_specs(layout)?;
     if planes.len() != indexed.len() {
@@ -194,6 +231,7 @@ pub fn render_to_target(
         target,
         (target_width, target_height),
         flipped,
+        geometry,
         overlay,
     );
     for tex in texs {
@@ -218,7 +256,7 @@ fn plane_specs(layout: PixelLayout) -> Result<Vec<PlaneSpec>, String> {
         | PixelLayout::Yuv420p10 | PixelLayout::Yuv422p10 | PixelLayout::Yuv444p10 => {
             Ok(vec![one(0), one(1), one(2)])
         }
-        PixelLayout::Nv12 => Ok(vec![
+        PixelLayout::Nv12 | PixelLayout::P010 => Ok(vec![
             one(0),
             PlaneSpec {
                 components: 2,
@@ -268,6 +306,7 @@ fn render_planes(
     target: sys::PlTex,
     (target_width, target_height): (c_int, c_int),
     flipped: bool,
+    geometry: VideoGeometry,
     overlay: Option<&Overlay>,
 ) -> Result<sys::PlTex, String> {
     let specs = plane_specs(layout)?;
@@ -294,7 +333,7 @@ fn render_planes(
             bits: sys::PlBitEncoding {
                 sample_depth: layout.storage_depth(),
                 color_depth: layout.color_depth(),
-                bit_shift: 0,
+                bit_shift: if layout == PixelLayout::P010 { 6 } else { 0 },
             },
             dovi: core::ptr::null(),
         },
@@ -317,8 +356,8 @@ fn render_planes(
             x1: width as f32,
             y1: height as f32,
         },
-        rotation: sys::PL_ROTATION_0,
-        pixel_aspect_ratio: 1.0,
+        rotation: (geometry.rotation / 90) as c_int,
+        pixel_aspect_ratio: geometry.pixel_aspect as f32,
         overlays: core::ptr::null(),
         num_overlays: 0,
         film_grain: sys::PlFilmGrain { opaque: [0; 208] },
@@ -388,9 +427,7 @@ fn render_planes(
         };
     }
     let mut target_frame = crate::render::target_frame(target, target_width, target_height, flipped);
-    target_frame.crop = fit_crop((width, height), (target_width, target_height), flipped);
-    // SAFETY: the renderer is live; infer fills defaulted metadata.
-    unsafe { sys::pl_frames_infer(renderer.as_raw(), &mut frame, &mut target_frame) };
+    target_frame.crop = fit_crop((width, height), (target_width, target_height), flipped, geometry);
     // SAFETY: the library defaults are valid for any render.
     let params: sys::PlRenderParams = unsafe { sys::pl_render_default_params };
     // SAFETY: frames and textures are live for the call.
@@ -411,11 +448,17 @@ fn fit_crop(
     (width, height): (c_int, c_int),
     (target_width, target_height): (c_int, c_int),
     flipped: bool,
+    geometry: VideoGeometry,
 ) -> sys::PlRect2df {
-    let scale = (target_width as f32 / width.max(1) as f32)
-        .min(target_height as f32 / height.max(1) as f32);
-    let fitted_width = width as f32 * scale;
-    let fitted_height = height as f32 * scale;
+    let (width, height) = if geometry.rotation == 90 || geometry.rotation == 270 {
+        (height as f32, width as f32 * geometry.pixel_aspect as f32)
+    } else {
+        (width as f32 * geometry.pixel_aspect as f32, height as f32)
+    };
+    let scale = (target_width as f32 / width.max(1.0))
+        .min(target_height as f32 / height.max(1.0));
+    let fitted_width = width * scale;
+    let fitted_height = height * scale;
     let x0 = ((target_width as f32 - fitted_width) / 2.0).round();
     let y0 = ((target_height as f32 - fitted_height) / 2.0).round();
     let (x1, y1) = (x0 + fitted_width.round(), y0 + fitted_height.round());
@@ -464,6 +507,40 @@ fn empty_plane() -> sys::PlPlane {
 mod tests {
     use super::*;
     use crate::OpenGpu;
+
+    #[test]
+    fn anamorphic_rotation_fits_in_display_coordinates() {
+        let geometry = VideoGeometry { pixel_aspect: 2.0, rotation: 90 };
+        assert_eq!(geometry.display_size(64, 32), (32, 128));
+        let crop = fit_crop((64, 32), (200, 200), false, geometry);
+        assert_eq!((crop.x0, crop.y0, crop.x1, crop.y1), (75.0, 0.0, 125.0, 200.0));
+        let plain = VideoGeometry { pixel_aspect: 2.0, rotation: 0 };
+        let crop = fit_crop((64, 32), (200, 200), false, plain);
+        assert_eq!((crop.x0, crop.y0, crop.x1, crop.y1), (0.0, 75.0, 200.0, 125.0));
+    }
+
+    fn anamorphic_rotation_transposes_and_rotates_pixels(open: OpenGpu) {
+        let (gpu, renderer) = setup(open);
+        let mut pixels = vec![0u8; 64 * 32 * 4];
+        for y in 0..32 {
+            for x in 0..64 {
+                let color = match (x < 32, y < 16) {
+                    (true, true) => [255, 0, 0, 255],
+                    (false, true) => [0, 255, 0, 255],
+                    (true, false) => [0, 0, 255, 255],
+                    (false, false) => [255, 255, 255, 255],
+                };
+                pixels[(y * 64 + x) * 4..][..4].copy_from_slice(&color);
+            }
+        }
+        let planes = [Plane { data: &pixels, stride: 256, width: 64, height: 32 }];
+        let image = render_frame_with_geometry(&gpu, &renderer, PixelLayout::Rgba8,
+            ColorSpec::bt709_full(), &planes, 32, 128,
+            VideoGeometry { pixel_aspect: 2.0, rotation: 270 }, None).unwrap();
+        let at = |x: usize, y: usize| &image[(y * 32 + x) * 4..][..3];
+        assert!(at(8, 16)[1] > 200 && at(8, 16)[0] < 30, "top left: {:?}", at(8, 16));
+        assert!(at(8, 112)[0] > 200 && at(8, 112)[1] < 30, "bottom left: {:?}", at(8, 112));
+    }
 
     fn setup(open: OpenGpu) -> (Gpu, Renderer) {
         let vk = open().expect("gpu initializes headlessly");
@@ -611,6 +688,19 @@ mod tests {
         let reference = render_solid(open, 54, 99, 255);
         let worst = out.iter().zip(reference.iter()).map(|(a, b)| a.abs_diff(*b)).max().unwrap();
         assert!(worst <= 4, "10-bit samples differ by {worst}");
+    }
+
+    fn p010_packing_matches_planar_reference(open: OpenGpu) {
+        let (gpu, renderer) = setup(open);
+        let y: Vec<u8> = (0..64).flat_map(|_| (216u16 << 6).to_le_bytes()).collect();
+        let uv: Vec<u8> = (0..16).flat_map(|_| [(396u16 << 6).to_le_bytes(), (1020u16 << 6).to_le_bytes()].concat()).collect();
+        let planes = [Plane { data: &y, stride: 16, width: 8, height: 8 },
+            Plane { data: &uv, stride: 16, width: 4, height: 4 }];
+        let output = render_frame(&gpu, &renderer, PixelLayout::P010,
+            ColorSpec::bt709_full(), &planes, 8, 8, None).unwrap();
+        let reference = render_solid(open, 54, 99, 255);
+        let worst = output.iter().zip(reference.iter()).map(|(a,b)| a.abs_diff(*b)).max().unwrap();
+        assert!(worst <= 4, "P010 differs by {worst}");
     }
 
     #[test]
@@ -820,10 +910,12 @@ mod tests {
     }
 
     gpu_tests!(
+        anamorphic_rotation_transposes_and_rotates_pixels,
         yuv420_solid_colors_match_software_reference,
         presented_frame_fits_the_target_with_letterbox_bars,
         nv12_matches_yuv420,
         yuv420p10_padded_samples_match_eight_bit_reference,
+        p010_packing_matches_planar_reference,
         overlay_alpha_blends_with_the_base,
         rgba8_passthrough_matches_input,
         overlay_covers_only_its_rect,

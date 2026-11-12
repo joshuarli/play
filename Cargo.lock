@@ -242,6 +242,7 @@ version = "0.1.0"
 dependencies = [
  "player-build",
  "player-media",
+ "rusty_aac",
  "symphonia",
 ]
 
@@ -417,6 +418,10 @@ dependencies = [
  "linux-raw-sys",
  "windows-sys",
 ]
+
+[[package]]
+name = "rusty_aac"
+version = "2.0.1"
 
 [[package]]
 name = "scoped-tls"

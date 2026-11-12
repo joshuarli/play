@@ -77,6 +77,7 @@ pub struct StreamInfo {
     pub index: usize,
     pub kind: StreamKind,
     pub codec_name: String,
+    pub profile: i32,
     pub width: i32,
     pub height: i32,
     pub sample_rate: i32,
@@ -318,6 +319,8 @@ impl MediaSession {
                 index,
                 kind,
                 codec_name,
+                // SAFETY: codecpar is live for this stream during the probe.
+                profile: unsafe { (*codecpar).profile },
                 width: params.width,
                 height: params.height,
                 sample_rate: params.sample_rate,
@@ -591,6 +594,26 @@ impl MediaSession {
             return Err(MediaError::Seek(format!("avformat_seek_file: {status}")));
         }
         Ok(())
+    }
+
+    pub fn video_geometry(&self, stream_index: usize) -> crate::VideoGeometry {
+        let mut geometry = crate::VideoGeometry::default();
+        // SAFETY: the format context owns the stream array and codec parameters during this call.
+        unsafe {
+            if stream_index >= (*self.context).nb_streams as usize { return geometry; }
+            let stream = *(*self.context).streams.add(stream_index);
+            if stream.is_null() || (*stream).codecpar.is_null() { return geometry; }
+            let params = &*(*stream).codecpar;
+            geometry.pixel_aspect = crate::video::aspect((*stream).sample_aspect_ratio)
+                .or_else(|| crate::video::aspect(params.sample_aspect_ratio)).unwrap_or(1.0);
+            let side = av_packet_side_data_get(params.coded_side_data.cast(), params.nb_coded_side_data, 5);
+            if !side.is_null() {
+                if let Some(rotation) = crate::video::matrix_rotation((*side).data, (*side).size) {
+                    geometry.rotation = rotation;
+                }
+            }
+        }
+        geometry
     }
 
     /// Raw codec parameters for a stream index. The pointer stays valid

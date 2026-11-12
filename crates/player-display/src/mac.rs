@@ -1,5 +1,5 @@
 use player_output::{
-    render_to_target, with_autorelease_pool, ColorSpec, Gpu, GpuApi, Instance, Overlay, PixelLayout, Plane, Renderer,
+    render_to_target_with_geometry, with_autorelease_pool, VideoGeometry, ColorSpec, Gpu, GpuApi, Instance, Overlay, PixelLayout, Plane, Renderer,
     Surface, Swapchain,
 };
 use std::ffi::{c_char, c_int, c_void, CStr, CString};
@@ -342,13 +342,14 @@ impl MacWindow {
         layout: PixelLayout,
         color: ColorSpec,
         planes: &[Plane<'_>],
+        geometry: VideoGeometry,
         overlay: Option<&Overlay>,
     ) -> Result<(), String> {
         let (width, height) = (self.width, self.height);
         let (swapchain, renderer, gpu) = self.presenter.parts();
         with_autorelease_pool(|| {
             let frame = swapchain.start_frame()?;
-            if let Err(message) = render_to_target(
+            if let Err(message) = render_to_target_with_geometry(
                 gpu,
                 renderer,
                 layout,
@@ -358,6 +359,7 @@ impl MacWindow {
                 width,
                 height,
                 frame.flipped,
+                geometry,
                 overlay,
             ) {
                 let _ = swapchain.submit();

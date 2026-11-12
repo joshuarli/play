@@ -143,6 +143,7 @@ impl HostWindow {
             frame.layout,
             frame.color,
             &planes,
+            frame.geometry,
             overlay,
         )?;
         self.presented += 1;

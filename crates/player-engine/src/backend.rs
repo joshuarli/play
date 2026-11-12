@@ -421,6 +421,7 @@ pub struct EngineStatus {
     pub estimated_vf_fps: Option<f64>,
     pub video_output: Option<&'static str>,
     pub audio_output: Option<&'static str>,
+    pub hardware_decoder: Option<player_media::HwRequest>,
     pub video_width: u32,
     pub video_height: u32,
     pub error: Option<String>,
@@ -455,6 +456,7 @@ impl Default for EngineStatus {
             estimated_vf_fps: None,
             video_output: None,
             audio_output: None,
+            hardware_decoder: None,
             video_width: 0,
             video_height: 0,
             error: None,
@@ -494,6 +496,7 @@ pub struct StartState {
     pub muted: bool,
     pub paused: bool,
     pub gpu_api: GpuApi,
+    pub hwdec: player_media::HwRequest,
 }
 
 impl Default for StartState {
@@ -503,6 +506,7 @@ impl Default for StartState {
             muted: false,
             paused: false,
             gpu_api: GpuApi::default(),
+            hwdec: player_media::HwRequest::None,
         }
     }
 }
@@ -741,7 +745,10 @@ fn run_worker(
         };
         let (video, video_out, video_output) = match demux.selected_video() {
             Some(stream) => {
-                let decoder = EngineVideo::open(demux.session(), stream)?;
+                let (decoder, fallback) = EngineVideo::open(demux.session(), stream, start.hwdec)?;
+                if let Some(reason) = fallback {
+                    eprintln!("player: hardware decoding unavailable, using software: {reason}");
+                }
                 let shared = decoder.shared();
                 if render_video {
                     (
@@ -1022,6 +1029,7 @@ impl Worker {
         let tracks = track_list(&self.scheduler);
         let subtitle_text = self.scheduler.subtitle_text(now);
         update(state, |status| {
+            status.hardware_decoder = self.scheduler.video_decoder().active_hardware();
             status.position = position;
             status.speed = self.scheduler.speed();
             status.paused = paused;
@@ -1208,7 +1216,7 @@ mod tests {
     #[test]
     fn engine_audio_forwards_both_resampled_spans_at_a_gap() {
         let info = StreamInfo {
-            index: 0, kind: player_media::StreamKind::Audio, codec_name: "pcm_s16le".to_string(),
+            index: 0, kind: player_media::StreamKind::Audio, codec_name: "pcm_s16le".to_string(), profile: -99,
             width: 0, height: 0, sample_rate: 44_100, channels: 1, time_base: (1, 44_100),
             duration_seconds: None, extradata: Vec::new(), channel_mask: 0,
             attached: false, default: false, forced: false, language: None, title: None,
@@ -1249,6 +1257,21 @@ mod tests {
             let pitch = crossings as f64 * 8000.0 / body.len() as f64;
             assert!((pitch - 200.0).abs() < 5.0, "{speed}: {pitch} Hz");
         }
+    }
+
+    #[test]
+    fn unavailable_hardware_request_decodes_and_reports_software_fallback() {
+        let request = if cfg!(target_os = "macos") {
+            player_media::HwRequest::VaApi
+        } else {
+            player_media::HwRequest::VideoToolbox
+        };
+        let engine = SchedulerEngine::load_null_video(&fixture("h264.mp4"), SinkKind::Null,
+            StartState { hwdec: request, paused: true, ..StartState::default() }).unwrap();
+        let status = poll_until(&engine, StdDuration::from_secs(5), |status| status.decoded > 0);
+        assert!(!status.failed, "{:?}", status.error);
+        assert!(status.decoded > 0);
+        assert_eq!(status.hardware_decoder, Some(player_media::HwRequest::None));
     }
 
     #[test]

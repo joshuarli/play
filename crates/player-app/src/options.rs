@@ -216,7 +216,11 @@ pub fn parse(args: &[String]) -> Result<Options, String> {
             "no-video" => options.no_video = true,
             "vo" => options.null_video = value(&name)? == "null",
             "ao" => options.null_audio = value(&name)? == "null",
-            "hwdec" => options.hwdec = value(&name)?,
+            "hwdec" => {
+                let requested = value(&name)?;
+                hardware_request(&requested)?;
+                options.hwdec = requested;
+            }
             "gpu-api" => options.gpu_api = parse_gpu_api(&value(&name)?)?,
             "hwdec-codecs" => {
                 let _ = value(&name)?;
@@ -389,5 +393,37 @@ mod tests {
         assert!(with_environment(Some("--mute movie.mkv"), &[]).is_err());
         assert!(parse(&args(&["--input-conf=keys.conf"])).is_err());
         assert!(parse(&args(&["--script=x.lua"])).is_err());
+    }
+}
+
+
+pub(crate) fn hardware_request(name: &str) -> Result<player_media::HwRequest, String> {
+    use player_media::HwRequest;
+    match name {
+        "no" => Ok(HwRequest::None),
+        "auto" | "auto-safe" => {
+            #[cfg(target_os = "macos")]
+            { Ok(HwRequest::VideoToolbox) }
+            #[cfg(target_os = "linux")]
+            { Ok(HwRequest::VaApi) }
+        }
+        #[cfg(target_os = "macos")]
+        "videotoolbox" | "videotoolbox-copy" => Ok(HwRequest::VideoToolbox),
+        #[cfg(target_os = "linux")]
+        "vaapi" | "vaapi-copy" => Ok(HwRequest::VaApi),
+        _ => Err(format!("unsupported hardware decoder '{name}' on this platform")),
+    }
+}
+
+#[cfg(test)]
+mod hwdec_tests {
+    use super::*;
+    #[test]
+    fn hardware_options_resolve_a_supported_request() {
+        assert_eq!(hardware_request("no").unwrap(), player_media::HwRequest::None);
+        assert_ne!(hardware_request("auto").unwrap(), player_media::HwRequest::None);
+        assert_eq!(hardware_request("auto").unwrap(), hardware_request("auto-safe").unwrap());
+        assert!(hardware_request("imaginary-decoder").is_err());
+        assert!(parse(&["--hwdec=imaginary-decoder".to_owned()]).is_err());
     }
 }

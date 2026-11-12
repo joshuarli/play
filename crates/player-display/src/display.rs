@@ -6,7 +6,7 @@
 //! and go out through `present_planes`.
 
 use player_output::{
-    render_to_target, ColorSpec, Instance, Overlay, PixelLayout, Plane, Renderer, Surface,
+    render_to_target_with_geometry, VideoGeometry, ColorSpec, Instance, Overlay, PixelLayout, Plane, Renderer, Surface,
     Swapchain, Gpu,
 };
 use std::collections::VecDeque;
@@ -521,10 +521,11 @@ impl Window {
         layout: PixelLayout,
         color: ColorSpec,
         planes: &[Plane<'_>],
+        geometry: VideoGeometry,
         overlay: Option<&Overlay>,
     ) -> Result<(), String> {
         let frame = self.swapchain.start_frame()?;
-        if let Err(message) = render_to_target(
+        if let Err(message) = render_to_target_with_geometry(
             &self.gpu,
             &self.renderer,
             layout,
@@ -534,6 +535,7 @@ impl Window {
             self.width,
             self.height,
             frame.flipped,
+            geometry,
             overlay,
         ) {
             let _ = self.swapchain.submit();

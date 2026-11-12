@@ -3,6 +3,7 @@ import subprocess
 import sys
 import time
 import uuid
+import zlib
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -63,6 +64,7 @@ def fixture_1080p():
 def gate_linux_gpu_next(results, args):
     compositor = Compositor()
     try:
+        presentation_regressions(results, compositor)
         play(results, compositor)
         window(results, compositor)
         subtitles(results, compositor)
@@ -71,6 +73,64 @@ def gate_linux_gpu_next(results, args):
         shutdown(results, compositor)
     finally:
         compositor.close()
+
+
+def presentation_regressions(results, compositor):
+    def shot(player, name):
+        path = TMP / name
+        player.command("screenshot-to-file", str(path))
+        data = path.read_bytes()
+        return path, (int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big"))
+
+    with Mpv([*GPU_ARGS, "--gui", "--pause=yes"], env=compositor.env) as player:
+        player.load(fixture_path(fixture_entry("audio-cover")))
+        player.wait_event("file-loaded", timeout=30)
+        _, cover_size = shot(player, "fresh-cover.png")
+        results.check("presentation: fresh GUI cover reaches screenshot", min(cover_size) > 0)
+        player.load(fixture_path(fixture_entry("h264")))
+        player.wait_event("file-loaded", timeout=30)
+        player.command("seek", 0, "absolute+exact")
+        player.wait_event("playback-restart", timeout=30)
+        shot(player, "before-cover.png")
+        player.load(fixture_path(fixture_entry("audio-cover")))
+        player.wait_event("file-loaded", timeout=30)
+        _, switched_size = shot(player, "switched-cover.png")
+        results.check("presentation: video-to-cover replaces the previous frame", switched_size == cover_size)
+
+    geometry = ROOT / "crates/player-media/tests/fixtures/geometry-rotated.mp4"
+    with Mpv([*GPU_ARGS, "--pause=yes"], env=compositor.env) as player:
+        player.load(geometry)
+        player.wait_event("file-loaded", timeout=30)
+        player.command("seek", 0, "absolute+exact")
+        player.wait_event("playback-restart", timeout=30)
+        _, size = shot(player, "rotated-anamorphic.png")
+        params = player.get_property("video-params")
+        results.check("presentation: screenshot applies SAR and rotation", size == (32, 128), str(size))
+        results.check("presentation: properties agree with screenshot",
+                      (params["dw"], params["dh"]) == size and params["par"] == 2 and params["rotate"] == 270,
+                      str(params))
+
+    gradient = ROOT / "crates/player-media/tests/fixtures/gradient-high10.mp4"
+    with Mpv([*GPU_ARGS, "--pause=yes"], env=compositor.env) as player:
+        player.load(gradient)
+        player.wait_event("file-loaded", timeout=30)
+        player.command("seek", 0, "absolute+exact")
+        player.wait_event("playback-restart", timeout=30)
+        image, size = shot(player, "gradient-high10.png")
+        data = image.read_bytes()
+        offset, compressed = 8, bytearray()
+        while offset < len(data):
+            length = int.from_bytes(data[offset:offset + 4], "big")
+            if data[offset + 4:offset + 8] == b"IDAT":
+                compressed.extend(data[offset + 8:offset + 8 + length])
+            offset += length + 12
+        pixels = zlib.decompress(compressed)
+        stride = 64 * 4 + 1
+        assert all(pixels[y * stride] == 0 for y in range(32))
+        left = pixels[16 * stride + 1 + 2 * 4]
+        right = pixels[16 * stride + 1 + 61 * 4]
+        results.check("presentation: rendered High 10 gradient reaches screenshot",
+                      size == (64, 32) and left < 30 and right > 220, f"{size}, endpoints {left}/{right}")
 
 
 def play(results, compositor):

@@ -64,6 +64,7 @@ pub const AV_PIX_FMT_YUV422P10LE: c_int = 64;
 pub const AV_PIX_FMT_YUV444P10LE: c_int = 68;
 pub const AV_PIX_FMT_VAAPI: c_int = 44;
 pub const AV_PIX_FMT_VIDEOTOOLBOX: c_int = 157;
+pub const AV_PIX_FMT_P010LE: c_int = 158;
 
 pub const AV_HWDEVICE_TYPE_NONE: c_int = 0;
 pub const AV_HWDEVICE_TYPE_VAAPI: c_int = 3;
@@ -79,7 +80,19 @@ pub enum SwsContext {}
 
 pub const SWS_BILINEAR: c_int = 1 << 1;
 
-pub enum AvFrameSideData {}
+#[repr(C)]
+pub struct AvFrameSideData {
+    pub kind: c_int,
+    pub data: *mut u8,
+    pub size: usize,
+}
+
+#[repr(C)]
+pub struct AvPacketSideData {
+    pub data: *mut u8,
+    pub size: usize,
+    pub kind: c_int,
+}
 
 /// Prefix of `AVFrame` through `hw_frames_ctx`, transcribed from
 /// `libavutil/frame.h` of the pinned FFmpeg. Fields after
@@ -505,8 +518,12 @@ unsafe extern "C" {
     pub fn avcodec_receive_frame(ctx: *mut AvCodecContext, frame: *mut AvFrame) -> c_int;
     pub fn avcodec_flush_buffers(ctx: *mut AvCodecContext);
     pub fn avcodec_free_context(ctx: *mut *mut AvCodecContext);
+    pub fn av_packet_side_data_get(data: *const AvPacketSideData, count: c_int, kind: c_int) -> *const AvPacketSideData;
+    pub fn av_frame_get_side_data(frame: *const AvFrame, kind: c_int) -> *mut AvFrameSideData;
+    pub fn av_display_rotation_get(matrix: *const i32) -> f64;
     pub fn av_frame_alloc() -> *mut AvFrame;
     pub fn av_frame_free(frame: *mut *mut AvFrame);
+    pub fn av_frame_copy_props(dst: *mut AvFrame, src: *const AvFrame) -> c_int;
     pub fn av_frame_unref(frame: *mut AvFrame);
     pub fn av_hwdevice_ctx_create(
         device_ctx: *mut *mut AvBufferRef,

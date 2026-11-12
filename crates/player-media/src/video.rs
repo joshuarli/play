@@ -16,7 +16,7 @@ pub use crate::sys::{
     AV_PIX_FMT_YUVJ420P, AV_PIX_FMT_YUVJ422P, AV_PIX_FMT_YUVJ444P,
     AV_PIX_FMT_GRAY8, AV_PIX_FMT_NV12, AV_PIX_FMT_NV21, AV_PIX_FMT_RGB24, AV_PIX_FMT_RGBA,
     AV_PIX_FMT_YUV420P, AV_PIX_FMT_YUV422P, AV_PIX_FMT_YUV444P,
-    AV_PIX_FMT_YUV420P10LE, AV_PIX_FMT_YUV422P10LE, AV_PIX_FMT_YUV444P10LE,
+    AV_PIX_FMT_YUV420P10LE, AV_PIX_FMT_YUV422P10LE, AV_PIX_FMT_YUV444P10LE, AV_PIX_FMT_P010LE,
 };
 
 const AV_CODEC_ID_MPEG4: c_int = 12;
@@ -145,8 +145,37 @@ fn codec_id_for_name(name: &str) -> Result<c_int, String> {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct VideoGeometry {
+    pub pixel_aspect: f64,
+    pub rotation: u16,
+}
+
+impl Default for VideoGeometry {
+    fn default() -> Self {
+        Self { pixel_aspect: 1.0, rotation: 0 }
+    }
+}
+
+pub(crate) fn aspect(ratio: AvRational) -> Option<f64> {
+    (ratio.num > 0 && ratio.den > 0).then(|| ratio.num as f64 / ratio.den as f64)
+}
+
+pub(crate) unsafe fn matrix_rotation(data: *const u8, size: usize) -> Option<u16> {
+    if data.is_null() || size < 9 * std::mem::size_of::<i32>() {
+        return None;
+    }
+    let mut matrix = [0i32; 9];
+    // SAFETY: the caller supplies at least nine matrix entries; copying bytes permits unaligned input.
+    unsafe { ptr::copy_nonoverlapping(data, matrix.as_mut_ptr().cast::<u8>(), 36) };
+    // SAFETY: matrix contains nine initialized entries in FFmpeg display-matrix layout.
+    let angle = unsafe { av_display_rotation_get(matrix.as_ptr()) };
+    angle.is_finite().then(|| ((-angle / 90.0).round() as i32).rem_euclid(4) as u16 * 90)
+}
+
 pub struct VideoFrame {
     frame: *mut AvFrame,
+    geometry: VideoGeometry,
 }
 
 // SAFETY: a VideoFrame owns its AvFrame exclusively and holds no reference to
@@ -159,6 +188,8 @@ pub struct VideoFrame {
 unsafe impl Send for VideoFrame {}
 
 impl VideoFrame {
+    pub fn geometry(&self) -> VideoGeometry { self.geometry }
+
     pub fn width(&self) -> i32 {
         // SAFETY: the frame is live.
         unsafe { (*self.frame).width }
@@ -222,7 +253,7 @@ impl VideoFrame {
     fn plane_height(&self, index: usize) -> usize {
         let height = self.height().max(0) as usize;
         match self.format() {
-            AV_PIX_FMT_YUV420P | AV_PIX_FMT_YUVJ420P | AV_PIX_FMT_YUV420P10LE | AV_PIX_FMT_NV12 | AV_PIX_FMT_NV21 => {
+            AV_PIX_FMT_YUV420P | AV_PIX_FMT_YUVJ420P | AV_PIX_FMT_YUV420P10LE | AV_PIX_FMT_P010LE | AV_PIX_FMT_NV12 | AV_PIX_FMT_NV21 => {
                 if index == 0 {
                     height
                 } else {
@@ -323,15 +354,19 @@ impl VideoFrame {
         let status = unsafe {
             av_hwframe_transfer_data(dst, self.frame, AV_HWFRAME_TRANSFER_DIRECTION_FROM)
         };
+        let status = if status >= 0 {
+            // SAFETY: both frames are live; dst exclusively owns its metadata.
+            unsafe { av_frame_copy_props(dst, self.frame) }
+        } else { status };
         if status < 0 {
             // SAFETY: dst was allocated above.
             unsafe {
                 let mut frame = dst;
                 av_frame_free(&mut frame);
             }
-            return Err(format!("av_hwframe_transfer_data failed: {status}"));
+            return Err(format!("hardware frame transfer or metadata copy failed: {status}"));
         }
-        Ok(VideoFrame { frame: dst })
+        Ok(VideoFrame { frame: dst, geometry: self.geometry })
     }
 }
 
@@ -363,6 +398,7 @@ pub struct VideoSession {
     context: *mut AvCodecContext,
     wanted: *mut c_int,
     time_base: (i32, i32),
+    geometry: VideoGeometry,
 }
 
 impl VideoSession {
@@ -394,7 +430,7 @@ impl VideoSession {
         let parameters = session
             .codecpar_ptr(stream_index)
             .ok_or_else(|| "stream parameters vanished".to_string())?;
-        Self::open_decoder(None, stream_index, &info, parameters, hw)
+        Self::open_decoder(None, stream_index, &info, parameters, hw, session.video_geometry(stream_index))
     }
 
     fn open_impl(
@@ -416,7 +452,8 @@ impl VideoSession {
             .expect("checked")
             .codecpar_ptr(stream_index)
             .ok_or_else(|| "stream parameters vanished".to_string())?;
-        Self::open_decoder(session, stream_index, &info, parameters, hw)
+        let geometry = session.as_ref().expect("checked").video_geometry(stream_index);
+        Self::open_decoder(session, stream_index, &info, parameters, hw, geometry)
     }
 
     fn open_decoder(
@@ -425,6 +462,7 @@ impl VideoSession {
         info: &StreamInfo,
         parameters: *const AvCodecParameters,
         hw: HwRequest,
+        geometry: VideoGeometry,
     ) -> Result<Self, String> {
         let codec_id = codec_id_for_name(&info.codec_name)?;
         // SAFETY: codec_id names a decoder in the pinned closure.
@@ -456,6 +494,7 @@ impl VideoSession {
             context,
             wanted,
             time_base: info.time_base,
+            geometry,
         })
     }
 
@@ -600,7 +639,20 @@ impl VideoSession {
             }
             return Err(format!("avcodec_receive_frame failed: {status}"));
         }
-        Ok(Some(VideoFrame { frame }))
+        let mut geometry = self.geometry;
+        // SAFETY: the decoded frame and its side data remain live until the returned frame is dropped.
+        unsafe {
+            if let Some(value) = aspect((*frame).sample_aspect_ratio) {
+                geometry.pixel_aspect = value;
+            }
+            let side = av_frame_get_side_data(frame, 6);
+            if !side.is_null() {
+                if let Some(value) = matrix_rotation((*side).data, (*side).size) {
+                    geometry.rotation = value;
+                }
+            }
+        }
+        Ok(Some(VideoFrame { frame, geometry }))
     }
 
     pub fn drain(&mut self) -> Result<(), String> {
@@ -725,6 +777,26 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
+    #[test]
+    fn stream_and_decoded_frame_preserve_anamorphic_rotation() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/geometry-rotated.mp4");
+        let path = path.to_str().unwrap();
+        let media = MediaSession::open(path).unwrap();
+        let stream = media.streams().into_iter().find(|s| s.kind == StreamKind::Video).unwrap();
+        assert_eq!((stream.width, stream.height), (64, 32));
+        let expected = VideoGeometry { pixel_aspect: 2.0, rotation: 270 };
+        assert_eq!(media.video_geometry(stream.index), expected);
+        let mut decoder = VideoSession::open(path, stream.index, HwRequest::None).unwrap();
+        loop {
+            match decoder.pump().unwrap() {
+                PumpResult::Frame(frame) => { assert_eq!(frame.geometry(), expected); break; }
+                PumpResult::NeedMore => (),
+                PumpResult::Ended => panic!("no decoded frame"),
+            }
+        }
+    }
+
     fn fixtures() -> PathBuf {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../..")
@@ -810,6 +882,7 @@ mod tests {
     fn pixfmt_constants_match_linked_library() {
         assert_eq!(pix_name(AV_PIX_FMT_YUV420P), "yuv420p");
         assert_eq!(pix_name(AV_PIX_FMT_YUV420P10LE), "yuv420p10le");
+        assert_eq!(pix_name(AV_PIX_FMT_P010LE), "p010le");
         assert_eq!(pix_name(AV_PIX_FMT_YUV422P10LE), "yuv422p10le");
         assert_eq!(pix_name(AV_PIX_FMT_YUV444P10LE), "yuv444p10le");
         assert_eq!(pix_name(AV_PIX_FMT_YUV422P), "yuv422p");
@@ -993,6 +1066,9 @@ mod tests {
                 let sw = first.transfer_to_software().expect("transfer works");
                 assert_eq!((sw.width(), sw.height()), (320, 240));
                 assert!(!sw.is_hardware());
+                assert_eq!(sw.color_space(), first.color_space());
+                assert_eq!(sw.color_range(), first.color_range());
+                assert_eq!(sw.geometry(), first.geometry());
                 assert!(sw.plane(0).is_some());
             }
             Err(message) => {

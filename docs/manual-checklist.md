@@ -30,5 +30,14 @@ Owner-run checks before a release and after a platform change. Automated gates a
 | Linux | Keyboard and pointer input reach the OSC; click and drag seek | not run |
 | Linux | ALSA audible on a hardware PCM; channel placement for stereo and 5.1 | not run |
 | Linux | Subtitle shaping and system-font fallback for CJK, Arabic, and Greek | not run |
-| Linux | VA-API decode through the scheduler, including 10-bit HEVC and AV1 and a separate decode GPU, once `PLAY-20` wires it | not run |
+| Linux | VA-API decode through the scheduler, including 10-bit HEVC and AV1 and a separate decode GPU, with negotiated `hwdec-current` | not run |
 | Linux | Tarball runs on a second musl host, if distributed | not run |
+
+Remaining checks for the P1/P2 fixes:
+
+- Listen at 0.5×, 1×, and 2× on CoreAudio and ALSA. Check pitch, artifacts, A/V alignment, paused changes, midstream changes, seeks, and track switches.
+- Check delayed audio starts and midstream gaps audibly against video.
+- Check fresh GUI cover-art audio and video-to-cover transitions on macOS.
+- Check a High 10 or Main 10 gradient, anamorphic content, and a remuxed 90-degree display matrix on both macOS renderers. Verify screenshots as well as the window.
+- Check terminal-launch keyboard focus on Metal and Vulkan. This remains unverified; the owner could not run it during the fix session.
+- Direct VideoToolbox-to-Metal IOSurface presentation remains unimplemented pending a suitable device and performance comparison.

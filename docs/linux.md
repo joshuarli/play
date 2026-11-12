@@ -35,7 +35,7 @@ The runtime's libavutil links `libva.so.2` and `libva-drm.so.2`, so a system als
 
 ## Hardware decode
 
-`player-media` carries VideoToolbox and VA-API decode paths and a software fallback. The scheduler currently opens video decoders in software, so the automated corpus and GUI gates do not depend on a GPU decoder. `--hwdec` values are accepted for compatibility, and `tests/run.sh linux-hwdec-default` checks the default property and the headless software path in the container. A real-GPU VA-API run needs a render node, a VA driver, and a compositor; it is an owner check, not part of `suite`.
+`player-media` carries VideoToolbox and VA-API decode paths and a software fallback. The scheduler forwards validated `--hwdec` requests and reports the negotiated decoder through `hwdec-current`. `no` selects software, `auto` and `auto-safe` request VA-API on Linux, and `vaapi` or `vaapi-copy` requests it explicitly. Device setup failure logs a software fallback, so automated corpus and GUI gates can run without a GPU decoder, and `tests/run.sh linux-hwdec-default` checks the default property and the headless software path in the container. A real-GPU VA-API run needs a render node, a VA driver, and a compositor; it is an owner check, not part of `suite`.
 
 The VA driver comes from the host, the same way the Vulkan ICD does: `mesa-va-gallium` for AMD and Nouveau, `intel-media-driver` for current Intel GPUs, or `libva-intel-driver` for older ones. The two libva libraries are shared because the drivers are dlopened and link libva themselves; the FFmpeg runtime's libavutil loads them.
 

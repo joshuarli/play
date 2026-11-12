@@ -387,6 +387,10 @@ where
         &mut self.audio_out
     }
 
+    pub(crate) fn video_decoder(&self) -> &V {
+        &self.video
+    }
+
     pub fn video_output(&self) -> &VO {
         &self.video_out
     }

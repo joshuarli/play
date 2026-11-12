@@ -5,7 +5,7 @@ use player_media::{
     AVCOL_SPC_BT2020_NCL, AVCOL_SPC_BT470BG, AVCOL_SPC_BT709, AVCOL_SPC_SMPTE170M,
     AVCOL_SPC_UNSPECIFIED, AV_PIX_FMT_NV12, AV_PIX_FMT_NV21, AV_PIX_FMT_RGB24, AV_PIX_FMT_RGBA,
     AV_PIX_FMT_YUV420P, AV_PIX_FMT_YUV422P, AV_PIX_FMT_YUV444P,
-    AV_PIX_FMT_YUV420P10LE, AV_PIX_FMT_YUV422P10LE, AV_PIX_FMT_YUV444P10LE,
+    AV_PIX_FMT_YUV420P10LE, AV_PIX_FMT_YUV422P10LE, AV_PIX_FMT_YUV444P10LE, AV_PIX_FMT_P010LE,
 };
 use player_output::{
     ColorSpec, PixelLayout, Plane, PL_COLOR_LEVELS_FULL,
@@ -27,16 +27,19 @@ pub struct PresentedFrame {
     pub color: ColorSpec,
     pub width: u32,
     pub height: u32,
+    pub geometry: player_output::VideoGeometry,
 }
 
 impl PresentedFrame {
     pub fn from_frame(frame: VideoFrame, pts: f64, id: u64) -> Result<Self, String> {
+        let metadata = frame.geometry();
+        let geometry = player_output::VideoGeometry { pixel_aspect: metadata.pixel_aspect, rotation: metadata.rotation };
         let frame = if frame.is_hardware() { frame.transfer_to_software()? } else { frame };
         let layout = layout_of(frame.format())?;
         let width = frame.width().max(0) as u32;
         let height = frame.height().max(0) as u32;
         let color = color_of(frame.color_space(), frame.color_range(), height as i32);
-        Ok(Self { frame, pts, id, layout, color, width, height })
+        Ok(Self { frame, pts, id, layout, color, width, height, geometry })
     }
 
     pub fn planes(&self) -> Result<Vec<Plane<'_>>, String> {
@@ -74,11 +77,7 @@ pub struct EngineVideo {
 }
 
 impl EngineVideo {
-    pub fn open(session: &MediaSession, stream: usize) -> Result<Self, String> {
-        Self::open_with_hw(session, stream, HwRequest::None).map(|(video, _)| video)
-    }
-
-    pub fn open_with_hw(session: &MediaSession, stream: usize, hw: HwRequest) -> Result<(Self, Option<String>), String> {
+    pub fn open(session: &MediaSession, stream: usize, hw: HwRequest) -> Result<(Self, Option<String>), String> {
         let (decoder, fallback) = match VideoSession::open_shared(session, stream, hw) {
             Ok(decoder) => (decoder, None),
             Err(error) if hw != HwRequest::None => {
@@ -318,6 +317,7 @@ fn layout_of(format: i32) -> Result<PixelLayout, String> {
         AV_PIX_FMT_YUV422P | AV_PIX_FMT_YUVJ422P => Ok(PixelLayout::Yuv422),
         AV_PIX_FMT_YUV444P | AV_PIX_FMT_YUVJ444P => Ok(PixelLayout::Yuv444),
         AV_PIX_FMT_NV12 => Ok(PixelLayout::Nv12),
+        AV_PIX_FMT_P010LE => Ok(PixelLayout::P010),
         AV_PIX_FMT_NV21 => Ok(PixelLayout::Nv21),
         AV_PIX_FMT_RGB24 => Ok(PixelLayout::Rgb24),
         AV_PIX_FMT_RGBA => Ok(PixelLayout::Rgba8),
@@ -332,7 +332,7 @@ fn plane_dimensions(layout: PixelLayout, width: i32, height: i32) -> Vec<(i32, i
         PixelLayout::Yuv420 | PixelLayout::Yuv420p10 => vec![(width, height), (half_width, half_height), (half_width, half_height)],
         PixelLayout::Yuv422 | PixelLayout::Yuv422p10 => vec![(width, height), (half_width, height), (half_width, height)],
         PixelLayout::Yuv444 | PixelLayout::Yuv444p10 => vec![(width, height), (width, height), (width, height)],
-        PixelLayout::Nv12 | PixelLayout::Nv21 => vec![(width, height), (half_width, half_height)],
+        PixelLayout::Nv12 | PixelLayout::Nv21 | PixelLayout::P010 => vec![(width, height), (half_width, half_height)],
         PixelLayout::Rgb24 | PixelLayout::Rgba8 => vec![(width, height)],
     }
 }
@@ -405,6 +405,7 @@ mod tests {
                 player_media::PumpResult::Frame(frame) => {
                     assert_eq!(frame.format(), AV_PIX_FMT_YUV420P);
                     return PresentedFrame {
+                        geometry: player_output::VideoGeometry::default(),
                         layout: layout_of(frame.format()).expect("layout"),
                         color: color_of(frame.color_space(), frame.color_range(), frame.height()),
                         width: frame.width() as u32,
@@ -416,6 +417,30 @@ mod tests {
                 }
                 player_media::PumpResult::NeedMore => {}
                 player_media::PumpResult::Ended => panic!("the fixture decoded no frame"),
+            }
+        }
+    }
+
+    #[test]
+    fn presentation_keeps_coded_planes_and_display_geometry() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../player-media/tests/fixtures/geometry-rotated.mp4");
+        let path = path.to_str().unwrap();
+        let session = MediaSession::open(path).unwrap();
+        let stream = session.streams().into_iter().find(|s| s.kind == StreamKind::Video).unwrap();
+        let mut decoder = VideoSession::open(path, stream.index, HwRequest::None).unwrap();
+        loop {
+            match decoder.pump().unwrap() {
+                player_media::PumpResult::Frame(frame) => {
+                    let presented = PresentedFrame::from_frame(frame, 0.0, 0).unwrap();
+                    assert_eq!((presented.width, presented.height), (64, 32));
+                    assert_eq!(presented.geometry.display_size(presented.width, presented.height), (32, 128));
+                    assert_eq!(presented.geometry.rotation, 270);
+                    assert_eq!((presented.planes().unwrap()[0].width, presented.planes().unwrap()[0].height), (64, 32));
+                    break;
+                }
+                player_media::PumpResult::NeedMore => (),
+                player_media::PumpResult::Ended => panic!("no decoded frame"),
             }
         }
     }

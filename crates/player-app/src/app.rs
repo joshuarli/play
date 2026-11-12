@@ -15,7 +15,7 @@ use player_engine::{
     EngineStatus, SchedulerEngine, SeekPrecision as EngineSeek, StartState, TrackKind,
 };
 use player_backend::engine::{EngineBackend, OverlayImage, DEFAULT_OSD_DURATION};
-use player_output::{render_frame, Gpu, GpuApi, Overlay, OverlayRect, Renderer};
+use player_output::{render_frame_with_geometry, Gpu, GpuApi, Overlay, OverlayRect, Renderer};
 use player_tui::{Control, Cover, Player as TuiPlayer, Snapshot, Track};
 
 use crate::ipc::{self, IpcServer};
@@ -302,6 +302,10 @@ impl App {
             )
     }
 
+    pub(crate) fn presented_video_geometry(&self) -> Option<(u32, u32, player_output::VideoGeometry)> {
+        self.last_frame.as_ref().map(|frame| (frame.width, frame.height, frame.geometry))
+    }
+
     fn unload(&mut self) {
         self.shown = 0;
         self.presented_serial = self.frame_serial;
@@ -333,7 +337,7 @@ impl App {
             .iter()
             .any(|stream| stream.kind == player_media::StreamKind::Video);
         let displays_video = probe.displays_video();
-        if displays_video
+        if (displays_video || self.options.gui)
             && !self.gui
             && !self.options.tui
             && !self.options.null_video
@@ -356,6 +360,7 @@ impl App {
             muted: self.options.muted,
             paused: self.options.pause,
             gpu_api: self.options.gpu_api,
+            hwdec: options::hardware_request(&self.options.hwdec)?,
         };
         let engine = if self.options.tui
             || self.options.no_video
@@ -1507,7 +1512,7 @@ impl App {
             .as_mut()
             .expect("the screenshot renderer just opened");
         let frame = self.last_frame.as_ref().expect("checked above");
-        let (width, height) = (frame.width, frame.height);
+        let (width, height) = frame.geometry.display_size(frame.width, frame.height);
         let mut rgba = renderer.render(frame)?;
         if content == ScreenshotContent::Window {
             let backend = self
@@ -2056,14 +2061,16 @@ impl ScreenshotRenderer {
 
     fn render(&mut self, frame: &PresentedFrame) -> Result<Vec<u8>, String> {
         let planes = frame.planes()?;
-        render_frame(
+        let (width, height) = frame.geometry.display_size(frame.width, frame.height);
+        render_frame_with_geometry(
             &self.device,
             &self.renderer,
             frame.layout,
             frame.color,
             &planes,
-            frame.width as i32,
-            frame.height as i32,
+            width as i32,
+            height as i32,
+            frame.geometry,
             None,
         )
     }

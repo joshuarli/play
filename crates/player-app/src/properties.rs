@@ -13,6 +13,7 @@ pub struct Probe {
     pub streams: Vec<StreamInfo>,
     pub format: String,
     pub video_frame_rate: Option<f64>,
+    pub video_geometry: player_media::VideoGeometry,
 }
 
 impl Probe {
@@ -62,6 +63,8 @@ pub fn probe(path: &str) -> Result<Probe, String> {
         .to_ascii_lowercase();
     let streams = session.streams();
     let video_frame_rate = session.video_frame_rate();
+    let video_geometry = streams.iter().find(|stream| stream.kind == StreamKind::Video)
+        .map(|stream| session.video_geometry(stream.index)).unwrap_or_default();
     if matches!(format.as_str(), "mp3" | "ogg" | "m4a") {
         for stream in &streams {
             if stream.kind != StreamKind::Audio {
@@ -88,6 +91,7 @@ pub fn probe(path: &str) -> Result<Probe, String> {
         streams,
         format,
         video_frame_rate,
+        video_geometry,
     })
 }
 
@@ -131,7 +135,7 @@ pub fn get(app: &App, name: &str) -> Result<NativeValue, String> {
         )),
         "video-format" => Ok(NativeValue::String("yuv420p".to_owned())),
         "audio-format" => Ok(NativeValue::String("floatp".to_owned())),
-        "video-out-params" => Ok(video_params(&app.probe)),
+        "video-out-params" => Ok(video_params(&app.probe, app.presented_video_geometry())),
         "audio-out-params" => Ok(audio_params(&app.probe)),
         "idle-active" => Ok(NativeValue::Bool(app.backend.is_none())),
         "core-idle" => Ok(NativeValue::Bool(app.backend.is_none())),
@@ -183,7 +187,7 @@ pub fn get(app: &App, name: &str) -> Result<NativeValue, String> {
         "audio-codec" => Ok(NativeValue::String(codec(&app.probe, StreamKind::Audio))),
         "width" => Ok(NativeValue::Int(video_dimension(&app.probe, 0))),
         "height" => Ok(NativeValue::Int(video_dimension(&app.probe, 1))),
-        "video-params" => Ok(video_params(&app.probe)),
+        "video-params" => Ok(video_params(&app.probe, app.presented_video_geometry())),
         "audio-params" => Ok(audio_params(&app.probe)),
         "file-format" => Ok(NativeValue::String(
             app.probe.as_ref().map(|probe| probe.format.clone()).unwrap_or_default(),
@@ -247,7 +251,11 @@ pub fn get(app: &App, name: &str) -> Result<NativeValue, String> {
         "hwdec" => Ok(NativeValue::Array(vec![NativeValue::String(
             app.options.hwdec.clone(),
         )])),
-        "hwdec-current" => Ok(NativeValue::String("no".to_owned())),
+        "hwdec-current" => Ok(NativeValue::String(match status.hardware_decoder {
+            Some(player_media::HwRequest::VideoToolbox) => "videotoolbox",
+            Some(player_media::HwRequest::VaApi) => "vaapi",
+            Some(player_media::HwRequest::None) | None => "no",
+        }.to_owned())),
         "hwdec-software-fallback" => Ok(NativeValue::String("yes".to_owned())),
         "seekable" => Ok(NativeValue::Bool(true)),
         "partially-seekable" => Ok(NativeValue::Bool(false)),
@@ -704,20 +712,31 @@ fn video_dimension(probe: &Option<Probe>, axis: usize) -> i64 {
         .unwrap_or(0)
 }
 
-fn video_params(probe: &Option<Probe>) -> NativeValue {
+fn video_params(probe: &Option<Probe>, presented: Option<(u32, u32, player_output::VideoGeometry)>) -> NativeValue {
     let Some(stream) = probe
         .as_ref()
         .and_then(|probe| probe.streams.iter().find(|stream| stream.kind == StreamKind::Video))
     else {
         return NativeValue::Map(Vec::new());
     };
-    let width = stream.width.max(0) as i64;
-    let height = stream.height.max(0) as i64;
-    let aspect = if height > 0 {
-        ((width as f64 / height as f64) * 100.0).round() / 100.0
+    let (width, height, geometry) = if let Some((width, height, geometry)) = presented {
+        (width as i64, height as i64, geometry)
+    } else {
+        let metadata = probe.as_ref().expect("stream belongs to probe").video_geometry;
+        (stream.width.max(0) as i64, stream.height.max(0) as i64,
+            player_output::VideoGeometry { pixel_aspect: metadata.pixel_aspect, rotation: metadata.rotation })
+    };
+    let display_width = (width as f64 * geometry.pixel_aspect).round() as i64;
+    let (dw, dh) = if geometry.rotation == 90 || geometry.rotation == 270 {
+        (height, display_width)
+    } else { (display_width, height) };
+    let aspect = if dh > 0 {
+        ((dw as f64 / dh as f64) * 100.0).round() / 100.0
     } else {
         0.0
     };
+    let sar = if height > 0 { ((width as f64 / height as f64) * 100.0).round() / 100.0 } else { 0.0 };
+    let sar_name = if (sar - 1.0).abs() < 0.01 { "Square" } else if (sar - 4.0 / 3.0).abs() < 0.01 { "4:3" } else { "other" };
     let aspect_name = if (aspect - 1.0).abs() < 0.01 {
         "Square"
     } else if (aspect - 4.0 / 3.0).abs() < 0.01 {
@@ -748,16 +767,16 @@ fn video_params(probe: &Option<Probe>) -> NativeValue {
     NativeValue::Map(vec![
         ("w".to_owned(), NativeValue::Int(width)),
         ("h".to_owned(), NativeValue::Int(height)),
-        ("dw".to_owned(), NativeValue::Int(width)),
-        ("dh".to_owned(), NativeValue::Int(height)),
+        ("dw".to_owned(), NativeValue::Int(dw)),
+        ("dh".to_owned(), NativeValue::Int(dh)),
         ("crop-x".to_owned(), NativeValue::Int(0)),
         ("crop-y".to_owned(), NativeValue::Int(0)),
         ("crop-w".to_owned(), NativeValue::Int(width)),
         ("crop-h".to_owned(), NativeValue::Int(height)),
         ("pixelformat".to_owned(), NativeValue::String(pixelformat.to_owned())),
-        ("par".to_owned(), NativeValue::Double(1.0)),
-        ("sar".to_owned(), NativeValue::Double(aspect)),
-        ("sar-name".to_owned(), NativeValue::String(aspect_name.to_owned())),
+        ("par".to_owned(), NativeValue::Double(geometry.pixel_aspect)),
+        ("sar".to_owned(), NativeValue::Double(sar)),
+        ("sar-name".to_owned(), NativeValue::String(sar_name.to_owned())),
         ("aspect".to_owned(), NativeValue::Double(aspect)),
         ("aspect-name".to_owned(), NativeValue::String(aspect_name.to_owned())),
         ("colormatrix".to_owned(), NativeValue::String(colormatrix.to_owned())),
@@ -769,7 +788,7 @@ fn video_params(probe: &Option<Probe>) -> NativeValue {
         ("stereo-in".to_owned(), NativeValue::String("mono".to_owned())),
         ("average-bpp".to_owned(), NativeValue::Int(bpp)),
         ("alpha".to_owned(), NativeValue::String("none".to_owned())),
-        ("rotate".to_owned(), NativeValue::Int(0)),
+        ("rotate".to_owned(), NativeValue::Int(geometry.rotation as i64)),
         ("sig-peak".to_owned(), NativeValue::Double(0.0)),
     ])
 }
@@ -887,7 +906,25 @@ mod tests {
             streams: Vec::new(),
             format: "mp4".to_owned(),
             video_frame_rate,
+            video_geometry: player_media::VideoGeometry::default(),
         }
+    }
+
+    #[test]
+    fn video_params_report_coded_and_rotated_display_geometry() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../player-media/tests/fixtures/geometry-rotated.mp4");
+        let probe = Some(super::probe(path.to_str().unwrap()).unwrap());
+        let NativeValue::Map(values) = video_params(&probe, None) else { panic!("map") };
+        let value = |key: &str| values.iter().find(|(name, _)| name == key).map(|(_, value)| value).unwrap();
+        assert_eq!(value("w"), &NativeValue::Int(64));
+        assert_eq!(value("h"), &NativeValue::Int(32));
+        assert_eq!(value("dw"), &NativeValue::Int(32));
+        assert_eq!(value("dh"), &NativeValue::Int(128));
+        assert_eq!(value("par"), &NativeValue::Double(2.0));
+        assert_eq!(value("sar"), &NativeValue::Double(2.0));
+        assert_eq!(value("aspect"), &NativeValue::Double(0.25));
+        assert_eq!(value("rotate"), &NativeValue::Int(270));
     }
 
     #[test]

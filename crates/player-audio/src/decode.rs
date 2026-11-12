@@ -193,7 +193,7 @@ mod tests {
 
     fn pcm_info(time_base: (i32, i32)) -> StreamInfo {
         StreamInfo {
-            index: 0, kind: StreamKind::Audio, codec_name: "pcm_s16le".to_string(),
+            index: 0, kind: StreamKind::Audio, codec_name: "pcm_s16le".to_string(), profile: -99,
             width: 0, height: 0, sample_rate: 44_100, channels: 1, time_base,
             duration_seconds: None, extradata: Vec::new(), channel_mask: 0,
             attached: false, default: false, forced: false, language: None, title: None,

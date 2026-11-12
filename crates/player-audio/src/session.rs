@@ -14,6 +14,9 @@ use symphonia::core::errors::Error as CodecError;
 use symphonia::core::packet::Packet;
 use symphonia::core::units::{Duration, Timestamp};
 
+const AAC_HE_PROFILE: i32 = 4;
+const AAC_HE_V2_PROFILE: i32 = 28;
+
 pub struct DecodedAudio {
     pub sample_rate: u32,
     pub channels: Channels,
@@ -22,10 +25,27 @@ pub struct DecodedAudio {
 }
 
 pub struct DecoderSession {
-    decoder: Box<dyn AudioDecoder>,
+    decoder: PacketCodec,
     stream_index: usize,
     time_base: (i32, i32),
     cursor: Option<u64>,
+}
+
+enum PacketCodec {
+    Symphonia(Box<dyn AudioDecoder>),
+    HighEfficiency {
+        decoder: rusty_aac::AacDecoder,
+        configuration: Vec<u8>,
+        channels: Channels,
+    },
+}
+
+fn open_he_aac(configuration: &[u8]) -> Result<rusty_aac::AacDecoder, String> {
+    if configuration.is_empty() {
+        Ok(rusty_aac::AacDecoder::new())
+    } else {
+        rusty_aac::AacDecoder::with_config_bytes(configuration).map_err(|error| error.to_string())
+    }
 }
 
 fn codec_id_for_name(name: &str) -> Option<AudioCodecId> {
@@ -80,9 +100,17 @@ impl DecoderSession {
         if !stream.extradata.is_empty() {
             params.with_extra_data(stream.extradata.clone().into_boxed_slice());
         }
-        let decoder = symphonia::default::get_codecs()
-            .make_audio_decoder(&params, &AudioDecoderOptions::default())
-            .map_err(|err| err.to_string())?;
+        let decoder = if stream.codec_name == "aac" && matches!(stream.profile, AAC_HE_PROFILE | AAC_HE_V2_PROFILE) {
+            PacketCodec::HighEfficiency {
+                decoder: open_he_aac(&stream.extradata)?,
+                configuration: stream.extradata.clone(),
+                channels: params.channels.clone().ok_or("HE-AAC stream has no channel layout")?,
+            }
+        } else {
+            PacketCodec::Symphonia(symphonia::default::get_codecs()
+                .make_audio_decoder(&params, &AudioDecoderOptions::default())
+                .map_err(|err| err.to_string())?)
+        };
         Ok(DecoderSession {
             decoder,
             stream_index: stream.index,
@@ -100,7 +128,12 @@ impl DecoderSession {
     }
 
     pub fn reset(&mut self) {
-        self.decoder.reset();
+        match &mut self.decoder {
+            PacketCodec::Symphonia(decoder) => decoder.reset(),
+            PacketCodec::HighEfficiency { decoder, configuration, .. } => {
+                *decoder = open_he_aac(configuration).expect("the validated HE-AAC configuration still parses");
+            }
+        }
         self.cursor = None;
     }
 
@@ -111,23 +144,39 @@ impl DecoderSession {
         let to_ticks = |seconds: f64| (seconds * den as f64 / num as f64).round().max(0.0) as u64;
         let timestamp = packet.pts_seconds.map(to_ticks).or(self.cursor).unwrap_or(0);
         let duration = packet.duration_seconds.map(to_ticks).unwrap_or(0);
-        let packet = Packet::new(
-            1,
-            Timestamp::from(timestamp.min(i64::MAX as u64) as i64),
-            Duration::from(duration),
-            packet.data.clone(),
-        );
-        let decoded = match self.decoder.decode(&packet) {
-            Ok(decoded) => Ok(interleaved(&decoded)),
-            Err(CodecError::ResetRequired) => {
-                self.decoder.reset();
-                self.decoder
-                    .decode(&packet)
-                    .map_err(|err| err.to_string())
-                    .map(|decoded| interleaved(&decoded))
+        let decoded = match &mut self.decoder {
+            PacketCodec::HighEfficiency { decoder, channels, .. } => {
+                let audio = decoder.decode(&packet.data, Some(timestamp.min(i64::MAX as u64) as i64))
+                    .map_err(|error| error.to_string())?;
+                if audio.channels as usize != channels.count() {
+                    return Err("HE-AAC output channel layout changed".to_owned());
+                }
+                DecodedAudio {
+                    sample_rate: audio.sample_rate,
+                    channels: channels.clone(),
+                    frames: audio.frames(),
+                    pcm: audio.samples,
+                }
             }
-            Err(err) => Err(err.to_string()),
-        }?;
+            PacketCodec::Symphonia(decoder) => {
+                let packet = Packet::new(
+                    1,
+                    Timestamp::from(timestamp.min(i64::MAX as u64) as i64),
+                    Duration::from(duration),
+                    packet.data.clone(),
+                );
+                match decoder.decode(&packet) {
+                    Ok(decoded) => Ok(interleaved(&decoded)),
+                    Err(CodecError::ResetRequired) => {
+                        decoder.reset();
+                        decoder.decode(&packet)
+                            .map_err(|err| err.to_string())
+                            .map(|decoded| interleaved(&decoded))
+                    }
+                    Err(err) => Err(err.to_string()),
+                }?
+            }
+        };
         if decoded.sample_rate > 0 {
             let advance =
                 decoded.frames as u64 * den as u64 / decoded.sample_rate as u64;
@@ -221,7 +270,7 @@ mod tests {
         let stream = StreamInfo {
             index: 0,
             kind: StreamKind::Audio,
-            codec_name: "ac3".to_string(),
+            codec_name: "ac3".to_string(), profile: -99,
             width: 0,
             height: 0,
             sample_rate: 48000,
@@ -368,5 +417,67 @@ mod tests {
         assert!(packet.stream_index == info.index);
         let decoded = second.decode(&packet).expect("independent session decodes");
         assert!(decoded.frames > 0);
+    }
+}
+
+#[cfg(test)]
+mod he_aac_tests {
+    use super::*;
+    use player_media::MediaSession;
+
+    fn explicit_configuration(ps: bool) -> Vec<u8> {
+        let fields = [(if ps { 29u32 } else { 5 }, 5), (6, 4),
+            (if ps { 1 } else { 2 }, 4), (3, 4), (2, 5), (0, 3)];
+        let mut bits = Vec::new();
+        for (value, count) in fields {
+            for bit in (0..count).rev() { bits.push(((value >> bit) & 1) as u8); }
+        }
+        bits.resize(bits.len().div_ceil(8) * 8, 0);
+        bits.chunks_exact(8).map(|byte| byte.iter().fold(0u8, |value, bit| (value << 1) | bit)).collect()
+    }
+
+    #[test]
+    fn explicit_and_implicit_he_aac_match_reference_bandwidth_and_stereo() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+        for (name, ps) in [("he-aac", false), ("he-aac-v2", true)] {
+            let mut media = MediaSession::open(root.join(format!("{name}.m4a")).to_str().unwrap()).unwrap();
+            let stream = media.streams().into_iter().find(|s| s.kind == StreamKind::Audio).unwrap();
+            assert_eq!(stream.profile, if ps { 28 } else { 4 });
+            let mut packets = Vec::new();
+            while let Ok(packet) = media.read_packet() {
+                if packet.stream_index == stream.index { packets.push(packet); }
+            }
+            let bytes = std::fs::read(root.join(format!("{name}-reference.f32"))).unwrap();
+            let reference: Vec<_> = bytes.chunks_exact(4).map(|bytes| f32::from_le_bytes(bytes.try_into().unwrap())).collect();
+            for explicit in [false, true] {
+                let mut info = stream.clone();
+                if explicit { info.extradata = explicit_configuration(ps); }
+                let mut decoder = DecoderSession::open(&info).unwrap();
+                assert!(matches!(decoder.decoder, PacketCodec::HighEfficiency { .. }));
+                let mut previous = None;
+                for _ in 0..2 {
+                    let mut pcm = Vec::new();
+                    for packet in &packets {
+                        let decoded = decoder.decode(packet).unwrap();
+                        assert_eq!(decoded.sample_rate, 48_000);
+                        assert_eq!(decoded.channels.count(), 2);
+                        pcm.extend(decoded.pcm);
+                    }
+                    if let Some(previous) = previous { assert_eq!(pcm, previous); }
+                    let output = &pcm[2112 * 2..2112 * 2 + reference.len()];
+                    let signal = reference.iter().map(|x| (*x as f64).powi(2)).sum::<f64>();
+                    let error = output.iter().zip(&reference).map(|(a,b)| (*a as f64 - *b as f64).powi(2)).sum::<f64>();
+                    assert!((error / signal).sqrt() < 0.0001, "{name}, explicit={explicit}");
+                    let left: Vec<_> = output.iter().step_by(2).copied().collect();
+                    let power = left.iter().map(|x| (*x as f64).powi(2)).sum::<f64>();
+                    let high_band = left.windows(2).map(|w| (w[1] as f64 - w[0] as f64).powi(2)).sum::<f64>();
+                    let stereo = output.chunks_exact(2).map(|frame| (frame[0] as f64 - frame[1] as f64).powi(2)).sum::<f64>();
+                    assert!(high_band / power > 0.1, "{name}: high frequencies lost");
+                    assert!(stereo / power > 0.5, "{name}: stereo collapsed");
+                    previous = Some(pcm);
+                    decoder.reset();
+                }
+            }
+        }
     }
 }
