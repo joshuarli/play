@@ -3,11 +3,11 @@
   "repository": "laputa-systems/ffmpeg-build",
   "profile": "runtime",
   "ffmpeg": "9.0.2",
-  "release": "20261107",
+  "release": "release-ac29c7720327f7dee4ed4677ce8421673fcc3563",
   "libraries": ["libavformat", "libavcodec", "libswscale", "libavutil"],
   "sha256": {
-    "aarch64-apple-darwin": "85482b29e3bd23ca643aabdc4faef19866e4323f428740ed25e877e53e7b278e",
-    "aarch64-unknown-linux-musl": "a90941ad4796207935d5aa2c176d38bb7906cdcbfecf4b5c265faf533b6c5f2c",
-    "x86_64-unknown-linux-musl": "dbcb49886d4295f48f69132b2a111687155437a5d091f6b70d5e2286680a1998"
+    "aarch64-apple-darwin": "380471e07416eb636836d8428e8b2c6bf8052b8df030cff85e4008ccab70369d",
+    "aarch64-unknown-linux-musl": "db6364f646b763a7fe2560d38b29e985232c3925ab48347d3a4fa39a94b86549",
+    "x86_64-unknown-linux-musl": "9b917fe0939b31430a338b12033d80bac3d32b62777f26ffe44d4a71fc850e65"
   }
 }

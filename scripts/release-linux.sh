@@ -19,6 +19,7 @@ runtime_packages=$(apk list -I 2>/dev/null |
 }
 
 runtime=$(python3 -c 'import json, sys; pin = json.load(open(sys.argv[1])); print(pin["ffmpeg"] + "+" + pin["release"])' "$ROOT/ffmpeg-runtime.lock.json")
+ffmpeg=${runtime%%+*}
 
 rm -rf "$STAGE"
 mkdir -p "$STAGE"
@@ -31,7 +32,7 @@ audio. It links the shared FFmpeg runtime from laputa-systems/ffmpeg-build:
 
 FFmpeg runtime: $runtime
 
-Install it from ffmpeg-$runtime-x86_64-unknown-linux-musl-runtime.tar.gz
+Install it from ffmpeg-runtime-$ffmpeg-x86_64-unknown-linux-musl.tar.xz
 and put player in a bin/ directory whose sibling lib/ holds that runtime's
 lib/ (the runtime's own bin/, or a prefix where lib links to it) that also
 holds librust_fontconfig.so.5.0.2, built from laputa-systems/rust-fontconfig

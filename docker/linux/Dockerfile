@@ -13,11 +13,11 @@ RUN apk add --no-cache \
         font-noto font-noto-arabic font-noto-hebrew font-noto-devanagari font-noto-thai \
         font-noto-cjk font-noto-emoji
 
-RUN archive=ffmpeg-9.0.2+20261111-x86_64-unknown-linux-musl-fixtures.tar.gz \
- && curl -fsSL --retry 3 "https://github.com/laputa-systems/ffmpeg-build/releases/download/20261111/$archive" -o "/tmp/$archive" \
- && echo "f631494ee9620c4dd014e30f0bb329479b29f9e4ec958ddf6849eb41ca838683  /tmp/$archive" | sha256sum -c - \
+RUN archive=ffmpeg-fixtures-9.0.2-x86_64-unknown-linux-musl.tar.xz \
+ && curl -fsSL --retry 3 "https://github.com/laputa-systems/ffmpeg-build/releases/download/release-ac29c7720327f7dee4ed4677ce8421673fcc3563/$archive" -o "/tmp/$archive" \
+ && echo "87e2bab4b54d2454ff34b9ac501cb2a4b53a2c7744538b46b114322db2f273d9  /tmp/$archive" | sha256sum -c - \
  && mkdir -p /opt/ffmpeg-fixtures \
- && tar -xzf "/tmp/$archive" -C /opt/ffmpeg-fixtures --strip-components=1 \
+ && tar -xJf "/tmp/$archive" -C /opt/ffmpeg-fixtures --strip-components=1 \
  && rm "/tmp/$archive"
 
 ENV RUSTUP_HOME=/opt/rustup CARGO_HOME=/opt/cargo PATH=/opt/ffmpeg-fixtures/bin:/opt/cargo/bin:$PATH
