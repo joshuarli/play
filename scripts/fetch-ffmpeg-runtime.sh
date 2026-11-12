@@ -22,7 +22,11 @@ pin = json.load(open(sys.argv[1]))
 target, field = sys.argv[2], sys.argv[3]
 if pin.get("contract") != 2 or pin.get("profile") != "runtime":
     sys.exit("error: ffmpeg-runtime.lock.json must be contract 2, profile runtime")
-archive = f"ffmpeg-{pin['ffmpeg']}+{pin['release']}-{target}-runtime.tar.gz"
+prefix = "release-"
+commit = pin["release"].removeprefix(prefix)
+if commit == pin["release"] or len(commit) != 40 or commit.strip("0123456789abcdef"):
+    sys.exit("error: ffmpeg-runtime.lock.json release must be release-<40 hex commit>")
+archive = f"ffmpeg-runtime-{pin['ffmpeg']}-{target}.tar.xz"
 if field == "archive":
     print(archive)
 elif field == "sha256":
@@ -48,8 +52,8 @@ want = {
     ("profile",): "runtime",
     ("target",): target,
     ("sources", "ffmpeg", "version"): pin["ffmpeg"],
-    ("release", "tag"): pin["release"],
-    ("release", "archive"): f"ffmpeg-{pin['ffmpeg']}+{pin['release']}-{target}-runtime.tar.gz",
+    ("producer", "commit"): pin["release"].removeprefix("release-"),
+    ("release", "archive"): f"ffmpeg-runtime-{pin['ffmpeg']}-{target}.tar.xz",
 }
 for keys, value in want.items():
     found = manifest
@@ -90,7 +94,7 @@ if [ -n "$local_archive" ]; then
 else
     archive="$CACHE/$asset"
     if [ ! -f "$archive" ] || [ "$(sha256 "$archive")" != "$expected" ]; then
-        url="https://github.com/$repository/releases/download/$release/${asset//+/%2B}"
+        url="https://github.com/$repository/releases/download/$release/$asset"
         printf 'download %s\n' "$url"
         curl -fsSL --retry 3 "$url" -o "$archive.part"
         mv "$archive.part" "$archive"
@@ -103,11 +107,11 @@ if [ "$actual" != "$expected" ]; then
     exit 1
 fi
 
-root=${asset%.tar.gz}
+root=${asset%.tar.xz}
 staging="$CACHE/extract-$target"
 rm -rf "$staging"
 mkdir -p "$staging"
-tar -xzf "$archive" -C "$staging"
+tar -xJf "$archive" -C "$staging"
 entries=$(cd "$staging" && printf '%s\n' *)
 [ "$entries" = "$root" ] || {
     printf 'error: %s does not contain exactly %s/\n' "$asset" "$root" >&2

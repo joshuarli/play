@@ -12,7 +12,7 @@ Player links the shared FFmpeg runtime from `laputa-systems/ffmpeg-build` (profi
   "repository": "laputa-systems/ffmpeg-build",
   "profile": "runtime",
   "ffmpeg": "9.0.2",
-  "release": "<producer tag>",
+  "release": "release-<producer commit>",
   "libraries": ["libavformat", "libavcodec", "libswscale", "libavutil"],
   "sha256": {
     "aarch64-apple-darwin": "<sha256 of the archive>",
@@ -21,7 +21,7 @@ Player links the shared FFmpeg runtime from `laputa-systems/ffmpeg-build` (profi
 }
 ```
 
-The runtime release is `<ffmpeg>+<release>`, such as `9.0.2+20261107`. The archive for a target is `ffmpeg-<ffmpeg>+<release>-<target>-runtime.tar.gz`, derived from those two fields; the pin stores only its digest. `libraries` is the set Player links; each must appear in the runtime manifest's `libraries` with a SONAME (Linux) or install name (macOS). An installer keeps exactly this release installed for Player, beside any newer ones, and reads it from the pin at the Player release tag, from `FFmpeg runtime:` in the Linux tarball's README, or from `PlayerFFmpegRuntime` in `Player.app/Contents/Info.plist`.
+`release` is the producer's tag, `release-` followed by the 40-character commit that built the release. The runtime release is `<ffmpeg>+<release>`, such as `9.0.2+release-ac29c7720327f7dee4ed4677ce8421673fcc3563`. The archive for a target is `ffmpeg-runtime-<ffmpeg>-<target>.tar.xz`, derived from `ffmpeg` and the target; the pin stores only its digest, which is the archive's line in the release's `SHA256SUMS`. `libraries` is the set Player links; each must appear in the runtime manifest's `libraries` with a SONAME (Linux) or install name (macOS). An installer keeps exactly this release installed for Player, beside any newer ones, and reads it from the pin at the Player release tag, from `FFmpeg runtime:` in the Linux tarball's README, or from `PlayerFFmpegRuntime` in `Player.app/Contents/Info.plist`.
 
 ## Installed layout
 
@@ -47,12 +47,12 @@ scripts/fetch-ffmpeg-runtime.sh aarch64-apple-darwin
 scripts/linux-container.sh scripts/fetch-ffmpeg-runtime.sh x86_64-unknown-linux-musl
 ```
 
-The script downloads the pinned archive from the producer's GitHub release into `.work/tmp/ffmpeg-runtime`, or takes a local archive given as the second argument, and verifies its SHA-256 against the pin either way. The archive must contain exactly one directory named after it, and its `share/ffmpeg-build/manifest.json` must agree with the pin on profile, target, FFmpeg version, release tag, archive name, and libraries. Only then does the script move it to `.work/deps/ffmpeg-runtime/<target>`. A prefix whose manifest already matches the pin is reused unless an archive is given. `scripts/build.sh`, `scripts/release.sh`, and `scripts/build-linux.sh` call the script, so a normal build fetches on first use.
+The script downloads the pinned archive from the producer's GitHub release into `.work/tmp/ffmpeg-runtime`, or takes a local archive given as the second argument, and verifies its SHA-256 against the pin either way. The archive must contain exactly one directory named after it, and its `share/ffmpeg-build/manifest.json` must agree with the pin on profile, target, FFmpeg version, producer commit, archive name, and libraries. Only then does the script move it to `.work/deps/ffmpeg-runtime/<target>`. A prefix whose manifest already matches the pin is reused unless an archive is given. `scripts/build.sh`, `scripts/release.sh`, and `scripts/build-linux.sh` call the script, so a normal build fetches on first use.
 
-To build against an unpublished runtime, package it in the producer with the tag the pin names (`python3 build.py package --target <target> --profile runtime --tag local`), set that target's `sha256`, and pass the archive once:
+To build against an unpublished runtime, build and package it in the producer (`make build package TARGET=<target>`), set `release` to `release-` followed by the producer's `git rev-parse HEAD`, set that target's `sha256`, and pass the archive once:
 
 ```sh
-scripts/fetch-ffmpeg-runtime.sh x86_64-unknown-linux-musl ../ffmpeg-build/dist/ffmpeg-9.0.2+local-x86_64-unknown-linux-musl-runtime.tar.gz
+scripts/fetch-ffmpeg-runtime.sh x86_64-unknown-linux-musl ../ffmpeg-build/dist/ffmpeg-runtime-9.0.2-x86_64-unknown-linux-musl.tar.xz
 ```
 
 ## Link
@@ -71,7 +71,7 @@ Development and release trees use the installed layout. On Linux `scripts/instal
 
 `tests/run.sh ffmpeg-audit` (`scripts/ffmpeg-manifest.sh --check [manifest.json]`) reads the runtime manifest, by default from `.work/deps/ffmpeg-runtime/<target>`. It checks Player's contract, not the producer's component allowlist:
 
-- the profile is `runtime`, the target is the Rust target, FFmpeg is the pinned 9.0.2, and the release tag matches the pin;
+- the profile is `runtime`, the target is the Rust target, FFmpeg is the pinned 9.0.2, and the producer commit matches the pin;
 - no output devices and no input device but `lavfi` (in `libavdevice`, which Player does not link); every protocol is local (`file`, `pipe`, or `fd`), none is a network scheme from `scripts/network-schemes.txt`, and `--disable-network` is configured;
 - each pinned library carries its SONAME or install name;
 - the required playback demuxers (`mov`, `matroska`, `avi`, `mp3`, `flac`, `wav`, `ogg`) and decoders (`h264`, `hevc`, `libdav1d`, `vp9`, `mpeg4`, `png`, `mjpeg`) are present. macOS also needs the VideoToolbox hwaccels. Linux needs the native `av1` decoder and the VA-API hwaccels;
