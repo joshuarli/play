@@ -3,24 +3,13 @@ use crate::{Instance, Surface};
 use core::ffi::{c_int, c_void};
 use std::ffi::CStr;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum GpuApi {
+    #[cfg_attr(not(target_os = "macos"), default)]
     Vulkan,
     #[cfg(target_os = "macos")]
+    #[default]
     Metal,
-}
-
-impl Default for GpuApi {
-    fn default() -> Self {
-        #[cfg(target_os = "macos")]
-        {
-            GpuApi::Metal
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            GpuApi::Vulkan
-        }
-    }
 }
 
 impl GpuApi {

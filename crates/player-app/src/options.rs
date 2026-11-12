@@ -253,10 +253,10 @@ pub fn parse(args: &[String]) -> Result<Options, String> {
             | "audio-channels" | "audio-client-name" | "title"
             | "no-border" | "border" | "autofit" | "force-seekable"
             | "length" | "end" | "ab-loop-a" | "ab-loop-b" | "speed"
-            | "watch-later-directory" | "resume-playback" | "save-position-on-quit" => {
-                if inline.is_none() && needs_value(&name) {
-                    let _ = value(&name)?;
-                }
+            | "watch-later-directory" | "resume-playback" | "save-position-on-quit"
+                if inline.is_none() && needs_value(&name) =>
+            {
+                let _ = value(&name)?;
             }
             _ => {}
         }

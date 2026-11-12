@@ -23,12 +23,11 @@ pub struct PacketDecoder {
 }
 
 fn channels_of(info: &StreamInfo) -> Channels {
-    if info.channel_mask != 0 {
-        if let Some(channels) = symphonia::core::audio::Position::from_bits(info.channel_mask)
+    if info.channel_mask != 0
+        && let Some(channels) = symphonia::core::audio::Position::from_bits(info.channel_mask)
             .map(Channels::Positioned)
-        {
-            return channels;
-        }
+    {
+        return channels;
     }
     Channels::Discrete(info.channels.max(0) as u16)
 }

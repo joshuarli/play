@@ -394,6 +394,13 @@ impl Drop for Backend {
     }
 }
 
+struct ShapeStyle {
+    level: u8,
+    script: u32,
+    weight: Weight,
+    size: f64,
+}
+
 #[derive(Clone)]
 struct Glyph {
     id: u32,
@@ -784,12 +791,10 @@ impl Backend {
         &mut self,
         text: &str,
         range: Range<usize>,
-        level: u8,
-        script: u32,
-        weight: Weight,
-        size: f64,
+        style: ShapeStyle,
         font: usize,
     ) -> Result<Vec<Glyph>, String> {
+        let ShapeStyle { level, script, weight, size } = style;
         let face_id = self.face(font, size)?;
         let mut glyphs = self.shape(text, range.clone(), level, script, face_id);
         let mut at = 0;
@@ -861,10 +866,10 @@ impl Backend {
                 let byte = characters[cursor].0;
                 let cluster = &text[byte..characters.get(stop).map_or(text.len(), |(next, _)| *next)];
                 cursor = stop;
-                if let Some(held) = current.filter(|_| !cluster.contains(EMOJI_PRESENTATION)) {
-                    if self.covers(weight, script, held, cluster)? {
-                        continue;
-                    }
+                if let Some(held) = current.filter(|_| !cluster.contains(EMOJI_PRESENTATION))
+                    && self.covers(weight, script, held, cluster)?
+                {
+                    continue;
                 }
                 let Some(next) = self.pick(weight, cluster, script, None)? else {
                     if current.is_none() {
@@ -872,17 +877,17 @@ impl Backend {
                     }
                     continue;
                 };
-                if let Some(previous) = current {
-                    if byte > sub_start {
-                        subs.push((sub_start..byte, previous));
-                        sub_start = byte;
-                    }
+                if let Some(previous) = current
+                    && byte > sub_start
+                {
+                    subs.push((sub_start..byte, previous));
+                    sub_start = byte;
                 }
                 current = Some(next);
             }
             subs.push((sub_start..item_end, current.unwrap_or(primary)));
             for (range, candidate) in subs {
-                let glyphs = self.shape_with_fallback(text, range.clone(), level, script, weight, size, candidate)?;
+                let glyphs = self.shape_with_fallback(text, range.clone(), ShapeStyle { level, script, weight, size }, candidate)?;
                 units.extend(group_units(glyphs, range, level, segment));
                 segment += 1;
             }
@@ -1158,7 +1163,7 @@ impl Surface {
 
     fn straight(&self) -> Vec<u8> {
         let mut out = vec![0u8; self.premultiplied.len()];
-        for (pixel, target) in self.premultiplied.chunks_exact(4).zip(out.chunks_exact_mut(4)) {
+        for (pixel, target) in self.premultiplied.as_chunks::<4>().0.iter().zip(out.as_chunks_mut::<4>().0.iter_mut()) {
             let alpha = pixel[3];
             if alpha <= 0.0 {
                 continue;

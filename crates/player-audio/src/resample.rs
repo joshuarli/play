@@ -48,7 +48,7 @@ impl Resampler {
     }
 
     pub fn push(&mut self, input: &[f32], output: &mut Vec<f32>) -> Result<(), String> {
-        if input.len() % self.channels != 0 {
+        if !input.len().is_multiple_of(self.channels) {
             return Err("resampler input must hold whole frames".to_string());
         }
         if self.is_passthrough() {
@@ -186,7 +186,9 @@ mod tests {
             "rms {level}"
         );
         let crossings = output
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|frame| frame[0])
             .collect::<Vec<_>>()
             .windows(2)

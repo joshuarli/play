@@ -95,7 +95,7 @@ mod tests {
 
     #[test]
     fn encodes_a_png_header_and_payload() {
-        let pixels = vec![0x20, 0x40, 0x60, 0xff].repeat(16);
+        let pixels = [0x20, 0x40, 0x60, 0xff].repeat(16);
         let png = encode_png(&pixels, 4, 4).expect("encode");
         assert!(png.starts_with(&SIGNATURE));
         assert_eq!(&png[12..16], b"IHDR");

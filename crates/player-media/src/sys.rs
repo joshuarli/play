@@ -532,11 +532,15 @@ unsafe extern "C" {
         opts: *mut AvDictionary,
         flags: c_int,
     ) -> c_int;
-    pub fn av_hwdevice_find_type_by_name(name: *const c_char) -> c_int;
     pub fn av_hwframe_transfer_data(dst: *mut AvFrame, src: *const AvFrame, flags: c_int)
     -> c_int;
+    #[cfg(test)]
+    pub fn av_hwdevice_find_type_by_name(name: *const c_char) -> c_int;
+    #[cfg(test)]
     pub fn av_get_pix_fmt_name(pix_fmt: c_int) -> *const c_char;
+    #[cfg(test)]
     pub fn av_color_space_name(space: c_int) -> *const c_char;
+    #[cfg(test)]
     pub fn av_color_range_name(range: c_int) -> *const c_char;
     pub fn av_opt_set_int(
         obj: *mut c_void,

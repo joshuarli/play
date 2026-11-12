@@ -99,6 +99,7 @@ pub enum Emphasis {
 pub struct FrameHeader {
     pub version: MpegVersion,
     pub layer: MpegLayer,
+    #[allow(dead_code)]
     pub bitrate: u32,
     pub sample_rate: u32,
     pub sample_rate_idx: usize,

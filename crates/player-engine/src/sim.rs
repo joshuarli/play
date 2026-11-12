@@ -60,7 +60,7 @@ mod tests {
                 index += 1;
             }
             if reorder_video {
-                for pair in video.chunks_exact_mut(2) {
+                for pair in video.as_chunks_mut::<2>().0.iter_mut() {
                     pair.swap(0, 1);
                 }
             }
@@ -356,7 +356,7 @@ mod tests {
 
         fn finish(&mut self) -> Result<Vec<DecodedFrame>, String> {
             self.buffer.sort_by(|a, b| a.total_cmp(b));
-            let all: Vec<f64> = self.buffer.drain(..).collect();
+            let all: Vec<f64> = std::mem::take(&mut self.buffer);
             {
                 let mut storage = self.storage.borrow_mut();
                 for pts in all {
@@ -576,11 +576,7 @@ mod tests {
                 ) {
                     break;
                 }
-                if self.sim.audio_output().log.is_empty() {
-                    run.audio_started = false;
-                } else {
-                    run.audio_started = true;
-                }
+                run.audio_started = !self.sim.audio_output().log.is_empty();
                 if run.audio_started
                     && matches!(self.sim.state(), State::Playing)
                     && self.sim.audio_output().queued_seconds() <= 0.0
@@ -1142,8 +1138,11 @@ mod tests {
         let segments = &h.sim.audio_output().segments;
         let mut runs: Vec<(usize, bool)> = Vec::new();
         for &(frames, silent) in segments {
-            if let Some(last) = runs.last_mut() {
-                if last.1 == silent { last.0 += frames; continue; }
+            if let Some(last) = runs.last_mut()
+                && last.1 == silent
+            {
+                last.0 += frames;
+                continue;
             }
             runs.push((frames, silent));
         }

@@ -84,40 +84,53 @@ impl VideoGeometry {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct FrameSpec {
+    pub layout: PixelLayout,
+    pub color: ColorSpec,
+    pub geometry: VideoGeometry,
+}
+
+impl FrameSpec {
+    pub fn new(layout: PixelLayout, color: ColorSpec) -> Self {
+        Self { layout, color, geometry: VideoGeometry::default() }
+    }
+
+    pub fn with_geometry(self, geometry: VideoGeometry) -> Self {
+        Self { geometry, ..self }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct RenderTarget {
+    pub tex: sys::PlTex,
+    pub width: c_int,
+    pub height: c_int,
+    pub flipped: bool,
+}
+
 pub fn render_frame(
     gpu: &Gpu,
     renderer: &Renderer,
-    layout: PixelLayout,
-    color: ColorSpec,
+    spec: FrameSpec,
     planes: &[Plane<'_>],
-    width: c_int,
-    height: c_int,
-    overlay: Option<&Overlay>,
-) -> Result<Vec<u8>, String> {
-    render_frame_with_geometry(gpu, renderer, layout, color, planes, width, height, VideoGeometry::default(), overlay)
-}
-
-pub fn render_frame_with_geometry(
-    gpu: &Gpu, renderer: &Renderer, layout: PixelLayout, color: ColorSpec,
-    planes: &[Plane<'_>], width: c_int, height: c_int, geometry: VideoGeometry,
+    (width, height): (c_int, c_int),
     overlay: Option<&Overlay>,
 ) -> Result<Vec<u8>, String> {
     crate::with_autorelease_pool(|| {
-        render_frame_in_pool(gpu, renderer, layout, color, planes, width, height, geometry, overlay)
+        render_frame_in_pool(gpu, renderer, spec, planes, (width, height), overlay)
     })
 }
 
 fn render_frame_in_pool(
     gpu: &Gpu,
     renderer: &Renderer,
-    layout: PixelLayout,
-    color: ColorSpec,
+    spec: FrameSpec,
     planes: &[Plane<'_>],
-    width: c_int,
-    height: c_int,
-    geometry: VideoGeometry,
+    (width, height): (c_int, c_int),
     overlay: Option<&Overlay>,
 ) -> Result<Vec<u8>, String> {
+    let layout = spec.layout;
     let indexed = plane_specs(layout)?;
     if planes.len() != indexed.len() {
         return Err(format!(
@@ -150,14 +163,10 @@ fn render_frame_in_pool(
     let result = render_planes(
         gpu,
         renderer,
-        layout,
-        color,
+        spec,
         &texs,
         (planes[0].width, planes[0].height),
-        target,
-        (width, height),
-        false,
-        geometry,
+        RenderTarget { tex: target, width, height, flipped: false },
         overlay,
     );
     for tex in texs {
@@ -172,24 +181,12 @@ fn render_frame_in_pool(
 pub fn render_to_target(
     gpu: &Gpu,
     renderer: &Renderer,
-    layout: PixelLayout,
-    color: ColorSpec,
+    spec: FrameSpec,
     planes: &[Plane<'_>],
-    target: sys::PlTex,
-    target_width: c_int,
-    target_height: c_int,
-    flipped: bool,
+    target: RenderTarget,
     overlay: Option<&Overlay>,
 ) -> Result<(), String> {
-    render_to_target_with_geometry(gpu, renderer, layout, color, planes, target,
-        target_width, target_height, flipped, VideoGeometry::default(), overlay)
-}
-
-pub fn render_to_target_with_geometry(
-    gpu: &Gpu, renderer: &Renderer, layout: PixelLayout, color: ColorSpec,
-    planes: &[Plane<'_>], target: sys::PlTex, target_width: c_int, target_height: c_int,
-    flipped: bool, geometry: VideoGeometry, overlay: Option<&Overlay>,
-) -> Result<(), String> {
+    let layout = spec.layout;
     let indexed = plane_specs(layout)?;
     if planes.len() != indexed.len() {
         return Err(format!(
@@ -221,19 +218,7 @@ pub fn render_to_target_with_geometry(
         .first()
         .map(|plane| (plane.width, plane.height))
         .ok_or_else(|| "no planes to render".to_string())?;
-    let result = render_planes(
-        gpu,
-        renderer,
-        layout,
-        color,
-        &texs,
-        source,
-        target,
-        (target_width, target_height),
-        flipped,
-        geometry,
-        overlay,
-    );
+    let result = render_planes(gpu, renderer, spec, &texs, source, target, overlay);
     for tex in texs {
         gpu.destroy_tex(tex);
     }
@@ -244,14 +229,11 @@ pub fn render_to_target_with_geometry(
 #[cfg(target_os = "macos")]
 pub fn render_surface_to_target(
     gpu: &Gpu, renderer: &Renderer, surface: &crate::NativeSurface,
-    layout: PixelLayout, color: ColorSpec, source: (i32, i32),
-    target: sys::PlTex, target_size: (i32, i32), flipped: bool,
-    geometry: VideoGeometry, overlay: Option<&Overlay>,
+    spec: FrameSpec, source: (i32, i32), target: RenderTarget, overlay: Option<&Overlay>,
 ) -> Result<bool, String> {
     crate::with_autorelease_pool(|| {
-        let Some(textures) = gpu.import_surface(surface, layout)? else { return Ok(false); };
-        render_planes(gpu, renderer, layout, color, &textures, source, target,
-            target_size, flipped, geometry, overlay)?;
+        let Some(textures) = gpu.import_surface(surface, spec.layout)? else { return Ok(false); };
+        render_planes(gpu, renderer, spec, &textures, source, target, overlay)?;
         Ok(true)
     })
 }
@@ -259,15 +241,14 @@ pub fn render_surface_to_target(
 #[cfg(target_os = "macos")]
 pub fn render_surface_frame(
     gpu: &Gpu, renderer: &Renderer, surface: &crate::NativeSurface,
-    layout: PixelLayout, color: ColorSpec, source: (i32, i32),
-    output: (i32, i32), geometry: VideoGeometry,
+    spec: FrameSpec, source: (i32, i32), output: (i32, i32),
 ) -> Result<Option<Vec<u8>>, String> {
     crate::with_autorelease_pool(|| {
-        let Some(textures) = gpu.import_surface(surface, layout)? else { return Ok(None); };
+        let Some(textures) = gpu.import_surface(surface, spec.layout)? else { return Ok(None); };
         let format = gpu.find_rgba8(sys::PL_FMT_CAP_RENDERABLE)?;
         let target = gpu.create_render_target(output.0, output.1, format)?;
-        let result = render_planes(gpu, renderer, layout, color, &textures, source, target,
-            output, false, geometry, None)
+        let render_target = RenderTarget { tex: target, width: output.0, height: output.1, flipped: false };
+        let result = render_planes(gpu, renderer, spec, &textures, source, render_target, None)
             .and_then(|_| gpu.download(target, output.0, output.1));
         gpu.destroy_tex(target);
         result.map(Some)
@@ -332,16 +313,14 @@ fn validate_planes(layout: PixelLayout, planes: &[Plane<'_>], specs: &[PlaneSpec
 fn render_planes(
     gpu: &Gpu,
     renderer: &Renderer,
-    layout: PixelLayout,
-    color: ColorSpec,
+    spec: FrameSpec,
     texs: &[sys::PlTex],
     (width, height): (c_int, c_int),
-    target: sys::PlTex,
-    (target_width, target_height): (c_int, c_int),
-    flipped: bool,
-    geometry: VideoGeometry,
+    target: RenderTarget,
     overlay: Option<&Overlay>,
 ) -> Result<sys::PlTex, String> {
+    let FrameSpec { layout, color, geometry } = spec;
+    let RenderTarget { tex: target, width: target_width, height: target_height, flipped } = target;
     let specs = plane_specs(layout)?;
     let mut frame = sys::PlFrame {
         num_planes: texs.len() as c_int,
@@ -567,9 +546,10 @@ mod tests {
             }
         }
         let planes = [Plane { data: &pixels, stride: 256, width: 64, height: 32 }];
-        let image = render_frame_with_geometry(&gpu, &renderer, PixelLayout::Rgba8,
-            ColorSpec::bt709_full(), &planes, 32, 128,
-            VideoGeometry { pixel_aspect: 2.0, rotation: 270 }, None).unwrap();
+        let image = render_frame(&gpu, &renderer,
+            FrameSpec::new(PixelLayout::Rgba8, ColorSpec::bt709_full())
+                .with_geometry(VideoGeometry { pixel_aspect: 2.0, rotation: 270 }),
+            &planes, (32, 128), None).unwrap();
         let at = |x: usize, y: usize| &image[(y * 32 + x) * 4..][..3];
         assert!(at(8, 16)[1] > 200 && at(8, 16)[0] < 30, "top left: {:?}", at(8, 16));
         assert!(at(8, 112)[0] > 200 && at(8, 112)[1] < 30, "bottom left: {:?}", at(8, 112));
@@ -628,16 +608,7 @@ mod tests {
                 height: h / 2,
             },
         ];
-        let out = render_frame(
-            &vk,
-            &renderer,
-            PixelLayout::Yuv420,
-            ColorSpec::bt709_full(),
-            &planes,
-            w,
-            h,
-            None,
-        )
+        let out = render_frame(&vk, &renderer, FrameSpec::new(PixelLayout::Yuv420, ColorSpec::bt709_full()), &planes, (w, h), None)
         .expect("solid frame renders");
         assert_eq!(out.len(), 8 * 8 * 4);
         out
@@ -648,7 +619,9 @@ mod tests {
             let expected = bt709_full_to_rgb(y, u, v);
             let out = render_solid(open, y, u, v);
             let worst = out
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .map(|px| {
                     (px[0].abs_diff(expected[0]))
                         .max(px[1].abs_diff(expected[1]))
@@ -674,13 +647,9 @@ mod tests {
         render_to_target(
             &vk,
             &renderer,
-            PixelLayout::Rgba8,
-            ColorSpec::bt709_full(),
+            FrameSpec::new(PixelLayout::Rgba8, ColorSpec::bt709_full()),
             &planes,
-            target,
-            64,
-            64,
-            false,
+            RenderTarget { tex: target, width: 64, height: 64, flipped: false },
             None,
         )
         .expect("frame renders");
@@ -704,7 +673,7 @@ mod tests {
             let stride = w * 2 + 4;
             let mut bytes = vec![0u8; stride * h];
             for row in bytes.chunks_exact_mut(stride) {
-                for pixel in row[..w * 2].chunks_exact_mut(2) {
+                for pixel in row[..w * 2].as_chunks_mut::<2>().0.iter_mut() {
                     pixel.copy_from_slice(&value.to_le_bytes());
                 }
             }
@@ -716,8 +685,7 @@ mod tests {
             width: w as c_int,
             height: h as c_int,
         }).collect();
-        let out = render_frame(&gpu, &renderer, PixelLayout::Yuv420p10,
-            ColorSpec::bt709_full(), &planes, 8, 8, None).expect("10-bit frame renders");
+        let out = render_frame(&gpu, &renderer, FrameSpec::new(PixelLayout::Yuv420p10, ColorSpec::bt709_full()), &planes, (8, 8), None).expect("10-bit frame renders");
         let reference = render_solid(open, 54, 99, 255);
         let worst = out.iter().zip(reference.iter()).map(|(a, b)| a.abs_diff(*b)).max().unwrap();
         assert!(worst <= 4, "10-bit samples differ by {worst}");
@@ -729,8 +697,7 @@ mod tests {
         let uv: Vec<u8> = (0..16).flat_map(|_| [(396u16 << 6).to_le_bytes(), (1020u16 << 6).to_le_bytes()].concat()).collect();
         let planes = [Plane { data: &y, stride: 16, width: 8, height: 8 },
             Plane { data: &uv, stride: 16, width: 4, height: 4 }];
-        let output = render_frame(&gpu, &renderer, PixelLayout::P010,
-            ColorSpec::bt709_full(), &planes, 8, 8, None).unwrap();
+        let output = render_frame(&gpu, &renderer, FrameSpec::new(PixelLayout::P010, ColorSpec::bt709_full()), &planes, (8, 8), None).unwrap();
         let reference = render_solid(open, 54, 99, 255);
         let worst = output.iter().zip(reference.iter()).map(|(a,b)| a.abs_diff(*b)).max().unwrap();
         assert!(worst <= 4, "P010 differs by {worst}");
@@ -770,16 +737,7 @@ mod tests {
                 height: h / 2,
             },
         ];
-        let nv = render_frame(
-            &vk,
-            &renderer,
-            PixelLayout::Nv12,
-            ColorSpec::bt709_full(),
-            &planes,
-            w,
-            h,
-            None,
-        )
+        let nv = render_frame(&vk, &renderer, FrameSpec::new(PixelLayout::Nv12, ColorSpec::bt709_full()), &planes, (w, h), None)
         .expect("nv12 renders");
         let planar = render_solid(open, 54, 99, 255);
         let worst = nv
@@ -800,19 +758,10 @@ mod tests {
             width: 64,
             height: 64,
         }];
-        let plain = render_frame(
-            &vk,
-            &renderer,
-            PixelLayout::Rgba8,
-            ColorSpec::bt709_full(),
-            &planes,
-            64,
-            64,
-            None,
-        )
+        let plain = render_frame(&vk, &renderer, FrameSpec::new(PixelLayout::Rgba8, ColorSpec::bt709_full()), &planes, (64, 64), None)
         .expect("base renders");
         let mut white = vec![255u8; 16 * 16 * 4];
-        for pixel in white.chunks_exact_mut(4) {
+        for pixel in white.as_chunks_mut::<4>().0.iter_mut() {
             pixel[3] = 128;
         }
         let overlay = Overlay {
@@ -827,16 +776,7 @@ mod tests {
                 y1: 40.0,
             },
         };
-        let covered = render_frame(
-            &vk,
-            &renderer,
-            PixelLayout::Rgba8,
-            ColorSpec::bt709_full(),
-            &planes,
-            64,
-            64,
-            Some(&overlay),
-        )
+        let covered = render_frame(&vk, &renderer, FrameSpec::new(PixelLayout::Rgba8, ColorSpec::bt709_full()), &planes, (64, 64), Some(&overlay))
         .expect("overlay renders");
         let at = |bytes: &[u8], x: usize, y: usize| bytes[(y * 64 + x) * 4];
         let before = at(&plain, 32, 32);
@@ -866,16 +806,7 @@ mod tests {
             width: 8,
             height: 8,
         }];
-        let out = render_frame(
-            &vk,
-            &renderer,
-            PixelLayout::Rgba8,
-            ColorSpec::bt709_full(),
-            &planes,
-            8,
-            8,
-            None,
-        )
+        let out = render_frame(&vk, &renderer, FrameSpec::new(PixelLayout::Rgba8, ColorSpec::bt709_full()), &planes, (8, 8), None)
         .expect("rgba renders");
         let worst = out
             .iter()
@@ -895,16 +826,7 @@ mod tests {
             width: 64,
             height: 64,
         }];
-        let plain = render_frame(
-            &vk,
-            &renderer,
-            PixelLayout::Rgba8,
-            ColorSpec::bt709_full(),
-            &planes,
-            64,
-            64,
-            None,
-        )
+        let plain = render_frame(&vk, &renderer, FrameSpec::new(PixelLayout::Rgba8, ColorSpec::bt709_full()), &planes, (64, 64), None)
         .expect("base renders");
         let white = vec![255u8; 16 * 16 * 4];
         let overlay = Overlay {
@@ -919,16 +841,7 @@ mod tests {
                 y1: 40.0,
             },
         };
-        let covered = render_frame(
-            &vk,
-            &renderer,
-            PixelLayout::Rgba8,
-            ColorSpec::bt709_full(),
-            &planes,
-            64,
-            64,
-            Some(&overlay),
-        )
+        let covered = render_frame(&vk, &renderer, FrameSpec::new(PixelLayout::Rgba8, ColorSpec::bt709_full()), &planes, (64, 64), Some(&overlay))
         .expect("overlay renders");
         let at = |bytes: &[u8], x: usize, y: usize| bytes[(y * 64 + x) * 4];
         assert_eq!(at(&covered, 4, 4), at(&plain, 4, 4));
@@ -964,7 +877,7 @@ mod tests {
         let cr: Vec<u8> = (0..cw * ch).map(|i| (200 - (i / cw) * 6) as u8).collect();
         let cbcr: Vec<u8> = cb.iter().zip(cr.iter()).flat_map(|(b, r)| [*b, *r]).collect();
         let mut ink = vec![0u8; 16 * 8 * 4];
-        for (i, pixel) in ink.chunks_exact_mut(4).enumerate() {
+        for (i, pixel) in ink.as_chunks_mut::<4>().0.iter_mut().enumerate() {
             pixel.copy_from_slice(&[255, (i * 2) as u8, 40, (i * 2) as u8]);
         }
         let overlay = Overlay {
@@ -996,16 +909,7 @@ mod tests {
         ];
         let render = |open: OpenGpu, layout: PixelLayout, planes: &[Plane<'_>]| {
             let (gpu, renderer) = setup(open);
-            render_frame(
-                &gpu,
-                &renderer,
-                layout,
-                ColorSpec::bt709_full(),
-                planes,
-                w as c_int,
-                h as c_int,
-                Some(&overlay),
-            )
+            render_frame(&gpu, &renderer, FrameSpec::new(layout, ColorSpec::bt709_full()), planes, (w as c_int, h as c_int), Some(&overlay))
             .expect("frame renders")
         };
         for (layout, planes) in &cases {

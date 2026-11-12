@@ -37,8 +37,8 @@ mod sys;
 
 pub use context::{with_autorelease_pool, Gpu, GpuApi};
 pub use frame::{
-    render_frame, render_frame_with_geometry, render_to_target, render_to_target_with_geometry,
-    ColorSpec, Overlay, OverlayRect, PixelLayout, Plane, VideoGeometry,
+    render_frame, render_to_target, ColorSpec, FrameSpec, Overlay, OverlayRect, PixelLayout, Plane,
+    RenderTarget, VideoGeometry,
 };
 pub use instance::{Instance, Surface};
 pub use render::target_frame;

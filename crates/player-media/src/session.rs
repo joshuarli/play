@@ -175,7 +175,7 @@ impl MediaSession {
         }
         // SAFETY: the buffer and reader outlive the IO context; the session
         // frees all three in Drop.
-        let mut io_context = unsafe {
+        let io_context = unsafe {
             avio_alloc_context(
                 io_buffer,
                 AVIO_BUFFER_BYTES as c_int,
@@ -338,9 +338,7 @@ impl MediaSession {
                 // SAFETY: duration is plain data set by the probe.
                 duration_seconds: unsafe {
                     let duration = (*stream).duration;
-                    if duration < 0 {
-                        None
-                    } else if time_base.1 == 0 {
+                    if duration < 0 || time_base.1 == 0 {
                         None
                     } else {
                         Some(duration as f64 * time_base.0 as f64 / time_base.1 as f64)
@@ -510,7 +508,7 @@ impl MediaSession {
 
     pub fn read_packet(&mut self) -> Result<Packet, MediaError> {
         // SAFETY: av_packet_alloc returns a live packet or null.
-        let packet = unsafe { av_packet_alloc() };
+        let mut packet = unsafe { av_packet_alloc() };
         if packet.is_null() {
             return Err(MediaError::Io("av_packet_alloc failed".to_owned()));
         }
@@ -518,12 +516,12 @@ impl MediaSession {
         let status = unsafe { av_read_frame(self.context, packet) };
         if status == AVERROR_EOF {
             // SAFETY: packet is live and owned here.
-            unsafe { av_packet_free(&mut (packet as *mut AvPacket)) };
+            unsafe { av_packet_free(&mut packet) };
             return Err(MediaError::Eof);
         }
         if status < 0 {
             // SAFETY: packet is live and owned here.
-            unsafe { av_packet_free(&mut (packet as *mut AvPacket)) };
+            unsafe { av_packet_free(&mut packet) };
             return Err(MediaError::Format(format!("av_read_frame: {status}")));
         }
         // SAFETY: the packet was filled by av_read_frame.
@@ -544,7 +542,7 @@ impl MediaSession {
             || size as usize > MAX_PACKET_BYTES
         {
             // SAFETY: packet is live and owned here.
-            unsafe { av_packet_free(&mut (packet as *mut AvPacket)) };
+            unsafe { av_packet_free(&mut packet) };
             return Err(MediaError::Format("packet out of bounds".to_owned()));
         }
         let time_base = self.time_bases[stream_index as usize];
@@ -577,7 +575,7 @@ impl MediaSession {
             }
         };
         // SAFETY: packet is live and owned here.
-        unsafe { av_packet_free(&mut (packet as *mut AvPacket)) };
+        unsafe { av_packet_free(&mut packet) };
         Ok(result)
     }
 
@@ -607,10 +605,10 @@ impl MediaSession {
             geometry.pixel_aspect = crate::video::aspect((*stream).sample_aspect_ratio)
                 .or_else(|| crate::video::aspect(params.sample_aspect_ratio)).unwrap_or(1.0);
             let side = av_packet_side_data_get(params.coded_side_data.cast(), params.nb_coded_side_data, 5);
-            if !side.is_null() {
-                if let Some(rotation) = crate::video::matrix_rotation((*side).data, (*side).size) {
-                    geometry.rotation = rotation;
-                }
+            if !side.is_null()
+                && let Some(rotation) = crate::video::matrix_rotation((*side).data, (*side).size)
+            {
+                geometry.rotation = rotation;
             }
         }
         geometry
@@ -633,6 +631,54 @@ impl MediaSession {
             Some(codecpar)
         }
     }
+}
+
+impl Drop for MediaSession {
+    fn drop(&mut self) {
+        Self::close(self.context, self.io_context, self.reader);
+    }
+}
+
+/// Reads one dictionary value. The caller guarantees `dict` is valid; a null
+/// dictionary reads as absent.
+unsafe fn dict_value(dict: *mut AvDictionary, key: &str) -> Option<String> {
+    let key = CString::new(key).ok()?;
+    // SAFETY: dict is a valid dictionary; key is NUL-terminated.
+    let entry = unsafe { av_dict_get(dict, key.as_ptr(), ptr::null(), 0) };
+    if entry.is_null() {
+        return None;
+    }
+    // SAFETY: key/value are NUL-terminated strings owned by the dictionary,
+    // which outlives the returned owned copy.
+    unsafe { CStr::from_ptr((*entry).value) }
+        .to_str()
+        .ok()
+        .map(str::to_owned)
+}
+
+/// Drains a dictionary in order, capped at MAX_METADATA_ENTRIES. The caller
+/// guarantees `dict` is valid; a null dictionary reads as empty.
+unsafe fn dict_entries(dict: *mut AvDictionary) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let mut prev: *const AvDictionaryEntry = ptr::null();
+    for _ in 0..MAX_METADATA_ENTRIES {
+        // SAFETY: dict is valid; prev chains the iteration. The ignore-suffix
+        // flag makes the empty key match every entry in order.
+        let entry = unsafe { av_dict_get(dict, c"".as_ptr(), prev, AV_DICT_IGNORE_SUFFIX) };
+        if entry.is_null() {
+            break;
+        }
+        // SAFETY: key/value are NUL-terminated strings owned by the dictionary.
+        let pair = unsafe {
+            (
+                CStr::from_ptr((*entry).key).to_string_lossy().into_owned(),
+                CStr::from_ptr((*entry).value).to_string_lossy().into_owned(),
+            )
+        };
+        out.push(pair);
+        prev = entry;
+    }
+    out
 }
 
 #[cfg(test)]
@@ -861,52 +907,4 @@ mod tests {
             "cover title tagged: {titles:?}"
         );
     }
-}
-
-impl Drop for MediaSession {
-    fn drop(&mut self) {
-        Self::close(self.context, self.io_context, self.reader);
-    }
-}
-
-/// Reads one dictionary value. The caller guarantees `dict` is valid; a null
-/// dictionary reads as absent.
-unsafe fn dict_value(dict: *mut AvDictionary, key: &str) -> Option<String> {
-    let key = CString::new(key).ok()?;
-    // SAFETY: dict is a valid dictionary; key is NUL-terminated.
-    let entry = unsafe { av_dict_get(dict, key.as_ptr(), ptr::null(), 0) };
-    if entry.is_null() {
-        return None;
-    }
-    // SAFETY: key/value are NUL-terminated strings owned by the dictionary,
-    // which outlives the returned owned copy.
-    unsafe { CStr::from_ptr((*entry).value) }
-        .to_str()
-        .ok()
-        .map(str::to_owned)
-}
-
-/// Drains a dictionary in order, capped at MAX_METADATA_ENTRIES. The caller
-/// guarantees `dict` is valid; a null dictionary reads as empty.
-unsafe fn dict_entries(dict: *mut AvDictionary) -> Vec<(String, String)> {
-    let mut out = Vec::new();
-    let mut prev: *const AvDictionaryEntry = ptr::null();
-    for _ in 0..MAX_METADATA_ENTRIES {
-        // SAFETY: dict is valid; prev chains the iteration. The ignore-suffix
-        // flag makes the empty key match every entry in order.
-        let entry = unsafe { av_dict_get(dict, c"".as_ptr(), prev, AV_DICT_IGNORE_SUFFIX) };
-        if entry.is_null() {
-            break;
-        }
-        // SAFETY: key/value are NUL-terminated strings owned by the dictionary.
-        let pair = unsafe {
-            (
-                CStr::from_ptr((*entry).key).to_string_lossy().into_owned(),
-                CStr::from_ptr((*entry).value).to_string_lossy().into_owned(),
-            )
-        };
-        out.push(pair);
-        prev = entry;
-    }
-    out
 }

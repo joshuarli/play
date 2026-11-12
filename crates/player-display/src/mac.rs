@@ -1,6 +1,6 @@
 use player_output::{
-    render_to_target_with_geometry, with_autorelease_pool, VideoGeometry, ColorSpec, Gpu, GpuApi, Instance, Overlay, PixelLayout, Plane, Renderer,
-    Surface, Swapchain,
+    render_to_target, with_autorelease_pool, ColorSpec, FrameSpec, Gpu, GpuApi, Instance, Overlay, PixelLayout, Plane, RenderTarget,
+    Renderer, Surface, Swapchain, VideoGeometry,
 };
 use std::ffi::{c_char, c_int, c_void, CStr, CString};
 
@@ -80,7 +80,7 @@ impl Bridge {
         let mut height = 0;
         // SAFETY: the handle is live and the out-pointers are valid.
         unsafe { player_mac_window_size(self.handle, &mut width, &mut height) };
-        (width as i32, height as i32)
+        (width, height)
     }
 
     fn resize(&self, width: i32, height: i32) {
@@ -338,9 +338,8 @@ impl MacWindow {
     }
 
     pub fn present_surface(
-        &mut self, surface: &player_output::NativeSurface, layout: PixelLayout,
-        color: ColorSpec, source: (i32, i32), geometry: VideoGeometry,
-        overlay: Option<&Overlay>,
+        &mut self, surface: &player_output::NativeSurface, spec: FrameSpec,
+        source: (i32, i32), overlay: Option<&Overlay>,
         render_fallback: impl FnOnce(&Gpu, &Renderer, &player_output::SwapFrame, (i32, i32)) -> Result<(), String>,
     ) -> Result<(), String> {
         let size = (self.width, self.height);
@@ -348,8 +347,8 @@ impl MacWindow {
         with_autorelease_pool(|| {
             let frame = swapchain.start_frame()?;
             let result = (|| {
-                if !player_output::render_surface_to_target(gpu, renderer, surface, layout, color,
-                    source, frame.fbo, size, frame.flipped, geometry, overlay)? {
+                let target = RenderTarget { tex: frame.fbo, width: size.0, height: size.1, flipped: frame.flipped };
+                if !player_output::render_surface_to_target(gpu, renderer, surface, spec, source, target, overlay)? {
                     render_fallback(gpu, renderer, &frame, size)?;
                 }
                 Ok::<_, String>(())
@@ -374,17 +373,12 @@ impl MacWindow {
         let (swapchain, renderer, gpu) = self.presenter.parts();
         with_autorelease_pool(|| {
             let frame = swapchain.start_frame()?;
-            if let Err(message) = render_to_target_with_geometry(
+            if let Err(message) = render_to_target(
                 gpu,
                 renderer,
-                layout,
-                color,
+                FrameSpec::new(layout, color).with_geometry(geometry),
                 planes,
-                frame.fbo,
-                width,
-                height,
-                frame.flipped,
-                geometry,
+                RenderTarget { tex: frame.fbo, width, height, flipped: frame.flipped },
                 overlay,
             ) {
                 let _ = swapchain.submit();

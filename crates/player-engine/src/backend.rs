@@ -552,15 +552,13 @@ impl SchedulerEngine {
             .name("player-scheduler".to_string())
             .spawn(move || {
                 run_worker(
-                    owned_path,
-                    kind,
-                    start,
-                    include_video,
-                    render_video,
-                    command_rx,
-                    worker_state,
-                    ready_tx,
-                    frames_tx,
+                    WorkerSetup { path: owned_path, kind, start, include_video, render_video },
+                    WorkerLinks {
+                        commands: command_rx,
+                        state: worker_state,
+                        ready: ready_tx,
+                        frames_tx,
+                    },
                 );
             })
             .map_err(|err| format!("scheduler worker failed to start: {err}"))?;
@@ -675,32 +673,38 @@ impl Drop for SchedulerEngine {
 
 type EngineScheduler = Scheduler<EngineDemux, EngineAudio, EngineVideo, EngineOutput, EngineVideoOutput>;
 
-fn run_worker(
+type BuiltWorker = (
+    EngineScheduler,
+    f64,
+    u32,
+    u32,
+    Option<&'static str>,
+    Option<&'static str>,
+);
+
+struct WorkerSetup {
     path: String,
     kind: SinkKind,
     start: StartState,
     include_video: bool,
     render_video: bool,
+}
+
+struct WorkerLinks {
     commands: mpsc::Receiver<WorkerCommand>,
     state: Arc<Mutex<EngineStatus>>,
     ready: mpsc::Sender<Result<(), String>>,
     frames_tx: mpsc::SyncSender<PresentedFrame>,
-) {
+}
+
+fn run_worker(setup: WorkerSetup, links: WorkerLinks) {
+    let WorkerSetup { path, kind, start, include_video, render_video } = setup;
+    let WorkerLinks { commands, state, ready, frames_tx } = links;
     let mut guard = PanicGuard {
         state: state.clone(),
         clean: false,
     };
-    let build = || -> Result<
-        (
-            EngineScheduler,
-            f64,
-            u32,
-            u32,
-            Option<&'static str>,
-            Option<&'static str>,
-        ),
-        String,
-    > {
+    let build = || -> Result<BuiltWorker, String> {
         let demux = if include_video {
             EngineDemux::open(&path)?
         } else {

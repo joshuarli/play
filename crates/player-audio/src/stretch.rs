@@ -38,7 +38,7 @@ impl TimeStretch {
     }
 
     pub fn push(&mut self, samples: &[f32], output: &mut Vec<f32>) -> Result<(), String> {
-        if self.channels == 0 || samples.len() % self.channels != 0 {
+        if self.channels == 0 || !samples.len().is_multiple_of(self.channels) {
             return Err("time stretch input must hold whole frames".to_string());
         }
         if self.speed == 1.0 {

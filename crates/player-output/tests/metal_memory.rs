@@ -1,6 +1,6 @@
 #![cfg(target_os = "macos")]
 
-use player_output::{render_frame, ColorSpec, Gpu, PixelLayout, Plane};
+use player_output::{render_frame, ColorSpec, FrameSpec, Gpu, PixelLayout, Plane};
 
 fn resident_mb() -> f64 {
     let out = std::process::Command::new("ps")
@@ -23,7 +23,7 @@ fn metal_frames_on_a_plain_thread_do_not_accumulate_memory() {
             height: 512,
         }];
         let render = || {
-            render_frame(&gpu, &renderer, PixelLayout::Rgba8, ColorSpec::bt709_full(), &planes, 512, 512, None)
+            render_frame(&gpu, &renderer, FrameSpec::new(PixelLayout::Rgba8, ColorSpec::bt709_full()), &planes, (512, 512), None)
                 .expect("frame renders");
         };
         for _ in 0..20 {

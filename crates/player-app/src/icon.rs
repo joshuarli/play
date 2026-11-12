@@ -217,7 +217,7 @@ mod tests {
         let images: Vec<_> = ALL.iter().map(|icon| rendered(*icon)).collect();
         for (icon, image) in ALL.iter().zip(&images) {
             assert!(image.x + image.width <= 48 && image.y + image.height <= 48, "{icon:?} {image:?}");
-            let inked = image.rgba.chunks_exact(4).filter(|pixel| pixel[3] > 128).count();
+            let inked = image.rgba.as_chunks::<4>().0.iter().filter(|pixel| pixel[3] > 128).count();
             assert!(inked > 40, "{icon:?} paints {inked} pixels");
         }
         for (a, first) in images.iter().enumerate() {
@@ -230,7 +230,7 @@ mod tests {
     #[test]
     fn louder_levels_draw_more_waves() {
         let ink = |level| {
-            rendered(Icon::Volume(level)).rgba.chunks_exact(4).map(|pixel| pixel[3] as u32).sum::<u32>()
+            rendered(Icon::Volume(level)).rgba.as_chunks::<4>().0.iter().map(|pixel| pixel[3] as u32).sum::<u32>()
         };
         assert!(ink(VolumeLevel::Low) < ink(VolumeLevel::Medium));
         assert!(ink(VolumeLevel::Medium) < ink(VolumeLevel::High));

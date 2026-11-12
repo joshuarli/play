@@ -15,7 +15,7 @@ use player_engine::{
     EngineStatus, SchedulerEngine, SeekPrecision as EngineSeek, StartState, TrackKind,
 };
 use player_backend::engine::{EngineBackend, OverlayImage, DEFAULT_OSD_DURATION};
-use player_output::{render_frame_with_geometry, Gpu, GpuApi, Overlay, OverlayRect, Renderer};
+use player_output::{render_frame, FrameSpec, Gpu, GpuApi, Overlay, OverlayRect, Renderer};
 use player_tui::{Control, Cover, Player as TuiPlayer, Snapshot, Track};
 
 use crate::ipc::{self, IpcServer};
@@ -957,7 +957,7 @@ impl App {
         let ink = self
             .osd
             .as_ref()
-            .map(|image| image.rgba.chunks_exact(4).filter(|pixel| pixel[3] > 0).count())
+            .map(|image| image.rgba.as_chunks::<4>().0.iter().filter(|pixel| pixel[3] > 0).count())
             .unwrap_or(0);
         let status = self.status();
         if self.last_gate_report.elapsed() >= Duration::from_secs(1) {
@@ -2009,6 +2009,7 @@ fn environment_args(args: &[String]) -> Result<Vec<String>, String> {
     options::with_environment(environment.as_deref(), args)
 }
 
+#[cfg(target_os = "macos")]
 fn may_open_window(args: &[String]) -> bool {
     options::parse(args).is_ok_and(|options| {
         !options.list_protocols && !options.tui && !options.null_video && !options.no_video
@@ -2065,15 +2066,16 @@ impl ScreenshotRenderer {
         #[cfg(target_os = "macos")]
         if let Some(surface) = frame.surface()
             && let Some(image) = player_output::render_surface_frame(&self.device, &self.renderer,
-                surface, frame.layout, frame.color, (frame.width as i32, frame.height as i32),
-                (width as i32, height as i32), frame.geometry)?
+                surface, FrameSpec::new(frame.layout, frame.color).with_geometry(frame.geometry),
+                (frame.width as i32, frame.height as i32), (width as i32, height as i32))?
         {
             return Ok(image);
         }
         frame.with_software_planes(|layout, planes| {
-            render_frame_with_geometry(
-                &self.device, &self.renderer, layout, frame.color, planes,
-                width as i32, height as i32, frame.geometry, None,
+            render_frame(
+                &self.device, &self.renderer,
+                FrameSpec::new(layout, frame.color).with_geometry(frame.geometry),
+                planes, (width as i32, height as i32), None,
             )
         })
     }

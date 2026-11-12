@@ -77,7 +77,7 @@ pub fn mix_into(input: &[f32], from: &Channels, to: Layout, output: &mut Vec<f32
     let from_count = from.count();
     assert!(from_count > 0, "mixer needs at least one input channel");
     assert!(
-        input.len() % from_count == 0,
+        input.len().is_multiple_of(from_count),
         "mixer input must hold whole frames"
     );
     let to_count = to.channels();
@@ -90,7 +90,7 @@ pub fn mix_into(input: &[f32], from: &Channels, to: Layout, output: &mut Vec<f32
     output.clear();
     output.reserve(frames * to_count);
     if from_count == 1 {
-        for frame in input.chunks_exact(1) {
+        for frame in input.as_chunks::<1>().0 {
             for _ in 0..to_count {
                 output.push(frame[0]);
             }

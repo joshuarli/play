@@ -130,16 +130,14 @@ impl Playback {
             .chapters
             .iter()
             .map(|chapter| chapter.time)
-            .filter(|time| *time <= self.position)
-            .last();
+            .rfind(|time| *time <= self.position);
         match current {
             Some(start) if self.position - start > CHAPTER_RESTART_SECONDS => Some(start),
             Some(start) => Some(
                 self.chapters
                     .iter()
                     .map(|chapter| chapter.time)
-                    .filter(|time| *time < start)
-                    .last()
+                    .rfind(|time| *time < start)
                     .unwrap_or(0.0),
             ),
             None => Some(0.0),
@@ -408,14 +406,14 @@ impl Layout {
         }
     }
 
-    fn to_virtual(&self, x: f64, y: f64) -> (f64, f64) {
+    fn to_virtual(self, x: f64, y: f64) -> (f64, f64) {
         (
             x * self.res_x / self.key.width as f64,
             y * self.res_y / self.key.height as f64,
         )
     }
 
-    fn to_window(&self, rect: Rect) -> Rect {
+    fn to_window(self, rect: Rect) -> Rect {
         let scale_x = self.key.width as f64 / self.res_x;
         let scale_y = self.key.height as f64 / self.res_y;
         Rect {
@@ -802,7 +800,7 @@ impl Osc {
             Phase::Fading { since } => {
                 let faded =
                     self.now.duration_since(since).as_secs_f64() / FADE_DURATION.as_secs_f64();
-                (faded < 1.0).then(|| Some((255.0 * faded) as u8))
+                (faded < 1.0).then_some(Some((255.0 * faded) as u8))
             }
         }
     }

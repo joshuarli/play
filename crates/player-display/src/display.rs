@@ -6,8 +6,8 @@
 //! and go out through `present_planes`.
 
 use player_output::{
-    render_to_target_with_geometry, VideoGeometry, ColorSpec, Instance, Overlay, PixelLayout, Plane, Renderer, Surface,
-    Swapchain, Gpu,
+    render_to_target, ColorSpec, FrameSpec, Gpu, Instance, Overlay, PixelLayout, Plane, RenderTarget, Renderer, Surface,
+    Swapchain, VideoGeometry,
 };
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
@@ -525,17 +525,12 @@ impl Window {
         overlay: Option<&Overlay>,
     ) -> Result<(), String> {
         let frame = self.swapchain.start_frame()?;
-        if let Err(message) = render_to_target_with_geometry(
+        if let Err(message) = render_to_target(
             &self.gpu,
             &self.renderer,
-            layout,
-            color,
+            FrameSpec::new(layout, color).with_geometry(geometry),
             planes,
-            frame.fbo,
-            self.width,
-            self.height,
-            frame.flipped,
-            geometry,
+            RenderTarget { tex: frame.fbo, width: self.width, height: self.height, flipped: frame.flipped },
             overlay,
         ) {
             let _ = self.swapchain.submit();
@@ -595,8 +590,10 @@ mod seat_tests {
 
     fn words(bytes: &[u8]) -> Vec<u32> {
         bytes
-            .chunks_exact(4)
-            .map(|word| u32::from_ne_bytes(word.try_into().unwrap()))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|word| u32::from_ne_bytes(*word))
             .collect()
     }
 
@@ -658,10 +655,10 @@ mod seat_tests {
                         }
                         (1, 0) => {
                             let callback = request.args[0];
-                            if seat != 0 {
-                                if let Some(value) = pending.next() {
-                                    reply.extend(message(seat, 0, &[value]));
-                                }
+                            if seat != 0
+                                && let Some(value) = pending.next()
+                            {
+                                reply.extend(message(seat, 0, &[value]));
                             }
                             reply.extend(message(callback, 0, &[0]));
                             reply.extend(message(1, 1, &[callback]));
