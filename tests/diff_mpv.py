@@ -114,9 +114,6 @@ CASES = {
 
 
 KNOWN_GAPS = {
-    "aac-71.m4a": "PLAY-24",
-    "h264-aac71.mkv": "PLAY-24",
-    "aac-quad.m4a": "PLAY-24",
 }
 
 

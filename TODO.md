@@ -56,15 +56,6 @@ Priorities are assigned by impact and likelihood. Source-confirmed paths are dis
 - **Fix with:** `none`
 - **Effort:** L (weeks)
 
-### PLAY-24 · P2 · AAC configuration 12 and program-config-element layouts fail
-
-- **Area:** Dependencies
-- **Where:** `vendor/symphonia/symphonia-common/src/mpeg/audio/mod.rs:201`, `vendor/symphonia/symphonia-common/src/mpeg/audio/mod.rs:289`, `vendor/symphonia/symphonia-codec-aac/src/aac/mod.rs:231`.
-- **Problem:** The channel-config table accepts only indices 1-7, so configuration 12 (7.1 rear) is invalid. AudioSpecificConfig with no fixed layout and in-stream program configuration elements are separately rejected, including quad/PCE inputs. These remain named gaps in the mpv comparison corpus.
-- **Recommendation:** Represent configuration 12 correctly and parse PCE layouts before final decoder/channel allocation. Preserve the actual channel order through decode and downmix, and verify isolated channel signals for configuration 12 and a PCE fixture before removing the known-gap entries.
-- **Fix with:** `typing-audit`
-- **Effort:** L (weeks)
-
 ### PLAY-25 · P2 · GUI audio has no embedded-cover presentation path
 
 - **Area:** Architecture

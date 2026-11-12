@@ -5,7 +5,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use symphonia_core::audio::{Channels, layouts};
+use symphonia_core::audio::{Channels, Position, layouts};
 use symphonia_core::codecs::CodecProfile;
 use symphonia_core::codecs::audio::well_known::profiles::*;
 use symphonia_core::errors::{Result, decode_error, unsupported_error};
@@ -208,9 +208,118 @@ pub fn get_mpeg4_audio_channels_by_config_index(index: u32) -> Mpeg4AudioChannel
         5 => layouts::CHANNEL_LAYOUT_AAC_5P0,
         6 => layouts::CHANNEL_LAYOUT_AAC_5P1,
         7 => layouts::CHANNEL_LAYOUT_AAC_7P1,
+        12 => layouts::CHANNEL_LAYOUT_7P1,
         _ => return Mpeg4AudioChannels::Invalid,
     };
     Mpeg4AudioChannels::Channels(channels)
+}
+
+/// An AAC channel element type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AacElementType {
+    Single,
+    Pair,
+    Lfe,
+}
+
+/// A channel element identified by its bitstream type and instance tag.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AacChannelElement {
+    pub kind: AacElementType,
+    pub tag: u8,
+    /// Speakers in element order.
+    pub positions: Vec<Position>,
+}
+
+/// Program configuration, retaining the element identifiers needed for routing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AacProgramConfig {
+    pub object_type: AudioObjectType,
+    pub sample_rate: u32,
+    pub channels: Channels,
+    pub elements: Vec<AacChannelElement>,
+}
+
+impl AacProgramConfig {
+    /// Read program_config_element(), including byte alignment and the comment field.
+    pub fn read<B: ReadBitsLtr>(bs: &mut B) -> Result<Self> {
+        let _tag = bs.read_bits_leq32(4)?;
+        let object_type = get_mpeg4_audio_object_type_by_index(bs.read_bits_leq32(2)? + 1)
+            .ok_or_else(|| symphonia_core::errors::Error::DecodeError("aac: invalid PCE object type"))?;
+        let sample_rate = match get_mpeg4_audio_sample_rate_by_index(bs.read_bits_leq32(4)?) {
+            Mpeg4AudioSampleRate::SampleRate(rate) => rate,
+            _ => return decode_error("aac: invalid PCE sample rate"),
+        };
+        let front = bs.read_bits_leq32(4)?;
+        let side = bs.read_bits_leq32(4)?;
+        let back = bs.read_bits_leq32(4)?;
+        let lfe = bs.read_bits_leq32(2)?;
+        let assoc = bs.read_bits_leq32(3)?;
+        let coupling = bs.read_bits_leq32(4)?;
+        for _ in 0..2 {
+            if bs.read_bool()? { bs.ignore_bits(4)?; }
+        }
+        if bs.read_bool()? { bs.ignore_bits(3)?; }
+        let mut groups = Vec::new();
+        for count in [front, side, back] {
+            let mut group = Vec::new();
+            for _ in 0..count {
+                let pair = bs.read_bool()?;
+                let tag = bs.read_bits_leq32(4)? as u8;
+                group.push((pair, tag));
+            }
+            groups.push(group);
+        }
+        let mut lfe_tags = Vec::new();
+        for _ in 0..lfe { lfe_tags.push(bs.read_bits_leq32(4)? as u8); }
+        for _ in 0..assoc { bs.ignore_bits(4)?; }
+        for _ in 0..coupling { bs.ignore_bits(5)?; }
+        bs.realign();
+        let comment_bytes = bs.read_bits_leq32(8)?;
+        for _ in 0..comment_bytes { bs.ignore_bits(8)?; }
+        if coupling != 0 { return unsupported_error("aac: PCE coupling channels"); }
+        let mut elements = Vec::new();
+        for (group_idx, group) in groups.iter().enumerate() {
+            let singles = group.iter().filter(|(pair, _)| !pair).count();
+            let pairs = group.len() - singles;
+            if singles > 1 || pairs > if group_idx == 0 { 2 } else { 1 }
+                || (group_idx == 1 && singles != 0) {
+                return unsupported_error("aac: unsupported PCE speaker arrangement");
+            }
+            let mut pair_index = 0;
+            for &(pair, tag) in group {
+                let positions = if pair {
+                    let positions = match (group_idx, pair_index, pairs) {
+                        (0, 0, 2) => vec![Position::FRONT_LEFT_CENTER, Position::FRONT_RIGHT_CENTER],
+                        (0, _, _) => vec![Position::FRONT_LEFT, Position::FRONT_RIGHT],
+                        (1, _, _) => vec![Position::SIDE_LEFT, Position::SIDE_RIGHT],
+                        _ => vec![Position::REAR_LEFT, Position::REAR_RIGHT],
+                    };
+                    pair_index += 1;
+                    positions
+                } else {
+                    vec![if group_idx == 0 { Position::FRONT_CENTER } else { Position::REAR_CENTER }]
+                };
+                elements.push(AacChannelElement { kind: if pair { AacElementType::Pair } else { AacElementType::Single }, tag, positions });
+            }
+        }
+        if lfe_tags.len() > 1 { return unsupported_error("aac: multiple PCE LFE channels"); }
+        for tag in lfe_tags {
+            elements.push(AacChannelElement { kind: AacElementType::Lfe, tag, positions: vec![Position::LFE1] });
+        }
+        let mut mask = Position::empty();
+        for (i, element) in elements.iter().enumerate() {
+            if elements[..i].iter().any(|e| e.kind == element.kind && e.tag == element.tag) {
+                return decode_error("aac: duplicate PCE element tag");
+            }
+            for &position in &element.positions {
+                if mask.intersects(position) { return decode_error("aac: duplicate PCE speaker"); }
+                mask |= position;
+            }
+        }
+        if mask.is_empty() { return decode_error("aac: empty PCE"); }
+        Ok(Self { object_type, sample_rate, channels: Channels::Positioned(mask), elements })
+    }
 }
 
 /// MPEG4 Audio Specific Configuration.
@@ -220,6 +329,7 @@ pub struct AudioSpecificConfig {
     pub object_type: AudioObjectType,
     pub sample_rate: u32,
     pub channels: Option<Channels>,
+    pub program_config: Option<AacProgramConfig>,
     pub samples: usize,
     pub sbr_ps_info: Option<(u32, Option<Channels>)>,
     pub sbr_present: bool,
@@ -287,7 +397,12 @@ impl AudioSpecificConfig {
                 let extension_flag = bs.read_bool()?;
 
                 if asc.channels.is_none() {
-                    return unsupported_error("common (mp4a): program config element");
+                    let pce = AacProgramConfig::read(&mut bs)?;
+                    if pce.object_type != asc.object_type || pce.sample_rate != asc.sample_rate {
+                        return decode_error("common (mp4a): PCE does not match audio config");
+                    }
+                    asc.channels = Some(pce.channels.clone());
+                    asc.program_config = Some(pce);
                 }
 
                 if (asc.object_type == AudioObjectType::Scalable)
