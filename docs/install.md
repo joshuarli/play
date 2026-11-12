@@ -9,8 +9,9 @@ A `v*` tag runs `.github/workflows/release.yml`, which builds and publishes:
 - `Player-aarch64-apple-darwin.zip`: `Player.app` for Apple Silicon.
 - `player-x86_64-linux-musl.tar.gz`: the Linux x86-64 musl binary and its README.
 
-Both need the FFmpeg runtime release named in `ffmpeg-runtime.lock.json`, installed in the layout described in [FFmpeg](ffmpeg.md#installed-layout).
 - `SHA256SUMS`: the digests for both archives.
+
+Both archives need the FFmpeg runtime release named in `ffmpeg-runtime.lock.json`, installed in the layout described in [FFmpeg](ffmpeg.md#installed-layout).
 
 Verify the checksum before use. On a machine with the `~/usr` dotfiles, `sh dl player` installs the latest release and verifies it: `~/Applications/Player.app` plus `~/.local/bin/player` on macOS, or `~/.local/bin/player` on Linux. Set `PLAYER_APPLICATIONS_DIR` to change the macOS location. Remove a `make install` copy with `make uninstall` before the first `dl` install.
 

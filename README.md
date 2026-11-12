@@ -4,9 +4,9 @@ Player is a local-only media player for macOS on Apple Silicon and for Linux x86
 
 ## Install and run
 
-Tagged releases publish `Player-aarch64-apple-darwin.zip` for macOS and `player-x86_64-linux-musl.tar.gz` for Linux with `SHA256SUMS`. With the `~/usr` dotfiles, `sh dl player` installs the latest release after verifying the checksum.
+Download the archive for your platform and `SHA256SUMS` from [Player releases](https://github.com/joshuarli/play/releases). Verify the archive against `SHA256SUMS`. With the `~/usr` dotfiles, `sh dl player` installs the latest release and verifies its checksum.
 
-Unzip the macOS app and open `Player.app` from Finder, or run a file directly:
+On macOS, unzip `Player-aarch64-apple-darwin.zip`. Download the matching Apple Silicon FFmpeg runtime from [ffmpeg-build releases](https://github.com/laputa-systems/ffmpeg-build/releases). The required release is in `Player.app/Contents/Info.plist` under `PlayerFFmpegRuntime`. Extract its `lib/` beside `Player.app`. Open the app from Finder, or run a file directly:
 
 ```sh
 Player.app/Contents/MacOS/player FILE
@@ -14,9 +14,8 @@ Player.app/Contents/MacOS/player FILE
 
 The bundle carries its own dylibs, Vulkan loader, and MoltenVK, and loads the pinned FFmpeg runtime from `lib/` beside `Player.app`. It does not use Homebrew at runtime. It is ad-hoc signed and not notarized; macOS may require the Finder context-menu Open on first launch, or clearing the quarantine attribute.
 
-On Linux, put `player` in a `bin/` directory beside the `lib/` of the FFmpeg runtime release its README names, then run `player FILE`. It also needs musl, the Vulkan loader, Wayland client, ALSA, and libva at run time; the bundled README lists the runtime packages. See [FFmpeg](docs/ffmpeg.md) for the layout and [Linux](docs/linux.md) for the rest.
+On Linux, extract `player-x86_64-linux-musl.tar.gz`. Its README names the required [FFmpeg runtime](https://github.com/laputa-systems/ffmpeg-build/releases) and runtime packages. Place `player` in a `bin/` directory beside the runtime `lib/`, and put `librust_fontconfig.so.5.0.2` in that `lib/` or install the system rust-fontconfig package. Run `player FILE`.
 
-To build either artifact from source, see [Install and run](docs/install.md).
 
 ## Input
 
@@ -45,19 +44,8 @@ macOS 27 on Apple Silicon, or Linux x86-64 on musl (Alpine or similar) with a Vu
 
 ## Help
 
-- [Install and run](docs/install.md)
-- [Linux](docs/linux.md)
-- [Scope](docs/scope.md)
-- [Terminal UI design](docs/tui-design.md)
-- [Measurements](docs/metrics.md)
-- [Manual checks](docs/manual-checklist.md)
-
-For development, see [AGENTS.md](AGENTS.md). Open work is in [TODO.md](TODO.md).
+Run `player --help` for command-line options. Report problems in [GitHub issues](https://github.com/joshuarli/play/issues). For source builds and developer documentation, see [AGENTS.md](AGENTS.md).
 
 ## Limits
 
-- Local files only: no network protocol, TLS, or remote resource load.
-- Video decodes in software; hardware decode wiring is `PLAY-20`.
-- Paths must be UTF-8.
-- GUI visuals, HDR, Retina scaling, real mouse input, audibility, and hardware decode are owner-run checks in `docs/manual-checklist.md`; the automated gates are headless.
-- Linux is x86-64 musl on Wayland only. glibc and X11 are out of scope.
+Video currently decodes in software. Paths must be UTF-8. Linux requires musl and Wayland; glibc and X11 are not supported.

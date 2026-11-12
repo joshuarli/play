@@ -36,5 +36,9 @@ Player is a local-only media player built on a Rust playback engine, the pinned 
 - [docs/metrics.md](docs/metrics.md): measurement history and release budgets.
 - [docs/manual-checklist.md](docs/manual-checklist.md): owner-run visual and audio checks.
 - [docs/tui-design.md](docs/tui-design.md): terminal UI layout, art transport, and limits.
-- [docs/perf-campaign.md](docs/perf-campaign.md): performance measurement and optimization campaign plan.
+- [docs/perf-campaign.md](docs/perf-campaign.md): performance campaign and remaining checks.
+- [docs/build-campaign.md](docs/build-campaign.md): closed build campaign.
+- [docs/build-baseline.md](docs/build-baseline.md): build baseline record.
+- [docs/build-benchmarks.md](docs/build-benchmarks.md): build experiment results.
+- [native-metal.md](native-metal.md): Metal backend campaign record.
 - [TODO.md](TODO.md): open work.
