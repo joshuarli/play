@@ -241,6 +241,39 @@ pub fn render_to_target_with_geometry(
     Ok(())
 }
 
+#[cfg(target_os = "macos")]
+pub fn render_surface_to_target(
+    gpu: &Gpu, renderer: &Renderer, surface: &crate::NativeSurface,
+    layout: PixelLayout, color: ColorSpec, source: (i32, i32),
+    target: sys::PlTex, target_size: (i32, i32), flipped: bool,
+    geometry: VideoGeometry, overlay: Option<&Overlay>,
+) -> Result<bool, String> {
+    crate::with_autorelease_pool(|| {
+        let Some(textures) = gpu.import_surface(surface, layout)? else { return Ok(false); };
+        render_planes(gpu, renderer, layout, color, &textures, source, target,
+            target_size, flipped, geometry, overlay)?;
+        Ok(true)
+    })
+}
+
+#[cfg(target_os = "macos")]
+pub fn render_surface_frame(
+    gpu: &Gpu, renderer: &Renderer, surface: &crate::NativeSurface,
+    layout: PixelLayout, color: ColorSpec, source: (i32, i32),
+    output: (i32, i32), geometry: VideoGeometry,
+) -> Result<Option<Vec<u8>>, String> {
+    crate::with_autorelease_pool(|| {
+        let Some(textures) = gpu.import_surface(surface, layout)? else { return Ok(None); };
+        let format = gpu.find_rgba8(sys::PL_FMT_CAP_RENDERABLE)?;
+        let target = gpu.create_render_target(output.0, output.1, format)?;
+        let result = render_planes(gpu, renderer, layout, color, &textures, source, target,
+            output, false, geometry, None)
+            .and_then(|_| gpu.download(target, output.0, output.1));
+        gpu.destroy_tex(target);
+        result.map(Some)
+    })
+}
+
 struct PlaneSpec {
     components: c_int,
     mapping: [c_int; 4],

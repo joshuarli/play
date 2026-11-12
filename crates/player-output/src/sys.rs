@@ -323,6 +323,8 @@ unsafe extern "C" {
 
     pub fn pl_tex_create(gpu: PlGpu, params: *const PlTexParams) -> PlTex;
     pub fn pl_tex_destroy(gpu: PlGpu, tex: *mut PlTex);
+    #[cfg(target_os = "macos")]
+    pub fn pl_tex_poll(gpu: PlGpu, tex: PlTex, timeout: u64) -> bool;
     pub fn pl_tex_upload(gpu: PlGpu, params: *const PlTexTransferParams) -> bool;
     pub fn pl_tex_download(gpu: PlGpu, params: *const PlTexTransferParams) -> bool;
 
@@ -442,6 +444,7 @@ unsafe extern "C" {
 
 #[cfg(target_os = "macos")]
 unsafe extern "C" {
+    pub fn pl_metal_wrap_iosurface(metal: PlMetal, surface: *mut c_void, plane: c_int, width: c_int, height: c_int, fmt: PlFmt) -> PlTex;
     pub fn pl_metal_create(log: PlLog, params: *const PlMetalParams) -> PlMetal;
     pub fn pl_metal_destroy(metal: *mut PlMetal);
     pub fn pl_metal_create_swapchain(

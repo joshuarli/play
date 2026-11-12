@@ -22,6 +22,7 @@ fn gray(window: &mut MacWindow, width: i32, height: i32) {
             PixelLayout::Rgba8,
             ColorSpec::bt709_full(),
             &planes,
+            player_output::VideoGeometry::default(),
             None,
         )
         .expect("frame presents");

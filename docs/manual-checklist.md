@@ -40,4 +40,4 @@ Remaining checks for the P1/P2 fixes:
 - Check fresh GUI cover-art audio and video-to-cover transitions on macOS.
 - Check a High 10 or Main 10 gradient, anamorphic content, and a remuxed 90-degree display matrix on both macOS renderers. Verify screenshots as well as the window.
 - Check terminal-launch keyboard focus on Metal and Vulkan. This remains unverified; the owner could not run it during the fix session.
-- Direct VideoToolbox-to-Metal IOSurface presentation remains unimplemented pending a suitable device and performance comparison.
+- Direct VideoToolbox-to-Metal IOSurface presentation passes headless NV12/P010 pixel and lifetime tests. Its windowed CPU/RSS comparison remains pending. Windowed testing was stopped at the owner's request; resume only when permitted.

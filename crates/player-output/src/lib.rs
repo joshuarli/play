@@ -26,6 +26,8 @@ macro_rules! gpu_tests {
     };
 }
 
+#[cfg(target_os = "macos")]
+mod iosurface;
 mod context;
 mod frame;
 mod instance;
@@ -46,3 +48,8 @@ pub use sys::{
     PL_COLOR_SYSTEM_BT_601, PL_COLOR_SYSTEM_BT_709,
 };
 pub use render::{rgba_frame, Renderer};
+
+#[cfg(target_os = "macos")]
+pub use iosurface::NativeSurface;
+#[cfg(target_os = "macos")]
+pub use frame::{render_surface_to_target, render_surface_frame};

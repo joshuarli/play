@@ -46,6 +46,14 @@ pub struct Gpu {
     log: sys::PlLog,
     backend: Backend,
     gpu: sys::PlGpu,
+    #[cfg(target_os = "macos")]
+    imports: std::cell::RefCell<std::collections::VecDeque<ImportedSurface>>,
+}
+
+#[cfg(target_os = "macos")]
+struct ImportedSurface {
+    textures: Vec<sys::PlTex>,
+    _surface: crate::NativeSurface,
 }
 
 enum Backend {
@@ -112,6 +120,8 @@ impl Gpu {
             log,
             backend: Backend::Vulkan(vk),
             gpu,
+            #[cfg(target_os = "macos")]
+            imports: Default::default(),
         })
     }
 
@@ -137,6 +147,7 @@ impl Gpu {
             log,
             backend: Backend::Metal(metal),
             gpu,
+            imports: Default::default(),
         })
     }
 
@@ -158,6 +169,52 @@ impl Gpu {
             Backend::Metal(metal) => Some(metal),
             Backend::Vulkan(_) => None,
         }
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(crate) fn import_surface(&self, surface: &crate::NativeSurface, layout: crate::PixelLayout) -> Result<Option<Vec<sys::PlTex>>, String> {
+        let Some(metal) = self.metal_handle() else { return Ok(None); };
+        if !matches!(layout, crate::PixelLayout::Nv12 | crate::PixelLayout::P010) { return Ok(None); }
+        let mut imports = self.imports.borrow_mut();
+        while imports.front().is_some_and(|lease| self.import_complete(lease, 0)) {
+            self.release_import(imports.pop_front().unwrap());
+        }
+        if imports.len() >= 4 {
+            let oldest = imports.pop_front().unwrap();
+            while !self.import_complete(&oldest, u64::MAX) {}
+            self.release_import(oldest);
+        }
+        let mut textures = Vec::with_capacity(2);
+        let depth = if layout == crate::PixelLayout::P010 { 16 } else { 8 };
+        for (index, &(width, height)) in surface.dimensions.iter().enumerate() {
+            let Some(format) = self.find_format(sys::PL_FMT_UNORM, (index + 1) as i32, depth, sys::PL_FMT_CAP_SAMPLEABLE) else {
+                for texture in textures { self.destroy_tex(texture); }
+                return Ok(None);
+            };
+            // SAFETY: the retained surface, Metal device and format are live;
+            // plane dimensions were obtained from the decoded pixel buffer.
+            let texture = unsafe { sys::pl_metal_wrap_iosurface(metal, surface.raw(), index as i32, width, height, format) };
+            if texture.is_null() {
+                for texture in textures { self.destroy_tex(texture); }
+                return Ok(None);
+            }
+            textures.push(texture);
+        }
+        imports.push_back(ImportedSurface { textures: textures.clone(), _surface: surface.clone() });
+        Ok(Some(textures))
+    }
+
+    #[cfg(target_os = "macos")]
+    fn import_complete(&self, lease: &ImportedSurface, timeout: u64) -> bool {
+        lease.textures.iter().all(|&texture| {
+            // SAFETY: the lease owns each texture and the GPU remains live.
+            !unsafe { sys::pl_tex_poll(self.gpu, texture, timeout) }
+        })
+    }
+
+    #[cfg(target_os = "macos")]
+    fn release_import(&self, lease: ImportedSurface) {
+        for &texture in &lease.textures { self.destroy_tex(texture); }
     }
 
     pub fn find_rgba8(&self, caps: c_int) -> Result<sys::PlFmt, String> {
@@ -378,6 +435,11 @@ fn create_log() -> Result<(sys::PlLog, String), String> {
 
 impl Drop for Gpu {
     fn drop(&mut self) {
+        #[cfg(target_os = "macos")]
+        while let Some(lease) = self.imports.get_mut().pop_front() {
+            while !self.import_complete(&lease, u64::MAX) {}
+            self.release_import(lease);
+        }
         match &mut self.backend {
             // SAFETY: all textures must be destroyed before this runs.
             Backend::Vulkan(vk) => unsafe { sys::pl_vulkan_destroy(vk) },

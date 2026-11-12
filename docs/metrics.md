@@ -31,6 +31,7 @@ Automated playback is headless (`--vo=null --ao=null`), so GUI and renderer beha
 | 2026-11-04 | 3c2f7e61356d | final | 7881984 | 7881984 | 11796736 | 7 | 15.77 | 14.2 | 34.18 | 14.0 | 262.08 | 3.24 | 3.54 | 12.44 | 11.07 | 1 | headless, 3 s clips |
 | 2026-11-05 | 81adbe76aa1e-dirty | final | 7898752 | 7898752 | 13946992 | 7 | 19.18 | 22.71 | 75.78 | 13.62 | 256.09 | 2.15 | 2.73 | 180.03 | 39.76 | 1 | headless, 3 s clips; perf gate deferred |
 | 2026-11-05 | a6ccaba15479-dirty | final | 7898912 | 7898912 | 13946992 | 7 | 12.16 | 12.28 | 58.67 | 13.58 | 262.27 | 3.06 | 3.44 | 51.51 | 21.76 | 1 | headless, 3 s clips |
+| 2026-11-12 | 5cefe2df6400 | final | 2028176 | 2028176 | 12994928 | 4 | 19.34 | 16.88 | 33.43 | 8.421875 | 69.64 | 0.12 | 0.4 | 11.76 | 10.36 | 1 | headless, 3 s clips |
 <!-- measure:end -->
 
 The `baseline` row is the original C player. The distributable budget is half of its unique closure, 29,542,136 B.
@@ -43,7 +44,7 @@ The `3c2f7e61356d` row is the first build on the `ffmpeg-build` `play-sdk` relea
 
 `scripts/measure.sh cpu BASELINE_PLAYER` runs seven interleaved baseline and candidate pairs and reports `improved`, `regressed`, `unchanged`, or `inconclusive` from the paired differences: the second-smallest and second-largest difference must both clear `max(5% of the baseline median, the metric's floor)`, and neither side's spread widens that tolerance. A failed trial makes the comparison `invalid`. `scripts/measure.sh compare BEFORE AFTER` applies the same rule between two recorded labels. Both print `perf gate deferred: host busy` and exit 75 when `perf-gate-ready` reports load.
 
-The 2026-11-12 P1/P2 fix build passes the static release budgets: executable 2,028,176 B, bundled rendering closure 12,994,928 B, combined 15,023,104 B. A single three-second 1080p software-decode run with null audio and video used 73,138,176 B peak RSS. Timing gates are deferred: `perf-gate-ready` reports a busy host with swap above its threshold.
+The 2026-11-12 P1/P2 fix build passes the static release budgets: executable 2,028,176 B, bundled rendering closure 12,994,928 B, combined 15,023,104 B. A single three-second 1080p software-decode run with null audio and video used 73,138,176 B peak RSS. The subsequent seven-run release gate passed on a qualified host; its row is recorded above. The swap warning from lane admission does not represent the timing gate.
 
 ## Native OSC
 

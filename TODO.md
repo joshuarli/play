@@ -7,15 +7,16 @@ Priorities are assigned by impact and likelihood. Source-confirmed paths are dis
 
 ## P2
 
-### PLAY-32 · P2 · VideoToolbox frames still require a CPU transfer before Metal
+### PLAY-32 · P2 · Complete the direct VideoToolbox presentation comparison
 
 - **Area:** Performance
-- **Where:** `crates/player-engine/src/video.rs:344`, `scripts/patches/libplacebo-metal.patch:2261`.
-- **Problem:** Hardware decoding is now forwarded through the scheduler, but the presentation boundary transfers every hardware frame to software and uploads its planes again. The carried Metal patch already exposes pl_metal_wrap_iosurface, but no player path uses it. Direct IOSurface import remains unimplemented. This is not a measured regression.
-- **Recommendation:** Carry owned CVPixelBuffer/IOSurface lifetime through the frame handoff and import it into the window's existing Metal device. Keep a software fallback for unsupported formats and verify ownership through presentation, seek, and shutdown. Compare equivalent hardware-decoded workloads before claiming a performance gain.
+- **Where:** `crates/player-output/src/context.rs`, `crates/player-output/src/iosurface.rs`, `crates/player-display/src/mac.rs`, `scripts/patches/libplacebo-metal.patch`.
+- **Implemented:** Metal imports supported VideoToolbox NV12 and P010 IOSurfaces directly. Retained surfaces and use counts survive GPU execution in a four-entry lease queue. Shutdown drains leases. Vulkan, unsupported imports, and explicit `videotoolbox-copy` use software transfer. Import fallback renders into the acquired drawable before its single submission.
+- **Verified:** Native NV12 and P010 pixel comparisons pass through decoder teardown, repeated buffer reuse, seek, GPU shutdown, explicit copy conversion, and same-target fallback. The full macOS Rust workspace and affected Linux packages pass.
+- **Remaining:** The interleaved windowed CPU/RSS comparison was stopped when the owner asked to use the computer. No performance gain is claimed. Keep this ticket open until a qualified comparison is accepted.
+- **Resume:** Run windowed tests only when the owner permits them. The preserved baseline is `.work/tmp/iosurface-baseline/Player.app/Contents/MacOS/player`; use identical `--hwdec=videotoolbox --gpu-api=metal --ao=null` settings for baseline and candidate. The existing frame harness has prepared `video-1080p` and `video-4k` fixtures. Compare at least five interleaved runs per side, including drops and RSS.
 - **Fix with:** `make-it-fast`
-- **Effort:** M (days)
-- **Environment:** Metal creation fails and MoltenVK reports Metal unavailable in this agent session. Implementation and equivalent-workload measurements require a render-capable Apple Silicon session.
+- **Effort:** S (hours)
 
 ### PLAY-21 · P2 · Terminal-launched macOS keyboard focus still needs owner verification
 

@@ -398,7 +398,7 @@ diff -ruN a/src/metal/formats.m b/src/metal/formats.m
 diff -ruN a/src/metal/gpu.h b/src/metal/gpu.h
 --- a/src/metal/gpu.h
 +++ b/src/metal/gpu.h
-@@ -0,0 +1,149 @@
+@@ -0,0 +1,150 @@
 +/*
 + * This file is part of libplacebo.
 + *
@@ -526,6 +526,7 @@ diff -ruN a/src/metal/gpu.h b/src/metal/gpu.h
 +bool    mtl_gpu_is_failed(pl_gpu);
 +pl_tex  mtl_tex_create(pl_gpu, const struct pl_tex_params *);
 +void    mtl_tex_destroy(pl_gpu, pl_tex);
++bool    mtl_tex_poll(pl_gpu, pl_tex, uint64_t timeout);
 +void    mtl_tex_invalidate(pl_gpu, pl_tex);
 +void    mtl_tex_clear_ex(pl_gpu, pl_tex, const union pl_clear_color);
 +void    mtl_tex_blit(pl_gpu, const struct pl_tex_blit_params *);
@@ -551,7 +552,7 @@ diff -ruN a/src/metal/gpu.h b/src/metal/gpu.h
 diff -ruN a/src/metal/gpu.m b/src/metal/gpu.m
 --- a/src/metal/gpu.m
 +++ b/src/metal/gpu.m
-@@ -0,0 +1,279 @@
+@@ -0,0 +1,280 @@
 +/*
 + * This file is part of libplacebo.
 + *
@@ -737,6 +738,7 @@ diff -ruN a/src/metal/gpu.m b/src/metal/gpu.m
 +    .destroy        = mtl_gpu_destroy,
 +    .tex_create     = mtl_tex_create,
 +    .tex_destroy    = mtl_tex_destroy,
++    .tex_poll       = mtl_tex_poll,
 +    .tex_invalidate = mtl_tex_invalidate,
 +    .tex_clear_ex   = mtl_tex_clear_ex,
 +    .tex_blit       = mtl_tex_blit,
@@ -1498,7 +1500,7 @@ diff -ruN a/src/metal/gpu_pass.m b/src/metal/gpu_pass.m
 diff -ruN a/src/metal/gpu_tex.m b/src/metal/gpu_tex.m
 --- a/src/metal/gpu_tex.m
 +++ b/src/metal/gpu_tex.m
-@@ -0,0 +1,401 @@
+@@ -0,0 +1,436 @@
 +/*
 + * This file is part of libplacebo.
 + *
@@ -1655,11 +1657,46 @@ diff -ruN a/src/metal/gpu_tex.m b/src/metal/gpu_tex.m
 +
 +// --------------------------------------------------------------- textures
 +
++bool mtl_tex_poll(pl_gpu gpu, pl_tex tex, uint64_t timeout)
++{
++    struct pl_tex_metal *tp = PL_PRIV(tex);
++    if (!tp->pending_cb)
++        return false;
++    if (timeout == UINT64_MAX) {
++        mtl_wait_pending(gpu, &tp->pending_cb);
++        return false;
++    }
++    id<MTLCommandBuffer> cb = (__bridge id<MTLCommandBuffer>) tp->pending_cb;
++    if (timeout > 0) {
++        struct pl_gpu_metal *pg = PL_PRIV(gpu);
++        if (tp->pending_cb == pg->frame_cb)
++            mtl_frame_commit(gpu);
++        dispatch_semaphore_t done = dispatch_semaphore_create(0);
++        dispatch_retain(done);
++        id<MTLCommandBuffer> fence = [mtl_queue(gpu) commandBuffer];
++        [fence addCompletedHandler:^(id<MTLCommandBuffer> completed) {
++            (void) completed;
++            dispatch_semaphore_signal(done);
++            dispatch_release(done);
++        }];
++        [fence commit];
++        int64_t delay = timeout > INT64_MAX ? INT64_MAX : (int64_t) timeout;
++        dispatch_semaphore_wait(done, dispatch_time(DISPATCH_TIME_NOW, delay));
++        dispatch_release(done);
++    }
++    MTLCommandBufferStatus status = cb.status;
++    if (status == MTLCommandBufferStatusCompleted || status == MTLCommandBufferStatusError) {
++        mtl_set_pending(&tp->pending_cb, nil);
++        return false;
++    }
++    return true;
++}
++
 +void mtl_tex_destroy(pl_gpu gpu, pl_tex tex)
 +{
 +    struct pl_tex_metal *tp = PL_PRIV(tex);
 +    // KEIN Completion-Wait (s. mtl_buf_destroy): der CB retained die Textur
-+    // (und bei IOSurface-Wraps die Surface via Use-Count) bis zum Abschluss.
++    // bis zum Abschluss.
 +    // Load-bearing für den No-finish-Pfad: render_pl zerstört das gewrappte
 +    // Drawable-Target direkt nach dem Flush — ein Wait hier wäre der volle
 +    // GPU-Frame-Stall, den wir gerade entfernen.
@@ -2293,7 +2330,7 @@ diff -ruN a/src/metal/swapchain.m b/src/metal/swapchain.m
 +    };
 +    tex->sampler_type = PL_SAMPLER_NORMAL;
 +    struct pl_tex_metal *tp = PL_PRIV(tex);
-+    tp->tex = (__bridge void *) [mtex retain];   // mtl_tex_destroy releases (balanced)
++    tp->tex = (__bridge void *) mtex;
 +    return tex;
 +}
 +

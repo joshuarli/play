@@ -21,6 +21,8 @@ const MAX_QUEUED_FRAMES: usize = 64;
 #[derive(Debug)]
 pub struct PresentedFrame {
     frame: VideoFrame,
+    #[cfg(target_os = "macos")]
+    surface: Option<player_output::NativeSurface>,
     pub pts: f64,
     pub id: u64,
     pub layout: PixelLayout,
@@ -34,15 +36,58 @@ impl PresentedFrame {
     pub fn from_frame(frame: VideoFrame, pts: f64, id: u64) -> Result<Self, String> {
         let metadata = frame.geometry();
         let geometry = player_output::VideoGeometry { pixel_aspect: metadata.pixel_aspect, rotation: metadata.rotation };
+        #[cfg(target_os = "macos")]
+        let native = frame.iosurface();
+        #[cfg(target_os = "macos")]
+        let surface = native.map(|(raw, _, dimensions)| {
+            // SAFETY: the live frame owns the pixel buffer and its IOSurface;
+            // dimensions were read from that same buffer.
+            unsafe { player_output::NativeSurface::retain(raw, dimensions) }
+        });
+        #[cfg(target_os = "macos")]
+        let frame = if frame.is_hardware() && surface.is_none() { frame.transfer_to_software()? } else { frame };
+        #[cfg(not(target_os = "macos"))]
         let frame = if frame.is_hardware() { frame.transfer_to_software()? } else { frame };
-        let layout = layout_of(frame.format())?;
+        #[cfg(target_os = "macos")]
+        let format = native.map(|(_, format, _)| format).unwrap_or_else(|| frame.format());
+        #[cfg(not(target_os = "macos"))]
+        let format = frame.format();
+        let layout = layout_of(format)?;
         let width = frame.width().max(0) as u32;
         let height = frame.height().max(0) as u32;
         let color = color_of(frame.color_space(), frame.color_range(), height as i32);
-        Ok(Self { frame, pts, id, layout, color, width, height, geometry })
+        Ok(Self { frame, #[cfg(target_os = "macos")] surface, pts, id, layout, color, width, height, geometry })
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn surface(&self) -> Option<&player_output::NativeSurface> { self.surface.as_ref() }
+
+    pub fn into_software(self) -> Result<Self, String> {
+        if self.frame.is_hardware() {
+            Self::from_frame(self.frame.transfer_to_software()?, self.pts, self.id)
+        } else {
+            Ok(self)
+        }
+    }
+
+    pub fn with_software_planes<T>(&self, render: impl FnOnce(PixelLayout, &[Plane<'_>]) -> Result<T, String>) -> Result<T, String> {
+        if self.frame.is_hardware() {
+            let software = self.frame.transfer_to_software()?;
+            let layout = layout_of(software.format())?;
+            let dimensions = plane_dimensions(layout, software.width(), software.height());
+            let mut planes = Vec::with_capacity(dimensions.len());
+            for (index, (width, height)) in dimensions.into_iter().enumerate() {
+                let (data, stride) = software.plane(index).ok_or_else(|| format!("video plane {index} missing"))?;
+                planes.push(Plane { data, stride, width, height });
+            }
+            render(layout, &planes)
+        } else {
+            render(self.layout, &self.planes()?)
+        }
     }
 
     pub fn planes(&self) -> Result<Vec<Plane<'_>>, String> {
+        if self.frame.is_hardware() { return Err("hardware frame needs software transfer".into()); }
         let dimensions = plane_dimensions(self.layout, self.frame.width(), self.frame.height());
         let mut planes = Vec::with_capacity(dimensions.len());
         for (index, (width, height)) in dimensions.iter().enumerate() {
@@ -411,6 +456,8 @@ mod tests {
                         width: frame.width() as u32,
                         height: frame.height() as u32,
                         frame,
+                        #[cfg(target_os = "macos")]
+                        surface: None,
                         pts: 0.0,
                         id: 0,
                     };
@@ -419,6 +466,131 @@ mod tests {
                 player_media::PumpResult::Ended => panic!("the fixture decoded no frame"),
             }
         }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn native_surface_matches_transfer(path: &str, expected_layout: PixelLayout) {
+        use player_media::PumpResult;
+        use player_output::{Gpu, render_frame_with_geometry, render_surface_to_target};
+
+        fn next(decoder: &mut VideoSession, id: u64) -> PresentedFrame {
+            loop {
+                match decoder.pump().expect("decode") {
+                    PumpResult::Frame(frame) => return PresentedFrame::from_frame(frame, 0.0, id).unwrap(),
+                    PumpResult::NeedMore => (),
+                    PumpResult::Ended => panic!("fixture has too few frames"),
+                }
+            }
+        }
+        let media = MediaSession::open(path).expect("fixture opens");
+        let stream = media.streams().into_iter().find(|s| s.kind == StreamKind::Video).unwrap();
+        drop(media);
+        let gpu = Gpu::metal().expect("Metal device");
+        let renderer = gpu.create_renderer().unwrap();
+        let mut decoder = VideoSession::open(path, stream.index, HwRequest::VideoToolbox).expect("VideoToolbox decoder");
+        let mut expected = Vec::new();
+        let mut retained_frame = None;
+        for id in 0..12 {
+            let frame = next(&mut decoder, id);
+            assert_eq!(frame.layout, expected_layout);
+            assert!(frame.surface().is_some(), "hardware IOSurface required");
+            let size = (frame.width as i32, frame.height as i32);
+            let image = frame.with_software_planes(|layout, planes| {
+                render_frame_with_geometry(&gpu, &renderer, layout, frame.color, planes,
+                    size.0, size.1, frame.geometry, None)
+            }).expect("software reference");
+            expected.push(image);
+            if id == 0 { retained_frame = Some(frame); }
+        }
+        drop(decoder);
+        let frame = retained_frame.take().unwrap();
+        let size = (frame.width as i32, frame.height as i32);
+        let image = player_output::render_surface_frame(&gpu, &renderer, frame.surface().unwrap(),
+            frame.layout, frame.color, size, size, frame.geometry).unwrap().expect("direct import");
+        let worst = image.iter().zip(&expected[0]).map(|(a, b)| a.abs_diff(*b)).max().unwrap();
+        assert!(worst <= 2, "frame after decoder shutdown differs by {worst}");
+        if expected_layout == PixelLayout::Nv12 {
+            let vulkan = Gpu::vulkan().expect("Vulkan device");
+            let vk_renderer = vulkan.create_renderer().unwrap();
+            assert!(player_output::render_surface_frame(&vulkan, &vk_renderer, frame.surface().unwrap(),
+                frame.layout, frame.color, size, size, frame.geometry).unwrap().is_none());
+            let fallback = frame.with_software_planes(|layout, planes| {
+                render_frame_with_geometry(&vulkan, &vk_renderer, layout, frame.color, planes,
+                    size.0, size.1, frame.geometry, None)
+            }).expect("Vulkan software fallback");
+            assert_eq!(fallback.len(), expected[0].len());
+            let worst = fallback.iter().zip(&expected[0]).map(|(a, b)| a.abs_diff(*b)).max().unwrap();
+            assert!(worst <= 4, "Vulkan fallback differs by {worst}");
+        }
+        let fallback_format = gpu.find_rgba8(1 << 3).unwrap();
+        let fallback_target = gpu.create_render_target(size.0, size.1, fallback_format).unwrap();
+        assert!(!render_surface_to_target(&gpu, &renderer, frame.surface().unwrap(),
+            PixelLayout::Rgba8, frame.color, size, fallback_target, size, false,
+            frame.geometry, None).unwrap(), "unsupported native layout requests fallback");
+        frame.with_software_planes(|layout, planes| {
+            player_output::render_to_target_with_geometry(&gpu, &renderer, layout,
+                frame.color, planes, fallback_target, size.0, size.1, false,
+                frame.geometry, None)
+        }).expect("fallback renders the same target");
+        let fallback_pixels = gpu.download(fallback_target, size.0, size.1).unwrap();
+        let worst = fallback_pixels.iter().zip(&expected[0]).map(|(a,b)| a.abs_diff(*b)).max().unwrap();
+        assert!(worst <= 2, "same-target fallback differs by {worst}");
+        gpu.destroy_tex(fallback_target);
+        let copied = frame.into_software().expect("explicit copy mode");
+        assert!(copied.surface().is_none());
+        assert!(!copied.planes().unwrap().is_empty());
+        drop(copied);
+        let mut decoder = VideoSession::open(path, stream.index, HwRequest::VideoToolbox).unwrap();
+        let format = gpu.find_rgba8(1 << 3).unwrap();
+        let mut targets = Vec::new();
+        for index in 0..24 {
+            if index == 12 { decoder.seek_seconds(0.0).expect("seek"); }
+            let frame = next(&mut decoder, index);
+            assert_eq!(frame.layout, expected_layout);
+            let size = (frame.width as i32, frame.height as i32);
+            let target = gpu.create_render_target(size.0, size.1, format).unwrap();
+            assert!(render_surface_to_target(&gpu, &renderer, frame.surface().expect("native surface"),
+                frame.layout, frame.color, size, target, size, false, frame.geometry, None).unwrap(),
+                "direct import required");
+            targets.push((target, size, index as usize % 12));
+            drop(frame);
+        }
+        drop(decoder);
+        for (target, (width, height), index) in targets {
+            let actual = gpu.download(target, width, height).expect("native readback");
+            let reference = &expected[index];
+            assert_eq!(actual.len(), reference.len());
+            let worst = actual.iter().zip(reference).map(|(a, b)| a.abs_diff(*b)).max().unwrap();
+            assert!(worst <= 2, "frame {index} worst channel difference {worst}");
+            gpu.destroy_tex(target);
+        }
+        let mut decoder = VideoSession::open(path, stream.index, HwRequest::VideoToolbox).unwrap();
+        let frame = next(&mut decoder, 0);
+        let size = (frame.width as i32, frame.height as i32);
+        let target = gpu.create_render_target(size.0, size.1, format).unwrap();
+        assert!(render_surface_to_target(&gpu, &renderer, frame.surface().unwrap(), frame.layout,
+            frame.color, size, target, size, false, frame.geometry, None).unwrap());
+        drop(frame);
+        drop(decoder);
+        gpu.destroy_tex(target);
+        drop(renderer);
+        drop(gpu);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "requires real VideoToolbox and Metal"]
+    fn videotoolbox_nv12_import_matches_transfer_through_seek_and_shutdown() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.work/fixtures/h264.mp4");
+        native_surface_matches_transfer(path.to_str().unwrap(), PixelLayout::Nv12);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "requires real VideoToolbox, Metal and a HEVC Main10 fixture"]
+    fn videotoolbox_p010_import_matches_transfer_through_seek_and_shutdown() {
+        let path = std::env::var("PLAYER_TEST_MAIN10").expect("PLAYER_TEST_MAIN10 must name a HEVC Main10 fixture with at least 12 frames");
+        native_surface_matches_transfer(&path, PixelLayout::P010);
     }
 
     #[test]

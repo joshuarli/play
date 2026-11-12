@@ -138,14 +138,23 @@ impl HostWindow {
         if frame.width == 0 || frame.height == 0 {
             return Ok(());
         }
-        let planes = frame.planes()?;
-        self.window.present_planes(
-            frame.layout,
-            frame.color,
-            &planes,
-            frame.geometry,
-            overlay,
-        )?;
+        #[cfg(target_os = "macos")]
+        if let Some(surface) = frame.surface() {
+            self.window.present_surface(surface, frame.layout, frame.color,
+                (frame.width as i32, frame.height as i32), frame.geometry, overlay,
+                |gpu, renderer, target, size| {
+                    frame.with_software_planes(|layout, planes| {
+                        player_output::render_to_target_with_geometry(gpu, renderer, layout,
+                            frame.color, planes, target.fbo, size.0, size.1, target.flipped,
+                            frame.geometry, overlay)
+                    })
+                })?;
+            self.presented += 1;
+            return Ok(());
+        }
+        frame.with_software_planes(|layout, planes| {
+            self.window.present_planes(layout, frame.color, planes, frame.geometry, overlay)
+        })?;
         self.presented += 1;
         Ok(())
     }

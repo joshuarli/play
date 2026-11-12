@@ -173,6 +173,16 @@ pub(crate) unsafe fn matrix_rotation(data: *const u8, size: usize) -> Option<u16
     angle.is_finite().then(|| ((-angle / 90.0).round() as i32).rem_euclid(4) as u16 * 90)
 }
 
+#[cfg(target_os = "macos")]
+#[link(name = "CoreVideo", kind = "framework")]
+unsafe extern "C" {
+    fn CVPixelBufferGetIOSurface(buffer: *mut c_void) -> *mut c_void;
+    fn CVPixelBufferGetPixelFormatType(buffer: *mut c_void) -> u32;
+    fn CVPixelBufferGetPlaneCount(buffer: *mut c_void) -> usize;
+    fn CVPixelBufferGetWidthOfPlane(buffer: *mut c_void, plane: usize) -> usize;
+    fn CVPixelBufferGetHeightOfPlane(buffer: *mut c_void, plane: usize) -> usize;
+}
+
 pub struct VideoFrame {
     frame: *mut AvFrame,
     geometry: VideoGeometry,
@@ -261,6 +271,32 @@ impl VideoFrame {
                 }
             }
             _ => height,
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn iosurface(&self) -> Option<(*mut c_void, i32, [(i32, i32); 2])> {
+        if self.format() != AV_PIX_FMT_VIDEOTOOLBOX {
+            return None;
+        }
+        let buffer = self.native_handle()?;
+        // SAFETY: VideoToolbox frames hold a live CVPixelBuffer in data[3].
+        unsafe {
+            let format = match CVPixelBufferGetPixelFormatType(buffer) {
+                n if n == u32::from_be_bytes(*b"420v") || n == u32::from_be_bytes(*b"420f") => AV_PIX_FMT_NV12,
+                n if n == u32::from_be_bytes(*b"x420") || n == u32::from_be_bytes(*b"xf20") => AV_PIX_FMT_P010LE,
+                _ => return None,
+            };
+            if CVPixelBufferGetPlaneCount(buffer) != 2 { return None; }
+            let surface = CVPixelBufferGetIOSurface(buffer);
+            if surface.is_null() { return None; }
+            let mut dimensions = [(0, 0); 2];
+            for (i, size) in dimensions.iter_mut().enumerate() {
+                *size = (i32::try_from(CVPixelBufferGetWidthOfPlane(buffer, i)).ok()?,
+                         i32::try_from(CVPixelBufferGetHeightOfPlane(buffer, i)).ok()?);
+                if size.0 <= 0 || size.1 <= 0 { return None; }
+            }
+            Some((surface, format, dimensions))
         }
     }
 

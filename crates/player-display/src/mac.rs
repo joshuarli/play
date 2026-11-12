@@ -337,6 +337,31 @@ impl MacWindow {
         Ok(false)
     }
 
+    pub fn present_surface(
+        &mut self, surface: &player_output::NativeSurface, layout: PixelLayout,
+        color: ColorSpec, source: (i32, i32), geometry: VideoGeometry,
+        overlay: Option<&Overlay>,
+        render_fallback: impl FnOnce(&Gpu, &Renderer, &player_output::SwapFrame, (i32, i32)) -> Result<(), String>,
+    ) -> Result<(), String> {
+        let size = (self.width, self.height);
+        let (swapchain, renderer, gpu) = self.presenter.parts();
+        with_autorelease_pool(|| {
+            let frame = swapchain.start_frame()?;
+            let result = (|| {
+                if !player_output::render_surface_to_target(gpu, renderer, surface, layout, color,
+                    source, frame.fbo, size, frame.flipped, geometry, overlay)? {
+                    render_fallback(gpu, renderer, &frame, size)?;
+                }
+                Ok::<_, String>(())
+            })();
+            let submitted = swapchain.submit();
+            result?;
+            submitted
+        })?;
+        self.presented += 1;
+        Ok(())
+    }
+
     pub fn present_planes(
         &mut self,
         layout: PixelLayout,

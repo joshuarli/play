@@ -1024,6 +1024,7 @@ impl App {
             return Ok(());
         };
         if let Some(frame) = backend.latest_frame() {
+            let frame = if self.options.hwdec == "videotoolbox-copy" { frame.into_software()? } else { frame };
             self.last_frame = Some(frame);
             self.frame_serial += 1;
         }
@@ -2060,19 +2061,21 @@ impl ScreenshotRenderer {
     }
 
     fn render(&mut self, frame: &PresentedFrame) -> Result<Vec<u8>, String> {
-        let planes = frame.planes()?;
         let (width, height) = frame.geometry.display_size(frame.width, frame.height);
-        render_frame_with_geometry(
-            &self.device,
-            &self.renderer,
-            frame.layout,
-            frame.color,
-            &planes,
-            width as i32,
-            height as i32,
-            frame.geometry,
-            None,
-        )
+        #[cfg(target_os = "macos")]
+        if let Some(surface) = frame.surface()
+            && let Some(image) = player_output::render_surface_frame(&self.device, &self.renderer,
+                surface, frame.layout, frame.color, (frame.width as i32, frame.height as i32),
+                (width as i32, height as i32), frame.geometry)?
+        {
+            return Ok(image);
+        }
+        frame.with_software_planes(|layout, planes| {
+            render_frame_with_geometry(
+                &self.device, &self.renderer, layout, frame.color, planes,
+                width as i32, height as i32, frame.geometry, None,
+            )
+        })
     }
 }
 
