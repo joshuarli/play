@@ -768,12 +768,12 @@ impl Osc {
             Control::Volume => Command::Mute(Toggle::Toggle),
             Control::Fullscreen => Command::Fullscreen(Toggle::Toggle),
             Control::TimeElapsed => {
-                self.milliseconds = !self.milliseconds;
+                self.milliseconds.toggle();
                 self.relayout();
                 return Response::Consumed;
             }
             Control::TimeRemaining => {
-                self.show_remaining = !self.show_remaining;
+                self.show_remaining.toggle();
                 return Response::Consumed;
             }
             Control::Menu | Control::Title | Control::Seek => return Response::Consumed,
