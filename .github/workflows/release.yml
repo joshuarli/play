@@ -22,7 +22,7 @@ jobs:
     uses: ./.github/workflows/macos.yml
 
   linux:
-    uses: ./.github/workflows/linux.yml
+    uses: ./.github/workflows/ci.yml
 
   publish:
     name: Publish release
