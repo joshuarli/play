@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 DIST="$ROOT/dist"
 NAME=player-x86_64-linux-musl
-TARBALL="$DIST/$NAME.tar.gz"
+TARBALL="$DIST/$NAME.tar.xz"
 STAGE="$ROOT/.work/tmp/release-linux"
 
 "$ROOT/scripts/build-linux.sh"
@@ -56,19 +56,18 @@ It does not load a user config or scripts. glibc systems cannot run it, and glib
 support is out of scope.
 
 Run:  ./player FILE
-Verify the download with:  sha256sum -c $NAME.tar.gz.sha256
+Verify the download with:  sha256sum -c $NAME.tar.xz.sha256
 README
 
 mkdir -p "$DIST"
-tar --sort=name --owner=0 --group=0 --numeric-owner --mtime=@0 \
-    -C "$STAGE" -czf "$TARBALL" player README
-(cd "$DIST" && sha256sum "$NAME.tar.gz" >"$NAME.tar.gz.sha256")
+"$ROOT/scripts/package-linux.sh" "$STAGE" "$TARBALL"
+(cd "$DIST" && sha256sum "$NAME.tar.xz" >"$NAME.tar.xz.sha256")
 
 VERIFY="$ROOT/.work/tmp/release-linux-verify"
 rm -rf "$VERIFY"
 mkdir -p "$VERIFY/bin"
-(cd "$DIST" && sha256sum -c "$NAME.tar.gz.sha256")
-tar -xzf "$TARBALL" -C "$VERIFY/bin"
+(cd "$DIST" && sha256sum -c "$NAME.tar.xz.sha256")
+tar -xJf "$TARBALL" -C "$VERIFY/bin"
 [ "$(ls "$VERIFY/bin" | sort | tr '\n' ' ')" = "README player " ] || {
     printf 'error: unexpected tarball contents: %s\n' "$(ls "$VERIFY/bin")" >&2
     exit 1

@@ -6,7 +6,7 @@ Player is a local-only media player for macOS on Apple Silicon and for Linux x86
 
 Download the archive for your platform and `SHA256SUMS` from [Player releases](https://github.com/joshuarli/play/releases). Verify the archive against `SHA256SUMS`. With the `~/usr` dotfiles, `sh dl player` installs the latest release and verifies its checksum.
 
-On macOS, unzip `Player-aarch64-apple-darwin.zip`. Download the matching Apple Silicon FFmpeg runtime from [ffmpeg-build releases](https://github.com/laputa-systems/ffmpeg-build/releases). The required release is in `Player.app/Contents/Info.plist` under `PlayerFFmpegRuntime`. Extract its `lib/` beside `Player.app`. Open the app from Finder, or run a file directly:
+On macOS, extract `Player-aarch64-apple-darwin.tar.xz`. Download the matching Apple Silicon FFmpeg runtime from [ffmpeg-build releases](https://github.com/laputa-systems/ffmpeg-build/releases). The required release is in `Player.app/Contents/Info.plist` under `PlayerFFmpegRuntime`. Extract its `lib/` beside `Player.app`. Open the app from Finder, or run a file directly:
 
 ```sh
 Player.app/Contents/MacOS/player FILE
@@ -14,7 +14,7 @@ Player.app/Contents/MacOS/player FILE
 
 The bundle carries its own dylibs, Vulkan loader, and MoltenVK, and loads the pinned FFmpeg runtime from `lib/` beside `Player.app`. It does not use Homebrew at runtime. It is ad-hoc signed and not notarized; macOS may require the Finder context-menu Open on first launch, or clearing the quarantine attribute.
 
-On Linux, extract `player-x86_64-linux-musl.tar.gz`. Its README names the required [FFmpeg runtime](https://github.com/laputa-systems/ffmpeg-build/releases) and runtime packages. Place `player` in a `bin/` directory beside the runtime `lib/`, and put `librust_fontconfig.so.5.0.2` in that `lib/` or install the system rust-fontconfig package. Run `player FILE`.
+On Linux, extract `player-x86_64-linux-musl.tar.xz`. Its README names the required [FFmpeg runtime](https://github.com/laputa-systems/ffmpeg-build/releases) and runtime packages. Place `player` in a `bin/` directory beside the runtime `lib/`, and put `librust_fontconfig.so.5.0.2` in that `lib/` or install the system rust-fontconfig package. Run `player FILE`.
 
 
 ## Input

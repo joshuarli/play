@@ -42,9 +42,9 @@ jobs:
       - name: Assemble assets
         run: |
           mkdir -p release
-          find dist -type f \( -name '*.zip' -o -name '*.tar.gz' \) -exec cp {} release/ \;
+          find dist -type f -name '*.tar.xz' -exec cp {} release/ \;
           test "$(find release -maxdepth 1 -type f | wc -l)" -eq 2
-          (cd release && sha256sum Player-aarch64-apple-darwin.zip player-x86_64-linux-musl.tar.gz > SHA256SUMS)
+          (cd release && sha256sum Player-aarch64-apple-darwin.tar.xz player-x86_64-linux-musl.tar.xz > SHA256SUMS)
           cat release/SHA256SUMS
 
       - name: Publish
@@ -54,9 +54,9 @@ jobs:
           cat > release-notes.md <<EOF
           Player ${GITHUB_REF_NAME}
 
-          macOS: Player-aarch64-apple-darwin.zip contains Player.app for Apple Silicon. It is ad-hoc signed, not notarized; open it from Finder with the context menu on first launch, or clear the quarantine attribute.
+          macOS: Player-aarch64-apple-darwin.tar.xz contains Player.app for Apple Silicon. It is ad-hoc signed, not notarized; open it from Finder with the context menu on first launch, or clear the quarantine attribute.
 
-          Linux: player-x86_64-linux-musl.tar.gz contains the x86-64 musl binary and a README with the runtime packages.
+          Linux: player-x86_64-linux-musl.tar.xz contains the x86-64 musl binary and a README with the runtime packages.
 
           Both archives are listed in SHA256SUMS, which must be verified before use.
           EOF
