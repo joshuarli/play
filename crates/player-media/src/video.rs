@@ -158,7 +158,7 @@ impl Default for VideoGeometry {
 }
 
 pub(crate) fn aspect(ratio: AvRational) -> Option<f64> {
-    (ratio.num > 0 && ratio.den > 0).then(|| ratio.num as f64 / ratio.den as f64)
+    (ratio.num > 0 && ratio.den > 0).then_some(ratio.num as f64 / ratio.den as f64)
 }
 
 pub(crate) unsafe fn matrix_rotation(data: *const u8, size: usize) -> Option<u16> {
