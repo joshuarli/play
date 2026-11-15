@@ -58,7 +58,7 @@ impl Target {
         let needed = width * height * 4;
         let mut premultiplied = buffer;
         if premultiplied.capacity() > needed.saturating_mul(2) {
-            premultiplied = Vec::new();
+            premultiplied = Vec::with_capacity(needed);
         }
         if clear {
             premultiplied.clear();
