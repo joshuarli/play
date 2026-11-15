@@ -1,6 +1,6 @@
 # Repository guide
 
-Player is a local-only media player built on a Rust playback engine, the pinned shared FFmpeg n9.0.2 runtime, libplacebo, and an mpv-compatible application surface. The macOS release artifact is `dist/Player.app`; the Linux x86-64 musl artifact is `dist/player-x86_64-linux-musl.tar.gz`. The Cargo workspace manifest is at the repository root and the crates are under `crates/`.
+Player is a local-only media player built on a Rust playback engine, the pinned shared FFmpeg n9.0.2 runtime, libplacebo, and an mpv-compatible application surface. The macOS release artifact is `dist/Player.app`; the Linux x86-64 musl artifact is `dist/player-x86_64-linux-musl.tar.xz`. The Cargo workspace manifest is at the repository root and the crates are under `crates/`.
 
 ## Commands
 

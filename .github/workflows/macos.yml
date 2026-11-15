@@ -20,7 +20,7 @@ defaults:
 env:
   HOMEBREW_NO_AUTO_UPDATE: 1
   HOMEBREW_NO_INSTALL_CLEANUP: 1
-  ARTIFACT: Player-aarch64-apple-darwin.zip
+  ARTIFACT: Player-aarch64-apple-darwin.tar.xz
 
 jobs:
   macos:
@@ -79,8 +79,9 @@ jobs:
 
       - name: Package app
         run: |
+          python3 -m unittest discover -s tests -p test_release_archives.py
           rm -f "$ARTIFACT"
-          ditto -c -k --keepParent dist/Player.app "$ARTIFACT"
+          scripts/package-macos.sh dist/Player.app "$ARTIFACT"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

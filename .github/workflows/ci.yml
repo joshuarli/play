@@ -18,7 +18,7 @@ defaults:
     shell: bash -euo pipefail {0}
 
 env:
-  ARTIFACT: player-x86_64-linux-musl.tar.gz
+  ARTIFACT: player-x86_64-linux-musl.tar.xz
 
 jobs:
   linux:
@@ -55,9 +55,10 @@ jobs:
 
       - name: Verify tarball
         run: |
+          python3 -m unittest discover -s tests -p test_release_archives.py
           cd dist
           sha256sum -c "$ARTIFACT.sha256"
-          tar -tzf "$ARTIFACT" | sort | tr '\n' ' ' | grep -qx 'README player '
+          tar -tJf "$ARTIFACT" | sort | tr '\n' ' ' | grep -qx 'README player '
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
