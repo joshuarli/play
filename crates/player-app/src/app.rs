@@ -1990,6 +1990,10 @@ fn toggle_value(toggle: Toggle, current: bool) -> bool {
 
 #[cfg(target_os = "macos")]
 pub fn run_program(args: &[String]) -> Result<(), String> {
+    if options::help_requested(args) {
+        print!("{}", options::help());
+        return Ok(());
+    }
     let args = environment_args(args)?;
     if !may_open_window(&args) {
         return run(&args);
@@ -2001,6 +2005,10 @@ pub fn run_program(args: &[String]) -> Result<(), String> {
 
 #[cfg(not(target_os = "macos"))]
 pub fn run_program(args: &[String]) -> Result<(), String> {
+    if options::help_requested(args) {
+        print!("{}", options::help());
+        return Ok(());
+    }
     run(&environment_args(args)?)
 }
 
