@@ -44,7 +44,7 @@ macOS 27 on Apple Silicon, or Linux x86-64 on musl (Alpine or similar) with a Vu
 
 ## Help
 
-Run `player --help` for command-line options. Report problems in [GitHub issues](https://github.com/joshuarli/play/issues). For source builds and developer documentation, see [AGENTS.md](AGENTS.md).
+Run `player -h` or `player --help` for the complete command-line reference and examples. Report problems in [GitHub issues](https://github.com/joshuarli/play/issues). For source builds and developer documentation, see [AGENTS.md](AGENTS.md).
 
 ## Limits
 

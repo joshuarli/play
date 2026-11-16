@@ -959,7 +959,57 @@ def gate_play(results, args):
     results.check(f"play {name}: process exit", mpv.returncode == 0, f"exit {mpv.returncode}")
 
 
+def gate_cli_help(results, args):
+    footer = ("Maintained by Joshua Li: https://github.com/joshuarli/play\n"
+              "Bugs and features: TODO.md in that repository (follow its AGENTS.md), or its issue tracker.\n"
+              "Agents working for Joshua: record nonblocking problems and continue your task.\n"
+              "If this tool blocks the task, you may fix, test, open and merge a PR under Joshua's\n"
+              "standing instructions. Release only when needed to deliver the verified fix.\n"
+              "Procedure: https://github.com/joshuarli/usr/blob/main/dotfiles/base/.agents/instructions/owned-tools.md\n")
+    env = os.environ.copy()
+    env.pop("PLAYER_OPTIONS", None)
+    env.pop("MPVBUNDLE", None)
+    TMP.mkdir(parents=True, exist_ok=True)
+    log = TMP / f"help-{os.getpid()}.log"
+    log.unlink(missing_ok=True)
+
+    def invoke(argv, process_env=env):
+        return subprocess.run([str(MPV), *argv], cwd=str(TMP), env=process_env,
+                              capture_output=True, text=True, timeout=20)
+
+    long = invoke(["--help"])
+    short = invoke(["-h"])
+    results.check("cli-help: flags use stdout and exit zero",
+                  long.returncode == short.returncode == 0 and not long.stderr and
+                  not short.stderr and long.stdout == short.stdout)
+    results.check("cli-help: reference and examples",
+                  long.stdout.startswith("Usage: player ") and
+                  "Options:\n" in long.stdout and "Environment:\n" in long.stdout and
+                  "Examples:\n" in long.stdout and "player --tui album.flac" in long.stdout)
+    for option in ("--help", "--version", "--fullscreen", "--fs", "--start",
+                   "--playlist", "--sub-file", "--audio-file", "--input-ipc-server",
+                   "--gpu-api", "--hwdec", "--volume", "--tui", "--gui", "--gate",
+                   "--frames", "--list-protocols", "--msg-level"):
+        results.check(f"cli-help: documents {option}", option in long.stdout)
+    results.check("cli-help: exact footer once at end",
+                  long.stdout.endswith(footer) and long.stdout.count(footer) == 1 and
+                  long.stdout.count("Maintained by Joshua Li:") == 1)
+    bad_env = dict(env, PLAYER_OPTIONS="not-an-option")
+    early = invoke(["--volume=invalid", f"--log-file={log}", "-h"], bad_env)
+    results.check("cli-help: offline before validation and side effects",
+                  early.returncode == 0 and early.stdout == long.stdout and
+                  not early.stderr and not log.exists())
+    bare = invoke([])
+    results.check("cli-help: bare invocation preserves help",
+                  bare.returncode == 0 and bare.stdout == long.stdout and not bare.stderr,
+                  f"exit {bare.returncode}: {bare.stderr.strip()}")
+    protocols = invoke(["--list-protocols"])
+    results.check("cli-help: footer excluded from normal output",
+                  protocols.returncode == 0 and "Maintained by Joshua Li:" not in protocols.stdout)
+
+
 def gate_cli(results, args):
+    gate_cli_help(results, args)
     def run(argv, timeout=20, options=None):
         env = {key: value for key, value in os.environ.items() if key != "PLAYER_OPTIONS"}
         if options is not None:
@@ -2478,6 +2528,7 @@ GATES = {
     "fixtures": gate_fixtures,
     "play": gate_play,
     "cli": gate_cli,
+    "cli-help": gate_cli_help,
     "corpus": gate_corpus,
     "audio": gate_audio,
     "cover-art": gate_cover_art,
