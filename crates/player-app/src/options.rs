@@ -184,7 +184,6 @@ struct OptionSpec {
     description: &'static str,
 }
 
-// This table owns the spellings used by both parsing and the reference.
 const OPTION_SPECS: &[OptionSpec] = &[
     OptionSpec { kind: OptionKind::Help, names: &["help", "h"], short: Some('h'), value: "", description: "Print this reference and exit." },
     OptionSpec { kind: OptionKind::Version, names: &["version", "v"], short: None, value: "", description: "Print the version and exit." },
