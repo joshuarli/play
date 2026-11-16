@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-TAG=release-4f7e194610f8c3e2bb5d7faa7b98a2b4e1893370
+TAG=release-dd4b9664d3319e7dc9d01bd895c72d57aa298244
 
 [ $# -eq 1 ] || {
     printf 'usage: %s <aarch64-apple-darwin|x86_64-unknown-linux-musl>\n' "$0" >&2
@@ -10,8 +10,8 @@ TAG=release-4f7e194610f8c3e2bb5d7faa7b98a2b4e1893370
 }
 target=$1
 case "$target" in
-    aarch64-apple-darwin) sha=31c1e7490c52875035150d836527d1aad08a2b4d4f311b3bf02013e2890958ad ;;
-    x86_64-unknown-linux-musl) sha=707e1ee2bcc3f9fdedaa32513304687d99e7eb7510d9467fd9330dfafd1412f0 ;;
+    aarch64-apple-darwin) sha=f7383222f00d8d580d47c543e99628046c2b2691df9059524838b829ef4cee76 ;;
+    x86_64-unknown-linux-musl) sha=abef15f7c04213c219e97eae794e55544e5e508204c06c79db8275b1868849fd ;;
     *)
         printf 'error: no gluon release for %s\n' "$target" >&2
         exit 2
@@ -29,19 +29,19 @@ mkdir -p "$TMPDIR" "$(dirname "$DEST")"
 stage=$(mktemp -d "$TMPDIR/gluon.XXXXXX")
 trap 'rm -rf "$stage"' EXIT
 
-archive="$stage/gluon-$target.zip"
-curl -fsSL "https://github.com/laputa-systems/gluon/releases/download/$TAG/gluon-$target.zip" -o "$archive"
+archive="$stage/gluon-$target.tar.xz"
+curl -fsSL "https://github.com/laputa-systems/gluon/releases/download/$TAG/gluon-$target.tar.xz" -o "$archive"
 if command -v sha256sum >/dev/null; then
     got=$(sha256sum "$archive" | awk '{print $1}')
 else
     got=$(shasum -a 256 "$archive" | awk '{print $1}')
 fi
 [ "$got" = "$sha" ] || {
-    printf 'error: gluon-%s.zip sha256 %s, pinned %s\n' "$target" "$got" "$sha" >&2
+    printf 'error: gluon-%s.tar.xz sha256 %s, pinned %s\n' "$target" "$got" "$sha" >&2
     exit 1
 }
 mkdir "$stage/out"
-unzip -q "$archive" -d "$stage/out"
+tar -xJf "$archive" -C "$stage/out"
 chmod 755 "$stage/out/meson" "$stage/out/ninja"
 rm -rf "$DEST"
 mv "$stage/out" "$DEST"
