@@ -528,7 +528,7 @@ mod tests {
                     _ => "",
                 };
                 let argument = format!("--{name}{value}");
-                parse(&[argument.clone()]).unwrap_or_else(|error| panic!("{argument}: {error}"));
+                parse(std::slice::from_ref(&argument)).unwrap_or_else(|error| panic!("{argument}: {error}"));
             }
         }
         for example in CLI.examples {
