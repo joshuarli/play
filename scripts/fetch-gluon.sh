@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-TAG=release-c7c0571992effba33a50e5b94c3ed4da7145c1e3
+TAG=release-494abcc6d59263aa76c33bb5a22afdd2b7c2718a
 
 [ $# -eq 1 ] || {
     printf 'usage: %s <aarch64-apple-darwin|x86_64-unknown-linux-musl>\n' "$0" >&2
@@ -10,8 +10,8 @@ TAG=release-c7c0571992effba33a50e5b94c3ed4da7145c1e3
 }
 target=$1
 case "$target" in
-    aarch64-apple-darwin) sha=8102162b2a90120efac9cac0d14c2f8b747772e4ebe1e6308907d1121a0e5397 ;;
-    x86_64-unknown-linux-musl) sha=1d28430818c830b222b2fe8e46c65d76731b43e1724d5d60ee1e7b651f187f26 ;;
+    aarch64-apple-darwin) sha=75011450589edc0cae64f7c51cd73a6c233c867c9de9335c94efcc1bb24f2b00 ;;
+    x86_64-unknown-linux-musl) sha=4c3092e5a6dee719b8118dd33fe15b03cfdeb7b3aeb51012b2e52def5d8d9f95 ;;
     *)
         printf 'error: no gluon release for %s\n' "$target" >&2
         exit 2
