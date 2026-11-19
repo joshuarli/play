@@ -851,6 +851,44 @@ def gate_tui(results, args):
             except OSError:
                 pass
 
+    # Inside tmux the image must use Unicode placeholders so it follows the
+    # pane grid instead of staying on the outer terminal across pane switches.
+    proc = None
+    master = None
+    try:
+        proc, master, buf = pty_session(
+            ["--no-config", "--tui", "--ao=null", "--volume=0", "--pause=yes", str(path)],
+            env_extra={"PLAYER_TUI_ART": "kitty", "TMUX": "/tmp/placeholder-test,1,0"},
+            wait_for=b"Paper Satellites",
+        )
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline and chr(0x10EEEE).encode() not in buf:
+            ready, _, _ = select.select([master], [], [], 0.1)
+            if ready:
+                try:
+                    buf.extend(os.read(master, 262144))
+                except OSError:
+                    break
+        data = bytes(buf)
+        results.check("tui: tmux kitty art uses a virtual placement", b",U=1," in data)
+        results.check("tui: tmux kitty art uses Unicode placeholders",
+                      chr(0x10EEEE).encode() in data)
+        results.check("tui: tmux kitty art is passed through", b"\x1bPtmux;" in data)
+        buf, stderr = pty_finish(proc, master, buf)
+        master = None
+        results.check("tui: tmux kitty clean exit", proc.returncode == 0,
+                      f"exit {proc.returncode}: {stderr[-300:]}")
+    except Exception as exc:
+        results.check("tui: tmux kitty", False, str(exc))
+    finally:
+        if proc is not None and proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=5)
+        if master is not None:
+            try:
+                os.close(master)
+            except OSError:
+                pass
 
     proc = None
     master = None

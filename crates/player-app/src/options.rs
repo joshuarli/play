@@ -489,7 +489,7 @@ pub fn help() -> String {
         let names = names.join(separator);
         writeln!(text, "  {names}\n      {}", spec.description).unwrap();
     }
-    text.push_str("\nBOOL accepts yes, true, 1, no, false, or 0; without a value it means yes.\nValue options also accept a separate argument. Unless stated otherwise, options\nare optional, values have no default, and the last occurrence wins.\nUnknown options are ignored for compatibility; removed and scripting options fail.\n\nEnvironment:\n  PLAYER_OPTIONS         Whitespace-separated options applied before command-line options.\n  PLAYER_TUI_ART         blocks/half-block/halfblock: text art; kitty/pixels: pixel art; other values: text art. Inside tmux, text art is always used.\n  MPVBUNDLE              true enables bundled idle behavior.\n\nExamples:\n");
+    text.push_str("\nBOOL accepts yes, true, 1, no, false, or 0; without a value it means yes.\nValue options also accept a separate argument. Unless stated otherwise, options\nare optional, values have no default, and the last occurrence wins.\nUnknown options are ignored for compatibility; removed and scripting options fail.\n\nEnvironment:\n  PLAYER_OPTIONS         Whitespace-separated options applied before command-line options.\n  PLAYER_TUI_ART         blocks/half-block/halfblock: text art; kitty/pixels: pixel art; other values: text art. Inside tmux, kitty art needs allow-passthrough on and uses Unicode placeholders.\n  MPVBUNDLE              true enables bundled idle behavior.\n\nExamples:\n");
     for example in CLI.examples {
         writeln!(text, "  {}", example.join(" ")).unwrap();
     }
