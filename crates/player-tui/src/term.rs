@@ -1,6 +1,5 @@
 use std::env;
 use std::io::{self, Write};
-use std::process::Command;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::os::fd::AsFd;
@@ -66,17 +65,8 @@ pub enum ArtMode {
 }
 
 pub fn detect_art_mode() -> ArtMode {
-    if let Ok(value) = env::var("PLAYER_TUI_ART") {
-        return match value.as_str() {
-            "blocks" | "half-block" | "halfblock" => ArtMode::Blocks,
-            "kitty" | "pixels" => ArtMode::Kitty,
-            _ => ArtMode::Blocks,
-        };
-    }
+    let explicit = env::var("PLAYER_TUI_ART").ok();
     let in_tmux = env::var_os("TMUX").is_some();
-    if in_tmux && !tmux_passthrough() {
-        return ArtMode::Blocks;
-    }
     let known = env::var_os("GHOSTTY_RESOURCES_DIR").is_some()
         || env::var_os("WEZTERM_EXECUTABLE").is_some()
         || env::var_os("KITTY_WINDOW_ID").is_some()
@@ -88,22 +78,19 @@ pub fn detect_art_mode() -> ArtMode {
             env::var("TERM").as_deref(),
             Ok("xterm-kitty") | Ok("xterm-ghostty")
         );
-    if known { ArtMode::Kitty } else { ArtMode::Blocks }
+    resolve_art_mode(explicit.as_deref(), in_tmux, known)
 }
 
-fn tmux_passthrough() -> bool {
-    for args in [
-        ["show-options", "-gv", "allow-passthrough"],
-        ["show-options", "-wv", "allow-passthrough"],
-    ] {
-        if let Ok(output) = Command::new("tmux").args(args).output()
-            && output.status.success()
-            && String::from_utf8_lossy(&output.stdout).trim() == "on"
-        {
-            return true;
-        }
+fn resolve_art_mode(explicit: Option<&str>, in_tmux: bool, known: bool) -> ArtMode {
+    if in_tmux {
+        return ArtMode::Blocks;
     }
-    false
+    match explicit {
+        Some("blocks" | "half-block" | "halfblock") => ArtMode::Blocks,
+        Some("kitty" | "pixels") => ArtMode::Kitty,
+        _ if known => ArtMode::Kitty,
+        _ => ArtMode::Blocks,
+    }
 }
 
 struct Kitty {
@@ -405,17 +392,21 @@ mod tests {
     }
 
     #[test]
-    fn explicit_art_mode_wins() {
-        unsafe {
-            env::set_var("PLAYER_TUI_ART", "blocks");
-        }
-        assert_eq!(detect_art_mode(), ArtMode::Blocks);
-        unsafe {
-            env::set_var("PLAYER_TUI_ART", "kitty");
-        }
-        assert_eq!(detect_art_mode(), ArtMode::Kitty);
-        unsafe {
-            env::remove_var("PLAYER_TUI_ART");
-        }
+    fn explicit_art_mode_wins_outside_tmux() {
+        assert_eq!(resolve_art_mode(Some("blocks"), false, true), ArtMode::Blocks);
+        assert_eq!(resolve_art_mode(Some("half-block"), false, true), ArtMode::Blocks);
+        assert_eq!(resolve_art_mode(Some("kitty"), false, false), ArtMode::Kitty);
+        assert_eq!(resolve_art_mode(Some("pixels"), false, false), ArtMode::Kitty);
+        assert_eq!(resolve_art_mode(Some("bogus"), false, false), ArtMode::Blocks);
+        assert_eq!(resolve_art_mode(None, false, true), ArtMode::Kitty);
+        assert_eq!(resolve_art_mode(None, false, false), ArtMode::Blocks);
+    }
+
+    #[test]
+    fn tmux_always_uses_half_blocks_because_kitty_images_persist_across_panes() {
+        assert_eq!(resolve_art_mode(None, true, true), ArtMode::Blocks);
+        assert_eq!(resolve_art_mode(Some("kitty"), true, true), ArtMode::Blocks);
+        assert_eq!(resolve_art_mode(Some("pixels"), true, false), ArtMode::Blocks);
+        assert_eq!(resolve_art_mode(Some("blocks"), true, true), ArtMode::Blocks);
     }
 }
