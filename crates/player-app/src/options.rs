@@ -42,6 +42,7 @@ pub struct Options {
     pub term_playing_msg: Option<String>,
     pub log_file: Option<PathBuf>,
     pub osc: bool,
+    pub disable_art: bool,
     pub sub_files: Vec<String>,
     pub sid: Option<String>,
     pub audio_files: Vec<String>,
@@ -82,6 +83,7 @@ impl Default for Options {
             term_playing_msg: None,
             log_file: None,
             osc: true,
+            disable_art: false,
             sub_files: Vec::new(),
             sid: None,
             audio_files: Vec::new(),
@@ -152,6 +154,7 @@ enum OptionKind {
     LogFile,
     Osc,
     NoOsc,
+    DisableArt,
     Audio,
     NoAudio,
     Video,
@@ -209,6 +212,7 @@ const OPTION_SPECS: &[OptionSpec] = &[
     OptionSpec { kind: OptionKind::LogFile, names: &["log-file"], short: None, value: "=PATH", description: "Create or truncate PATH at startup." },
     OptionSpec { kind: OptionKind::Osc, names: &["osc"], short: None, value: "[=BOOL]", description: "Enable on-screen controls (default: yes)." },
     OptionSpec { kind: OptionKind::NoOsc, names: &["no-osc"], short: None, value: "", description: "Disable on-screen controls." },
+    OptionSpec { kind: OptionKind::DisableArt, names: &["disable-art"], short: None, value: "[=BOOL]", description: "Do not display album art (default: no)." },
     OptionSpec { kind: OptionKind::Audio, names: &["audio"], short: None, value: "[=BOOL]", description: "Enable audio (default: yes)." },
     OptionSpec { kind: OptionKind::NoAudio, names: &["no-audio"], short: None, value: "", description: "Disable audio." },
     OptionSpec { kind: OptionKind::Video, names: &["video"], short: None, value: "[=BOOL]", description: "Enable video (default: yes)." },
@@ -382,6 +386,7 @@ pub fn parse(args: &[String]) -> Result<Options, String> {
             Some(OptionKind::LogFile) => options.log_file = Some(PathBuf::from(value(&name)?)),
             Some(OptionKind::Osc) => options.osc = flag(&inline)?,
             Some(OptionKind::NoOsc) => options.osc = false,
+            Some(OptionKind::DisableArt) => options.disable_art = flag(&inline)?,
             Some(OptionKind::Audio) => options.no_audio = !flag(&inline)?,
             Some(OptionKind::NoAudio) => options.no_audio = true,
             Some(OptionKind::Video) => options.no_video = !flag(&inline)?,
@@ -484,7 +489,7 @@ pub fn help() -> String {
         let names = names.join(separator);
         writeln!(text, "  {names}\n      {}", spec.description).unwrap();
     }
-    text.push_str("\nBOOL accepts yes, true, 1, no, false, or 0; without a value it means yes.\nValue options also accept a separate argument. Unless stated otherwise, options\nare optional, values have no default, and the last occurrence wins.\nUnknown options are ignored for compatibility; removed and scripting options fail.\n\nEnvironment:\n  PLAYER_OPTIONS         Whitespace-separated options applied before command-line options.\n  PLAYER_TUI_ART         blocks/half-block/halfblock: text art; kitty/pixels: pixel art; other values: text art.\n  MPVBUNDLE              true enables bundled idle behavior.\n\nExamples:\n");
+    text.push_str("\nBOOL accepts yes, true, 1, no, false, or 0; without a value it means yes.\nValue options also accept a separate argument. Unless stated otherwise, options\nare optional, values have no default, and the last occurrence wins.\nUnknown options are ignored for compatibility; removed and scripting options fail.\n\nEnvironment:\n  PLAYER_OPTIONS         Whitespace-separated options applied before command-line options.\n  PLAYER_TUI_ART         blocks/half-block/halfblock: text art; kitty/pixels: pixel art; other values: text art. Inside tmux, text art is always used.\n  MPVBUNDLE              true enables bundled idle behavior.\n\nExamples:\n");
     for example in CLI.examples {
         writeln!(text, "  {}", example.join(" ")).unwrap();
     }
@@ -543,6 +548,16 @@ mod tests {
         assert_eq!(parse(&args(&["--volume", "--help"])).unwrap_err(), "__help__");
         assert_eq!(help().matches(FOOTER).count(), 1);
         assert!(help().ends_with(FOOTER));
+    }
+
+    #[test]
+    fn disable_art_is_a_flag_and_defaults_to_off() {
+        assert!(!parse(&args(&[])).unwrap().disable_art);
+        assert!(parse(&args(&["--disable-art"])).unwrap().disable_art);
+        assert!(parse(&args(&["--disable-art=yes"])).unwrap().disable_art);
+        assert!(!parse(&args(&["--disable-art=no"])).unwrap().disable_art);
+        assert!(parse(&args(&["--disable-art=bogus"])).is_err());
+        assert!(help().contains("--disable-art"));
     }
 
     #[test]

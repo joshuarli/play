@@ -387,7 +387,7 @@ impl App {
             self.defer_event(ipc::event("audio-reconfig", Vec::new()));
         }
         self.backend = Some(EngineBackend::open(engine));
-        if self.window.is_some() && !displays_video && !self.options.no_video && !self.options.null_video {
+        if self.window.is_some() && !displays_video && !self.options.no_video && !self.options.null_video && !self.options.disable_art {
             self.last_frame = match crate::art::gui_cover(&entry.path) {
                 Ok(frame) => frame,
                 Err(error) => {
@@ -1878,6 +1878,9 @@ impl TuiPlayer for App {
     }
 
     fn cover_art(&mut self, path: &str) -> Option<Cover> {
+        if self.options.disable_art {
+            return None;
+        }
         crate::art::cover_art(path)
     }
 
@@ -2102,6 +2105,19 @@ mod tests {
         app.unload();
         assert!(app.last_frame.is_none());
         assert!(app.write_screenshot(None).is_err());
+    }
+
+    #[test]
+    fn disable_art_suppresses_the_tui_cover() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.work/fixtures");
+        let path = root.join("audio-cover.flac");
+        let path = path.to_str().unwrap();
+        let mut enabled = App::new(Options::default());
+        assert!(TuiPlayer::cover_art(&mut enabled, path).is_some());
+        let mut options = Options::default();
+        options.disable_art = true;
+        let mut disabled = App::new(options);
+        assert!(TuiPlayer::cover_art(&mut disabled, path).is_none());
     }
 
     #[test]
