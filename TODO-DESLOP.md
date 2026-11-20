@@ -188,4 +188,3 @@ Not started.
 - **Recommendation:** In the Linux container with alsa/null, inject the three cases with a fake pcm layer or the null device's error hooks and reproduce before changing code; retry EINTR, bound consecutive EPIPE recoveries, and decide the pause fallback with the owner.
 - **Fix with:** lifecycle-concurrency
 - **Effort:** M
-
