@@ -51,7 +51,7 @@ jobs:
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
 
       - name: Test
-        run: scripts/linux-container.sh tests/run.sh suite
+        run: make test
 
       - name: Verify tarball
         run: |

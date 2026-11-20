@@ -68,7 +68,8 @@ Linux x86-64 musl uses the same engine and application as macOS. The platform sp
 - mpv v0.41.0 is the compatibility reference for the CLI, IPC commands, and property names.
 - FFmpeg n9.0.2 at `ce8f11b9fac4cd7ccfb41ca7c01bc17f5cda8cc3`, as the shared runtime from `laputa-systems/ffmpeg-build`, licensed GPL version 2 or later.
 - `rusty_aac` 2.0.1, vendored with Apache-2.0 licensing and no runtime dependencies. Default SIMD features are disabled. Its published archive and revision are recorded in `vendor/rusty-aac/UPSTREAM.md`.
-- Symphonia at `b6336209bb40d57e4ed71079cf7f7fc6c4626aae`, vendored under `vendor/symphonia` with its own license files.
+- `ruopus` 0.1.2 at `b7aab670bce04eaa10731b152e9834b89a21cde3`, vendored under `vendor/ruopus` (MIT) with a local FFT replacement for Symphonia's Opus codec; see `vendor/ruopus/UPSTREAM.md`.
+- Symphonia at `b6336209bb40d57e4ed71079cf7f7fc6c4626aae`, vendored under `vendor/symphonia` with its own license files; see `vendor/symphonia/UPSTREAM.md`.
 
 ## Follow-on
 

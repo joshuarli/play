@@ -64,7 +64,7 @@ ifeq ($(shell uname -s),Darwin)
 		FFMPEG_BIN_DIR="$$(brew --prefix)/opt/ffmpeg/bin"; \
 	fi; \
 	if [ -n "$$FFMPEG_BIN_DIR" ]; then export PATH="$$FFMPEG_BIN_DIR:$$PATH"; fi; \
-	scripts/build.sh && tests/run.sh suite
+	scripts/build.sh && scripts/release.sh && tests/run.sh suite
 else
 	scripts/linux-container.sh tests/run.sh suite
 endif

@@ -15,6 +15,23 @@ Player is a local-only media player built on a Rust playback engine, the pinned 
 - `cargo test` runs the Rust tests.
 - `build/mpv --tui FILE` runs the terminal player; `build/mpv FILE` renders through libplacebo's native Metal backend on macOS (`--gpu-api=vulkan` selects Vulkan/MoltenVK).
 
+## Verification
+
+- Costs (M-series Mac, busy host, observations): `make test` 202 s warm; cold (empty `.work` and `target`) 481 s before it built the release app, which adds 287 s; it runs `build/mpv`, `scripts/release.sh`, then `tests/run.sh suite` (489 checks, workspace `cargo test` inside the `rust-link` gate). `make lint` 41 s warm, 187 s cold. Python unit tests are outside `make test`: `python3 -m unittest discover -s tests -p 'test_*.py'` 235 s, `-s scripts` 1 s (DSLP-19).
+- Known red: two `fixtures` byte-hash checks for corrupt, hevc and mpeg4 fail with the host's Homebrew x265 and lame, also at base a4d901f (DSLP-18). Linux compares fixture structure only.
+- CI: `ci.yml` (Linux musl container) runs `make test` on pull requests; `lint.yml` runs `make lint`; `macos.yml` builds and verifies the app and runs no tests.
+- Guards by boundary (gates are `tests/run.sh GATE`; unit tests ship in each crate):
+  - CLI flags, help text, exit codes: gates `cli`, `cli-help`; `crates/player-app/src/options.rs` tests.
+  - Local-only input and wrappers: `local-only`, `local-paths`; `crates/player-core/src/input.rs` tests; `scripts/audit.sh`.
+  - Commands, properties, JSON IPC socket (`--input-ipc-server`): `state`, `input`, `dispatch`, `osc-input`; `ipc.rs` tests. Malformed or oversized IPC lines: none.
+  - Playlists (m3u, m3u8, pls, directories): `playlist` gate; `crates/player-app/src/playlist.rs` tests. Non-UTF-8, BOM or oversized playlist files: none.
+  - Container and codec decode: `corpus`, `audio`, `cover-art`, `seek` over `tests/fixtures/manifest.json`; truncated and corrupt files: `failures`. Mutated or fuzzed media: none.
+  - Release artifacts: `release` gate, `tests/test_release_archives.py`, `scripts/audit-linux.sh`.
+  - Audio devices: ALSA null PCM in `linux-audio`; CoreAudio and real devices: none, owner checks in `docs/manual-checklist.md`.
+- Performance workload: `scripts/measure.sh final` against the budgets in `docs/metrics.md` (CPU and RSS during playback), plus `scripts/bench.py`. Owner-run, not part of `make test`.
+- Components (first-party lines; the repository is over 50k with vendored code): playback (14.2k: player-core, -media, -audio, -engine, -backend), presentation (8.1k: player-output, -display, -overlay), application (9.3k: player-app, -tui, -gui, -build), harness (9.6k: tests, scripts, docker, native).
+- Vendored trees (`UPSTREAM.md` in each): `vendor/rusty-aac` is crates.io 2.0.1 from Remade-With-Rust/remade_ffmpeg_rs at `14e8508`, pristine; `vendor/ruopus` is crates.io 0.1.2 from jmg049/ruopus at `b7aab67`, modified (FFT); `vendor/symphonia` is joshuarli/symphonia at `b633620` (derived from pdeljanov/Symphonia 0.6.1), modified (AAC layouts, surround Opus). Fork differences were not diffed.
+
 ## Invariants
 
 - Linux is x86-64 musl only. glibc is explicitly out of scope; do not add a glibc build or fallback.
