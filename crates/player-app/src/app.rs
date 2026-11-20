@@ -2114,9 +2114,7 @@ mod tests {
         let path = path.to_str().unwrap();
         let mut enabled = App::new(Options::default());
         assert!(TuiPlayer::cover_art(&mut enabled, path).is_some());
-        let mut options = Options::default();
-        options.disable_art = true;
-        let mut disabled = App::new(options);
+        let mut disabled = App::new(Options { disable_art: true, ..Options::default() });
         assert!(TuiPlayer::cover_art(&mut disabled, path).is_none());
     }
 

@@ -2204,9 +2204,8 @@ def gate_rust_link(results, args):
                   "C playloop symbol present")
 
     proc = subprocess.run(
-        ["cargo", "test", "--manifest-path", str(ROOT / "Cargo.toml"),
-         "-p", "player-core", "-p", "player-backend"],
-        cwd=str(ROOT), capture_output=True, text=True, timeout=300,
+        ["cargo", "test", "--manifest-path", str(ROOT / "Cargo.toml"), "--workspace"],
+        cwd=str(ROOT), capture_output=True, text=True, timeout=600,
     )
     results.check("rust-link: cargo test", proc.returncode == 0,
                   tail((proc.stdout + proc.stderr).splitlines(), 20))
