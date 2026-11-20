@@ -1,5 +1,5 @@
 Prefix: DSLP
-Next: 20
+Next: 26
 
 Deslop campaign backlog ([plan](https://github.com/laputa-systems/stuff/blob/main/docs/campaigns/deslop.md), tier D). One agent works this file with the `deslop` skill: take the lowest-numbered open ticket whose area does not start with `Needs owner ·`. After DSLP-17 (the per-component tickets that replaced DSLP-3 to DSLP-5), work the open P1 and P2 findings, then fill in `## Report` below.
 
@@ -8,15 +8,6 @@ Deslop campaign backlog ([plan](https://github.com/laputa-systems/stuff/blob/mai
 Not started.
 
 ## Tickets
-
-### DSLP-2 · P2 · Diagnose: ultrareview into this backlog
-
-- **Area:** deslop · diagnose
-- **Where:** whole repository
-- **Problem:** No review has ranked this repository's risks for the deslop pass.
-- **Recommendation:** Run the deslop Diagnose step. Accept: the diff touches only docs, comments, and this file, and every finding names its Fix with.
-- **Fix with:** deslop
-- **Effort:** M
 
 ### DSLP-6 · P2 · Types: playback pipeline
 
@@ -126,6 +117,15 @@ Not started.
 - **Fix with:** deslop
 - **Effort:** M
 
+### DSLP-20 · P2 · m3u playlists with a UTF-8 BOM or non-UTF-8 bytes fail the whole startup
+
+- **Area:** Playlist
+- **Where:** crates/player-app/src/playlist.rs:170-216 (read_playlist, parse_m3u)
+- **Problem:** read_playlist uses std::fs::read_to_string and never strips a BOM. Reproduced on build/mpv at 3db6e14a with a.wav beside the playlists: printf '\xef\xbb\xbf#EXTM3U\n#EXTINF:3,Tone\na.wav\n' > bom.m3u, then build/mpv --no-config --vo=null --ao=null --playlist=bom.m3u prints 'player: failed to open \ufeff#EXTM3U: open: ... No such file or directory' and exits 1: the BOM glues to the header line, so it is no longer a comment and becomes the first entry (the same file without the BOM plays). printf '#EXTM3U\ncaf\xe9.wav\na.wav\n' > latin1.m3u (classic .m3u is Latin-1 or the system code page) prints 'cannot read playlist latin1.m3u: stream did not contain valid UTF-8' and exits 1, losing the valid a.wav entry too. Both are common outputs of Windows and older tools. parse_srt already strips a BOM (sub.rs:173), so the omission is local to playlists.
+- **Recommendation:** Strip a leading U+FEFF, read bytes and decode lossily or per extension (m3u8 is UTF-8 by definition), and skip an entry that does not resolve instead of failing the load. Test both files through the playlist gate, and add a unit test beside insertion_tests; prove each with one injected fault.
+- **Fix with:** error-model
+- **Effort:** S
+
 ### DSLP-18 · P3 · Fixture byte hashes drift with Homebrew encoder upgrades, so macOS make test is red
 
 - **Area:** Tests
@@ -143,4 +143,49 @@ Not started.
 - **Recommendation:** In the Tests step for the harness component, add the fast files to make test and either shrink test_build_deps.py or keep it behind a separate target; record the cost against the test budget.
 - **Fix with:** test-audit
 - **Effort:** S
+
+### DSLP-21 · P3 · The IPC socket reads unbounded input and rescans it on every poll
+
+- **Area:** Concurrency
+- **Where:** crates/player-app/src/ipc.rs:29-72 (IpcServer::poll)
+- **Problem:** poll appends everything the client sends to client.buffer with no cap and searches the whole buffer for a newline on every call, so a client that never sends a newline grows memory and makes each poll O(buffer). Reproduced on build/mpv with --input-ipc-server and a local client writing 'A' bytes in 1 MiB writes (script in the finding's scratch dir, .work/tmp/r/ipc_nl.py): sending 4 MiB took 1.2 s, 16 MiB 7.3 s, 32 MiB 43.2 s (RSS 12 MB to 56 MB, superlinear), and the next valid request got no reply within 8 s because it was glued to the junk line. A valid get_property answered in under 0.1 s before the flood. The socket is created with the user's umask, so any local process that can open it can do this. A 1 MiB flood of bare newlines took 6.6 s and then recovered; a quadratic drain was not demonstrated.
+- **Recommendation:** Cap one line (for example 1 MiB): past the cap discard to the next newline and reply with an error, or close the client. Scan only the new bytes for the newline. Add an ipc.rs test that feeds an oversized line and asserts the bound and that a later valid line is answered; prove it with the cap removed.
+- **Fix with:** security
+- **Effort:** S
+
+### DSLP-22 · P3 · File names with control characters reach the terminal unsanitized
+
+- **Area:** Security
+- **Where:** crates/player-app/src/app.rs:445 (Playing: line), app.rs:330 and :382 (failed to open), expand_message for ${filename}
+- **Problem:** println!("Playing: {}", entry.path) and the open-failure message print the path raw. Reproduced: cp t.flac $'x\e[31mevil\e]0;pw\a.flac' then build/mpv --no-config --vo=null --ao=null that file | cat -v shows 'Playing: x^[[31mevil^[]0;pw^G.flac', and a missing $'nofile\e[2Jx.mp3' prints '^[[2J' in 'failed to open'. A directory argument or an m3u entry can name such a file, so a downloaded folder or playlist can inject cursor, clear and title sequences. The TUI is safe (Canvas::put maps controls to spaces; tested) and container title, artist and stream-title tags carrying ESC were not printed by the plain player in my probes (chapter titles were not probed).
+- **Recommendation:** Escape or replace C0, C1 and DEL characters in every path or tag string the plain player writes (one helper next to expand_message), keeping the file path itself untouched for opening. Test the Playing line, the failed-to-open line and ${filename}.
+- **Fix with:** security
+- **Effort:** S
+
+### DSLP-23 · P3 · parse_srt timestamp arithmetic is unchecked: dev builds kill the scheduler, release builds wrap
+
+- **Area:** Resource bounds
+- **Where:** crates/player-engine/src/sub.rs:144-161 (parse_timestamp), :122 (feed: start_ms + duration_ms)
+- **Problem:** parse_timestamp parses unbounded digit strings into i64 and computes ((hours * 60 + minutes) * 60 + seconds) * 1000 without checks. Reproduced: printf '1\n99999999999999:00:00,000 --> 99999999999999:00:01,000\nboom\n' > big.srt, then build/mpv --no-config --vo=null --ao=null --sub-file=big.srt a.wav prints 'player: scheduler worker died' (dev profile: overflow checks on, the worker thread panics). dist/Player.app with the same arguments exits normally because release wraps, so the shipped build shows a garbage cue time rather than rejecting the file. EngineSub::feed has the same sum for an embedded packet with a huge duration (not reproduced).
+- **Recommendation:** Use checked arithmetic and treat an out-of-range timestamp as a malformed cue (skipped, as parse_srt already skips bad cues); cap hours at a sane value. Add a parse_srt test for 99999999999999:00:00,000 that fails before the change.
+- **Fix with:** error-model
+- **Effort:** S
+
+### DSLP-24 · P3 · Playlist and subtitle readers load whole files with no size bound
+
+- **Area:** Resource bounds
+- **Where:** crates/player-app/src/playlist.rs:175 (read_to_string), crates/player-engine/src/sub.rs:90 (fs::read)
+- **Problem:** Reproduced for playlists: build/mpv --no-config --vo=null --ao=null --playlist=/dev/zero reached 6.5 GB RSS after 6 s and 7.0 GB after 12 s with no error. A regular multi-gigabyte file or a FIFO behaves the same; the player never checks the size or file type first. An .srt passed to sub-file or found next to a video is read the same way (not measured separately). Other bounds checked and fine: MAX_STREAMS, MAX_CHAPTERS, MAX_PACKET_BYTES and metadata caps in player-media, 32k-entry playlists (ready in 50 ms, 27 MB), speed clamped to 0.01..100.
+- **Recommendation:** Open the file, require a regular file, and read at most a fixed cap (for example 16 MiB for playlists and 4 MiB for subtitles) through Read::take, failing with a clear error past it. Test with a file one byte over the cap.
+- **Fix with:** os-boundaries
+- **Effort:** S
+
+### DSLP-25 · P4 · ALSA write path may fail playback on EINTR and loop on repeated EPIPE
+
+- **Area:** Needs environment · Linux audio
+- **Where:** crates/player-audio/src/backend_alsa.rs:195-225 (AlsaSink::write)
+- **Problem:** Source reading only, not reproduced: this host is macOS and the ALSA null PCM needs the Linux container. write treats every negative snd_pcm_writei result other than EPIPE and ESTRPIPE as fatal, so EINTR (-4, for example from a signal delivered to the process during a blocking write) ends the audio path instead of retrying. The EPIPE branch calls snd_pcm_prepare and continues with no bound, so a device that returns EPIPE on every write spins the thread. snd_pcm_pause failing on a device without pause support surfaces as an error with no snd_pcm_drop fallback. None of these has a test: linux-audio runs only the happy path on alsa/null.
+- **Recommendation:** In the Linux container with alsa/null, inject the three cases with a fake pcm layer or the null device's error hooks and reproduce before changing code; retry EINTR, bound consecutive EPIPE recoveries, and decide the pause fallback with the owner.
+- **Fix with:** lifecycle-concurrency
+- **Effort:** M
 
