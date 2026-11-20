@@ -302,7 +302,7 @@ mod read_tests {
             .join(format!("playlist-{}-{name}", std::process::id()));
         std::fs::create_dir_all(&directory).unwrap();
         let media = directory.join(filename);
-        std::fs::write(&media, b"fixture").unwrap();
+        std::fs::write(&media, b"RIFF\x26\0\0\0WAVEfmt \x10\0\0\0\x01\0\x01\0\x40\x1f\0\0\x80\x3e\0\0\x02\0\x10\0data\x02\0\0\0\0\0").unwrap();
         let playlist = directory.join("list.m3u");
         std::fs::write(&playlist, contents).unwrap();
         let entries = read_playlist(playlist.to_str().unwrap()).unwrap();
