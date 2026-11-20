@@ -172,8 +172,10 @@ pub fn read_playlist(path: &str) -> Result<Vec<Entry>, String> {
         Ok(InputPath::Local(path)) => path,
         _ => return Err("Refusing non-local playlist".to_owned()),
     };
-    let text = std::fs::read_to_string(&source)
+    let bytes = std::fs::read(&source)
         .map_err(|error| format!("cannot read playlist {}: {error}", source.display()))?;
+    let bytes = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(&bytes);
+    let text = decode_playlist(bytes);
     let base = source.parent().unwrap_or_else(|| Path::new("."));
     let extension = source
         .extension()
@@ -188,6 +190,26 @@ pub fn read_playlist(path: &str) -> Result<Vec<Entry>, String> {
         return Err(format!("playlist {} has no entries", source.display()));
     }
     Ok(entries)
+}
+
+fn decode_playlist(mut bytes: &[u8]) -> String {
+    let mut text = String::with_capacity(bytes.len());
+    while !bytes.is_empty() {
+        match std::str::from_utf8(bytes) {
+            Ok(valid) => {
+                text.push_str(valid);
+                break;
+            }
+            Err(error) => {
+                let valid = error.valid_up_to();
+                text.push_str(std::str::from_utf8(&bytes[..valid]).unwrap());
+                let invalid = error.error_len().unwrap_or(bytes.len() - valid);
+                text.extend(bytes[valid..valid + invalid].iter().map(|byte| char::from(*byte)));
+                bytes = &bytes[valid + invalid..];
+            }
+        }
+    }
+    text
 }
 
 fn parse_m3u(text: &str, base: &Path) -> Vec<Entry> {
@@ -267,5 +289,36 @@ mod insertion_tests {
         let mut list = Playlist::new();
         list.insert(99, vec![entry("X")]);
         assert_eq!(list.current(), None);
+    }
+}
+
+#[cfg(test)]
+mod read_tests {
+    use super::*;
+
+    fn check_playlist(name: &str, contents: &[u8], filename: &str) {
+        let directory = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../.work/tmp")
+            .join(format!("playlist-{}-{name}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let media = directory.join(filename);
+        std::fs::write(&media, b"fixture").unwrap();
+        let playlist = directory.join("list.m3u");
+        std::fs::write(&playlist, contents).unwrap();
+        let entries = read_playlist(playlist.to_str().unwrap()).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(Path::new(&entries[0].path), media);
+        assert!(Path::new(&entries[0].path).is_file());
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn reads_utf8_bom_m3u() {
+        check_playlist("bom", b"\xef\xbb\xbf#EXTM3U\ntone.wav\n", "tone.wav");
+    }
+
+    #[test]
+    fn reads_latin1_m3u() {
+        check_playlist("latin1", b"#EXTM3U\ncaf\xe9.wav\n", "café.wav");
     }
 }

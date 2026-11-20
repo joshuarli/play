@@ -117,15 +117,6 @@ Not started.
 - **Fix with:** deslop
 - **Effort:** M
 
-### DSLP-20 · P2 · m3u playlists with a UTF-8 BOM or non-UTF-8 bytes fail the whole startup
-
-- **Area:** Playlist
-- **Where:** crates/player-app/src/playlist.rs:170-216 (read_playlist, parse_m3u)
-- **Problem:** read_playlist uses std::fs::read_to_string and never strips a BOM. Reproduced on build/mpv at 3db6e14a with a.wav beside the playlists: printf '\xef\xbb\xbf#EXTM3U\n#EXTINF:3,Tone\na.wav\n' > bom.m3u, then build/mpv --no-config --vo=null --ao=null --playlist=bom.m3u prints 'player: failed to open \ufeff#EXTM3U: open: ... No such file or directory' and exits 1: the BOM glues to the header line, so it is no longer a comment and becomes the first entry (the same file without the BOM plays). printf '#EXTM3U\ncaf\xe9.wav\na.wav\n' > latin1.m3u (classic .m3u is Latin-1 or the system code page) prints 'cannot read playlist latin1.m3u: stream did not contain valid UTF-8' and exits 1, losing the valid a.wav entry too. Both are common outputs of Windows and older tools. parse_srt already strips a BOM (sub.rs:173), so the omission is local to playlists.
-- **Recommendation:** Strip a leading U+FEFF, read bytes and decode lossily or per extension (m3u8 is UTF-8 by definition), and skip an entry that does not resolve instead of failing the load. Test both files through the playlist gate, and add a unit test beside insertion_tests; prove each with one injected fault.
-- **Fix with:** error-model
-- **Effort:** S
-
 ### DSLP-18 · P3 · Fixture byte hashes drift with Homebrew encoder upgrades, so macOS make test is red
 
 - **Area:** Tests
