@@ -366,7 +366,9 @@ impl Compositor {
             });
         }
         let (changing_paints, changing_union) = resolve_layers(changing, text, frame)?;
-        let cached = self.stable.as_ref().expect("the stable layer was just validated");
+        let Some(cached) = self.stable.as_ref() else {
+            return Ok(None);
+        };
         let stable_union = (cached.width > 0).then_some((cached.x, cached.y, cached.x + cached.width, cached.y + cached.height));
         let union = match (stable_union, changing_union) {
             (Some((x0, y0, x1, y1)), Some((a, b, c, d))) => {
@@ -378,7 +380,6 @@ impl Compositor {
         let covered = stable_union == Some(union);
         let mut target = Target::from_buffer(union, std::mem::take(&mut self.scratch), !covered);
         if let Some(stable_union) = stable_union {
-            let cached = self.stable.as_ref().expect("the stable layer exists");
             let (dx, dy) = (stable_union.0 - union.0, stable_union.1 - union.1);
             for row in 0..cached.height {
                 let source = &cached.premultiplied[row * cached.width * 4..][..cached.width * 4];
