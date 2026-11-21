@@ -18,7 +18,7 @@ Player is a local-only media player built on a Rust playback engine, the pinned 
 ## Verification
 
 - Costs (M-series Mac, busy host, observations): `make test` 202 s warm; cold (empty `.work` and `target`) 481 s before it built the release app, which adds 287 s; it runs `build/mpv`, `scripts/release.sh`, then `tests/run.sh suite` (489 checks, workspace `cargo test` inside the `rust-link` gate). `make lint` 41 s warm, 187 s cold. Python unit tests are outside `make test`: `python3 -m unittest discover -s tests -p 'test_*.py'` 235 s, `-s scripts` 1 s (PLAY-56).
-- Known red: two `fixtures` byte-hash checks for corrupt, hevc and mpeg4 fail with the host's Homebrew x265 and lame, also at base a4d901f (PLAY-55). Linux compares fixture structure only.
+- The `fixtures` gate compares stream structure against `tests/fixtures/manifest.json` on every platform; byte hashes vary with the host's encoder libraries.
 - CI: `ci.yml` (Linux musl container) runs `make test` on pull requests; `lint.yml` runs `make lint`; `macos.yml` builds and verifies the app and runs no tests.
 - Guards by boundary (gates are `tests/run.sh GATE`; unit tests ship in each crate):
   - CLI flags, help text, exit codes: gates `cli`, `cli-help`; `crates/player-app/src/options.rs` tests.
