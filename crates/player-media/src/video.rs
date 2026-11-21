@@ -1026,6 +1026,58 @@ mod tests {
         }
     }
 
+    fn mutated_copy(name: &str, seed: u64) -> PathBuf {
+        let mut bytes = std::fs::read(fixtures().join(name)).expect("fixture reads");
+        let mut state = seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1;
+        let mut next = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        for _ in 0..16 {
+            let at = next() as usize % bytes.len();
+            bytes[at] ^= (next() % 255 + 1) as u8;
+        }
+        let ext = name.rsplit('.').next().expect("extension");
+        let path = std::env::temp_dir().join(format!("mutated-{}-{seed}.{ext}", std::process::id()));
+        std::fs::write(&path, bytes).expect("mutated copy writes");
+        path
+    }
+
+    #[test]
+    fn mutated_video_files_end_cleanly() {
+        let (mut opened, mut decoded) = (0, 0);
+        for name in ["h264.mp4", "hevc.mkv", "mpeg4.avi", "vp9.webm", "av1.webm"] {
+            for seed in 0..8 {
+                let path = mutated_copy(name, seed);
+                let path_text = path.to_string_lossy().into_owned();
+                let stream = MediaSession::open(&path_text).ok().and_then(|session| {
+                    session.streams().into_iter().find(|stream| stream.kind == StreamKind::Video)
+                });
+                if let Some(stream) = stream
+                    && let Ok(mut session) = VideoSession::open(&path_text, stream.index, HwRequest::None)
+                {
+                    opened += 1;
+                    let mut ended = false;
+                    for _ in 0..2000 {
+                        match session.pump() {
+                            Ok(PumpResult::Frame(_)) => decoded += 1,
+                            Ok(PumpResult::NeedMore) => {}
+                            Ok(PumpResult::Ended) | Err(_) => {
+                                ended = true;
+                                break;
+                            }
+                        }
+                    }
+                    assert!(ended, "{name} seed {seed}: decode did not end");
+                }
+                std::fs::remove_file(&path).expect("mutated copy removes");
+            }
+        }
+        assert!(opened >= 20 && decoded > 0, "opened {opened}, decoded {decoded}");
+    }
+
     #[test]
     fn decode_is_deterministic() {
         let first = open_sw("h264.mp4").drain_all().expect("drain");
