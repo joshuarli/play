@@ -107,21 +107,55 @@ and linkage inputs do not change.
 | Environment | Commands | Result |
 | --- | --- | --- |
 | macOS 27.2 arm64 (native) | `TMPDIR=.work/tmp make lint` | exit 0 |
-| macOS 27.2 arm64 (native) | `TMPDIR=.work/tmp make test` | exit 0 |
+| macOS 27.2 arm64 (native) | `TMPDIR=.work/tmp make test` | exit 2: `TOTAL 493 passed, 2 failed`; both failures are the pre-existing PLAY-55 fixture byte checks, not this slice |
+| macOS 27.2 arm64 (native) | `TMPDIR=.work/tmp tests/run.sh ffmpeg-audit` | exit 0, 16 passed |
 | macOS 27.2 arm64 (native) | `python3 -m unittest tests.test_ffmpeg_fetch -v` | exit 0, 10 tests |
-| `ubuntu:24.04`, linux/amd64, cold and emulated | bootstrap auto-selection, acquisition, `make test` | see capsules below |
-| `ubuntu:26.04` + `musl`, linux/amd64, cold and emulated | bootstrap auto-selection, acquisition, `make test` | see capsules below |
+| `ubuntu:24.04`, amd64, cold and emulated | setup, acquisition, `make linux`, `make test`, `make lint` | all exit 0; bootstrap took `uv`; suite 464 passed, 0 failed |
+| `ubuntu:26.04` + `musl` 1.2.5, arm64, cold and native | setup, acquisition, `make linux`, `make test`, `make lint` | all exit 0; bootstrap took `python-build`; suite 464 passed, 0 failed |
 
-The Linux capsules mount the worktree read-only and `git clone` it inside; no scratch
-ref is pushed. Capsule logs stay under `.work/tmp` and host paths are redacted here.
-`git status --porcelain` in each clone is empty after the gates. macOS signing and
-execution of the app are unaffected and were not re-qualified by the Linux runs.
+**macOS red, pre-existing.** `make test` fails only
+`fixtures: generated manifest matches the tracked manifest` and `fixtures: 30 file hashes`
+(`corrupt`, `hevc`, `mpeg4`). `tests/fixtures/gen.sh` uses the host's Homebrew libx265
+and libmp3lame; this host has x265 4.3 and lame 4.0, while the tracked manifest records
+the Nov 5 output. `AGENTS.md` and `TODO.md` (PLAY-55) record the same failure at base
+`a4d901f`, and `docs/deslop-test-harness.md` records it as known red and untouched.
+This slice does not edit `tests/fixtures/gen.sh`, `tests/fixtures/manifest.json` or
+`gate_fixtures`; every other macOS gate, including `rust-link`, `release`, `unit`, `meta`
+file presence and `ffmpeg-audit`, passes. Re-baselining the manifest alone is explicitly
+not the fix (PLAY-55), and weakening the byte check was out of scope, so macOS
+`make test` still exits nonzero on this host.
+
+**Capsules.** Each capsule mounted the worktree read-only (plus the linked worktree's
+gitdir), cloned it inside, and ran as an unprivileged user with `dockerd` on `vfs`.
+Cold clone of `91940ca64020ba58c2dbb68178ec14481746d266`; no scratch ref was pushed.
+The only later commit is this document, which the gates do not execute.
+
+| Capsule | Bootstrap branch | acquire | `make linux` | `make test` | `make lint` | `git status` | Cold wall time |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `ubuntu:24.04`, amd64 under Rosetta | `uv` (0.13.7, CPython 3.15.2) | 0 (5 s) | 0 (5 m 48 s) | 0, 464 passed | 0 (1 m 27 s) | empty | 13 m 33 s |
+| `ubuntu:26.04` + `musl`, arm64 native | `python-build` (CPython 3.15.1 aarch64) | 0 (4 s) | 0 (5 m 46 s) | 0, 464 passed | 0 (45 s) | empty | 15 m 1 s |
+
+The 26.04 capsule ran the repository's amd64 Linux gate in nested Docker
+(`--platform linux/amd64` reported `x86_64`) while its own acquisition used the native
+aarch64 interpreter and fetched the `x86_64-unknown-linux-musl` runtime. The 24.04
+capsule is emulated throughout. Cold setup downloaded about 59.6 MB on 24.04 (uv
+16,671,812 B, uv-managed CPython 36.4 MiB as reported, wheel 25,193 B, FFmpeg
+4,735,840 B) and 13,186,781 B on 26.04 (python-build 8,425,748 B, wheel 25,193 B,
+FFmpeg 4,735,840 B). These durations are operational cold-capsule cost, not benchmarks.
+
+One environment limit is recorded rather than hidden: an amd64-emulated `ubuntu:26.04`
+capsule could not run the pinned `python-build` runtime on this host. GNU tar 1.35 returns
+`ENOSYS` for extraction under Rosetta, and the pinned rustls TLS path takes an illegal
+instruction during the HTTPS acquisition. The arm64 capsule is the qualified python-build
+path here; the amd64-musl `python-build` path under emulation is not proven. The uv path
+on emulated amd64 is proven. macOS signing and application execution are unaffected and
+were not re-qualified by the Linux runs.
 
 ## 6. Benefit and cost
 
 - **Duplicate code removed.** The acquisition shell shrank from 127 lines to an
   11-line wrapper. The deleted code implemented SHA-256 on two platforms, retry
-  downloads, a `.part` rename and a post-hoc digest check. The 187-line helper keeps
+  downloads, a `.part` rename and a post-hoc digest check. The 189-line helper keeps
   only Player policy, extraction and layout.
 - **Shared operations used.** Verified fetch with per-URL fallback, streamed
   digest/size comparison, atomic publish, cache verification and supported-target
