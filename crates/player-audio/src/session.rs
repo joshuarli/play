@@ -35,20 +35,20 @@ enum PacketCodec {
     Symphonia(Box<dyn AudioDecoder>),
     HighEfficiency {
         decoder: Box<rusty_aac::AacDecoder>,
-        configuration: Option<rusty_aac::config::StreamConfig>,
+        configuration: Option<Box<rusty_aac::config::StreamConfig>>,
         channels: Channels,
     },
 }
 
-fn parse_he_aac(configuration: &[u8]) -> Result<Option<rusty_aac::config::StreamConfig>, String> {
+fn parse_he_aac(configuration: &[u8]) -> Result<Option<Box<rusty_aac::config::StreamConfig>>, String> {
     if configuration.is_empty() {
         Ok(None)
     } else {
-        rusty_aac::config::parse(configuration).map(Some).map_err(|error| error.to_string())
+        rusty_aac::config::parse(configuration).map(|stream| Some(Box::new(stream))).map_err(|error| error.to_string())
     }
 }
 
-fn open_he_aac(configuration: &Option<rusty_aac::config::StreamConfig>) -> rusty_aac::AacDecoder {
+fn open_he_aac(configuration: Option<&rusty_aac::config::StreamConfig>) -> rusty_aac::AacDecoder {
     match configuration {
         None => rusty_aac::AacDecoder::new(),
         Some(stream) => rusty_aac::AacDecoder::with_stream_config(stream.clone()),
@@ -110,7 +110,7 @@ impl DecoderSession {
         let decoder = if stream.codec_name == "aac" && matches!(stream.profile, AAC_HE_PROFILE | AAC_HE_V2_PROFILE) {
             let configuration = parse_he_aac(&stream.extradata)?;
             PacketCodec::HighEfficiency {
-                decoder: Box::new(open_he_aac(&configuration)),
+                decoder: Box::new(open_he_aac(configuration.as_deref())),
                 configuration,
                 channels: params.channels.clone().ok_or("HE-AAC stream has no channel layout")?,
             }
@@ -139,7 +139,7 @@ impl DecoderSession {
         match &mut self.decoder {
             PacketCodec::Symphonia(decoder) => decoder.reset(),
             PacketCodec::HighEfficiency { decoder, configuration, .. } => {
-                **decoder = open_he_aac(configuration);
+                **decoder = open_he_aac(configuration.as_deref());
             }
         }
         self.cursor = None;
