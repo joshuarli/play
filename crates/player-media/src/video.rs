@@ -104,8 +104,12 @@ fn thread_count() -> i64 {
     (parallelism + 1).clamp(1, FRAME_THREADS_MAX) as i64
 }
 
+fn option_string(text: &str) -> Result<CString, String> {
+    CString::new(text).map_err(|_| format!("codec option {text:?} contains a NUL byte"))
+}
+
 fn set_option(context: *mut AvCodecContext, name: &str, value: i64) -> Result<(), String> {
-    let name = CString::new(name).expect("option name");
+    let name = option_string(name)?;
     // SAFETY: the context is live and the name is valid.
     let status = unsafe { av_opt_set_int(context as *mut c_void, name.as_ptr(), value, 0) };
     if status < 0 {
@@ -115,8 +119,8 @@ fn set_option(context: *mut AvCodecContext, name: &str, value: i64) -> Result<()
 }
 
 fn set_option_text(context: *mut AvCodecContext, name: &str, value: &str) -> Result<(), String> {
-    let name = CString::new(name).expect("option name");
-    let value = CString::new(value).expect("option value");
+    let name = option_string(name)?;
+    let value = option_string(value)?;
     // SAFETY: the context is live and both strings are valid.
     let status = unsafe {
         av_opt_set(
@@ -477,21 +481,18 @@ impl VideoSession {
         stream_index: usize,
         hw: HwRequest,
     ) -> Result<Self, String> {
-        let info = session
-            .as_ref()
-            .ok_or_else(|| "no owned session".to_string())?
+        let owned = session.as_ref().ok_or_else(|| "no owned session".to_string())?;
+        let info = owned
             .streams()
             .into_iter()
             .find(|stream| stream.index == stream_index && stream.kind == StreamKind::Video)
             .ok_or_else(|| format!("no video stream {stream_index}"))?;
         check_dimensions(&info)?;
         // SAFETY: the codec parameters outlive the session.
-        let parameters = session
-            .as_ref()
-            .expect("checked")
+        let parameters = owned
             .codecpar_ptr(stream_index)
             .ok_or_else(|| "stream parameters vanished".to_string())?;
-        let geometry = session.as_ref().expect("checked").video_geometry(stream_index);
+        let geometry = owned.video_geometry(stream_index);
         Self::open_decoder(session, stream_index, &info, parameters, hw, geometry)
     }
 
@@ -719,14 +720,11 @@ impl VideoSession {
     }
 
     pub fn pump(&mut self) -> Result<PumpResult, String> {
-        if self.session.is_none() {
-            return Err("no owned session".to_string());
-        }
         loop {
             let packet = self
                 .session
                 .as_mut()
-                .expect("checked")
+                .ok_or_else(|| "no owned session".to_string())?
                 .read_packet();
             match packet {
                 Ok(packet) => {

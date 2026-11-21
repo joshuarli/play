@@ -499,7 +499,7 @@ impl MediaSession {
             let data = unsafe { slice::from_raw_parts(packet.data, size) }.to_vec();
             out.push(Attachment {
                 stream_index: stream.index,
-                codec_name: stream.codec_name.clone(),
+                codec_name: stream.codec_name,
                 data,
             });
         }
