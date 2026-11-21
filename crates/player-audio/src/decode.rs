@@ -137,7 +137,7 @@ impl PacketDecoder {
             }
         }
         let source_start = self.expected_source_pts.unwrap_or(packet_pts);
-        self.output_cursor.get_or_insert(packet_pts);
+        let cursor = *self.output_cursor.get_or_insert(packet_pts);
         self.expected_source_pts = Some(source_start + decoded.frames as f64 / decoded.sample_rate as f64);
         self.mixed.clear();
         mix_into(
@@ -148,7 +148,7 @@ impl PacketDecoder {
         );
         self.resampler.push(&self.mixed, &mut self.converted)?;
         if !self.converted.is_empty() {
-            ready.push(self.take_chunk());
+            ready.push(self.take_chunk(cursor));
         }
         Ok(ready)
     }
@@ -156,10 +156,12 @@ impl PacketDecoder {
     pub fn finish(&mut self) -> Result<Option<ReadyChunk>, String> {
         self.resampler.finish(&mut self.converted)?;
         self.resampler.reset();
-        let tail = if self.converted.is_empty() {
-            None
-        } else {
-            Some(self.take_chunk())
+        let tail = match self.output_cursor {
+            Some(cursor) if !self.converted.is_empty() => Some(self.take_chunk(cursor)),
+            _ => {
+                self.converted.clear();
+                None
+            }
         };
         self.output_cursor = None;
         self.expected_source_pts = None;
@@ -175,8 +177,7 @@ impl PacketDecoder {
         self.expected_source_pts = None;
     }
 
-    fn take_chunk(&mut self) -> ReadyChunk {
-        let pts = self.output_cursor.expect("decoded samples have a timestamp");
+    fn take_chunk(&mut self, pts: f64) -> ReadyChunk {
         self.output_cursor = Some(pts + self.converted.len() as f64 / (self.target_rate as f64 * self.target_layout.channels() as f64));
         ReadyChunk {
             pts,

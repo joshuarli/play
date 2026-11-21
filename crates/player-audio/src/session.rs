@@ -35,16 +35,23 @@ enum PacketCodec {
     Symphonia(Box<dyn AudioDecoder>),
     HighEfficiency {
         decoder: Box<rusty_aac::AacDecoder>,
-        configuration: Vec<u8>,
+        configuration: Option<rusty_aac::config::StreamConfig>,
         channels: Channels,
     },
 }
 
-fn open_he_aac(configuration: &[u8]) -> Result<rusty_aac::AacDecoder, String> {
+fn parse_he_aac(configuration: &[u8]) -> Result<Option<rusty_aac::config::StreamConfig>, String> {
     if configuration.is_empty() {
-        Ok(rusty_aac::AacDecoder::new())
+        Ok(None)
     } else {
-        rusty_aac::AacDecoder::with_config_bytes(configuration).map_err(|error| error.to_string())
+        rusty_aac::config::parse(configuration).map(Some).map_err(|error| error.to_string())
+    }
+}
+
+fn open_he_aac(configuration: &Option<rusty_aac::config::StreamConfig>) -> rusty_aac::AacDecoder {
+    match configuration {
+        None => rusty_aac::AacDecoder::new(),
+        Some(stream) => rusty_aac::AacDecoder::with_stream_config(stream.clone()),
     }
 }
 
@@ -101,9 +108,10 @@ impl DecoderSession {
             params.with_extra_data(stream.extradata.clone().into_boxed_slice());
         }
         let decoder = if stream.codec_name == "aac" && matches!(stream.profile, AAC_HE_PROFILE | AAC_HE_V2_PROFILE) {
+            let configuration = parse_he_aac(&stream.extradata)?;
             PacketCodec::HighEfficiency {
-                decoder: Box::new(open_he_aac(&stream.extradata)?),
-                configuration: stream.extradata.clone(),
+                decoder: Box::new(open_he_aac(&configuration)),
+                configuration,
                 channels: params.channels.clone().ok_or("HE-AAC stream has no channel layout")?,
             }
         } else {
@@ -131,7 +139,7 @@ impl DecoderSession {
         match &mut self.decoder {
             PacketCodec::Symphonia(decoder) => decoder.reset(),
             PacketCodec::HighEfficiency { decoder, configuration, .. } => {
-                **decoder = open_he_aac(configuration).expect("the validated HE-AAC configuration still parses");
+                **decoder = open_he_aac(configuration);
             }
         }
         self.cursor = None;
