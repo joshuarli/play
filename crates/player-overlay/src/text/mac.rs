@@ -181,7 +181,7 @@ fn utf16_to_bytes(text: &str) -> Vec<usize> {
 }
 
 impl Backend {
-    pub fn new() -> Result<Self, String> {
+    pub(super) fn new() -> Result<Self, String> {
         // SAFETY: `kCGColorSpaceSRGB` is a constant CFString provided by
         // CoreGraphics; the call returns a +1 reference or null.
         let color_space = unsafe { CGColorSpaceCreateWithName(kCGColorSpaceSRGB) };
@@ -205,7 +205,7 @@ impl Backend {
         Ok(&self.fonts[&key])
     }
 
-    pub fn render(&mut self, block: &TextBlock, margin: u32) -> Result<Rendered, String> {
+    pub(super) fn render(&mut self, block: &TextBlock, margin: u32) -> Result<Rendered, String> {
         let size = block.style.size;
         let font = self.font(block.style.weight, size)?;
         let (font_ref, font_ascent, font_descent, font_leading) = (font.font.0, font.ascent, font.descent, font.leading);

@@ -512,7 +512,7 @@ fn cluster_end(characters: &[(usize, char)], start: usize, limit: usize) -> usiz
 }
 
 impl Backend {
-    pub fn new() -> Result<Self, String> {
+    pub(super) fn new() -> Result<Self, String> {
         // SAFETY: no preconditions; returns an owned cache or null.
         let cache = unsafe { fc_cache_build() };
         if cache.is_null() {
@@ -998,7 +998,7 @@ fn visual_pieces(units: &[Unit]) -> Vec<Piece> {
 }
 
 impl Backend {
-    pub fn render(&mut self, block: &TextBlock, margin: u32) -> Result<Rendered, String> {
+    pub(super) fn render(&mut self, block: &TextBlock, margin: u32) -> Result<Rendered, String> {
         let size = block.style.size;
         let weight = block.style.weight;
         let primary_font = self.primary(weight)?;

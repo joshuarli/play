@@ -1,34 +1,34 @@
 use core::ffi::{c_char, c_int, c_uint, c_void};
 
-pub const PLACEBO_VERSION: &str = "v7.387.0";
-pub const PLACEBO_API_VERSION: c_int = 387;
+pub(crate) const PLACEBO_VERSION: &str = "v7.387.0";
+pub(crate) const PLACEBO_API_VERSION: c_int = 387;
 
-pub const PL_FMT_UNORM: c_int = 1;
+pub(crate) const PL_FMT_UNORM: c_int = 1;
 
-pub const PL_FMT_CAP_SAMPLEABLE: c_int = 1;
-pub const PL_FMT_CAP_RENDERABLE: c_int = 1 << 3;
+pub(crate) const PL_FMT_CAP_SAMPLEABLE: c_int = 1;
+pub(crate) const PL_FMT_CAP_RENDERABLE: c_int = 1 << 3;
 #[cfg(test)]
-pub const PL_FMT_CAP_HOST_READABLE: c_int = 1 << 9;
+pub(crate) const PL_FMT_CAP_HOST_READABLE: c_int = 1 << 9;
 
-pub type PlLog = *const c_void;
-pub type PlGpu = *mut c_void;
-pub type PlTex = *mut c_void;
-pub type PlFmt = *const c_void;
-pub type PlRenderer = *mut c_void;
+pub(crate) type PlLog = *const c_void;
+pub(crate) type PlGpu = *mut c_void;
+pub(crate) type PlTex = *mut c_void;
+pub(crate) type PlFmt = *const c_void;
+pub(crate) type PlRenderer = *mut c_void;
 
 pub const PL_COLOR_SYSTEM_BT_601: c_int = 1;
 pub const PL_COLOR_SYSTEM_BT_709: c_int = 2;
 pub const PL_COLOR_SYSTEM_BT_2020_NC: c_int = 4;
-pub const PL_COLOR_SYSTEM_RGB: c_int = 12;
+pub(crate) const PL_COLOR_SYSTEM_RGB: c_int = 12;
 pub const PL_COLOR_LEVELS_LIMITED: c_int = 1;
 pub const PL_COLOR_LEVELS_FULL: c_int = 2;
-pub const PL_COLOR_PRIM_BT_709: c_int = 3;
-pub const PL_COLOR_TRC_SRGB: c_int = 2;
-pub const PL_ALPHA_INDEPENDENT: c_int = 1;
+pub(crate) const PL_COLOR_PRIM_BT_709: c_int = 3;
+pub(crate) const PL_COLOR_TRC_SRGB: c_int = 2;
+pub(crate) const PL_ALPHA_INDEPENDENT: c_int = 1;
 
-pub const PL_TEX_ADDRESS_CLAMP: c_int = 0;
-pub const PL_FIELD_NONE: c_int = 0;
-pub const PL_ROTATION_0: c_int = 0;
+pub(crate) const PL_TEX_ADDRESS_CLAMP: c_int = 0;
+pub(crate) const PL_FIELD_NONE: c_int = 0;
+pub(crate) const PL_ROTATION_0: c_int = 0;
 
 #[repr(C)]
 pub struct PlPlane {
@@ -90,8 +90,8 @@ pub struct PlRect2df {
     pub y1: f32,
 }
 
-pub const PL_OVERLAY_NORMAL: c_int = 0;
-pub const PL_OVERLAY_COORDS_DST_FRAME: c_int = 3;
+pub(crate) const PL_OVERLAY_NORMAL: c_int = 0;
+pub(crate) const PL_OVERLAY_COORDS_DST_FRAME: c_int = 3;
 
 #[repr(C)]
 pub struct PlOverlayPart {
@@ -139,12 +139,12 @@ pub struct PlFrame {
 
 #[derive(Clone, Copy)]
 #[repr(C)]
-pub struct PlRenderParams {
+pub(crate) struct PlRenderParams {
     pub opaque: [u8; 288],
 }
 
 #[repr(C)]
-pub struct PlVulkanParams {
+pub(crate) struct PlVulkanParams {
     pub instance: VkInstance,
     pub get_proc_addr: *mut c_void,
     pub instance_params: *const c_void,
@@ -168,63 +168,63 @@ pub struct PlVulkanParams {
 }
 
 #[repr(C)]
-pub struct PlVulkanHead {
+pub(crate) struct PlVulkanHead {
     pub gpu: PlGpu,
 }
 
-pub type PlVulkan = *mut PlVulkanHead;
+pub(crate) type PlVulkan = *mut PlVulkanHead;
 
 #[cfg(target_os = "macos")]
 #[repr(C)]
-pub struct PlMetalT {
+pub(crate) struct PlMetalT {
     pub gpu: PlGpu,
     pub device: *mut c_void,
     pub queue: *mut c_void,
 }
 
 #[cfg(target_os = "macos")]
-pub type PlMetal = *const PlMetalT;
+pub(crate) type PlMetal = *const PlMetalT;
 
 #[cfg(target_os = "macos")]
 #[repr(C)]
-pub struct PlMetalParams {
+pub(crate) struct PlMetalParams {
     pub device: *mut c_void,
     pub queue: *mut c_void,
 }
 
 #[cfg(target_os = "macos")]
 #[repr(C)]
-pub struct PlMetalSwapchainParams {
+pub(crate) struct PlMetalSwapchainParams {
     pub layer: *mut c_void,
 }
 
-pub type PlSwapchain = *mut c_void;
+pub(crate) type PlSwapchain = *mut c_void;
 
-pub type VkInstance = *mut c_void;
-pub type VkSurfaceKHR = u64;
-pub type VkFlags = u32;
+pub(crate) type VkInstance = *mut c_void;
+pub(crate) type VkSurfaceKHR = u64;
+pub(crate) type VkFlags = u32;
 
-pub const VK_SUCCESS: c_int = 0;
+pub(crate) const VK_SUCCESS: c_int = 0;
 
-pub const VK_STRUCTURE_TYPE_APPLICATION_INFO: c_int = 0;
-pub const VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO: c_int = 1;
-pub const VK_STRUCTURE_TYPE_WAYLAND_SURFACE_CREATE_INFO_KHR: c_int = 1000006000;
+pub(crate) const VK_STRUCTURE_TYPE_APPLICATION_INFO: c_int = 0;
+pub(crate) const VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO: c_int = 1;
+pub(crate) const VK_STRUCTURE_TYPE_WAYLAND_SURFACE_CREATE_INFO_KHR: c_int = 1000006000;
 #[cfg(target_os = "macos")]
-pub const VK_STRUCTURE_TYPE_METAL_SURFACE_CREATE_INFO_EXT: c_int = 1000217000;
+pub(crate) const VK_STRUCTURE_TYPE_METAL_SURFACE_CREATE_INFO_EXT: c_int = 1000217000;
 #[cfg(target_os = "macos")]
-pub const VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR: VkFlags = 0x00000001;
+pub(crate) const VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR: VkFlags = 0x00000001;
 
-pub const VK_PRESENT_MODE_MAILBOX_KHR: c_int = 1;
+pub(crate) const VK_PRESENT_MODE_MAILBOX_KHR: c_int = 1;
 
-pub const VK_API_VERSION_1_2: u32 = 4202496;
+pub(crate) const VK_API_VERSION_1_2: u32 = 4202496;
 
 #[repr(C)]
-pub struct PlHandle {
+pub(crate) struct PlHandle {
     pub ptr: *mut c_void,
 }
 
 #[repr(C)]
-pub struct PlSharedMem {
+pub(crate) struct PlSharedMem {
     pub handle: PlHandle,
     pub size: usize,
     pub offset: usize,
@@ -235,7 +235,7 @@ pub struct PlSharedMem {
 }
 
 #[repr(C)]
-pub struct PlTexParams {
+pub(crate) struct PlTexParams {
     pub w: c_int,
     pub h: c_int,
     pub d: c_int,
@@ -256,7 +256,7 @@ pub struct PlTexParams {
 }
 
 #[repr(C)]
-pub struct PlRect3d {
+pub(crate) struct PlRect3d {
     pub x0: c_int,
     pub y0: c_int,
     pub z0: c_int,
@@ -266,7 +266,7 @@ pub struct PlRect3d {
 }
 
 #[repr(C)]
-pub struct PlTexTransferParams {
+pub(crate) struct PlTexTransferParams {
     pub tex: PlTex,
     pub rc: PlRect3d,
     pub row_pitch: usize,
@@ -281,19 +281,19 @@ pub struct PlTexTransferParams {
 }
 
 unsafe extern "C" {
-    pub fn pl_version() -> *const c_char;
+    pub(crate) fn pl_version() -> *const c_char;
 
     #[link_name = "pl_log_create_387"]
-    pub fn pl_log_create(api_ver: c_int, params: *const c_void) -> PlLog;
-    pub fn pl_log_destroy(log: *mut PlLog);
+    pub(crate) fn pl_log_create(api_ver: c_int, params: *const c_void) -> PlLog;
+    pub(crate) fn pl_log_destroy(log: *mut PlLog);
 
-    pub fn pl_vulkan_create(log: PlLog, params: *const PlVulkanParams) -> PlVulkan;
-    pub fn pl_vulkan_destroy(vk: *mut PlVulkan);
+    pub(crate) fn pl_vulkan_create(log: PlLog, params: *const PlVulkanParams) -> PlVulkan;
+    pub(crate) fn pl_vulkan_destroy(vk: *mut PlVulkan);
 
-    pub fn pl_renderer_create(log: PlLog, gpu: PlGpu) -> PlRenderer;
-    pub fn pl_renderer_destroy(rr: *mut PlRenderer);
+    pub(crate) fn pl_renderer_create(log: PlLog, gpu: PlGpu) -> PlRenderer;
+    pub(crate) fn pl_renderer_destroy(rr: *mut PlRenderer);
 
-    pub fn pl_find_fmt(
+    pub(crate) fn pl_find_fmt(
         gpu: PlGpu,
         typ: c_int,
         num_components: c_int,
@@ -302,52 +302,52 @@ unsafe extern "C" {
         caps: c_int,
     ) -> PlFmt;
 
-    pub fn pl_tex_create(gpu: PlGpu, params: *const PlTexParams) -> PlTex;
-    pub fn pl_tex_destroy(gpu: PlGpu, tex: *mut PlTex);
+    pub(crate) fn pl_tex_create(gpu: PlGpu, params: *const PlTexParams) -> PlTex;
+    pub(crate) fn pl_tex_destroy(gpu: PlGpu, tex: *mut PlTex);
     #[cfg(target_os = "macos")]
-    pub fn pl_tex_poll(gpu: PlGpu, tex: PlTex, timeout: u64) -> bool;
-    pub fn pl_tex_upload(gpu: PlGpu, params: *const PlTexTransferParams) -> bool;
-    pub fn pl_tex_download(gpu: PlGpu, params: *const PlTexTransferParams) -> bool;
+    pub(crate) fn pl_tex_poll(gpu: PlGpu, tex: PlTex, timeout: u64) -> bool;
+    pub(crate) fn pl_tex_upload(gpu: PlGpu, params: *const PlTexTransferParams) -> bool;
+    pub(crate) fn pl_tex_download(gpu: PlGpu, params: *const PlTexTransferParams) -> bool;
 
-    pub static pl_render_default_params: PlRenderParams;
+    pub(crate) static pl_render_default_params: PlRenderParams;
 
-    pub fn pl_frames_infer(rr: PlRenderer, image: *mut PlFrame, target: *mut PlFrame);
-    pub fn pl_render_image(
+    pub(crate) fn pl_frames_infer(rr: PlRenderer, image: *mut PlFrame, target: *mut PlFrame);
+    pub(crate) fn pl_render_image(
         rr: PlRenderer,
         image: *const PlFrame,
         target: *const PlFrame,
         params: *const PlRenderParams,
     ) -> bool;
 
-    pub fn pl_vulkan_create_swapchain(
+    pub(crate) fn pl_vulkan_create_swapchain(
         vk: PlVulkan,
         params: *const PlVulkanSwapchainParams,
     ) -> PlSwapchain;
-    pub fn pl_swapchain_destroy(sw: *mut PlSwapchain);
-    pub fn pl_swapchain_resize(sw: PlSwapchain, width: *mut c_int, height: *mut c_int) -> bool;
-    pub fn pl_swapchain_start_frame(sw: PlSwapchain, frame: *mut PlSwapchainFrame) -> bool;
-    pub fn pl_swapchain_submit_frame(sw: PlSwapchain) -> bool;
-    pub fn pl_swapchain_swap_buffers(sw: PlSwapchain);
+    pub(crate) fn pl_swapchain_destroy(sw: *mut PlSwapchain);
+    pub(crate) fn pl_swapchain_resize(sw: PlSwapchain, width: *mut c_int, height: *mut c_int) -> bool;
+    pub(crate) fn pl_swapchain_start_frame(sw: PlSwapchain, frame: *mut PlSwapchainFrame) -> bool;
+    pub(crate) fn pl_swapchain_submit_frame(sw: PlSwapchain) -> bool;
+    pub(crate) fn pl_swapchain_swap_buffers(sw: PlSwapchain);
 
-    pub fn vkCreateInstance(
+    pub(crate) fn vkCreateInstance(
         create_info: *const VkInstanceCreateInfo,
         allocator: *const c_void,
         instance: *mut VkInstance,
     ) -> c_int;
-    pub fn vkDestroyInstance(instance: VkInstance, allocator: *const c_void);
-    pub fn vkCreateWaylandSurfaceKHR(
+    pub(crate) fn vkDestroyInstance(instance: VkInstance, allocator: *const c_void);
+    pub(crate) fn vkCreateWaylandSurfaceKHR(
         instance: VkInstance,
         create_info: *const VkWaylandSurfaceCreateInfoKHR,
         allocator: *const c_void,
         surface: *mut VkSurfaceKHR,
     ) -> c_int;
-    pub fn vkDestroySurfaceKHR(
+    pub(crate) fn vkDestroySurfaceKHR(
         instance: VkInstance,
         surface: VkSurfaceKHR,
         allocator: *const c_void,
     );
     #[cfg(target_os = "macos")]
-    pub fn vkCreateMetalSurfaceEXT(
+    pub(crate) fn vkCreateMetalSurfaceEXT(
         instance: VkInstance,
         create_info: *const VkMetalSurfaceCreateInfoEXT,
         allocator: *const c_void,
@@ -357,7 +357,7 @@ unsafe extern "C" {
 
 #[cfg(target_os = "macos")]
 #[repr(C)]
-pub struct VkMetalSurfaceCreateInfoEXT {
+pub(crate) struct VkMetalSurfaceCreateInfoEXT {
     pub s_type: c_int,
     pub next: *const c_void,
     pub flags: VkFlags,
@@ -365,7 +365,7 @@ pub struct VkMetalSurfaceCreateInfoEXT {
 }
 
 #[repr(C)]
-pub struct VkApplicationInfo {
+pub(crate) struct VkApplicationInfo {
     pub s_type: c_int,
     pub next: *const c_void,
     pub app_name: *const c_char,
@@ -376,7 +376,7 @@ pub struct VkApplicationInfo {
 }
 
 #[repr(C)]
-pub struct VkInstanceCreateInfo {
+pub(crate) struct VkInstanceCreateInfo {
     pub s_type: c_int,
     pub next: *const c_void,
     pub flags: VkFlags,
@@ -388,7 +388,7 @@ pub struct VkInstanceCreateInfo {
 }
 
 #[repr(C)]
-pub struct VkWaylandSurfaceCreateInfoKHR {
+pub(crate) struct VkWaylandSurfaceCreateInfoKHR {
     pub s_type: c_int,
     pub next: *const c_void,
     pub flags: VkFlags,
@@ -397,7 +397,7 @@ pub struct VkWaylandSurfaceCreateInfoKHR {
 }
 
 #[repr(C)]
-pub struct PlVulkanSwapchainParams {
+pub(crate) struct PlVulkanSwapchainParams {
     pub surface: VkSurfaceKHR,
     pub present_mode: c_int,
     pub swapchain_depth: c_int,
@@ -408,7 +408,7 @@ pub struct PlVulkanSwapchainParams {
 }
 
 #[repr(C)]
-pub struct PlSwapchainFrame {
+pub(crate) struct PlSwapchainFrame {
     pub fbo: PlTex,
     pub flipped: bool,
     pub color_repr: PlColorRepr,
@@ -418,16 +418,16 @@ pub struct PlSwapchainFrame {
 #[cfg(target_os = "macos")]
 #[link(name = "objc")]
 unsafe extern "C" {
-    pub fn objc_autoreleasePoolPush() -> *mut c_void;
-    pub fn objc_autoreleasePoolPop(pool: *mut c_void);
+    pub(crate) fn objc_autoreleasePoolPush() -> *mut c_void;
+    pub(crate) fn objc_autoreleasePoolPop(pool: *mut c_void);
 }
 
 #[cfg(target_os = "macos")]
 unsafe extern "C" {
-    pub fn pl_metal_wrap_iosurface(metal: PlMetal, surface: *mut c_void, plane: c_int, width: c_int, height: c_int, fmt: PlFmt) -> PlTex;
-    pub fn pl_metal_create(log: PlLog, params: *const PlMetalParams) -> PlMetal;
-    pub fn pl_metal_destroy(metal: *mut PlMetal);
-    pub fn pl_metal_create_swapchain(
+    pub(crate) fn pl_metal_wrap_iosurface(metal: PlMetal, surface: *mut c_void, plane: c_int, width: c_int, height: c_int, fmt: PlFmt) -> PlTex;
+    pub(crate) fn pl_metal_create(log: PlLog, params: *const PlMetalParams) -> PlMetal;
+    pub(crate) fn pl_metal_destroy(metal: *mut PlMetal);
+    pub(crate) fn pl_metal_create_swapchain(
         metal: PlMetal,
         params: *const PlMetalSwapchainParams,
     ) -> PlSwapchain;
