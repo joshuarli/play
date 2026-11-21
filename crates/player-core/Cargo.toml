@@ -5,3 +5,7 @@ edition = "2024"
 
 [lib]
 crate-type = ["rlib"]
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"

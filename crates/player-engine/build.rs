@@ -1,6 +1,6 @@
 fn main() {
     let target = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
-    let dir = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     if target == "macos" {
         player_build::emit_macos_prefix_rpath("player-engine", &dir);
         player_build::ffmpeg_runtime::emit_macos_dev_rpath("player-engine", &dir);

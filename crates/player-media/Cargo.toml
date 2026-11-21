@@ -11,3 +11,7 @@ player-core = { path = "../player-core" }
 
 [build-dependencies]
 player-build = { path = "../player-build" }
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
