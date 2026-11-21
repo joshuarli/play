@@ -17,13 +17,13 @@ Player is a local-only media player built on a Rust playback engine, the pinned 
 
 ## Verification
 
-- Costs (M-series Mac, busy host, observations): `make test` 202 s warm; cold (empty `.work` and `target`) 481 s before it built the release app, which adds 287 s; it runs `build/mpv`, `scripts/release.sh`, then `tests/run.sh suite` (489 checks, workspace `cargo test` inside the `rust-link` gate). `make lint` 41 s warm, 187 s cold. Python unit tests are outside `make test`: `python3 -m unittest discover -s tests -p 'test_*.py'` 235 s, `-s scripts` 1 s (DSLP-19).
-- Known red: two `fixtures` byte-hash checks for corrupt, hevc and mpeg4 fail with the host's Homebrew x265 and lame, also at base a4d901f (DSLP-18). Linux compares fixture structure only.
+- Costs (M-series Mac, busy host, observations): `make test` 202 s warm; cold (empty `.work` and `target`) 481 s before it built the release app, which adds 287 s; it runs `build/mpv`, `scripts/release.sh`, then `tests/run.sh suite` (489 checks, workspace `cargo test` inside the `rust-link` gate). `make lint` 41 s warm, 187 s cold. Python unit tests are outside `make test`: `python3 -m unittest discover -s tests -p 'test_*.py'` 235 s, `-s scripts` 1 s (PLAY-56).
+- Known red: two `fixtures` byte-hash checks for corrupt, hevc and mpeg4 fail with the host's Homebrew x265 and lame, also at base a4d901f (PLAY-55). Linux compares fixture structure only.
 - CI: `ci.yml` (Linux musl container) runs `make test` on pull requests; `lint.yml` runs `make lint`; `macos.yml` builds and verifies the app and runs no tests.
 - Guards by boundary (gates are `tests/run.sh GATE`; unit tests ship in each crate):
   - CLI flags, help text, exit codes: gates `cli`, `cli-help`; `crates/player-app/src/options.rs` tests.
   - Local-only input and wrappers: `local-only`, `local-paths`; `crates/player-core/src/input.rs` tests; `scripts/audit.sh`.
-  - Commands, properties, JSON IPC socket (`--input-ipc-server`): `state`, `input`, `dispatch`, `osc-input`; `ipc.rs` tests. Malformed IPC lines: `ipc.rs` tests; oversized lines: none (DSLP-21).
+  - Commands, properties, JSON IPC socket (`--input-ipc-server`): `state`, `input`, `dispatch`, `osc-input`; `ipc.rs` tests. Malformed IPC lines: `ipc.rs` tests; oversized lines: none (PLAY-57).
   - Playlists (m3u, m3u8, pls, directories): `playlist` gate; `crates/player-app/src/playlist.rs` tests. UTF-8 BOM and Latin-1 playlists: `playlist.rs` `read_tests` and the `playlist` gate; oversized playlist files: none.
   - Container and codec decode: `corpus`, `audio`, `cover-art`, `seek` over `tests/fixtures/manifest.json`; truncated and corrupt files: `failures`. Mutated or fuzzed media: none.
   - Release artifacts: `release` gate, `tests/test_release_archives.py`, `scripts/audit-linux.sh`.
