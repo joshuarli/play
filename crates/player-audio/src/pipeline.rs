@@ -218,6 +218,59 @@ mod tests {
         assert!((rms(&converted_pcm) - rms(&native_pcm)).abs() < 0.02);
     }
 
+    fn mutated_copy(name: &str, seed: u64) -> PathBuf {
+        let mut bytes = std::fs::read(fixtures().join(name)).expect("fixture reads");
+        let mut state = seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1;
+        let mut next = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        for _ in 0..16 {
+            let at = next() as usize % bytes.len();
+            bytes[at] ^= (next() % 255 + 1) as u8;
+        }
+        let ext = name.rsplit('.').next().expect("extension");
+        let path = std::env::temp_dir().join(format!("mutated-audio-{}-{seed}.{ext}", std::process::id()));
+        std::fs::write(&path, bytes).expect("mutated copy writes");
+        path
+    }
+
+    #[test]
+    fn mutated_audio_files_end_cleanly() {
+        use player_media::{MediaSession, StreamKind};
+        let (mut opened, mut decoded) = (0, 0);
+        for name in ["audio-flac.flac", "audio-mp3.mp3", "audio-ogg.ogg", "audio-alac.m4a", "audio-wav.wav", "h264.mp4"] {
+            for seed in 0..8 {
+                let path = mutated_copy(name, seed);
+                let path_text = path.to_string_lossy().into_owned();
+                let stream = MediaSession::open(&path_text).ok().and_then(|session| {
+                    session.streams().into_iter().find(|stream| stream.kind == StreamKind::Audio)
+                });
+                if let Some(stream) = stream
+                    && let Ok(mut pipeline) = Pipeline::open(&path_text, stream.index, 48000)
+                {
+                    opened += 1;
+                    let mut ended = false;
+                    for _ in 0..5000 {
+                        let mut chunk = Vec::new();
+                        match pipeline.next_chunk(&mut chunk) {
+                            Ok(false) => decoded += chunk.len(),
+                            Ok(true) | Err(_) => {
+                                ended = true;
+                                break;
+                            }
+                        }
+                    }
+                    assert!(ended, "{name} seed {seed}: decode did not end");
+                }
+                std::fs::remove_file(&path).expect("mutated copy removes");
+            }
+        }
+        assert!(opened >= 30 && decoded > 0, "opened {opened}, decoded {decoded}");
+    }
+
     #[test]
     fn drain_is_deterministic() {
         let mut first = open(&fixture("audio-flac.flac"), 48000);
