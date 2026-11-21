@@ -21,7 +21,7 @@ use player_tui::{Control, Cover, Player as TuiPlayer, Snapshot, Track};
 use crate::ipc::{self, IpcServer};
 use crate::options::{self, Options, Start};
 use crate::osc::{Chapter, Osc, Playback, Response};
-use crate::playlist::{self, Entry, Playlist};
+use crate::playlist::{self, Playlist};
 use crate::properties::{self, Probe};
 use crate::value::NativeValue;
 use crate::window::{HostEvent, HostWindow};
@@ -268,14 +268,6 @@ impl App {
         osc.set_visibility(mode, Instant::now());
         self.show_text(&format!("OSC visibility: {}", mode.name()), DEFAULT_OSD_DURATION);
         Ok(())
-    }
-
-    pub fn quit(&mut self) {
-        self.quit = true;
-    }
-
-    pub fn should_quit(&self) -> bool {
-        self.quit
     }
 
     fn unshown_frame(&self) -> u64 {
@@ -1786,16 +1778,6 @@ impl App {
         }
         Ok(())
     }
-
-    pub fn observe_property(&mut self, id: u64, name: &str) {
-        self.observers.insert(
-            id,
-            Observer {
-                name: name.to_owned(),
-                last: None,
-            },
-        );
-    }
 }
 
 impl TuiPlayer for App {
@@ -2042,10 +2024,6 @@ pub fn run(args: &[String]) -> Result<(), String> {
     }
     let mut app = App::new(options);
     app.run()
-}
-
-pub fn entry(path: &str) -> Result<Entry, String> {
-    playlist::local_entry(path)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

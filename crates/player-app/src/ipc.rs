@@ -89,10 +89,6 @@ impl IpcServer {
         }
     }
 
-    pub fn connected(&self) -> bool {
-        self.client.is_some()
-    }
-
     pub fn send(&mut self, value: &NativeValue) {
         let Some(client) = self.client.as_mut() else {
             return;
@@ -286,13 +282,13 @@ mod tests {
         let mut first = UnixStream::connect(dir.socket()).unwrap();
         first.write_all(b"{\"command\":[\"a\"]}\n").unwrap();
         assert_eq!(poll_until(&mut server, 1), vec![command("a")]);
-        assert!(server.connected());
+        assert!(server.client.is_some());
         drop(first);
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while server.connected() && std::time::Instant::now() < deadline {
+        while server.client.is_some() && std::time::Instant::now() < deadline {
             server.poll();
         }
-        assert!(!server.connected());
+        assert!(server.client.is_none());
         let mut second = UnixStream::connect(dir.socket()).unwrap();
         second.write_all(b"{\"command\":[\"b\"]}\n").unwrap();
         assert_eq!(poll_until(&mut server, 1), vec![command("b")]);

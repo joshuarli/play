@@ -61,10 +61,6 @@ impl HostWindow {
         self.presented
     }
 
-    pub fn fullscreen(&self) -> bool {
-        self.window.fullscreen()
-    }
-
     pub fn set_fullscreen(&mut self, fullscreen: bool) {
         self.window.set_fullscreen(fullscreen);
     }

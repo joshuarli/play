@@ -436,10 +436,6 @@ fn rect_value(rect: Rect) -> NativeValue {
     ])
 }
 
-pub fn to_bool(value: &NativeValue) -> bool {
-    matches!(value, NativeValue::Bool(true))
-}
-
 fn metadata(probe: &Option<Probe>) -> NativeValue {
     let mut fields = Vec::new();
     if let Some(probe) = probe {
