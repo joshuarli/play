@@ -165,11 +165,12 @@ impl Gpu {
         let Some(metal) = self.metal_handle() else { return Ok(None); };
         if !matches!(layout, crate::PixelLayout::Nv12 | crate::PixelLayout::P010) { return Ok(None); }
         let mut imports = self.imports.borrow_mut();
-        while imports.front().is_some_and(|lease| self.import_complete(lease, 0)) {
-            self.release_import(imports.pop_front().unwrap());
+        while let Some(lease) = imports.pop_front_if(|lease| self.import_complete(lease, 0)) {
+            self.release_import(lease);
         }
-        if imports.len() >= 4 {
-            let oldest = imports.pop_front().unwrap();
+        if imports.len() >= 4
+            && let Some(oldest) = imports.pop_front()
+        {
             while !self.import_complete(&oldest, u64::MAX) {}
             self.release_import(oldest);
         }
