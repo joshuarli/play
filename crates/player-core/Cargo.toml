@@ -6,6 +6,9 @@ edition = "2024"
 [lib]
 crate-type = ["rlib"]
 
+[lints.rust]
+unreachable_pub = "deny"
+
 [lints.clippy]
 unwrap_used = "deny"
 expect_used = "deny"

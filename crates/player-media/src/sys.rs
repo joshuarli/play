@@ -10,44 +10,44 @@
 
 use std::ffi::{c_char, c_int, c_uint, c_void};
 
-pub const AVFORMAT_VERSION_MAJOR: u32 = 63;
-pub const AVCODEC_VERSION_MAJOR: u32 = 63;
+pub(crate) const AVFORMAT_VERSION_MAJOR: u32 = 63;
+pub(crate) const AVCODEC_VERSION_MAJOR: u32 = 63;
 
-pub const AVMEDIA_TYPE_VIDEO: c_int = 0;
-pub const AVMEDIA_TYPE_AUDIO: c_int = 1;
-pub const AVMEDIA_TYPE_DATA: c_int = 2;
-pub const AVMEDIA_TYPE_SUBTITLE: c_int = 3;
-pub const AVMEDIA_TYPE_ATTACHMENT: c_int = 4;
+pub(crate) const AVMEDIA_TYPE_VIDEO: c_int = 0;
+pub(crate) const AVMEDIA_TYPE_AUDIO: c_int = 1;
+pub(crate) const AVMEDIA_TYPE_DATA: c_int = 2;
+pub(crate) const AVMEDIA_TYPE_SUBTITLE: c_int = 3;
+pub(crate) const AVMEDIA_TYPE_ATTACHMENT: c_int = 4;
 
-pub const AV_DISPOSITION_DEFAULT: c_int = 1 << 0;
-pub const AV_DISPOSITION_FORCED: c_int = 1 << 6;
-pub const AV_DISPOSITION_ATTACHED_PIC: c_int = 1 << 10;
+pub(crate) const AV_DISPOSITION_DEFAULT: c_int = 1 << 0;
+pub(crate) const AV_DISPOSITION_FORCED: c_int = 1 << 6;
+pub(crate) const AV_DISPOSITION_ATTACHED_PIC: c_int = 1 << 10;
 
-pub const AV_LOG_ERROR: c_int = 16;
+pub(crate) const AV_LOG_ERROR: c_int = 16;
 
-pub const AVFMT_FLAG_CUSTOM_IO: c_int = 0x0080;
-pub const AV_DICT_IGNORE_SUFFIX: c_int = 2;
+pub(crate) const AVFMT_FLAG_CUSTOM_IO: c_int = 0x0080;
+pub(crate) const AV_DICT_IGNORE_SUFFIX: c_int = 2;
 
-pub const SEEK_SET: c_int = 0;
-pub const SEEK_CUR: c_int = 1;
-pub const SEEK_END: c_int = 2;
-pub const AVSEEK_SIZE: c_int = 0x10000;
+pub(crate) const SEEK_SET: c_int = 0;
+pub(crate) const SEEK_CUR: c_int = 1;
+pub(crate) const SEEK_END: c_int = 2;
+pub(crate) const AVSEEK_SIZE: c_int = 0x10000;
 
 /// `AVERROR_EOF`, proven by the packet-drain tests on every platform.
-pub const AVERROR_EOF: c_int = -541478725;
+pub(crate) const AVERROR_EOF: c_int = -541478725;
 
 /// `AVERROR(EAGAIN)`: the decoder's try-again signal is the negated
 /// platform errno, 35 on macOS and 11 on Linux.
 #[cfg(target_os = "macos")]
-pub const AVERROR_EAGAIN: c_int = -35;
+pub(crate) const AVERROR_EAGAIN: c_int = -35;
 /// `AVERROR(EAGAIN)`: the decoder's try-again signal is the negated
 /// platform errno, 35 on macOS and 11 on Linux.
 #[cfg(not(target_os = "macos"))]
-pub const AVERROR_EAGAIN: c_int = -11;
+pub(crate) const AVERROR_EAGAIN: c_int = -11;
 
-pub const AV_NUM_DATA_POINTERS: usize = 8;
+pub(crate) const AV_NUM_DATA_POINTERS: usize = 8;
 
-pub const AV_PIX_FMT_NONE: c_int = -1;
+pub(crate) const AV_PIX_FMT_NONE: c_int = -1;
 pub const AV_PIX_FMT_YUV420P: c_int = 0;
 pub const AV_PIX_FMT_RGB24: c_int = 2;
 pub const AV_PIX_FMT_YUV422P: c_int = 4;
@@ -62,33 +62,33 @@ pub const AV_PIX_FMT_RGBA: c_int = 26;
 pub const AV_PIX_FMT_YUV420P10LE: c_int = 62;
 pub const AV_PIX_FMT_YUV422P10LE: c_int = 64;
 pub const AV_PIX_FMT_YUV444P10LE: c_int = 68;
-pub const AV_PIX_FMT_VAAPI: c_int = 44;
-pub const AV_PIX_FMT_VIDEOTOOLBOX: c_int = 157;
+pub(crate) const AV_PIX_FMT_VAAPI: c_int = 44;
+pub(crate) const AV_PIX_FMT_VIDEOTOOLBOX: c_int = 157;
 pub const AV_PIX_FMT_P010LE: c_int = 158;
 
-pub const AV_HWDEVICE_TYPE_NONE: c_int = 0;
-pub const AV_HWDEVICE_TYPE_VAAPI: c_int = 3;
-pub const AV_HWDEVICE_TYPE_VIDEOTOOLBOX: c_int = 6;
+pub(crate) const AV_HWDEVICE_TYPE_NONE: c_int = 0;
+pub(crate) const AV_HWDEVICE_TYPE_VAAPI: c_int = 3;
+pub(crate) const AV_HWDEVICE_TYPE_VIDEOTOOLBOX: c_int = 6;
 
-pub const AV_HWFRAME_TRANSFER_DIRECTION_FROM: c_int = 0;
+pub(crate) const AV_HWFRAME_TRANSFER_DIRECTION_FROM: c_int = 0;
 
-pub enum AvCodec {}
+pub(crate) enum AvCodec {}
 
-pub enum AvBufferRef {}
+pub(crate) enum AvBufferRef {}
 
-pub enum SwsContext {}
+pub(crate) enum SwsContext {}
 
-pub const SWS_BILINEAR: c_int = 1 << 1;
+pub(crate) const SWS_BILINEAR: c_int = 1 << 1;
 
 #[repr(C)]
-pub struct AvFrameSideData {
+pub(crate) struct AvFrameSideData {
     pub kind: c_int,
     pub data: *mut u8,
     pub size: usize,
 }
 
 #[repr(C)]
-pub struct AvPacketSideData {
+pub(crate) struct AvPacketSideData {
     pub data: *mut u8,
     pub size: usize,
     pub kind: c_int,
@@ -98,7 +98,7 @@ pub struct AvPacketSideData {
 /// `libavutil/frame.h` of the pinned FFmpeg. Fields after
 /// `hw_frames_ctx` are not mapped; never access them.
 #[repr(C)]
-pub struct AvFrame {
+pub(crate) struct AvFrame {
     pub data: [*mut u8; AV_NUM_DATA_POINTERS],
     pub linesize: [c_int; AV_NUM_DATA_POINTERS],
     pub extended_data: *mut *mut u8,
@@ -132,14 +132,14 @@ pub struct AvFrame {
     pub hw_frames_ctx: *mut AvBufferRef,
 }
 
-pub type AvGetFormat =
+pub(crate) type AvGetFormat =
     Option<unsafe extern "C" fn(ctx: *mut AvCodecContext, formats: *const c_int) -> c_int>;
 
-pub type AvGetBuffer2 = Option<
+pub(crate) type AvGetBuffer2 = Option<
     unsafe extern "C" fn(ctx: *mut AvCodecContext, frame: *mut AvFrame, flags: c_int) -> c_int,
 >;
 
-pub type AvDrawHorizBand = Option<
+pub(crate) type AvDrawHorizBand = Option<
     unsafe extern "C" fn(
         ctx: *mut AvCodecContext,
         src: *const AvFrame,
@@ -156,7 +156,7 @@ pub type AvDrawHorizBand = Option<
 /// pre-64 compatibility defines. Fields after `extra_hw_frames` are
 /// not mapped; never access them.
 #[repr(C)]
-pub struct AvCodecContext {
+pub(crate) struct AvCodecContext {
     pub av_class: *const c_void,
     pub log_level_offset: c_int,
     pub codec_type: c_int,
@@ -270,10 +270,10 @@ pub struct AvCodecContext {
     pub extra_hw_frames: c_int,
 }
 
-pub const MAX_STREAMS: usize = 256;
-pub const MAX_CHAPTERS: usize = 256;
-pub const MAX_METADATA_ENTRIES: usize = 1024;
-pub const MAX_PACKET_BYTES: usize = 64 * 1024 * 1024;
+pub(crate) const MAX_STREAMS: usize = 256;
+pub(crate) const MAX_CHAPTERS: usize = 256;
+pub(crate) const MAX_METADATA_ENTRIES: usize = 1024;
+pub(crate) const MAX_PACKET_BYTES: usize = 64 * 1024 * 1024;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -282,25 +282,25 @@ pub struct AvRational {
     pub den: c_int,
 }
 
-pub enum AvDictionary {}
+pub(crate) enum AvDictionary {}
 
 /// Prefix of `AVIOContext` through `buffer`. lavf may reallocate the buffer
 /// during probing, so the session always frees the current pointer with
 /// `av_free`, never the original allocation.
 #[repr(C)]
-pub struct AvIoContext {
+pub(crate) struct AvIoContext {
     pub av_class: *const c_void,
     pub buffer: *mut u8,
 }
 
 #[repr(C)]
-pub struct AvDictionaryEntry {
+pub(crate) struct AvDictionaryEntry {
     pub key: *mut c_char,
     pub value: *mut c_char,
 }
 
 #[repr(C)]
-pub struct AvChapter {
+pub(crate) struct AvChapter {
     pub id: i64,
     pub time_base: AvRational,
     pub start: i64,
@@ -359,7 +359,7 @@ pub struct AvCodecParameters {
 }
 
 #[repr(C)]
-pub struct AvPacket {
+pub(crate) struct AvPacket {
     pub buf: *mut c_void,
     pub pts: i64,
     pub dts: i64,
@@ -377,7 +377,7 @@ pub struct AvPacket {
 }
 
 #[repr(C)]
-pub struct AvStream {
+pub(crate) struct AvStream {
     pub av_class: *const c_void,
     pub index: c_int,
     pub id: c_int,
@@ -401,7 +401,7 @@ pub struct AvStream {
 /// Prefix of `AVFormatContext` through `metadata`. Fields after `metadata`
 /// are not mapped; never access them.
 #[repr(C)]
-pub struct AvFormatContext {
+pub(crate) struct AvFormatContext {
     pub av_class: *const c_void,
     pub iformat: *const c_void,
     pub oformat: *const c_void,
@@ -435,40 +435,40 @@ pub struct AvFormatContext {
 }
 
 #[repr(C)]
-pub struct AvCodecDescriptor {
+pub(crate) struct AvCodecDescriptor {
     pub id: c_int,
     pub media_type: c_int,
     pub name: *const c_char,
 }
 
-pub type AvioReadPacket = unsafe extern "C" fn(
+pub(crate) type AvioReadPacket = unsafe extern "C" fn(
     opaque: *mut c_void,
     buf: *mut u8,
     buf_size: c_int,
 ) -> c_int;
 
-pub type AvioSeek =
+pub(crate) type AvioSeek =
     unsafe extern "C" fn(opaque: *mut c_void, offset: i64, whence: c_int) -> i64;
 
 unsafe extern "C" {
-    pub fn av_log_set_level(level: c_int);
-    pub fn av_malloc(size: usize) -> *mut c_void;
-    pub fn av_free(ptr: *mut c_void);
-    pub fn avformat_alloc_context() -> *mut AvFormatContext;
-    pub fn avformat_open_input(
+    pub(crate) fn av_log_set_level(level: c_int);
+    pub(crate) fn av_malloc(size: usize) -> *mut c_void;
+    pub(crate) fn av_free(ptr: *mut c_void);
+    pub(crate) fn avformat_alloc_context() -> *mut AvFormatContext;
+    pub(crate) fn avformat_open_input(
         ps: *mut *mut AvFormatContext,
         url: *const c_char,
         fmt: *const c_void,
         options: *mut *mut AvDictionary,
     ) -> c_int;
-    pub fn avformat_find_stream_info(
+    pub(crate) fn avformat_find_stream_info(
         ic: *mut AvFormatContext,
         options: *mut *mut AvDictionary,
     ) -> c_int;
-    pub fn avformat_close_input(s: *mut *mut AvFormatContext);
-    pub fn avformat_free_context(s: *mut AvFormatContext);
-    pub fn av_read_frame(s: *mut AvFormatContext, pkt: *mut AvPacket) -> c_int;
-    pub fn avformat_seek_file(
+    pub(crate) fn avformat_close_input(s: *mut *mut AvFormatContext);
+    pub(crate) fn avformat_free_context(s: *mut AvFormatContext);
+    pub(crate) fn av_read_frame(s: *mut AvFormatContext, pkt: *mut AvPacket) -> c_int;
+    pub(crate) fn avformat_seek_file(
         s: *mut AvFormatContext,
         stream_index: c_int,
         min_ts: i64,
@@ -476,16 +476,16 @@ unsafe extern "C" {
         max_ts: i64,
         flags: c_int,
     ) -> c_int;
-    pub fn av_packet_alloc() -> *mut AvPacket;
-    pub fn av_new_packet(pkt: *mut AvPacket, size: c_int) -> c_int;
-    pub fn av_packet_free(pkt: *mut *mut AvPacket);
-    pub fn av_dict_get(
+    pub(crate) fn av_packet_alloc() -> *mut AvPacket;
+    pub(crate) fn av_new_packet(pkt: *mut AvPacket, size: c_int) -> c_int;
+    pub(crate) fn av_packet_free(pkt: *mut *mut AvPacket);
+    pub(crate) fn av_dict_get(
         m: *const AvDictionary,
         key: *const c_char,
         prev: *const AvDictionaryEntry,
         flags: c_int,
     ) -> *mut AvDictionaryEntry;
-    pub fn avio_alloc_context(
+    pub(crate) fn avio_alloc_context(
         buffer: *mut u8,
         buffer_size: c_int,
         write_flag: c_int,
@@ -500,61 +500,61 @@ unsafe extern "C" {
         >,
         seek: Option<AvioSeek>,
     ) -> *mut AvIoContext;
-    pub fn avcodec_descriptor_get(id: c_int) -> *const AvCodecDescriptor;
-    pub fn avformat_version() -> c_uint;
-    pub fn avcodec_version() -> c_uint;
-    pub fn avcodec_find_decoder(id: c_int) -> *const AvCodec;
-    pub fn avcodec_alloc_context3(codec: *const AvCodec) -> *mut AvCodecContext;
-    pub fn avcodec_parameters_to_context(
+    pub(crate) fn avcodec_descriptor_get(id: c_int) -> *const AvCodecDescriptor;
+    pub(crate) fn avformat_version() -> c_uint;
+    pub(crate) fn avcodec_version() -> c_uint;
+    pub(crate) fn avcodec_find_decoder(id: c_int) -> *const AvCodec;
+    pub(crate) fn avcodec_alloc_context3(codec: *const AvCodec) -> *mut AvCodecContext;
+    pub(crate) fn avcodec_parameters_to_context(
         ctx: *mut AvCodecContext,
         par: *const AvCodecParameters,
     ) -> c_int;
-    pub fn avcodec_open2(
+    pub(crate) fn avcodec_open2(
         ctx: *mut AvCodecContext,
         codec: *const AvCodec,
         options: *mut *mut AvDictionary,
     ) -> c_int;
-    pub fn avcodec_send_packet(ctx: *mut AvCodecContext, pkt: *const AvPacket) -> c_int;
-    pub fn avcodec_receive_frame(ctx: *mut AvCodecContext, frame: *mut AvFrame) -> c_int;
-    pub fn avcodec_flush_buffers(ctx: *mut AvCodecContext);
-    pub fn avcodec_free_context(ctx: *mut *mut AvCodecContext);
-    pub fn av_packet_side_data_get(data: *const AvPacketSideData, count: c_int, kind: c_int) -> *const AvPacketSideData;
-    pub fn av_frame_get_side_data(frame: *const AvFrame, kind: c_int) -> *mut AvFrameSideData;
-    pub fn av_display_rotation_get(matrix: *const i32) -> f64;
-    pub fn av_frame_alloc() -> *mut AvFrame;
-    pub fn av_frame_free(frame: *mut *mut AvFrame);
-    pub fn av_frame_copy_props(dst: *mut AvFrame, src: *const AvFrame) -> c_int;
-    pub fn av_frame_unref(frame: *mut AvFrame);
-    pub fn av_hwdevice_ctx_create(
+    pub(crate) fn avcodec_send_packet(ctx: *mut AvCodecContext, pkt: *const AvPacket) -> c_int;
+    pub(crate) fn avcodec_receive_frame(ctx: *mut AvCodecContext, frame: *mut AvFrame) -> c_int;
+    pub(crate) fn avcodec_flush_buffers(ctx: *mut AvCodecContext);
+    pub(crate) fn avcodec_free_context(ctx: *mut *mut AvCodecContext);
+    pub(crate) fn av_packet_side_data_get(data: *const AvPacketSideData, count: c_int, kind: c_int) -> *const AvPacketSideData;
+    pub(crate) fn av_frame_get_side_data(frame: *const AvFrame, kind: c_int) -> *mut AvFrameSideData;
+    pub(crate) fn av_display_rotation_get(matrix: *const i32) -> f64;
+    pub(crate) fn av_frame_alloc() -> *mut AvFrame;
+    pub(crate) fn av_frame_free(frame: *mut *mut AvFrame);
+    pub(crate) fn av_frame_copy_props(dst: *mut AvFrame, src: *const AvFrame) -> c_int;
+    pub(crate) fn av_frame_unref(frame: *mut AvFrame);
+    pub(crate) fn av_hwdevice_ctx_create(
         device_ctx: *mut *mut AvBufferRef,
         device_type: c_int,
         device: *const c_char,
         opts: *mut AvDictionary,
         flags: c_int,
     ) -> c_int;
-    pub fn av_hwframe_transfer_data(dst: *mut AvFrame, src: *const AvFrame, flags: c_int)
+    pub(crate) fn av_hwframe_transfer_data(dst: *mut AvFrame, src: *const AvFrame, flags: c_int)
     -> c_int;
     #[cfg(test)]
-    pub fn av_hwdevice_find_type_by_name(name: *const c_char) -> c_int;
+    pub(crate) fn av_hwdevice_find_type_by_name(name: *const c_char) -> c_int;
     #[cfg(test)]
-    pub fn av_get_pix_fmt_name(pix_fmt: c_int) -> *const c_char;
+    pub(crate) fn av_get_pix_fmt_name(pix_fmt: c_int) -> *const c_char;
     #[cfg(test)]
-    pub fn av_color_space_name(space: c_int) -> *const c_char;
+    pub(crate) fn av_color_space_name(space: c_int) -> *const c_char;
     #[cfg(test)]
-    pub fn av_color_range_name(range: c_int) -> *const c_char;
-    pub fn av_opt_set_int(
+    pub(crate) fn av_color_range_name(range: c_int) -> *const c_char;
+    pub(crate) fn av_opt_set_int(
         obj: *mut c_void,
         name: *const c_char,
         value: i64,
         search_flags: c_int,
     ) -> c_int;
-    pub fn av_opt_set(
+    pub(crate) fn av_opt_set(
         obj: *mut c_void,
         name: *const c_char,
         value: *const c_char,
         search_flags: c_int,
     ) -> c_int;
-    pub fn sws_getContext(
+    pub(crate) fn sws_getContext(
         src_w: c_int,
         src_h: c_int,
         src_format: c_int,
@@ -566,7 +566,7 @@ unsafe extern "C" {
         dst_filter: *const c_void,
         param: *const f64,
     ) -> *mut SwsContext;
-    pub fn sws_scale(
+    pub(crate) fn sws_scale(
         context: *mut SwsContext,
         src_slice: *const *const u8,
         src_stride: *const c_int,
@@ -575,5 +575,5 @@ unsafe extern "C" {
         dst: *const *mut u8,
         dst_stride: *const c_int,
     ) -> c_int;
-    pub fn sws_freeContext(context: *mut SwsContext);
+    pub(crate) fn sws_freeContext(context: *mut SwsContext);
 }

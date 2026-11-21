@@ -1,6 +1,6 @@
 pub const NOPTS: i64 = i64::MIN;
 
-pub const MAX_LATE_SECONDS: f64 = 0.1;
+pub(crate) const MAX_LATE_SECONDS: f64 = 0.1;
 
 pub fn rescale_to_seconds(timestamp: i64, numerator: i32, denominator: i32) -> Option<f64> {
     if timestamp == NOPTS || denominator == 0 {
