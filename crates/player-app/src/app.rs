@@ -1502,17 +1502,13 @@ impl App {
         path: Option<&str>,
         content: ScreenshotContent,
     ) -> Result<NativeValue, String> {
-        if self.last_frame.is_none() {
+        let Some(frame) = self.last_frame.as_ref() else {
             return Err("no video frame is available for a screenshot".to_owned());
-        }
-        if self.screenshot_renderer.is_none() {
-            self.screenshot_renderer = Some(ScreenshotRenderer::open(self.options.gpu_api)?);
-        }
-        let renderer = self
-            .screenshot_renderer
-            .as_mut()
-            .expect("the screenshot renderer just opened");
-        let frame = self.last_frame.as_ref().expect("checked above");
+        };
+        let renderer = match &mut self.screenshot_renderer {
+            Some(renderer) => renderer,
+            slot @ None => slot.insert(ScreenshotRenderer::open(self.options.gpu_api)?),
+        };
         let (width, height) = frame.geometry.display_size(frame.width, frame.height);
         let mut rgba = renderer.render(frame)?;
         if content == ScreenshotContent::Window {
