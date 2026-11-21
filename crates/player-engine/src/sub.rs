@@ -186,11 +186,8 @@ pub fn parse_srt(content: &str) -> Result<Vec<Cue>, String> {
             },
         };
         let mut body = Vec::new();
-        while let Some(next) = lines.peek() {
-            if next.trim().is_empty() {
-                break;
-            }
-            body.push(lines.next().expect("peeked line"));
+        while let Some(next) = lines.next_if(|line| !line.trim().is_empty()) {
+            body.push(next);
         }
         let (start_ms, end_ms) = timing;
         let text = markup_free(&body.join("\n"));
@@ -217,16 +214,16 @@ pub fn markup_free(text: &str) -> String {
         let close = if tail.starts_with('<') { '>' } else { '}' };
         let end = tail.find(close);
         let tag = end.map(|end| &tail[1..end]);
-        let is_markup = match (close, tag) {
-            ('>', Some(tag)) => {
+        let markup_end = match (close, tag, end) {
+            ('>', Some(tag), Some(end)) => {
                 let name = tag.trim_start_matches('/').split([' ', '\t']).next().unwrap_or("").to_ascii_lowercase();
-                matches!(name.as_str(), "i" | "b" | "u" | "s" | "font")
+                matches!(name.as_str(), "i" | "b" | "u" | "s" | "font").then_some(end)
             }
-            ('}', Some(tag)) => tag.starts_with('\\'),
-            _ => false,
+            ('}', Some(tag), Some(end)) => tag.starts_with('\\').then_some(end),
+            _ => None,
         };
-        if is_markup {
-            rest = &tail[end.expect("markup has a closer") + 1..];
+        if let Some(end) = markup_end {
+            rest = &tail[end + 1..];
         } else {
             out.push_str(&tail[..1]);
             rest = &tail[1..];

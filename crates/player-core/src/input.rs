@@ -60,7 +60,7 @@ pub fn classify_input(input: &str, allow_file_uri: bool) -> Result<InputPath, In
     let lower = input.to_ascii_lowercase();
     for wrapper in WRAPPERS {
         if lower.starts_with(wrapper) {
-            return Err(InputError::Wrapper((*wrapper).to_string()));
+            return Err(InputError::Wrapper(wrapper.to_string()));
         }
     }
 
@@ -160,5 +160,62 @@ mod tests {
                    PathBuf::from("/tmp/a b.mp4"));
         assert!(matches!(classify_input("file://", true),
                          Err(InputError::InvalidFileUri)));
+    }
+
+    #[test]
+    fn empty_input_is_refused_with_or_without_file_uris() {
+        assert_eq!(classify_input("", false), Err(InputError::Empty));
+        assert_eq!(classify_input("", true), Err(InputError::Empty));
+    }
+
+    #[test]
+    fn every_wrapper_prefix_is_refused_in_any_case() {
+        let wrappers = [
+            "data:", "lavfi:", "edl:", "memory:", "fd:", "fdclose:", "av:",
+            "avdevice:", "mf:", "null:", "slice:", "appending:", "mpv:",
+            "ffmpeg:", "lavf:", "http:", "https:", "ftp:", "sftp:", "ssh:",
+            "rtsp:", "rtmp:", "hls:", "dash:", "smb:",
+        ];
+        assert_eq!(wrappers, super::WRAPPERS);
+        for wrapper in wrappers {
+            for input in [format!("{wrapper}x"), format!("{}x", wrapper.to_ascii_uppercase())] {
+                assert_eq!(classify_input(&input, false),
+                           Err(InputError::Wrapper(wrapper.to_string())), "{input}");
+                assert_eq!(classify_input(&input, true),
+                           Err(InputError::Wrapper(wrapper.to_string())), "{input}");
+            }
+        }
+    }
+
+    #[test]
+    fn schemes_are_matched_in_any_case_and_reported_lowercase() {
+        assert_eq!(classify_input("HTTP://example.com/a", false),
+                   Err(InputError::RemoteScheme("http".to_string())));
+        assert_eq!(classify_input("x+y-z.w://host/a", true),
+                   Err(InputError::RemoteScheme("x+y-z.w".to_string())));
+        assert_eq!(classify_input("FILE:///tmp/a.mp4", false),
+                   Err(InputError::RemoteScheme("file".to_string())));
+        assert_eq!(local("FILE:///tmp/a.mp4", true), PathBuf::from("/tmp/a.mp4"));
+    }
+
+    #[test]
+    fn a_separator_inside_a_path_is_not_a_scheme() {
+        for input in ["1http://example.com/a.mp4", "/tmp/dir://a.mp4", "dir/x://a.mp4", "a b://c", "://a.mp4", "-x://a"] {
+            assert_eq!(local(input, true), PathBuf::from(input), "{input}");
+        }
+    }
+
+    #[test]
+    fn file_uri_escapes_decode_in_either_hex_case() {
+        assert_eq!(local("file:///tmp/a%2fb%2Fc%41", true), PathBuf::from("/tmp/a/b/cA"));
+        assert_eq!(local("file:///tmp/%e3%81%82%C3%A9.mp4", true), PathBuf::from("/tmp/\u{3042}\u{e9}.mp4"));
+        assert_eq!(local("file:///%41", true), PathBuf::from("/A"));
+    }
+
+    #[test]
+    fn malformed_file_uri_escapes_are_refused() {
+        for input in ["file:///a%", "file:///a%4", "file:///a%4g", "file:///a%zz", "file:///%ff", "file:///%c3"] {
+            assert_eq!(classify_input(input, true), Err(InputError::InvalidFileUri), "{input}");
+        }
     }
 }

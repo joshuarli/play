@@ -531,6 +531,30 @@ mod tests {
         assert_eq!((crop.x0, crop.y0, crop.x1, crop.y1), (0.0, 75.0, 200.0, 125.0));
     }
 
+    #[test]
+    fn display_size_applies_aspect_with_rounding_and_swaps_for_quarter_turns() {
+        let size = |pixel_aspect, rotation| VideoGeometry { pixel_aspect, rotation }.display_size(5, 3);
+        assert_eq!(size(1.0, 0), (5, 3));
+        assert_eq!(size(1.0, 180), (5, 3));
+        assert_eq!(size(1.0, 90), (3, 5));
+        assert_eq!(size(1.0, 270), (3, 5));
+        assert_eq!(size(1.5, 0), (8, 3));
+        assert_eq!(size(1.5, 270), (3, 8));
+        assert_eq!(size(0.1, 0), (1, 3));
+        assert_eq!(size(2.0, 90), (3, 10));
+    }
+
+    fn rgb_layouts_ignore_the_source_range_and_matrix(open: OpenGpu) {
+        let (gpu, renderer) = setup(open);
+        let pixels: Vec<u8> = (0..16).flat_map(|index| [64 + index as u8 * 8, 128, 192 - index as u8 * 8, 255]).collect();
+        let planes = [Plane { data: &pixels, stride: 16, width: 4, height: 4 }];
+        let limited = ColorSpec { system: sys::PL_COLOR_SYSTEM_BT_601, levels: sys::PL_COLOR_LEVELS_LIMITED };
+        let render = |color| {
+            render_frame(&gpu, &renderer, FrameSpec::new(PixelLayout::Rgba8, color), &planes, (4, 4), None).unwrap()
+        };
+        assert_eq!(render(limited), render(ColorSpec::bt709_full()));
+    }
+
     fn anamorphic_rotation_transposes_and_rotates_pixels(open: OpenGpu) {
         let (gpu, renderer) = setup(open);
         let mut pixels = vec![0u8; 64 * 32 * 4];
@@ -856,6 +880,7 @@ mod tests {
     }
 
     gpu_tests!(
+        rgb_layouts_ignore_the_source_range_and_matrix,
         anamorphic_rotation_transposes_and_rotates_pixels,
         yuv420_solid_colors_match_software_reference,
         presented_frame_fits_the_target_with_letterbox_bars,

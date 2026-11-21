@@ -1,7 +1,7 @@
 fn main() {
     let target = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     if target == "linux" {
-        let dir = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         player_build::emit_linux_closure(
             "player-display",
             &dir.join("../player-output/linux-link.args"),
@@ -17,7 +17,7 @@ fn main() {
             .compile("player_display_bridge");
         println!("cargo:rustc-link-lib=framework=AppKit");
         println!("cargo:rustc-link-lib=framework=QuartzCore");
-        let dir = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         player_build::emit_macos_prefix_rpath("player-display", &dir);
     }
 }

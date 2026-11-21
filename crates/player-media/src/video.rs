@@ -104,8 +104,12 @@ fn thread_count() -> i64 {
     (parallelism + 1).clamp(1, FRAME_THREADS_MAX) as i64
 }
 
+fn option_string(text: &str) -> Result<CString, String> {
+    CString::new(text).map_err(|_| format!("codec option {text:?} contains a NUL byte"))
+}
+
 fn set_option(context: *mut AvCodecContext, name: &str, value: i64) -> Result<(), String> {
-    let name = CString::new(name).expect("option name");
+    let name = option_string(name)?;
     // SAFETY: the context is live and the name is valid.
     let status = unsafe { av_opt_set_int(context as *mut c_void, name.as_ptr(), value, 0) };
     if status < 0 {
@@ -115,8 +119,8 @@ fn set_option(context: *mut AvCodecContext, name: &str, value: i64) -> Result<()
 }
 
 fn set_option_text(context: *mut AvCodecContext, name: &str, value: &str) -> Result<(), String> {
-    let name = CString::new(name).expect("option name");
-    let value = CString::new(value).expect("option value");
+    let name = option_string(name)?;
+    let value = option_string(value)?;
     // SAFETY: the context is live and both strings are valid.
     let status = unsafe {
         av_opt_set(
@@ -442,6 +446,7 @@ pub struct VideoSession {
 
 impl VideoSession {
     pub fn open(path: &str, stream_index: usize, hw: HwRequest) -> Result<Self, String> {
+        // SAFETY: avcodec_version reads a constant and has no preconditions.
         let version = unsafe { avcodec_version() };
         if (version >> 16) & 0xff != AVCODEC_VERSION_MAJOR {
             return Err(format!(
@@ -477,21 +482,18 @@ impl VideoSession {
         stream_index: usize,
         hw: HwRequest,
     ) -> Result<Self, String> {
-        let info = session
-            .as_ref()
-            .ok_or_else(|| "no owned session".to_string())?
+        let owned = session.as_ref().ok_or_else(|| "no owned session".to_string())?;
+        let info = owned
             .streams()
             .into_iter()
             .find(|stream| stream.index == stream_index && stream.kind == StreamKind::Video)
             .ok_or_else(|| format!("no video stream {stream_index}"))?;
         check_dimensions(&info)?;
         // SAFETY: the codec parameters outlive the session.
-        let parameters = session
-            .as_ref()
-            .expect("checked")
+        let parameters = owned
             .codecpar_ptr(stream_index)
             .ok_or_else(|| "stream parameters vanished".to_string())?;
-        let geometry = session.as_ref().expect("checked").video_geometry(stream_index);
+        let geometry = owned.video_geometry(stream_index);
         Self::open_decoder(session, stream_index, &info, parameters, hw, geometry)
     }
 
@@ -635,6 +637,8 @@ impl VideoSession {
         let pts = pts_seconds
             .map(|seconds| (seconds * den as f64 / num as f64).round() as i64)
             .unwrap_or(AV_NOPTS_VALUE);
+        // SAFETY: av_new_packet sized the packet buffer to data.len() bytes and
+        // the packet is live and exclusively owned until av_packet_free.
         unsafe {
             ptr::copy_nonoverlapping(data.as_ptr(), (*packet).data, data.len());
             (*packet).pts = pts;
@@ -719,14 +723,11 @@ impl VideoSession {
     }
 
     pub fn pump(&mut self) -> Result<PumpResult, String> {
-        if self.session.is_none() {
-            return Err("no owned session".to_string());
-        }
         loop {
             let packet = self
                 .session
                 .as_mut()
-                .expect("checked")
+                .ok_or_else(|| "no owned session".to_string())?
                 .read_packet();
             match packet {
                 Ok(packet) => {
@@ -1026,6 +1027,58 @@ mod tests {
             assert!(!frames[0].is_hardware(), "{name}");
             assert!(frames[0].width() > 0 && frames[0].height() > 0, "{name}");
         }
+    }
+
+    fn mutated_copy(name: &str, seed: u64) -> PathBuf {
+        let mut bytes = std::fs::read(fixtures().join(name)).expect("fixture reads");
+        let mut state = seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1;
+        let mut next = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        for _ in 0..16 {
+            let at = next() as usize % bytes.len();
+            bytes[at] ^= (next() % 255 + 1) as u8;
+        }
+        let ext = name.rsplit('.').next().expect("extension");
+        let path = std::env::temp_dir().join(format!("mutated-{}-{seed}.{ext}", std::process::id()));
+        std::fs::write(&path, bytes).expect("mutated copy writes");
+        path
+    }
+
+    #[test]
+    fn mutated_video_files_end_cleanly() {
+        let (mut opened, mut decoded) = (0, 0);
+        for name in ["h264.mp4", "hevc.mkv", "mpeg4.avi", "vp9.webm", "av1.webm"] {
+            for seed in 0..8 {
+                let path = mutated_copy(name, seed);
+                let path_text = path.to_string_lossy().into_owned();
+                let stream = MediaSession::open(&path_text).ok().and_then(|session| {
+                    session.streams().into_iter().find(|stream| stream.kind == StreamKind::Video)
+                });
+                if let Some(stream) = stream
+                    && let Ok(mut session) = VideoSession::open(&path_text, stream.index, HwRequest::None)
+                {
+                    opened += 1;
+                    let mut ended = false;
+                    for _ in 0..2000 {
+                        match session.pump() {
+                            Ok(PumpResult::Frame(_)) => decoded += 1,
+                            Ok(PumpResult::NeedMore) => {}
+                            Ok(PumpResult::Ended) | Err(_) => {
+                                ended = true;
+                                break;
+                            }
+                        }
+                    }
+                    assert!(ended, "{name} seed {seed}: decode did not end");
+                }
+                std::fs::remove_file(&path).expect("mutated copy removes");
+            }
+        }
+        assert!(opened >= 20 && decoded > 0, "opened {opened}, decoded {decoded}");
     }
 
     #[test]

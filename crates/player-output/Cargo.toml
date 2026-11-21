@@ -8,3 +8,6 @@ crate-type = ["rlib"]
 
 [build-dependencies]
 player-build = { path = "../player-build" }
+
+[lints.rust]
+unreachable_pub = "deny"

@@ -1,7 +1,7 @@
 fn main() {
     let target = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     if target == "linux" {
-        let dir = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         player_build::emit_linux_closure(
             "player-output",
             &dir.join("linux-link.args"),
@@ -9,7 +9,7 @@ fn main() {
         );
         return;
     }
-    let dir = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let prefix = player_build::release_prefix("player-output", &dir);
     let pkgconfig = prefix.join("lib/pkgconfig");
     for package in ["libplacebo", "vulkan"] {

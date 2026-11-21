@@ -11,3 +11,6 @@ crate-type = ["rlib"]
 rustc-hash = "2"
 unicode-bidi = "0.3.18"
 unicode-linebreak = "0.1.5"
+
+[lints.rust]
+unreachable_pub = "deny"

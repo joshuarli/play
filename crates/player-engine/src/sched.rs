@@ -232,8 +232,8 @@ where
     pub fn send(&mut self, command: Command) {
         if let Command::Seek(_, _, generation) = &command {
             self.stats.seek_generation = *generation;
-            if matches!(self.commands.last(), Some(Command::Seek(..))) {
-                *self.commands.last_mut().expect("seek already queued") = command;
+            if let Some(last @ Command::Seek(..)) = self.commands.last_mut() {
+                *last = command;
                 return;
             }
         }
@@ -628,15 +628,14 @@ where
             .position(|frame| frame.pts > position + 0.001)
             .map(|index| index.saturating_sub(1))
             .unwrap_or_else(|| self.pending_frames.len().saturating_sub(1));
-        if self.pending_frames.is_empty() {
-            return Ok(());
-        }
         let stale: Vec<DecodedFrame> = self.pending_frames.drain(..chosen).collect();
         for frame in stale {
             self.drop_late(frame);
         }
-        let frame = self.pending_frames.pop_front().expect("chosen frame");
-        self.present_frame(frame)
+        match self.pending_frames.pop_front() {
+            Some(frame) => self.present_frame(frame),
+            None => Ok(()),
+        }
     }
 
     fn startup_audio_seconds(&self) -> f64 {
@@ -990,20 +989,19 @@ where
 
     fn present_due(&mut self, now: f64) {
         let position = self.clock.position(now);
-        while let Some(frame) = self.pending_frames.front() {
+        while let Some(frame) = self.pending_frames.pop_front() {
             match judge_frame(frame.pts, position) {
-                FrameVerdict::Wait => break,
+                FrameVerdict::Wait => {
+                    self.pending_frames.push_front(frame);
+                    break;
+                }
                 FrameVerdict::Present => {
-                    let frame = self.pending_frames.pop_front().expect("peeked");
                     if let Err(message) = self.present_frame(frame) {
                         self.fail(message);
                         return;
                     }
                 }
-                FrameVerdict::DropLate => {
-                    let frame = self.pending_frames.pop_front().expect("peeked");
-                    self.drop_late(frame);
-                }
+                FrameVerdict::DropLate => self.drop_late(frame),
             }
         }
     }

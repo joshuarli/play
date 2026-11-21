@@ -183,7 +183,9 @@ fn push_frame(shared: &mut SharedVideo, frame: VideoFrame, pts: f64) {
     shared.decoded += 1;
     shared.queue.push_back((id, pts, frame));
     while shared.queue.len() > MAX_QUEUED_FRAMES {
-        let (id, _, _) = shared.queue.pop_front().expect("over capacity");
+        let Some((id, _, _)) = shared.queue.pop_front() else {
+            break;
+        };
         if id >= shared.drained {
             shared.evicted += 1;
         }
@@ -203,7 +205,7 @@ impl SharedVideo {
 
     fn take(&mut self, id: u64) -> Option<VideoFrame> {
         let position = self.queue.iter().position(|(queued, _, _)| *queued == id)?;
-        Some(self.queue.remove(position).expect("found").2)
+        self.queue.remove(position).map(|(_, _, frame)| frame)
     }
 }
 

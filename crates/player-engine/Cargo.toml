@@ -13,3 +13,10 @@ player-output = { path = "../player-output" }
 
 [build-dependencies]
 player-build = { path = "../player-build" }
+
+[lints.rust]
+unreachable_pub = "deny"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"

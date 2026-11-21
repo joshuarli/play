@@ -1,5 +1,5 @@
 Prefix: DSLP
-Next: 30
+Next: 33
 
 Deslop campaign backlog ([plan](https://github.com/laputa-systems/stuff/blob/main/docs/campaigns/deslop.md), tier D). One agent works this file with the `deslop` skill: take the lowest-numbered open ticket whose area does not start with `Needs owner ·`. After DSLP-17 (the per-component tickets that replaced DSLP-3 to DSLP-5), work the open P1 and P2 findings, then fill in `## Report` below.
 
@@ -8,60 +8,6 @@ Deslop campaign backlog ([plan](https://github.com/laputa-systems/stuff/blob/mai
 Not started.
 
 ## Tickets
-
-### DSLP-6 · P2 · Types: playback pipeline
-
-- **Area:** deslop · types
-- **Where:** crates/player-core, crates/player-media, crates/player-audio, crates/player-engine, crates/player-backend
-- **Problem:** Component of 14.2k first-party lines (Rust; vendored Symphonia, ruopus and rusty_aac excluded). Contracts: the FFmpeg FFI boundary in player-media (sys.rs, session.rs, video.rs: unsafe blocks, MAX_* bounds, IO callbacks), local-only input classification (player-core::input), the Symphonia and rusty_aac decode bridge in player-audio, the scheduler, clock and state machine in player-engine, and the Backend trait in player-backend. Consumers: player-app, player-tui, player-gui, and the corpus, audio, seek and failures gates. The whole repository is over 50k lines including vendored codecs, so each step runs per component.
-- **Recommendation:** Run the deslop Types step on this component: measure the strict-profile candidates (clippy wildcard_enum_match_arm, cast_possible_truncation, cast_sign_loss, unwrap_used and expect_used outside tests, redundant_clone, needless_pass_by_value; Python ty and Ruff candidates for Python files), and adopt only those that reject a real defect or delete an escape hatch at no more than one false positive per 5k lines. Accept: clean at the adopted profile, escape hatches (rg count from the tools reference) not increased, each fixed contract has a witness. Keep unsafe_code policy as the workspace states it: native-boundary unsafe stays in the crates AGENTS.md lists. Acceptance command: cargo test -p player-core -p player-media -p player-audio -p player-engine -p player-backend, then tests/run.sh corpus, then tests/run.sh audio, then tests/run.sh seek, then tests/run.sh failures.
-- **Fix with:** deslop
-- **Effort:** M
-
-### DSLP-7 · P2 · Types: presentation
-
-- **Area:** deslop · types
-- **Where:** crates/player-output, crates/player-display (including bridge/metal_window.m), crates/player-overlay
-- **Problem:** Component of 8.1k first-party lines (Rust and one Objective-C file). Contracts: the libplacebo and Metal/Vulkan FFI in player-output, the window, input ring and Wayland/Cocoa surface in player-display, and the overlay display list, rasterizer and text shaping in player-overlay; each unsafe block states its safety argument. Consumers: player-engine (frame hand-off), player-app, player-gui, and the gpu-api, osc and gui gates. The whole repository is over 50k lines including vendored codecs, so each step runs per component.
-- **Recommendation:** Run the deslop Types step on this component: measure the strict-profile candidates (clippy wildcard_enum_match_arm, cast_possible_truncation, cast_sign_loss, unwrap_used and expect_used outside tests, redundant_clone, needless_pass_by_value; Python ty and Ruff candidates for Python files), and adopt only those that reject a real defect or delete an escape hatch at no more than one false positive per 5k lines. Accept: clean at the adopted profile, escape hatches (rg count from the tools reference) not increased, each fixed contract has a witness. Keep unsafe_code policy as the workspace states it: native-boundary unsafe stays in the crates AGENTS.md lists. Acceptance command: cargo test -p player-output -p player-display -p player-overlay, then tests/run.sh gpu-api, then tests/run.sh osc (GPU and window checks need a display: Needs environment where absent).
-- **Fix with:** deslop
-- **Effort:** M
-
-### DSLP-10 · P2 · Tests: playback pipeline
-
-- **Area:** deslop · tests
-- **Where:** crates/player-core, crates/player-media, crates/player-audio, crates/player-engine, crates/player-backend
-- **Problem:** Component of 14.2k first-party lines (Rust; vendored Symphonia, ruopus and rusty_aac excluded). Contracts: the FFmpeg FFI boundary in player-media (sys.rs, session.rs, video.rs: unsafe blocks, MAX_* bounds, IO callbacks), local-only input classification (player-core::input), the Symphonia and rusty_aac decode bridge in player-audio, the scheduler, clock and state machine in player-engine, and the Backend trait in player-backend. Consumers: player-app, player-tui, player-gui, and the corpus, audio, seek and failures gates. The whole repository is over 50k lines including vendored codecs, so each step runs per component.
-- **Recommendation:** Run the deslop Tests step on this component: test-pyramid audit, coverage where cargo-llvm-cov exists (Needs environment: it is not installed on this host), a bounded mutation run of the critical contracts where cargo-mutants exists (also not installed), and a boundary test for each `none` in AGENTS.md Verification that this component owns. Accept: no undispositioned survivor in the critical scope, each new test proven by one injected fault, warm make test within 20% or 30s of the Ground baseline. Acceptance command: cargo test -p player-core -p player-media -p player-audio -p player-engine -p player-backend, then tests/run.sh corpus, then tests/run.sh audio, then tests/run.sh seek, then tests/run.sh failures.
-- **Fix with:** deslop
-- **Effort:** M
-
-### DSLP-11 · P2 · Tests: presentation
-
-- **Area:** deslop · tests
-- **Where:** crates/player-output, crates/player-display (including bridge/metal_window.m), crates/player-overlay
-- **Problem:** Component of 8.1k first-party lines (Rust and one Objective-C file). Contracts: the libplacebo and Metal/Vulkan FFI in player-output, the window, input ring and Wayland/Cocoa surface in player-display, and the overlay display list, rasterizer and text shaping in player-overlay; each unsafe block states its safety argument. Consumers: player-engine (frame hand-off), player-app, player-gui, and the gpu-api, osc and gui gates. The whole repository is over 50k lines including vendored codecs, so each step runs per component.
-- **Recommendation:** Run the deslop Tests step on this component: test-pyramid audit, coverage where cargo-llvm-cov exists (Needs environment: it is not installed on this host), a bounded mutation run of the critical contracts where cargo-mutants exists (also not installed), and a boundary test for each `none` in AGENTS.md Verification that this component owns. Accept: no undispositioned survivor in the critical scope, each new test proven by one injected fault, warm make test within 20% or 30s of the Ground baseline. Acceptance command: cargo test -p player-output -p player-display -p player-overlay, then tests/run.sh gpu-api, then tests/run.sh osc (GPU and window checks need a display: Needs environment where absent).
-- **Fix with:** deslop
-- **Effort:** M
-
-### DSLP-14 · P2 · Dead code: playback pipeline
-
-- **Area:** deslop · dead code
-- **Where:** crates/player-core, crates/player-media, crates/player-audio, crates/player-engine, crates/player-backend
-- **Problem:** Component of 14.2k first-party lines (Rust; vendored Symphonia, ruopus and rusty_aac excluded). Contracts: the FFmpeg FFI boundary in player-media (sys.rs, session.rs, video.rs: unsafe blocks, MAX_* bounds, IO callbacks), local-only input classification (player-core::input), the Symphonia and rusty_aac decode bridge in player-audio, the scheduler, clock and state machine in player-engine, and the Backend trait in player-backend. Consumers: player-app, player-tui, player-gui, and the corpus, audio, seek and failures gates. The whole repository is over 50k lines including vendored codecs, so each step runs per component.
-- **Recommendation:** Run the deslop Dead code step on this component: rustc dead_code and unreachable_pub, cargo-machete, then debloat; owner decisions pre-confirm cuts and removals of flags or formats become Needs owner tickets. Accept: tools clean or allowlisted (at most 5 entries, each with a reason), and every removal records the entry points, registrations and consumers checked and the consumer tests run. Acceptance command: cargo test -p player-core -p player-media -p player-audio -p player-engine -p player-backend, then tests/run.sh corpus, then tests/run.sh audio, then tests/run.sh seek, then tests/run.sh failures.
-- **Fix with:** deslop
-- **Effort:** M
-
-### DSLP-15 · P2 · Dead code: presentation
-
-- **Area:** deslop · dead code
-- **Where:** crates/player-output, crates/player-display (including bridge/metal_window.m), crates/player-overlay
-- **Problem:** Component of 8.1k first-party lines (Rust and one Objective-C file). Contracts: the libplacebo and Metal/Vulkan FFI in player-output, the window, input ring and Wayland/Cocoa surface in player-display, and the overlay display list, rasterizer and text shaping in player-overlay; each unsafe block states its safety argument. Consumers: player-engine (frame hand-off), player-app, player-gui, and the gpu-api, osc and gui gates. The whole repository is over 50k lines including vendored codecs, so each step runs per component.
-- **Recommendation:** Run the deslop Dead code step on this component: rustc dead_code and unreachable_pub, cargo-machete, then debloat; owner decisions pre-confirm cuts and removals of flags or formats become Needs owner tickets. Accept: tools clean or allowlisted (at most 5 entries, each with a reason), and every removal records the entry points, registrations and consumers checked and the consumer tests run. Acceptance command: cargo test -p player-output -p player-display -p player-overlay, then tests/run.sh gpu-api, then tests/run.sh osc (GPU and window checks need a display: Needs environment where absent).
-- **Fix with:** deslop
-- **Effort:** M
 
 ### DSLP-18 · P3 · Fixture byte hashes drift with Homebrew encoder upgrades, so macOS make test is red
 
@@ -144,6 +90,24 @@ Not started.
 - **Fix with:** root-cause
 - **Effort:** S
 
+### DSLP-30 · P3 · Linux-only expects block a presentation-wide expect_used deny
+
+- **Area:** Types · presentation
+- **Where:** crates/player-overlay/src/text/linux.rs:690, :810, :811, :1052; crates/player-overlay tests/present.rs helpers
+- **Problem:** The playback crates now deny unwrap/expect, but the presentation crates can't: Linux-only production code still uses expect, and it can't be compiled on Darwin, so this pass also left two Linux edits (pub(super) in text/linux.rs, AVERROR_EAGAIN in sys.rs) uncompiled.
+- **Recommendation:** In the musl container, run make lint to confirm the Linux edits, replace the Linux expects, and extend the unwrap/expect deny to the presentation crates.
+- **Fix with:** deslop
+- **Effort:** S
+
+### DSLP-31 · P3 · Public playback and presentation items with no callers
+
+- **Area:** Dead code · consumer questions
+- **Where:** AudioClock::is_paused, Resampler::buffered_input_frames, PlaybackState::supports_bool and supports_number, VideoFrame::pts_ticks, OverlayImage::alpha_at, Anchor::CENTER; output_latency and render_rgba (test callers only)
+- **Problem:** These public items have no workspace callers (two only test callers), so they are either API for external consumers or dead code.
+- **Recommendation:** Decide per item: remove, or keep as documented API with a test that exercises the contract.
+- **Fix with:** dead-code-archaeology
+- **Effort:** S
+
 ### DSLP-25 · P4 · ALSA write path may fail playback on EINTR and loop on repeated EPIPE
 
 - **Area:** Needs environment · Linux audio
@@ -160,5 +124,14 @@ Not started.
 - **Problem:** Osc::overlay and Rendered::full are test-only; install-layout.sh:43 runs rm -rf "$prefix/lib" with no empty-prefix check; GLSLANG_REV, SPIRV_HEADERS_REV and SPIRV_TOOLS_REV are dead in both build-deps scripts (removing them costs one CI cache rebuild); the play, mpv-diff, meta and build gates have no documented caller; a missing playlist entry still exits 1 at startup where mpv skips it.
 - **Recommendation:** Address together in one cleanup change that accepts the cache rebuild; guard the rm with a non-empty prefix check first.
 - **Fix with:** dead-code-archaeology
+- **Effort:** S
+
+### DSLP-32 · P4 · Playback leftovers: double observe in sched step, unproven decoder finish case, VideoToolbox lease witness
+
+- **Area:** Tests · playback
+- **Where:** crates/player-sched (sched.rs step), player-audio decoder finish(), VideoToolbox import ring test
+- **Problem:** step calls observe(now) twice (idempotent, harmless); finish() on a decoder with no cursor now discards stray samples instead of panicking but reachability is unshown; an injected early-lease-release fault still passes the VideoToolbox import-ring test, so that path has no witness.
+- **Recommendation:** Drop the redundant observe; show or rule out the finish case; add a test that fails when leases are released early.
+- **Fix with:** test-audit
 - **Effort:** S
 
