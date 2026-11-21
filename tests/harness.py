@@ -2525,6 +2525,21 @@ def run_script_gate(results, name, command):
                   tail((proc.stdout + proc.stderr).splitlines(), 20))
 
 
+UNIT_TESTS = (
+    ("scripts", "test_perfstat.py", ("ComparePairedTests", "MetricFloorTests", "CpuSecondsTests",
+                                     "ResultWritingTests", "RangeStatsTests")),
+    ("tests", "test_harness.py", ()),
+)
+
+
+def gate_unit(results, args):
+    for directory, pattern, classes in UNIT_TESTS:
+        selected = [flag for name in classes for flag in ("-k", name)]
+        run_script_gate(results, f"unit: {directory}/{pattern}",
+                        [sys.executable, "-m", "unittest", "discover", "-s", directory,
+                         "-p", pattern, *selected])
+
+
 def gate_linux_gpu_next(results, args):
     run_script_gate(results, "linux-gpu-next", [sys.executable, str(ROOT / "tests" / "wayland.py")])
 
@@ -2618,19 +2633,20 @@ GATES = {
     "meta": gate_meta,
     "release": gate_release,
     "failures": gate_failures,
+    "unit": gate_unit,
 }
 
 SUITE = [
     "fixtures", "corpus", "audio", "cover-art", "hwdec", "seek", "local-paths",
     "local-only", "osc", "osc-input", "input", "playlist", "cli", "state", "failures",
-    "rust-link", "tui", "release", "traces", "dispatch", "gpu-api",
+    "rust-link", "tui", "release", "traces", "dispatch", "gpu-api", "unit",
 ]
 
 
 LINUX_SUITE = [
     "fixtures", "linux-corpus", "linux-audio", "cover-art", "linux-gpu-next", "linux-local-only", "linux-osc",
     "linux-mostly-static", "linux-hwdec-default", "local-paths", "seek", "input", "playlist", "cli", "state",
-    "failures", "tui", "linux-rust-link", "traces", "dispatch",
+    "failures", "tui", "linux-rust-link", "traces", "dispatch", "unit",
 ]
 
 
