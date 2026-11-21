@@ -962,8 +962,9 @@ impl FpsMeter {
             Some(_) => {}
         }
         self.last = Some((sample, presented));
-        let (origin_position, origin_presented) =
-            self.origin.expect("the first presented frame set the origin");
+        let Some((origin_position, origin_presented)) = self.origin else {
+            return;
+        };
         let span = sample - origin_position;
         let intervals = presented - origin_presented;
         if span >= FPS_MINIMUM_SPAN_SECONDS && intervals >= 1 {
