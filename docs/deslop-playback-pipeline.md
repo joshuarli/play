@@ -42,6 +42,8 @@ Typing contracts fixed, each with its witness:
 | audio chunk timestamp | `take_chunk(pts)` takes the cursor instead of unwrapping it; `finish()` with no cursor now discards stray samples instead of panicking (`decode.rs:178`). Reachability of that case was not shown | `pipeline.rs` drain and seek tests, `mutated_audio_files_end_cleanly` |
 | overlay renderer creation | `match &mut self.overlay { Some(r) => r, empty => empty.insert(OverlayRenderer::new()?) }` (`player-backend/engine.rs:167`) | `engine.rs:300` `osc_overlay_composites_into_a_frame` |
 
+Invariant check (AGENTS.md: each native-boundary `unsafe` block states its safety argument): a script over the five crates found 180 `unsafe` sites; 21 lack a nearby `SAFETY` comment, and 17 of those are `extern` declarations, function-pointer types or `unsafe extern "C" fn` definitions rather than blocks. Two production blocks in `player-media/src/video.rs` (`avcodec_version` in `VideoSession::open`, the packet fill in `send`) had none; both now state one. The remaining two are `#[cfg(test)]` calls (`video.rs` `av_color_space_name`, `avcodec_version`), left alone.
+
 Acceptance (`e39e5018` to `c3040eef`): `cargo test -p player-core -p player-media -p player-audio -p player-engine -p player-backend` exit 0 (42, 25, 56, 93, 9 passed; 2 + 2 ignored), then `corpus` 109/0, `seek` 38/0, `failures` 8/0, each exit 0. `audio` not run (headful, below).
 
 ## DSLP-10 Tests

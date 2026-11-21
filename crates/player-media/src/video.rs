@@ -446,6 +446,7 @@ pub struct VideoSession {
 
 impl VideoSession {
     pub fn open(path: &str, stream_index: usize, hw: HwRequest) -> Result<Self, String> {
+        // SAFETY: avcodec_version reads a constant and has no preconditions.
         let version = unsafe { avcodec_version() };
         if (version >> 16) & 0xff != AVCODEC_VERSION_MAJOR {
             return Err(format!(
@@ -636,6 +637,8 @@ impl VideoSession {
         let pts = pts_seconds
             .map(|seconds| (seconds * den as f64 / num as f64).round() as i64)
             .unwrap_or(AV_NOPTS_VALUE);
+        // SAFETY: av_new_packet sized the packet buffer to data.len() bytes and
+        // the packet is live and exclusively owned until av_packet_free.
         unsafe {
             ptr::copy_nonoverlapping(data.as_ptr(), (*packet).data, data.len());
             (*packet).pts = pts;
