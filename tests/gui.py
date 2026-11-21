@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from harness import MPV, ROOT, Failure, fixture_entry, fixture_path, tail  # noqa: E402
+from harness import MPV, ROOT, fixture_entry, fixture_path, tail  # noqa: E402
 
 CARGO = shutil.which("cargo") or "cargo"
 PASS_LINE = re.compile(r"player-gui gate: PASS frames=(\d+) overlay_ink=(\d+)")
