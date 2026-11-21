@@ -562,6 +562,42 @@ mod tests {
         assert_eq!(frame, vec![0, 0, 0, 255, 128, 128, 128, 255]);
     }
 
+    #[test]
+    fn blending_rounds_each_channel_and_keeps_the_backdrop_alpha() {
+        let overlay = OverlayImage { rgba: vec![200, 100, 0, 100], x: 0, y: 0, width: 1, height: 1 };
+        let mut frame = vec![50, 50, 50, 200];
+        overlay.blend_onto(&mut frame, 1, 1).unwrap();
+        assert_eq!(frame, vec![109, 70, 30, 222]);
+        let mut empty = vec![7, 8, 9, 10];
+        OverlayImage { rgba: vec![255, 255, 255, 0], x: 0, y: 0, width: 1, height: 1 }
+            .blend_onto(&mut empty, 1, 1)
+            .unwrap();
+        assert_eq!(empty, vec![7, 8, 9, 10]);
+    }
+
+    #[test]
+    fn blending_clips_an_overhanging_overlay_without_wrapping_rows() {
+        let overlay = OverlayImage { rgba: [255, 255, 255, 255].repeat(4), x: 1, y: 1, width: 2, height: 2 };
+        let mut frame = [0, 0, 0, 255].repeat(4);
+        overlay.blend_onto(&mut frame, 2, 2).unwrap();
+        let mut expected = [0, 0, 0, 255].repeat(4);
+        expected[12..16].copy_from_slice(&[255, 255, 255, 255]);
+        assert_eq!(frame, expected);
+        let exact = [0, 0, 0, 255].repeat(4);
+        assert!(overlay.blend_onto(&mut exact.clone(), 2, 2).is_ok());
+        assert!(overlay.blend_onto(&mut exact[..15].to_vec(), 2, 2).is_err());
+    }
+
+    #[test]
+    fn pixel_boxes_cover_the_rect_clamped_to_the_frame() {
+        assert_eq!(pixel_box(Rect::new(1.5, 2.5, 2.0, 1.0), (10, 10)), Some((1, 2, 4, 4)));
+        assert_eq!(pixel_box(Rect::new(8.0, 8.0, 10.0, 10.0), (10, 10)), Some((8, 8, 10, 10)));
+        assert_eq!(pixel_box(Rect::new(-5.0, -5.0, 10.0, 10.0), (10, 10)), Some((0, 0, 5, 5)));
+        assert_eq!(pixel_box(Rect::new(3.0, 3.0, 0.0, 5.0), (10, 10)), None);
+        assert_eq!(pixel_box(Rect::new(3.0, 3.0, 5.0, 0.0), (10, 10)), None);
+        assert_eq!(pixel_box(Rect::new(20.0, 20.0, 5.0, 5.0), (10, 10)), None);
+    }
+
     fn label(text: &str, size: f64, x: f64) -> DisplayList {
         let mut list = DisplayList::new(200, 100, 1.0);
         list.text(
