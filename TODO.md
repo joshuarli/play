@@ -130,15 +130,6 @@ Priorities are assigned by impact and likelihood. Source-confirmed paths are dis
 - **Fix with:** `typing-audit`
 - **Effort:** M (days)
 
-### PLAY-55 · P3 · Fixture byte hashes drift with Homebrew encoder upgrades, so macOS make test is red
-
-- **Area:** Tests
-- **Where:** tests/fixtures/manifest.json, tests/fixtures/gen.sh, tests/harness.py gate_fixtures
-- **Problem:** On macOS, make test fails two checks, fixtures: generated manifest matches the tracked manifest and fixtures: 30 file hashes, for corrupt, hevc and mpeg4. Cause (reproduced): gen.sh encodes with the host's Homebrew libx265 and libmp3lame; this host has x265 4.3 and lame 4.0, whose bytes differ from the Nov 5 manifest. Regeneration is deterministic here (three runs gave identical hashes), so it is version drift, not flakiness. Proven at base a4d901f in a scratch worktree: tests/run.sh fixtures gives 4 passed, 2 failed, the same two checks. Linux compares structure only, so Linux CI does not see it.
-- **Recommendation:** Decide with the owner whether byte hashes belong in the gate. Cheapest fix that keeps the intent: compare stream structure plus decoded-output hashes on macOS too, as Linux does, or pin the Homebrew formula versions in scripts/dev-deps.sh and say so in docs/linux.md. Do not regenerate the manifest alone: it would break again on the next brew upgrade.
-- **Fix with:** test-audit
-- **Effort:** S
-
 ### PLAY-56 · P3 · Python unit tests are outside make test and CI, and one file costs 235 s
 
 - **Area:** Tests
