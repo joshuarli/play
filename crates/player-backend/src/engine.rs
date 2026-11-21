@@ -161,10 +161,10 @@ impl EngineBackend {
             }
             return Ok(None);
         }
-        if self.overlay.is_none() {
-            self.overlay = Some(OverlayRenderer::new()?);
-        }
-        let renderer = self.overlay.as_mut().expect("overlay renderer starts");
+        let renderer = match &mut self.overlay {
+            Some(renderer) => renderer,
+            empty => empty.insert(OverlayRenderer::new()?),
+        };
         renderer.render(&scene, width, height)
     }
 
