@@ -1,5 +1,5 @@
 Prefix: DSLP
-Next: 26
+Next: 30
 
 Deslop campaign backlog ([plan](https://github.com/laputa-systems/stuff/blob/main/docs/campaigns/deslop.md), tier D). One agent works this file with the `deslop` skill: take the lowest-numbered open ticket whose area does not start with `Needs owner ·`. After DSLP-17 (the per-component tickets that replaced DSLP-3 to DSLP-5), work the open P1 and P2 findings, then fill in `## Report` below.
 
@@ -27,24 +27,6 @@ Not started.
 - **Fix with:** deslop
 - **Effort:** M
 
-### DSLP-8 · P2 · Types: application surface
-
-- **Area:** deslop · types
-- **Where:** crates/player-app, crates/player-tui, crates/player-gui, crates/player-build
-- **Problem:** Component of 9.3k first-party lines. Contracts: the mpv-compatible CLI (options.rs, --help and exit codes), the command and property surface, the JSON IPC socket (ipc.rs), playlist and directory loading (playlist.rs), the OSC (osc.rs), the terminal UI, and the build-script helpers in player-build. Consumers: the mpv-compatible users of build/mpv and Player.app, and the cli, cli-help, input, playlist, state, dispatch, osc-input and tui gates. The whole repository is over 50k lines including vendored codecs, so each step runs per component.
-- **Recommendation:** Run the deslop Types step on this component: measure the strict-profile candidates (clippy wildcard_enum_match_arm, cast_possible_truncation, cast_sign_loss, unwrap_used and expect_used outside tests, redundant_clone, needless_pass_by_value; Python ty and Ruff candidates for Python files), and adopt only those that reject a real defect or delete an escape hatch at no more than one false positive per 5k lines. Accept: clean at the adopted profile, escape hatches (rg count from the tools reference) not increased, each fixed contract has a witness. Keep unsafe_code policy as the workspace states it: native-boundary unsafe stays in the crates AGENTS.md lists. Acceptance command: cargo test -p player-app -p player-tui -p player-gui -p player-build, then tests/run.sh cli, then tests/run.sh cli-help, then tests/run.sh playlist, then tests/run.sh state.
-- **Fix with:** deslop
-- **Effort:** M
-
-### DSLP-9 · P2 · Types: test harness and scripts
-
-- **Area:** deslop · types
-- **Where:** tests/, scripts/, docker/, native/
-- **Problem:** Component of 9.6k first-party lines (Python and shell). Contracts: tests/run.sh and tests/harness.py (the gate list, fixture manifest, trace format), the Python unit tests, scripts/build*.sh, release*.sh, audit*.sh, bundle.py, measure.sh, bench.py, perfstat.py, the Dockerfile, and the vendored native inputs. Consumers: make test, make lint, make release and the three GitHub workflows. The whole repository is over 50k lines including vendored codecs, so each step runs per component.
-- **Recommendation:** Run the deslop Types step on this component: measure the strict-profile candidates (clippy wildcard_enum_match_arm, cast_possible_truncation, cast_sign_loss, unwrap_used and expect_used outside tests, redundant_clone, needless_pass_by_value; Python ty and Ruff candidates for Python files), and adopt only those that reject a real defect or delete an escape hatch at no more than one false positive per 5k lines. Accept: clean at the adopted profile, escape hatches (rg count from the tools reference) not increased, each fixed contract has a witness. Keep unsafe_code policy as the workspace states it: native-boundary unsafe stays in the crates AGENTS.md lists. Acceptance command: python3 -m unittest discover -s scripts -p 'test_*.py', python3 -m unittest discover -s tests -p 'test_*.py', then make test.
-- **Fix with:** deslop
-- **Effort:** M
-
 ### DSLP-10 · P2 · Tests: playback pipeline
 
 - **Area:** deslop · tests
@@ -60,24 +42,6 @@ Not started.
 - **Where:** crates/player-output, crates/player-display (including bridge/metal_window.m), crates/player-overlay
 - **Problem:** Component of 8.1k first-party lines (Rust and one Objective-C file). Contracts: the libplacebo and Metal/Vulkan FFI in player-output, the window, input ring and Wayland/Cocoa surface in player-display, and the overlay display list, rasterizer and text shaping in player-overlay; each unsafe block states its safety argument. Consumers: player-engine (frame hand-off), player-app, player-gui, and the gpu-api, osc and gui gates. The whole repository is over 50k lines including vendored codecs, so each step runs per component.
 - **Recommendation:** Run the deslop Tests step on this component: test-pyramid audit, coverage where cargo-llvm-cov exists (Needs environment: it is not installed on this host), a bounded mutation run of the critical contracts where cargo-mutants exists (also not installed), and a boundary test for each `none` in AGENTS.md Verification that this component owns. Accept: no undispositioned survivor in the critical scope, each new test proven by one injected fault, warm make test within 20% or 30s of the Ground baseline. Acceptance command: cargo test -p player-output -p player-display -p player-overlay, then tests/run.sh gpu-api, then tests/run.sh osc (GPU and window checks need a display: Needs environment where absent).
-- **Fix with:** deslop
-- **Effort:** M
-
-### DSLP-12 · P2 · Tests: application surface
-
-- **Area:** deslop · tests
-- **Where:** crates/player-app, crates/player-tui, crates/player-gui, crates/player-build
-- **Problem:** Component of 9.3k first-party lines. Contracts: the mpv-compatible CLI (options.rs, --help and exit codes), the command and property surface, the JSON IPC socket (ipc.rs), playlist and directory loading (playlist.rs), the OSC (osc.rs), the terminal UI, and the build-script helpers in player-build. Consumers: the mpv-compatible users of build/mpv and Player.app, and the cli, cli-help, input, playlist, state, dispatch, osc-input and tui gates. The whole repository is over 50k lines including vendored codecs, so each step runs per component.
-- **Recommendation:** Run the deslop Tests step on this component: test-pyramid audit, coverage where cargo-llvm-cov exists (Needs environment: it is not installed on this host), a bounded mutation run of the critical contracts where cargo-mutants exists (also not installed), and a boundary test for each `none` in AGENTS.md Verification that this component owns. Accept: no undispositioned survivor in the critical scope, each new test proven by one injected fault, warm make test within 20% or 30s of the Ground baseline. Acceptance command: cargo test -p player-app -p player-tui -p player-gui -p player-build, then tests/run.sh cli, then tests/run.sh cli-help, then tests/run.sh playlist, then tests/run.sh state.
-- **Fix with:** deslop
-- **Effort:** M
-
-### DSLP-13 · P2 · Tests: test harness and scripts
-
-- **Area:** deslop · tests
-- **Where:** tests/, scripts/, docker/, native/
-- **Problem:** Component of 9.6k first-party lines (Python and shell). Contracts: tests/run.sh and tests/harness.py (the gate list, fixture manifest, trace format), the Python unit tests, scripts/build*.sh, release*.sh, audit*.sh, bundle.py, measure.sh, bench.py, perfstat.py, the Dockerfile, and the vendored native inputs. Consumers: make test, make lint, make release and the three GitHub workflows. The whole repository is over 50k lines including vendored codecs, so each step runs per component.
-- **Recommendation:** Run the deslop Tests step on this component: test-pyramid audit, coverage where cargo-llvm-cov exists (Needs environment: it is not installed on this host), a bounded mutation run of the critical contracts where cargo-mutants exists (also not installed), and a boundary test for each `none` in AGENTS.md Verification that this component owns. Accept: no undispositioned survivor in the critical scope, each new test proven by one injected fault, warm make test within 20% or 30s of the Ground baseline. Acceptance command: python3 -m unittest discover -s scripts -p 'test_*.py', python3 -m unittest discover -s tests -p 'test_*.py', then make test.
 - **Fix with:** deslop
 - **Effort:** M
 
@@ -98,33 +62,6 @@ Not started.
 - **Recommendation:** Run the deslop Dead code step on this component: rustc dead_code and unreachable_pub, cargo-machete, then debloat; owner decisions pre-confirm cuts and removals of flags or formats become Needs owner tickets. Accept: tools clean or allowlisted (at most 5 entries, each with a reason), and every removal records the entry points, registrations and consumers checked and the consumer tests run. Acceptance command: cargo test -p player-output -p player-display -p player-overlay, then tests/run.sh gpu-api, then tests/run.sh osc (GPU and window checks need a display: Needs environment where absent).
 - **Fix with:** deslop
 - **Effort:** M
-
-### DSLP-16 · P2 · Dead code: application surface
-
-- **Area:** deslop · dead code
-- **Where:** crates/player-app, crates/player-tui, crates/player-gui, crates/player-build
-- **Problem:** Component of 9.3k first-party lines. Contracts: the mpv-compatible CLI (options.rs, --help and exit codes), the command and property surface, the JSON IPC socket (ipc.rs), playlist and directory loading (playlist.rs), the OSC (osc.rs), the terminal UI, and the build-script helpers in player-build. Consumers: the mpv-compatible users of build/mpv and Player.app, and the cli, cli-help, input, playlist, state, dispatch, osc-input and tui gates. The whole repository is over 50k lines including vendored codecs, so each step runs per component.
-- **Recommendation:** Run the deslop Dead code step on this component: rustc dead_code and unreachable_pub, cargo-machete, then debloat; owner decisions pre-confirm cuts and removals of flags or formats become Needs owner tickets. Accept: tools clean or allowlisted (at most 5 entries, each with a reason), and every removal records the entry points, registrations and consumers checked and the consumer tests run. Acceptance command: cargo test -p player-app -p player-tui -p player-gui -p player-build, then tests/run.sh cli, then tests/run.sh cli-help, then tests/run.sh playlist, then tests/run.sh state.
-- **Fix with:** deslop
-- **Effort:** M
-
-### DSLP-17 · P2 · Dead code: test harness and scripts
-
-- **Area:** deslop · dead code
-- **Where:** tests/, scripts/, docker/, native/
-- **Problem:** Component of 9.6k first-party lines (Python and shell). Contracts: tests/run.sh and tests/harness.py (the gate list, fixture manifest, trace format), the Python unit tests, scripts/build*.sh, release*.sh, audit*.sh, bundle.py, measure.sh, bench.py, perfstat.py, the Dockerfile, and the vendored native inputs. Consumers: make test, make lint, make release and the three GitHub workflows. The whole repository is over 50k lines including vendored codecs, so each step runs per component.
-- **Recommendation:** Run the deslop Dead code step on this component: rustc dead_code and unreachable_pub, cargo-machete, then debloat; owner decisions pre-confirm cuts and removals of flags or formats become Needs owner tickets. Accept: tools clean or allowlisted (at most 5 entries, each with a reason), and every removal records the entry points, registrations and consumers checked and the consumer tests run. Acceptance command: python3 -m unittest discover -s scripts -p 'test_*.py', python3 -m unittest discover -s tests -p 'test_*.py', then make test.
-- **Fix with:** deslop
-- **Effort:** M
-
-### DSLP-20 · P2 · m3u playlists with a UTF-8 BOM or non-UTF-8 bytes fail the whole startup
-
-- **Area:** Playlist
-- **Where:** crates/player-app/src/playlist.rs:170-216 (read_playlist, parse_m3u)
-- **Problem:** read_playlist uses std::fs::read_to_string and never strips a BOM. Reproduced on build/mpv at 3db6e14a with a.wav beside the playlists: printf '\xef\xbb\xbf#EXTM3U\n#EXTINF:3,Tone\na.wav\n' > bom.m3u, then build/mpv --no-config --vo=null --ao=null --playlist=bom.m3u prints 'player: failed to open \ufeff#EXTM3U: open: ... No such file or directory' and exits 1: the BOM glues to the header line, so it is no longer a comment and becomes the first entry (the same file without the BOM plays). printf '#EXTM3U\ncaf\xe9.wav\na.wav\n' > latin1.m3u (classic .m3u is Latin-1 or the system code page) prints 'cannot read playlist latin1.m3u: stream did not contain valid UTF-8' and exits 1, losing the valid a.wav entry too. Both are common outputs of Windows and older tools. parse_srt already strips a BOM (sub.rs:173), so the omission is local to playlists.
-- **Recommendation:** Strip a leading U+FEFF, read bytes and decode lossily or per extension (m3u8 is UTF-8 by definition), and skip an entry that does not resolve instead of failing the load. Test both files through the playlist gate, and add a unit test beside insertion_tests; prove each with one injected fault.
-- **Fix with:** error-model
-- **Effort:** S
 
 ### DSLP-18 · P3 · Fixture byte hashes drift with Homebrew encoder upgrades, so macOS make test is red
 
@@ -180,6 +117,33 @@ Not started.
 - **Fix with:** os-boundaries
 - **Effort:** S
 
+### DSLP-26 · P3 · player-app uses unsafe zlib FFI but AGENTS.md doesn't list it among the unsafe crates
+
+- **Area:** Security
+- **Where:** crates/player-app/src/png.rs:3, AGENTS.md
+- **Problem:** png.rs declares unsafe extern "C" compress2 from zlib, but AGENTS.md's list of crates allowed unsafe code omits player-app.
+- **Recommendation:** Either list player-app (with the zlib boundary) in AGENTS.md or replace the FFI with a safe encoder.
+- **Fix with:** os-boundaries
+- **Effort:** S
+
+### DSLP-27 · P3 · The meta gate is red at base and runs in neither suite
+
+- **Area:** Tests
+- **Where:** tests/harness.py:861, scripts/fetch-gluon.sh, meta gate
+- **Problem:** Its $TMPDIR pattern matches scripts/fetch-gluon.sh and tests/harness.py:861, and its .git/info/exclude check fails in linked worktrees, so it fails at base; it is outside SUITE and LINUX_SUITE so nothing notices.
+- **Recommendation:** Fix the two false positives (resolve the common git dir for worktrees) and add meta to a suite.
+- **Fix with:** root-cause
+- **Effort:** S
+
+### DSLP-28 · P3 · perfstat ProcessCpuTests need 50 ms of CPU inside a 100 ms window
+
+- **Area:** Tests
+- **Where:** scripts/test_perfstat.py (ProcessCpuTests)
+- **Problem:** The tests assume the process gets 50 ms of CPU within 100 ms of wall time; on a busy host they failed once.
+- **Recommendation:** Measure CPU with a work-bounded loop or a generous wall bound, so scheduling latency can't fail them.
+- **Fix with:** root-cause
+- **Effort:** S
+
 ### DSLP-25 · P4 · ALSA write path may fail playback on EINTR and loop on repeated EPIPE
 
 - **Area:** Needs environment · Linux audio
@@ -188,3 +152,13 @@ Not started.
 - **Recommendation:** In the Linux container with alsa/null, inject the three cases with a fake pcm layer or the null device's error hooks and reproduce before changing code; retry EINTR, bound consecutive EPIPE recoveries, and decide the pause fallback with the owner.
 - **Fix with:** lifecycle-concurrency
 - **Effort:** M
+
+### DSLP-29 · P4 · Small dead-code and safety leftovers from the application and harness pass
+
+- **Area:** Dead code
+- **Where:** crates/player-app (Osc::overlay, Rendered::full), scripts/install-layout.sh:43, scripts/build-deps*.sh, tests/harness.py gates
+- **Problem:** Osc::overlay and Rendered::full are test-only; install-layout.sh:43 runs rm -rf "$prefix/lib" with no empty-prefix check; GLSLANG_REV, SPIRV_HEADERS_REV and SPIRV_TOOLS_REV are dead in both build-deps scripts (removing them costs one CI cache rebuild); the play, mpv-diff, meta and build gates have no documented caller; a missing playlist entry still exits 1 at startup where mpv skips it.
+- **Recommendation:** Address together in one cleanup change that accepts the cache rebuild; guard the rm with a non-empty prefix check first.
+- **Fix with:** dead-code-archaeology
+- **Effort:** S
+
