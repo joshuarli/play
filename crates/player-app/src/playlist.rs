@@ -172,8 +172,9 @@ pub fn read_playlist(path: &str) -> Result<Vec<Entry>, String> {
         Ok(InputPath::Local(path)) => path,
         _ => return Err("Refusing non-local playlist".to_owned()),
     };
-    let text = std::fs::read_to_string(&source)
+    let bytes = std::fs::read(&source)
         .map_err(|error| format!("cannot read playlist {}: {error}", source.display()))?;
+    let text = decode_playlist(&bytes);
     let base = source.parent().unwrap_or_else(|| Path::new("."));
     let extension = source
         .extension()
@@ -188,6 +189,19 @@ pub fn read_playlist(path: &str) -> Result<Vec<Entry>, String> {
         return Err(format!("playlist {} has no entries", source.display()));
     }
     Ok(entries)
+}
+
+/// Classic m3u and pls files are Latin-1 or a system code page and often carry
+/// a UTF-8 byte order mark. Valid UTF-8 is kept as written; each byte that is
+/// not part of a valid sequence is read as the Latin-1 character with that value.
+fn decode_playlist(bytes: &[u8]) -> String {
+    let bytes = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(bytes);
+    let mut text = String::with_capacity(bytes.len());
+    for chunk in bytes.utf8_chunks() {
+        text.push_str(chunk.valid());
+        text.extend(chunk.invalid().iter().map(|byte| char::from(*byte)));
+    }
+    text
 }
 
 fn parse_m3u(text: &str, base: &Path) -> Vec<Entry> {
@@ -267,5 +281,70 @@ mod insertion_tests {
         let mut list = Playlist::new();
         list.insert(99, vec![entry("X")]);
         assert_eq!(list.current(), None);
+    }
+}
+
+#[cfg(test)]
+mod read_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct Scratch(PathBuf);
+    impl Scratch {
+        fn new() -> Self {
+            static NEXT: AtomicUsize = AtomicUsize::new(0);
+            let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../.work/tmp")
+                .join(format!("playlist-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+            std::fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+        fn read(&self, name: &str, contents: &[u8]) -> Result<Vec<Entry>, String> {
+            let playlist = self.0.join(name);
+            std::fs::write(&playlist, contents).unwrap();
+            read_playlist(playlist.to_str().unwrap())
+        }
+        fn paths(&self, names: &[&str]) -> Vec<String> {
+            names.iter().map(|name| self.0.join(name).to_string_lossy().into_owned()).collect()
+        }
+    }
+    impl Drop for Scratch {
+        fn drop(&mut self) { std::fs::remove_dir_all(&self.0).unwrap(); }
+    }
+
+    fn paths(entries: &[Entry]) -> Vec<&str> {
+        entries.iter().map(|entry| entry.path.as_str()).collect()
+    }
+
+    #[test]
+    fn utf8_bom_does_not_become_an_entry() {
+        let scratch = Scratch::new();
+        let entries = scratch.read("bom.m3u", b"\xef\xbb\xbf#EXTM3U\n#EXTINF:3,Tone\na.wav\n").unwrap();
+        assert_eq!(paths(&entries), scratch.paths(&["a.wav"]));
+        assert_eq!(entries[0].title.as_deref(), Some("Tone"));
+        let entries = scratch.read("bom.pls", b"\xef\xbb\xbf[playlist]\nFile1=a.wav\n").unwrap();
+        assert_eq!(paths(&entries), scratch.paths(&["a.wav"]));
+    }
+
+    #[test]
+    fn latin1_entries_are_read_without_losing_valid_ones() {
+        let scratch = Scratch::new();
+        let entries = scratch.read("latin1.m3u", b"#EXTM3U\ncaf\xe9.wav\na.wav\n").unwrap();
+        assert_eq!(paths(&entries), scratch.paths(&["caf\u{e9}.wav", "a.wav"]));
+    }
+
+    #[test]
+    fn valid_utf8_is_unchanged() {
+        let scratch = Scratch::new();
+        let entries = scratch.read("utf8.m3u8", "#EXTINF:1,Caf\u{e9}\ncaf\u{e9} \u{65e5}\u{672c}.wav\n".as_bytes()).unwrap();
+        assert_eq!(paths(&entries), scratch.paths(&["caf\u{e9} \u{65e5}\u{672c}.wav"]));
+        assert_eq!(entries[0].title.as_deref(), Some("Caf\u{e9}"));
+    }
+
+    #[test]
+    fn empty_and_bom_only_playlists_are_rejected() {
+        let scratch = Scratch::new();
+        assert!(scratch.read("empty.m3u", b"").unwrap_err().ends_with("has no entries"));
+        assert!(scratch.read("bom-only.m3u", b"\xef\xbb\xbf").unwrap_err().ends_with("has no entries"));
     }
 }
