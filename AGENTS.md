@@ -23,8 +23,8 @@ Player is a local-only media player built on a Rust playback engine, the pinned 
 - Guards by boundary (gates are `tests/run.sh GATE`; unit tests ship in each crate):
   - CLI flags, help text, exit codes: gates `cli`, `cli-help`; `crates/player-app/src/options.rs` tests.
   - Local-only input and wrappers: `local-only`, `local-paths`; `crates/player-core/src/input.rs` tests; `scripts/audit.sh`.
-  - Commands, properties, JSON IPC socket (`--input-ipc-server`): `state`, `input`, `dispatch`, `osc-input`; `ipc.rs` tests. Malformed or oversized IPC lines: none.
-  - Playlists (m3u, m3u8, pls, directories): `playlist` gate; `crates/player-app/src/playlist.rs` tests. Non-UTF-8, BOM or oversized playlist files: none.
+  - Commands, properties, JSON IPC socket (`--input-ipc-server`): `state`, `input`, `dispatch`, `osc-input`; `ipc.rs` tests. Malformed IPC lines: `ipc.rs` tests; oversized lines: none (DSLP-21).
+  - Playlists (m3u, m3u8, pls, directories): `playlist` gate; `crates/player-app/src/playlist.rs` tests. UTF-8 BOM and Latin-1 playlists: `playlist.rs` `read_tests` and the `playlist` gate; oversized playlist files: none.
   - Container and codec decode: `corpus`, `audio`, `cover-art`, `seek` over `tests/fixtures/manifest.json`; truncated and corrupt files: `failures`. Mutated or fuzzed media: none.
   - Release artifacts: `release` gate, `tests/test_release_archives.py`, `scripts/audit-linux.sh`.
   - Audio devices: ALSA null PCM in `linux-audio`; CoreAudio and real devices: none, owner checks in `docs/manual-checklist.md`.

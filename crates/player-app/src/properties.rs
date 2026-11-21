@@ -436,10 +436,6 @@ fn rect_value(rect: Rect) -> NativeValue {
     ])
 }
 
-pub fn to_bool(value: &NativeValue) -> bool {
-    matches!(value, NativeValue::Bool(true))
-}
-
 fn metadata(probe: &Option<Probe>) -> NativeValue {
     let mut fields = Vec::new();
     if let Some(probe) = probe {
@@ -713,16 +709,16 @@ fn video_dimension(probe: &Option<Probe>, axis: usize) -> i64 {
 }
 
 fn video_params(probe: &Option<Probe>, presented: Option<(u32, u32, player_output::VideoGeometry)>) -> NativeValue {
-    let Some(stream) = probe
-        .as_ref()
-        .and_then(|probe| probe.streams.iter().find(|stream| stream.kind == StreamKind::Video))
-    else {
+    let Some((probe, stream)) = probe.as_ref().and_then(|probe| {
+        let stream = probe.streams.iter().find(|stream| stream.kind == StreamKind::Video)?;
+        Some((probe, stream))
+    }) else {
         return NativeValue::Map(Vec::new());
     };
     let (width, height, geometry) = if let Some((width, height, geometry)) = presented {
         (width as i64, height as i64, geometry)
     } else {
-        let metadata = probe.as_ref().expect("stream belongs to probe").video_geometry;
+        let metadata = probe.video_geometry;
         (stream.width.max(0) as i64, stream.height.max(0) as i64,
             player_output::VideoGeometry { pixel_aspect: metadata.pixel_aspect, rotation: metadata.rotation })
     };

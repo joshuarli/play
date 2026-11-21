@@ -89,10 +89,6 @@ impl IpcServer {
         }
     }
 
-    pub fn connected(&self) -> bool {
-        self.client.is_some()
-    }
-
     pub fn send(&mut self, value: &NativeValue) {
         let Some(client) = self.client.as_mut() else {
             return;
@@ -227,5 +223,74 @@ mod tests {
         assert!(std::fs::symlink_metadata(&path).unwrap().file_type().is_symlink());
         assert_eq!(std::fs::read(&target).unwrap(), b"keep");
         assert!(IpcServer::bind(&dir.0.join("missing/socket")).is_err());
+    }
+    fn poll_until(server: &mut IpcServer, count: usize) -> Vec<NativeValue> {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let mut messages = Vec::new();
+        while messages.len() < count && std::time::Instant::now() < deadline {
+            messages.extend(server.poll());
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        messages
+    }
+
+    fn command(name: &str) -> NativeValue {
+        NativeValue::Map(vec![(
+            "command".to_owned(),
+            NativeValue::Array(vec![NativeValue::String(name.to_owned())]),
+        )])
+    }
+
+    #[test]
+    fn malformed_lines_are_marked_or_skipped_and_do_not_hide_valid_ones() {
+        let dir = Directory::new();
+        let mut server = IpcServer::bind(&dir.socket()).unwrap();
+        let mut client = UnixStream::connect(dir.socket()).unwrap();
+        client
+            .write_all(b"{\"command\":[\"a\"]}\nnot json\n\xff\xfe\n\n   \n{\"command\":[\"b\"]}\n")
+            .unwrap();
+        let messages = poll_until(&mut server, 3);
+        assert_eq!(
+            messages,
+            vec![
+                command("a"),
+                NativeValue::Map(vec![(
+                    "invalid".to_owned(),
+                    NativeValue::String("not json".to_owned())
+                )]),
+                command("b"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_line_split_across_polls_is_delivered_once_complete() {
+        let dir = Directory::new();
+        let mut server = IpcServer::bind(&dir.socket()).unwrap();
+        let mut client = UnixStream::connect(dir.socket()).unwrap();
+        client.write_all(b"{\"command\":[\"a").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        assert!(server.poll().is_empty());
+        client.write_all(b"\"]}\n").unwrap();
+        assert_eq!(poll_until(&mut server, 1), vec![command("a")]);
+    }
+
+    #[test]
+    fn a_closed_client_is_dropped_and_the_next_one_accepted() {
+        let dir = Directory::new();
+        let mut server = IpcServer::bind(&dir.socket()).unwrap();
+        let mut first = UnixStream::connect(dir.socket()).unwrap();
+        first.write_all(b"{\"command\":[\"a\"]}\n").unwrap();
+        assert_eq!(poll_until(&mut server, 1), vec![command("a")]);
+        assert!(server.client.is_some());
+        drop(first);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while server.client.is_some() && std::time::Instant::now() < deadline {
+            server.poll();
+        }
+        assert!(server.client.is_none());
+        let mut second = UnixStream::connect(dir.socket()).unwrap();
+        second.write_all(b"{\"command\":[\"b\"]}\n").unwrap();
+        assert_eq!(poll_until(&mut server, 1), vec![command("b")]);
     }
 }

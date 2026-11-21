@@ -21,7 +21,7 @@ use player_tui::{Control, Cover, Player as TuiPlayer, Snapshot, Track};
 use crate::ipc::{self, IpcServer};
 use crate::options::{self, Options, Start};
 use crate::osc::{Chapter, Osc, Playback, Response};
-use crate::playlist::{self, Entry, Playlist};
+use crate::playlist::{self, Playlist};
 use crate::properties::{self, Probe};
 use crate::value::NativeValue;
 use crate::window::{HostEvent, HostWindow};
@@ -268,14 +268,6 @@ impl App {
         osc.set_visibility(mode, Instant::now());
         self.show_text(&format!("OSC visibility: {}", mode.name()), DEFAULT_OSD_DURATION);
         Ok(())
-    }
-
-    pub fn quit(&mut self) {
-        self.quit = true;
-    }
-
-    pub fn should_quit(&self) -> bool {
-        self.quit
     }
 
     fn unshown_frame(&self) -> u64 {
@@ -1502,17 +1494,13 @@ impl App {
         path: Option<&str>,
         content: ScreenshotContent,
     ) -> Result<NativeValue, String> {
-        if self.last_frame.is_none() {
+        let Some(frame) = self.last_frame.as_ref() else {
             return Err("no video frame is available for a screenshot".to_owned());
-        }
-        if self.screenshot_renderer.is_none() {
-            self.screenshot_renderer = Some(ScreenshotRenderer::open(self.options.gpu_api)?);
-        }
-        let renderer = self
-            .screenshot_renderer
-            .as_mut()
-            .expect("the screenshot renderer just opened");
-        let frame = self.last_frame.as_ref().expect("checked above");
+        };
+        let renderer = match &mut self.screenshot_renderer {
+            Some(renderer) => renderer,
+            slot @ None => slot.insert(ScreenshotRenderer::open(self.options.gpu_api)?),
+        };
         let (width, height) = frame.geometry.display_size(frame.width, frame.height);
         let mut rgba = renderer.render(frame)?;
         if content == ScreenshotContent::Window {
@@ -1790,16 +1778,6 @@ impl App {
         }
         Ok(())
     }
-
-    pub fn observe_property(&mut self, id: u64, name: &str) {
-        self.observers.insert(
-            id,
-            Observer {
-                name: name.to_owned(),
-                last: None,
-            },
-        );
-    }
 }
 
 impl TuiPlayer for App {
@@ -2046,10 +2024,6 @@ pub fn run(args: &[String]) -> Result<(), String> {
     }
     let mut app = App::new(options);
     app.run()
-}
-
-pub fn entry(path: &str) -> Result<Entry, String> {
-    playlist::local_entry(path)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
