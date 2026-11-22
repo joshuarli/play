@@ -1,0 +1,18 @@
+[package]
+name = "player-text-differential"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "Differential harness: Play's FreeType/HarfBuzz text path against harfrust, skrifa, and zeno. Evidence only; not a workspace member."
+
+[workspace]
+
+[dev-dependencies]
+player-overlay = { path = ".." }
+unicode-bidi = "0.3.18"
+harfrust = "0.16.1"
+skrifa = "0.50.0"
+zeno = "0.3.3"
+
+[profile.dev]
+opt-level = 2
