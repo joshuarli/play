@@ -29,9 +29,9 @@ The roadmap, [docs/roadmap.md](docs/roadmap.md), holds all current and future wo
   - Local-only input and wrappers: `local-only`, `local-paths`; `crates/player-core/src/input.rs` tests; `scripts/audit.sh`.
   - Commands, properties, JSON IPC socket (`--input-ipc-server`): `state`, `input`, `dispatch`, `osc-input`; `ipc.rs` tests. Malformed IPC lines: `ipc.rs` tests; oversized lines: none (PLAY-57).
   - Playlists (m3u, m3u8, pls, directories): `playlist` gate; `crates/player-app/src/playlist.rs` tests. UTF-8 BOM and Latin-1 playlists: `playlist.rs` `read_tests` and the `playlist` gate; oversized playlist files: none.
-  - Container and codec decode: `corpus`, `audio`, `cover-art`, `seek` over `tests/fixtures/manifest.json`; truncated and corrupt files: `failures`. Mutated or fuzzed media: none.
+  - Container and codec decode: `corpus`, `audio`, `cover-art`, `seek` over `tests/fixtures/manifest.json`; truncated and corrupt files: `failures`. Mutated audio and video fixtures: `mutated_audio_files_end_cleanly` and `mutated_video_files_end_cleanly`; fuzzing: none.
   - Release artifacts: `release` gate, `tests/test_release_archives.py`, `scripts/audit-linux.sh`.
-  - Audio devices: ALSA null PCM in `linux-audio`; CoreAudio and real devices: none, owner checks in `docs/manual-checklist.md`.
+  - Audio devices: ALSA null PCM in `linux-audio`; CoreAudio: `audio` gate; real-device checks: `docs/manual-checklist.md`.
 - Performance workload: `scripts/measure.sh final` against the budgets in `docs/metrics.md` (CPU and RSS during playback), plus `scripts/bench.py`. Owner-run, not part of `make test`.
 - Components (first-party lines; the repository is over 50k with vendored code): playback (14.2k: player-core, -media, -audio, -engine, -backend), presentation (8.1k: player-output, -display, -overlay), application (9.3k: player-app, -tui, -gui, -build), harness (9.6k: tests, scripts, docker, native).
 - Vendored trees (`UPSTREAM.md` in each): `vendor/rusty-aac` is crates.io 2.0.1 from Remade-With-Rust/remade_ffmpeg_rs at `14e8508`, pristine; `vendor/ruopus` is crates.io 0.1.2 from jmg049/ruopus at `b7aab67`, modified (FFT); `vendor/symphonia` is joshuarli/symphonia at `b633620` (derived from pdeljanov/Symphonia 0.6.1), modified (AAC layouts, surround Opus). Fork differences were not diffed.

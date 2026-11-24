@@ -117,8 +117,7 @@ and linkage inputs do not change.
 `fixtures: generated manifest matches the tracked manifest` and `fixtures: 30 file hashes`
 (`corrupt`, `hevc`, `mpeg4`). `tests/fixtures/gen.sh` uses the host's Homebrew libx265
 and libmp3lame; this host has x265 4.3 and lame 4.0, while the tracked manifest records
-the Nov 5 output. `AGENTS.md` and `TODO.md` (PLAY-55) record the same failure at base
-`a4d901f`, and `docs/deslop-test-harness.md` records it as known red and untouched.
+the Nov 5 output. The same failure occurred at base `a4d901f`.
 This slice does not edit `tests/fixtures/gen.sh`, `tests/fixtures/manifest.json` or
 `gate_fixtures`; every other macOS gate, including `rust-link`, `release`, `unit`, `meta`
 file presence and `ffmpeg-audit`, passes. Re-baselining the manifest alone is explicitly
