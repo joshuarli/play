@@ -2,6 +2,8 @@
 
 Player is a local-only media player built on a Rust playback engine, the pinned shared FFmpeg n9.0.2 runtime, libplacebo, and an mpv-compatible application surface. The macOS release artifact is `dist/Player.app`; the Linux x86-64 musl artifact is `dist/player-x86_64-linux-musl.tar.xz`. The Cargo workspace manifest is at the repository root and the crates are under `crates/`.
 
+The roadmap, [docs/roadmap.md](docs/roadmap.md), holds all current and future work; its Status is the resume point.
+
 ## Commands
 
 - `scripts/build.sh` builds the development player at `build/mpv` on macOS or `build-linux/mpv` on Linux. On macOS it and the Rust tests link `.work/deps/release`, so run `scripts/build-deps.sh` first; use the pinned container for Linux.
