@@ -1,7 +1,7 @@
 FROM alpine@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
 
 RUN apk add --no-cache \
-        bash=5.3.9-r1 build-base=0.5-r4 clang22=22.1.3-r2 pkgconf=2.5.1-r0 python3=3.14.10-r1 \
+        bash=5.3.9-r1 build-base=0.5-r4 clang22=22.1.3-r2 pkgconf=2.5.1-r0 python3=3.14.10-r2 \
         linux-headers=7.0.0-r1 git=2.54.1-r0 curl=8.23.0-r0 xz=5.8.4-r0 bzip2 tar=1.35-r5 perl=5.42.3-r0 patchelf file=5.47-r2 \
         util-linux coreutils=9.11-r0 findutils diffutils time \
         wayland-dev wayland-protocols alsa-lib-dev \
