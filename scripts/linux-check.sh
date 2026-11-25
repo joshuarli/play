@@ -11,7 +11,7 @@ fail() {
 [ "$(uname -s)" = "Linux" ] || fail "requires Linux, found $(uname -s)"
 [ "$(uname -m)" = "x86_64" ] || fail "requires x86_64, found $(uname -m)"
 
-for tool in gcc pkg-config python3 cargo rustc strip wayland-scanner weston ffmpeg unshare; do
+for tool in cc pkg-config python3 cargo rustc strip wayland-scanner weston ffmpeg unshare; do
     command -v "$tool" >/dev/null 2>&1 || fail "missing build tool: $tool"
 done
 

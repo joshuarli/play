@@ -9,8 +9,8 @@
 # Rust's std for a dynamically linked musl target passes `-lgcc_s`
 # for its unwinder, and rustc links with `-nodefaultlibs`, so
 # `-static-libgcc` alone cannot keep libgcc_s out. With
-# `-static-libgcc`, replace `-lgcc_s` in place with GCC's static
-# unwinder, libgcc_eh.a. Everything else passes through untouched.
+# `-static-libgcc`, replace `-lgcc_s` in place with the owned clang's
+# static LLVM libunwind. Everything else passes through untouched.
 set -u
 static_libgcc=""
 for arg in "$@"; do
@@ -26,7 +26,7 @@ for arg in "$@"; do
         ;;
     -lgcc_s)
         if [ -n "$static_libgcc" ]; then
-            rewritten="$rewritten '$(cc -print-file-name=libgcc_eh.a)'"
+            rewritten="$rewritten '$(cc -print-file-name=libunwind.a)'"
             continue
         fi
         ;;

@@ -3,7 +3,8 @@ COPY --from=oci.17166969.xyz/owned-tools@sha256:aaec19e7a44cbc53b40db2d22093600e
 ENV PATH=$PATH:/opt/laputa/bin
 
 RUN apk add --no-cache \
-        bash=5.3.9-r1 build-base=0.5-r4 pkgconf=2.5.1-r0 python3=3.14.10-r2 \
+        bash=5.3.9-r1 binutils=2.45.1-r1 make=4.4.1-r4 musl-dev=1.2.6-r3 patch \
+        libgcc=15.2.0-r5 libstdc++-dev=15.2.0-r5 pkgconf=2.5.1-r0 python3=3.14.10-r2 \
         linux-headers=7.0.0-r1 curl=8.23.0-r0 xz=5.8.4-r0 bzip2 tar=1.35-r5 perl=5.42.3-r0 patchelf file=5.47-r2 \
         util-linux coreutils=9.11-r0 findutils diffutils time \
         wayland-dev wayland-protocols alsa-lib-dev \
@@ -14,6 +15,11 @@ RUN apk add --no-cache \
         harfbuzz-dev freetype-dev \
         font-noto font-noto-arabic font-noto-hebrew font-noto-devanagari font-noto-thai \
         font-noto-cjk font-noto-emoji
+
+# Rust links host proc-macros against -lgcc_s, which only gcc's package symlinks.
+RUN ln -s libgcc_s.so.1 /usr/lib/libgcc_s.so \
+ && ln -s /opt/laputa/bin/clang /usr/local/bin/cc \
+ && ln -s /opt/laputa/bin/clang++ /usr/local/bin/c++
 
 RUN archive=ffmpeg-fixtures-9.0.2-x86_64-unknown-linux-musl.tar.xz \
  && curl -fsSL --retry 3 "https://github.com/laputa-systems/ffmpeg-build/releases/download/release-ac29c7720327f7dee4ed4677ce8421673fcc3563/$archive" -o "/tmp/$archive" \

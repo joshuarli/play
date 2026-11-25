@@ -9,7 +9,9 @@ JOBS=${JOBS:-$(getconf _NPROCESSORS_ONLN)}
 export TMPDIR="$ROOT/.work/tmp"
 export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig:$PREFIX/lib64/pkgconfig:$PREFIX/share/pkgconfig"
 export CFLAGS="-O2 -fPIC -ffile-prefix-map=$ROOT=."
-export CXXFLAGS="-O2 -fPIC -ffile-prefix-map=$ROOT=."
+# The prebuilt libshaderc_combined.a is built against libstdc++, not libc++.
+STDCXX_INCLUDE=$(echo /usr/include/c++/*)
+export CXXFLAGS="-O2 -fPIC -ffile-prefix-map=$ROOT=. -stdlib=libstdc++ -stdlib++-isystem $STDCXX_INCLUDE -stdlib++-isystem $STDCXX_INCLUDE/x86_64-alpine-linux-musl"
 
 mkdir -p "$PREFIX" "$SRC" "$LOGS"
 # Release tarballs carry no .git, so a build-time `git describe` (meson's

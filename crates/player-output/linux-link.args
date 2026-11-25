@@ -11,4 +11,4 @@ arg:/usr/lib/libvulkan.so
 lib:dl
 lib:m
 arg:-lc
-arg:/usr/lib/gcc/x86_64-alpine-linux-musl/15.2.0/libgcc.a
+arg:/opt/laputa/llvm/lib/clang/23/lib/linux/libclang_rt.builtins-x86_64.a
