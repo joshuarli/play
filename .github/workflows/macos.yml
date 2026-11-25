@@ -45,7 +45,12 @@ jobs:
           cargo --version
 
       - name: Install build tools
-        run: brew install pkgconf ripgrep
+        run: brew install pkgconf
+
+      - uses: laputa-systems/buildlib/setup@1cd9d482a684e72c68ac6fea7f4ee3a3e9c4a161 # v0.3.1
+        with:
+          tools: rg
+          lock: .github/tools.lock.json
 
       - name: Cache dependencies
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
