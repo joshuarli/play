@@ -12,7 +12,7 @@ mkdir -p "$ROOT/.work/home"
 
 devices=()
 for node in /dev/dri/renderD*; do
-    [ -e "$node" ] && devices+=(--device "$node" --group-add "$(stat -c %g "$node")")
+    [ -e "$node" ] && devices+=(--device "$node" --group-add "$(python3 "$ROOT/scripts/file-gid.py" "$node")")
 done
 
 exec docker run --rm --init --platform linux/amd64 \
