@@ -1,6 +1,6 @@
 FROM alpine@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
 COPY --from=oci.17166969.xyz/owned-tools@sha256:1a5d1306bb105f21b60c67bbf04677a92048c02a808ae9b29dfdac1a90f2f073 /opt/laputa /opt/laputa
-ENV PATH=/opt/laputa/bin:$PATH
+ENV PATH=$PATH:/opt/laputa/bin
 
 RUN apk add --no-cache \
         bash=5.3.9-r1 build-base=0.5-r4 pkgconf=2.5.1-r0 python3=3.14.10-r2 \
