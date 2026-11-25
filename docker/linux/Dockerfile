@@ -1,14 +1,16 @@
 FROM alpine@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
+COPY --from=oci.17166969.xyz/owned-tools@sha256:1a5d1306bb105f21b60c67bbf04677a92048c02a808ae9b29dfdac1a90f2f073 /opt/laputa /opt/laputa
+ENV PATH=/opt/laputa/bin:$PATH
 
 RUN apk add --no-cache \
-        bash=5.3.9-r1 build-base=0.5-r4 clang22=22.1.3-r2 pkgconf=2.5.1-r0 python3=3.14.10-r2 \
-        linux-headers=7.0.0-r1 git=2.54.1-r0 curl=8.23.0-r0 xz=5.8.4-r0 bzip2 tar=1.35-r5 perl=5.42.3-r0 patchelf file=5.47-r2 \
+        bash=5.3.9-r1 build-base=0.5-r4 pkgconf=2.5.1-r0 python3=3.14.10-r2 \
+        linux-headers=7.0.0-r1 curl=8.23.0-r0 xz=5.8.4-r0 bzip2 tar=1.35-r5 perl=5.42.3-r0 patchelf file=5.47-r2 \
         util-linux coreutils=9.11-r0 findutils diffutils time \
         wayland-dev wayland-protocols alsa-lib-dev \
         vulkan-loader-dev vulkan-headers \
         mesa-vulkan-swrast weston weston-backend-headless weston-clients weston-shell-desktop font-dejavu fontconfig \
         libva-dev libdrm-dev mesa-va-gallium libva-utils \
-        rustup ripgrep \
+        rustup \
         harfbuzz-dev freetype-dev \
         font-noto font-noto-arabic font-noto-hebrew font-noto-devanagari font-noto-thai \
         font-noto-cjk font-noto-emoji
