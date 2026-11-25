@@ -31,11 +31,7 @@ trap 'rm -rf "$stage"' EXIT
 
 archive="$stage/gluon-$target.tar.xz"
 curl -fsSL "https://github.com/laputa-systems/gluon/releases/download/$TAG/gluon-$target.tar.xz" -o "$archive"
-if command -v sha256sum >/dev/null; then
-    got=$(sha256sum "$archive" | awk '{print $1}')
-else
-    got=$(shasum -a 256 "$archive" | awk '{print $1}')
-fi
+got=$(sha256sum "$archive" | awk '{print $1}')
 [ "$got" = "$sha" ] || {
     printf 'error: gluon-%s.tar.xz sha256 %s, pinned %s\n' "$target" "$got" "$sha" >&2
     exit 1

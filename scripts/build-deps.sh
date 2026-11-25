@@ -15,7 +15,7 @@ SH_SHA=12ba0c59a98fb8f671f9473573002b2a812f26d2e60ea4f577f0c8c750c9838a
 PREFIX="$ROOT/.work/deps/release"
 SRC="$ROOT/.work/tmp/release"
 LOGS="$SRC/logs"
-JOBS=${JOBS:-$(/usr/sbin/sysctl -n hw.ncpu 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)}
+JOBS=${JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)}
 export TMPDIR="$ROOT/.work/tmp"
 export MACOSX_DEPLOYMENT_TARGET=${MACOSX_DEPLOYMENT_TARGET:-27.0}
 export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig"
@@ -29,13 +29,13 @@ export GIT_CEILING_DIRECTORIES="$SRC"
 
 INPUT_HASH=$(cat "$ROOT/scripts/build-deps.sh" "$ROOT/scripts/fetch-gluon.sh" "$ROOT/scripts/patches/libplacebo-metal.patch" "$ROOT/scripts/patches/libplacebo-python.patch" \
     "$ROOT/native/spirv-cross/meson.build" "$ROOT/native/spirv-cross/gitversion.h.in" |
-    shasum -a 256 | awk '{print $1}')
+    sha256sum | awk '{print $1}')
 
 GLUON=$("$ROOT/scripts/fetch-gluon.sh" aarch64-apple-darwin)
 NINJA=${NINJA:-$GLUON/ninja}
 MESON_SETUP_LIBPLACEBO=("$GLUON/meson" setup)
 
-for tool in curl tar shasum xcrun; do
+for tool in curl tar sha256sum xcrun; do
     command -v "$tool" >/dev/null || {
         printf 'error: %s is required (development tool)\n' "$tool" >&2
         exit 1
@@ -58,8 +58,18 @@ require_version() {
     local tool=$1 minimum=$2 found
     require_tool "$tool"
     found=$(tool_version "$tool")
-    if [ -z "$found" ] ||
-        [ "$(printf '%s\n%s\n' "$minimum" "$found" | sort -V | head -1)" != "$minimum" ]; then
+    if [ -z "$found" ] || ! awk -v minimum="$minimum" -v found="$found" '
+        BEGIN {
+            min_count = split(minimum, min, ".")
+            found_count = split(found, actual, ".")
+            count = min_count > found_count ? min_count : found_count
+            for (i = 1; i <= count; i++) {
+                if ((actual[i] + 0) > (min[i] + 0)) exit 0
+                if ((actual[i] + 0) < (min[i] + 0)) exit 1
+            }
+            exit 0
+        }
+    '; then
         printf 'error: %s %s or newer is required, found %s\n' \
             "$tool" "$minimum" "${found:-no version}" >&2
         exit 1
@@ -72,11 +82,11 @@ require_version python3 3.9
 
 fetch() {
     local url=$1 sha=$2 out=$3
-    if [ ! -f "$out" ] || [ "$(shasum -a 256 "$out" | awk '{print $1}')" != "$sha" ]; then
+    if [ ! -f "$out" ] || [ "$(sha256sum "$out" | awk '{print $1}')" != "$sha" ]; then
         printf 'download %s\n' "$url"
         curl -fsSL "$url" -o "$out"
     fi
-    if [ "$(shasum -a 256 "$out" | awk '{print $1}')" != "$sha" ]; then
+    if [ "$(sha256sum "$out" | awk '{print $1}')" != "$sha" ]; then
         printf 'error: checksum mismatch for %s\n' "$out" >&2
         exit 1
     fi
@@ -84,11 +94,11 @@ fetch() {
 
 fetch_blob() {
     local url=$1 sha=$2 out=$3
-    if [ ! -f "$out" ] || [ "$(shasum -a 256 "$out" | awk '{print $1}')" != "$sha" ]; then
+    if [ ! -f "$out" ] || [ "$(sha256sum "$out" | awk '{print $1}')" != "$sha" ]; then
         printf 'download %s\n' "$url"
         curl -fsSL -H 'Authorization: Bearer QQ==' -L "$url" -o "$out"
     fi
-    if [ "$(shasum -a 256 "$out" | awk '{print $1}')" != "$sha" ]; then
+    if [ "$(sha256sum "$out" | awk '{print $1}')" != "$sha" ]; then
         printf 'error: checksum mismatch for %s\n' "$out" >&2
         exit 1
     fi

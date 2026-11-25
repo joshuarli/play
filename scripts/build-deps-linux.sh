@@ -5,7 +5,7 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 PREFIX="$ROOT/.work/deps/linux"
 SRC="$ROOT/.work/tmp/linux"
 LOGS="$SRC/logs"
-JOBS=${JOBS:-$(nproc)}
+JOBS=${JOBS:-$(getconf _NPROCESSORS_ONLN)}
 export TMPDIR="$ROOT/.work/tmp"
 export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig:$PREFIX/lib64/pkgconfig:$PREFIX/share/pkgconfig"
 export CFLAGS="-O2 -fPIC -ffile-prefix-map=$ROOT=."

@@ -40,13 +40,7 @@ for digest in "$python_sha" "$wheel_sha" "$uv_sha"; do
     case "$digest" in *[!0-9a-f]*) fail 'invalid sha256' ;; esac
 done
 case "$uv_python" in ''|*[!0-9.]*) fail 'invalid uv Python version' ;; esac
-if command -v sha256sum >/dev/null 2>&1; then
-    hash() { sha256sum "$1" | cut -d ' ' -f 1; }
-elif command -v shasum >/dev/null 2>&1; then
-    hash() { shasum -a 256 "$1" | cut -d ' ' -f 1; }
-else
-    fail 'install sha256sum or shasum'
-fi
+hash() { sha256sum "$1" | cut -d ' ' -f 1; }
 cache=${BUILDLIB_CACHE:-${XDG_CACHE_HOME:-${HOME:?HOME is required}/.cache}/laputa-buildlib}
 mkdir -p "$cache"
 cache=$(CDPATH='' cd -- "$cache" && pwd)
